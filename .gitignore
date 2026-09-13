@@ -45,3 +45,5 @@ collect.sh
 packages/agent/docs/extensions/pi-server-artifact/index.md
 SPEC-ZCODE-CLI.md
 DESIGN.md
+
+bench/results/
