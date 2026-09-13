@@ -917,7 +917,7 @@ export class InteractiveMode {
 					"  " +
 					theme.bold(theme.fg("accent", APP_NAME)) +
 					theme.fg("dim", ` v${this.version}`),
-				theme.fg("accent", bird[2]) + "  " + theme.fg("dim", "GLM-native coding agent"),
+				`${theme.fg("accent", bird[2])}  ${theme.fg("dim", "GLM-native coding agent")}`,
 				theme.fg("accent", bird[3]),
 			].join("\n");
 
