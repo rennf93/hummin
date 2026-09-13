@@ -56,8 +56,11 @@ function parseInstances(): string[] {
 		.filter((entry) => entry.length > 0);
 }
 
-async function fetchModels(baseUrl: string): Promise<string[]> {
-	const response = await fetch(`${baseUrl}/v1/models`, { signal: AbortSignal.timeout(5000) });
+async function fetchModels(baseUrl: string, apiKey: string | undefined): Promise<string[]> {
+	const response = await fetch(`${baseUrl}/v1/models`, {
+		signal: AbortSignal.timeout(5000),
+		headers: { Authorization: `Bearer ${apiKey ?? "colibri"}` },
+	});
 	if (!response.ok) {
 		throw new Error(`HTTP ${response.status} from ${baseUrl}/v1/models`);
 	}
@@ -155,8 +158,8 @@ async function registerInstance(
 ): Promise<void> {
 	let modelIds: string[] = [];
 	try {
-		modelIds = await fetchModels(baseUrl);
-	} catch {
+		modelIds = await fetchModels(baseUrl, process.env.COLI_API_KEY);
+	} catch (e) {
 		return; // unreachable instance: register nothing rather than a broken provider
 	}
 	if (modelIds.length === 0) {
