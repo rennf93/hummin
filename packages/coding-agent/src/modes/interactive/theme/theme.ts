@@ -577,7 +577,7 @@ export function getThemeByName(name: string): Theme | undefined {
 	}
 }
 
-export type TerminalTheme = "dark" | "light";
+export type TerminalTheme = "dark" | "light" | "zcode-dark";
 
 export function parseAutoThemeSetting(
 	themeSetting: string | undefined,

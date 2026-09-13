@@ -17,16 +17,24 @@ export interface FirstTimeSetupOptions {
 }
 
 const THEME_OPTIONS: Array<{ value: TerminalTheme; label: string }> = [
+	{ value: "zcode-dark", label: "Zcode Dark (recommended)" },
 	{ value: "dark", label: "Dark" },
 	{ value: "light", label: "Light" },
 ];
 
 const ANALYTICS_OPTIONS: Array<{ value: boolean; label: string }> = [
-	{ value: true, label: "Share anonymous usage data" },
 	{ value: false, label: "Don't share" },
+	{ value: true, label: "Share anonymous usage data" },
 ];
 
-const SETUP_LOGO_LINES = ["██████", "██  ██", "████  ██", "██    ██"];
+const SETUP_LOGO_LINES = [
+	"       ▄▄████▄▄",
+	"▀████▄█████████▄",
+	"    ▀███████████",
+	"      ▀████████▀",
+	"      ▀██████▀█▄",
+	"         ▀▀██ ██",
+];
 
 /** First-time setup dialog: theme choice and analytics opt-in. */
 export class FirstTimeSetupComponent extends Container {

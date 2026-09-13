@@ -488,6 +488,7 @@ interface PackageJson {
 		configDir?: string;
 		version?: string;
 		checkNewVersion?: boolean;
+		remoteCatalog?: boolean;
 	};
 }
 
@@ -510,6 +511,22 @@ export const VERSION: string = pkg.piConfig?.version || pkg.version || "0.0.0";
 // Fork gate for the pi.dev "new version available" banner: only enabled when a
 // fork explicitly opts in, since upstream releases do not apply to it.
 export const CHECK_NEW_VERSION: boolean = pkg.piConfig?.checkNewVersion === true;
+// Fork gate for pi.dev model-catalog refreshes: the shipped static catalog is
+// the source of truth unless a fork opts into a remote one.
+export const REMOTE_CATALOG_ENABLED: boolean = pkg.piConfig?.remoteCatalog !== false;
+
+// Fork env aliasing: ZCODE_<NAME> mirrors legacy PI_<NAME> at startup so either
+// prefix works while the internal code keeps reading PI_<NAME>.
+export function aliasZcodeEnv(): void {
+	for (const [key, value] of Object.entries(process.env)) {
+		if (key.startsWith("ZCODE_") && value !== undefined) {
+			const legacy = `PI_${key.slice("ZCODE_".length)}`;
+			if (process.env[legacy] === undefined) {
+				process.env[legacy] = value;
+			}
+		}
+	}
+}
 
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
@@ -519,11 +536,14 @@ export function expandTildePath(path: string): string {
 	return normalizePath(path);
 }
 
-const DEFAULT_SHARE_VIEWER_URL = "https://pi.dev/session/";
+// Fork default: no upstream share viewer. Set ZCODE_SHARE_VIEWER_URL to enable
+// the "Share URL" line in /share.
+const DEFAULT_SHARE_VIEWER_URL = "";
 
-/** Get the share viewer URL for a gist ID. */
+/** Get the share viewer URL for a gist ID. Empty string when no viewer is configured. */
 export function getShareViewerUrl(gistId: string): string {
 	const baseUrl = process.env.PI_SHARE_VIEWER_URL || DEFAULT_SHARE_VIEWER_URL;
+	if (!baseUrl) return "";
 	return `${baseUrl}#${gistId}`;
 }
 

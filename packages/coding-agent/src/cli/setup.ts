@@ -1,10 +1,12 @@
-import { APP_NAME } from "../config.ts";
+import { APP_NAME, aliasZcodeEnv } from "../config.ts";
 import { configureHttpDispatcher } from "../core/http-dispatcher.ts";
 
 export function setupCli(): void {
 	process.title = APP_NAME;
 	process.env.PI_CODING_AGENT = "true";
+	process.env.ZCODE_CODING_AGENT = "true";
 	process.env.AI_AGENT = "zcode";
+	aliasZcodeEnv();
 	process.emitWarning = (() => {}) as typeof process.emitWarning;
 
 	// Configure undici before provider SDKs issue requests. Settings are applied

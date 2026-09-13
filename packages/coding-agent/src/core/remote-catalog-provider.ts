@@ -1,5 +1,5 @@
 import type { Api, Model, ModelsStoreEntry, Provider } from "@earendil-works/pi-ai";
-import { VERSION } from "../config.ts";
+import { REMOTE_CATALOG_ENABLED, VERSION } from "../config.ts";
 import { fetchWithRetry } from "../utils/management-http.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 
@@ -48,6 +48,9 @@ export function withRemoteCatalog(
 	catalogBaseUrl: string = DEFAULT_CATALOG_BASE_URL,
 	localGeneratedAt?: number,
 ): Provider {
+	if (!REMOTE_CATALOG_ENABLED) {
+		return provider; // fork: the shipped static catalog is the source of truth
+	}
 	let dynamicModels: readonly Model<Api>[] = [];
 
 	return {

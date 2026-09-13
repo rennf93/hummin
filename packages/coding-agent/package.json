@@ -7,10 +7,13 @@
 		"name": "zcode",
 		"configDir": ".zcode",
 		"version": "0.1.0",
-		"checkNewVersion": false
+		"checkNewVersion": false,
+		"remoteCatalog": false
 	},
 	"pi": {
-		"extensions": ["extensions/colibri.ts"]
+		"extensions": [
+			"extensions/colibri.ts"
+		]
 	},
 	"bin": {
 		"zcode": "dist/bundle/cli.js"

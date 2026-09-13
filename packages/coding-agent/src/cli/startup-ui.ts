@@ -7,7 +7,6 @@ import {
 } from "@earendil-works/pi-tui";
 import { existsSync } from "fs";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, getAgentDir, getSettingsPath, PACKAGE_NAME } from "../config.ts";
-import { areExperimentalFeaturesEnabled } from "../core/experimental.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
 import { DefaultPackageManager, type ResolvedResource } from "../core/package-manager.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
@@ -40,6 +39,10 @@ interface DistributionMetadata {
 }
 
 function isOfficialDistribution({ packageName, appName, configDirName }: DistributionMetadata): boolean {
+	// This fork ships its own first-run experience under the zcode identity.
+	if (appName === "zcode" && configDirName === ".zcode") {
+		return true;
+	}
 	return (
 		packageName === OFFICIAL_PACKAGE_NAME &&
 		appName === OFFICIAL_APP_NAME &&
@@ -115,7 +118,6 @@ async function clearStartupTui(ui: TUI): Promise<void> {
 /**
  * First-time setup runs when all of these hold:
  * - this is the official Pi distribution (not a fork/rebrand)
- * - experimental features are enabled (PI_EXPERIMENTAL=1)
  * - the default agent directory is used (no custom agent dir override)
  * - setup was not completed before (settings.json does not exist)
  */
@@ -127,9 +129,6 @@ export function shouldRunFirstTimeSetup(settingsPath: string = getSettingsPath()
 			configDirName: CONFIG_DIR_NAME,
 		})
 	) {
-		return false;
-	}
-	if (!areExperimentalFeaturesEnabled()) {
 		return false;
 	}
 	if (process.env[ENV_AGENT_DIR]) {
