@@ -912,79 +912,45 @@ export class InteractiveMode {
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
 			// Exact pixel transcription of the red-throated hummingbird reference
-			// (24x26 cells, truecolor half-blocks; near-black lifted to visible grays).
+			// (native 16x12 grid, sampled colors, rendered at 2x scale).
 			const BIRD_PALETTE: Record<string, string> = {
-				A: "#3d3b39",
-				B: "#387457",
-				D: "#383838",
-				E: "#b3b8b8",
-				F: "#e55363",
-				G: "#389762",
-				H: "#6b6b6d",
-				K: "#d1b2c1",
+				B: "#383838",
+				D: "#388155",
+				G: "#b3bab7",
+				E: "#e65364",
+				W: "#646367",
 			};
 			const BIRD: string[] = [
-				"......AAAAA.............",
-				".....AABABAA............",
-				".....AABBBAH............",
-				"....AABBBHHHA...........",
-				"HEHHAABBBHHHA...........",
-				"HHHHHHHBFFFFD...........",
-				"HHHHHAHFFFBDDD..........",
-				"....AAFFFFBBDD..........",
-				"....AAFFKKBGGDD.........",
-				"....AAFF.ABBGDDD........",
-				"....AHH.EDBGGGDD........",
-				"....HHHEEDBBGBGGDD......",
-				".....HHE.DBBBBGGDD......",
-				"......AAEEDBBBBBDD......",
-				"......AAEEDDBBBBDDD.....",
-				"......AAEEEDDDDBGDD.....",
-				"......ADDEEEDEDDGBDD....",
-				"........DEEEEEDDGBDDA...",
-				"........DDEEEEEEDBBBD...",
-				"........DDDEEDEEDBBBDD..",
-				".........DDDDDED.DDBBD..",
-				".........DHDDHDD.DDDBDD.",
-				".........DHHDHD....DBBDD",
-				"....................DBBD",
-				"....................DDDD",
-				".....................DDD",
+				"...BBBBB........",
+				"...BDDWWB.......",
+				"WWWWWEEEB.......",
+				"...BEEEDBB......",
+				"...WEEBDDBB.....",
+				"...WGGDDDDBB....",
+				"....BGGBDDDBB...",
+				"....BBGBBBDDB...",
+				".....BBGGGBDDB..",
+				"......BBBGBBBDBB",
+				"......BWBB..BBDB",
+				".............BBB",
 			];
 			const rgb = (hex: string): string => {
 				const value = parseInt(hex.slice(1), 16);
 				return `${(value >> 16) & 255};${(value >> 8) & 255};${value & 255}`;
 			};
-			const birdLines: string[] = [];
-			for (let row = 0; row < BIRD.length; row += 2) {
-				const top = BIRD[row];
-				const bottom = BIRD[row + 1] ?? "";
+			const birdLines = BIRD.map((row) => {
 				let line = "";
-				for (let column = 0; column < Math.max(top.length, bottom.length); column++) {
-					const topChar = top[column] ?? ".";
-					const bottomChar = bottom[column] ?? ".";
-					const topColor = topChar === "." ? undefined : BIRD_PALETTE[topChar];
-					const bottomColor = bottomChar === "." ? undefined : BIRD_PALETTE[bottomChar];
-					if (!topColor && !bottomColor) {
-						line += " ";
-					} else if (topColor && bottomColor && topColor === bottomColor) {
-						line += `\x1b[38;2;${rgb(topColor)}m█`;
-					} else if (topColor && bottomColor) {
-						line += `\x1b[38;2;${rgb(topColor)}m\x1b[48;2;${rgb(bottomColor)}m▀`;
-					} else if (topColor) {
-						line += `\x1b[38;2;${rgb(topColor)}m\x1b[49m▀`;
-					} else {
-						line += `\x1b[38;2;${rgb(bottomColor ?? "#383838")}m\x1b[49m▄`;
-					}
+				for (const char of row) {
+					const color = char === "." ? undefined : BIRD_PALETTE[char];
+					line += color ? `\x1b[38;2;${rgb(color)}m██` : "  ";
 				}
-				birdLines.push(`${line}\x1b[0m`);
-			}
+				return `${line}\x1b[0m`;
+			});
 			const nameLine = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
 			const tagline = theme.fg("dim", "GLM-native coding agent");
 			const logo = [`${birdLines[0]}    ${nameLine}`, `${birdLines[1]}    ${tagline}`, ...birdLines.slice(2)].join(
 				"\n",
 			);
-
 			// Build startup instructions using keybinding hint helpers
 			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
 
@@ -1007,7 +973,6 @@ export class InteractiveMode {
 				hint("app.message.followUp", "to queue follow-up"),
 				hint("app.message.dequeue", "to edit all queued messages"),
 				hint("app.clipboard.pasteImage", "to paste image (with text fallback)"),
-				rawKeyHint("drop files", "to attach"),
 			].join("\n");
 			const compactInstructions = [
 				hint("app.interrupt", "interrupt"),

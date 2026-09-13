@@ -8,7 +8,7 @@ Why a fork: GLM is a first-class citizen here, not a compatibility mode. The pro
 
 ## Status
 
-Early and moving fast. Tracked in [SPEC-ZCODE-CLI.md](SPEC-ZCODE-CLI.md):
+Early and moving fast. The working spec lives in Renn's local clone (not part of the public repo):
 
 - M0 rebrand + build: done
 - M1 Z.ai catalog: done upstream (GLM-5.3 / GLM-5.3-Flash ship in the zai provider); live acceptance pending
