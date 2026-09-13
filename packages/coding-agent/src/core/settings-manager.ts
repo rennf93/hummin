@@ -46,6 +46,10 @@ export interface RetrySettings {
 	provider?: ProviderRetrySettings;
 }
 
+export interface ProvidersSettings {
+	showAll?: boolean; // default: false - /login surfaces curated providers (zai, colibri) plus already-configured ones only
+}
+
 export type TuiMode = RendererTuiMode;
 export type FullscreenExitOutput = "transcript" | "resume-hint";
 
@@ -116,6 +120,7 @@ export interface Settings {
 	compaction?: CompactionSettings;
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
+	providers?: ProvidersSettings;
 	hideThinkingBlock?: boolean;
 	showCacheMissNotices?: boolean; // default: false - show cache cost and provider recovery notices
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
@@ -777,7 +782,7 @@ export class SettingsManager {
 	getThemeSetting(): string | undefined {
 		const value = this.settings.theme;
 		if (typeof value === "string") return value;
-		return undefined;
+		return "zcode-dark";
 	}
 
 	getTheme(): string | undefined {
@@ -788,6 +793,19 @@ export class SettingsManager {
 	setTheme(theme: string): void {
 		this.globalSettings.theme = theme;
 		this.markModified("theme");
+		this.save();
+	}
+
+	getProvidersShowAll(): boolean {
+		return this.settings.providers?.showAll ?? false;
+	}
+
+	setProvidersShowAll(showAll: boolean): void {
+		if (!this.globalSettings.providers) {
+			this.globalSettings.providers = {};
+		}
+		this.globalSettings.providers.showAll = showAll;
+		this.markModified("providers", "showAll");
 		this.save();
 	}
 

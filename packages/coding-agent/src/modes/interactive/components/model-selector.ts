@@ -229,8 +229,11 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	}
 
 	private sortModels(models: ModelItem[]): ModelItem[] {
+		const curated = (provider: string): boolean =>
+			provider === "zai" || provider === "zai-coding-cn" || provider.startsWith("colibri");
 		const sorted = [...models];
-		// Sort: current model first, default model second, then by provider.
+		// Sort: current model first, default model second, curated providers
+		// (zai, colibri) next, then remaining providers alphabetically.
 		sorted.sort((a, b) => {
 			const aIsCurrent = modelsAreEqual(this.currentModel, a.model);
 			const bIsCurrent = modelsAreEqual(this.currentModel, b.model);
@@ -240,6 +243,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			const bIsDefault = this.isDefaultModel(b.model);
 			if (aIsDefault && !bIsDefault) return -1;
 			if (!aIsDefault && bIsDefault) return 1;
+			const aCurated = curated(a.provider);
+			const bCurated = curated(b.provider);
+			if (aCurated && !bCurated) return -1;
+			if (!aCurated && bCurated) return 1;
 			return a.provider.localeCompare(b.provider);
 		});
 		return sorted;

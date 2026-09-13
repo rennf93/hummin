@@ -5455,7 +5455,16 @@ export class InteractiveMode {
 				});
 			}
 		}
-		return options.sort((a, b) => a.name.localeCompare(b.name));
+		const showAll = this.settingsManager.getProvidersShowAll();
+		const curated = (id: string): boolean => id === "zai" || id === "zai-coding-cn" || id.startsWith("colibri");
+		const visible = options.filter((option) => showAll || curated(option.id) || option.status !== undefined);
+		return visible.sort((a, b) => {
+			const aCurated = curated(a.id);
+			const bCurated = curated(b.id);
+			if (aCurated && !bCurated) return -1;
+			if (!aCurated && bCurated) return 1;
+			return a.name.localeCompare(b.name);
+		});
 	}
 
 	private async getLogoutProviderOptions(): Promise<AuthSelectorProvider[]> {
