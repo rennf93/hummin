@@ -159,11 +159,14 @@ async function registerInstance(
 	let modelIds: string[] = [];
 	try {
 		modelIds = await fetchModels(baseUrl, process.env.COLI_API_KEY);
-	} catch (e) {
-		return; // unreachable instance: register nothing rather than a broken provider
+	} catch {
+		// Unreachable instance (server down, host asleep): still register with the
+		// documented default model id so the picker always shows colibri entries.
+		// Requests fail at generation time until the server is back.
+		modelIds = ["glm-5.3-flash-colibri"];
 	}
 	if (modelIds.length === 0) {
-		return;
+		modelIds = ["glm-5.3-flash-colibri"];
 	}
 
 	const models: Model<"openai-completions">[] = modelIds.map((modelId) => ({
