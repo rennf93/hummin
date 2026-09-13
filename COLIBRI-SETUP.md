@@ -68,7 +68,7 @@ First replies can be slow (experts cold from disk); it warms up as colibri cache
 ## 5. Serve on the network
 
 ```bash
-export COLI_API_KEY=$(openssl rand -hex 24)   # save this; zcode will need it
+export COLI_API_KEY=$(openssl rand -hex 24)   # save this; zcode-cli will need it
 COLI_MODEL=$COLI_MODEL COLI_API_KEY=$COLI_API_KEY \
   python3 ~/colibri/coli serve --host 0.0.0.0 --port 9998 --no-browser
 ```
@@ -111,7 +111,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now colibri
 ```bash
 export ZCODE_COLIBRI_INSTANCES="http://your-server:9998,http://your-server:9997"
 export COLI_API_KEY=your-key                   # omit if the server runs keyless
-zcode -e /path/to/zcode-cli/packages/coding-agent/extensions/colibri.ts
+zcode-cli -e /path/to/zcode-cli/packages/coding-agent/extensions/colibri.ts
 ```
 
 Then `/model` and pick a `colibri` entry. Each instance becomes a provider; models are discovered from `/v1/models` automatically. The extension serializes requests per instance and retries the documented busy response (429 + `x-colibri-queue-wait-ms`) with capped backoff.
@@ -124,7 +124,7 @@ Environment variables:
 | `COLI_API_KEY` | bearer token; placeholder is sent for keyless servers |
 | `ZCODE_COLIBRI_CTX` | advertised context window per model (default: 16384) |
 
-`-e` loads the extension for one run. To install it persistently, use `zcode install /path/to/packages/coding-agent/extensions/colibri.ts` (built-in autoload is on the roadmap; see [SPEC-ZCODE-CLI.md](SPEC-ZCODE-CLI.md)).
+`-e` loads the extension for one run. To install it persistently, use `zcode-cli install /path/to/packages/coding-agent/extensions/colibri.ts` (built-in autoload is on the roadmap; see [SPEC-ZCODE-CLI.md](SPEC-ZCODE-CLI.md)).
 
 ## 7. Troubleshooting
 
@@ -133,11 +133,11 @@ Environment variables:
 | Download stalls at 0% | `export HF_HUB_DISABLE_XET=1`, re-run the download (it resumes) |
 | Prebuilt binary fails to start | build from source (step 2) |
 | `doctor` complains about disk speed | move the model to NVMe; this directly buys tokens/s |
-| HTTP 429 from the server | the instance is mid-generation; the zcode extension retries automatically |
+| HTTP 429 from the server | the instance is mid-generation; the zcode-cli extension retries automatically |
 | HTTP 401 | `COLI_API_KEY` mismatch between server and client |
 | Port already in use | pick another port in `serve` and in `ZCODE_COLIBRI_INSTANCES` |
 | Everything works but it is slow | that is the design point of colibri: check `coli tune`, keep the model on NVMe, raise RAM |
 
 ## 8. Running both models
 
-Download both containers and run one `serve` per model on different ports (e.g. 9998 for Flash, 9997 for GLM-5.3). zcode lists them as separate providers and the picker groups them first. Each server generates one response at a time; running two servers doubles your concurrency ceiling, though they share the same disk pipe.
+Download both containers and run one `serve` per model on different ports (e.g. 9998 for Flash, 9997 for GLM-5.3). zcode-cli lists them as separate providers and the picker groups them first. Each server generates one response at a time; running two servers doubles your concurrency ceiling, though they share the same disk pipe.

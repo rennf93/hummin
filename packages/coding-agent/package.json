@@ -8,7 +8,8 @@
 		"configDir": ".zcode",
 		"version": "0.1.0",
 		"checkNewVersion": false,
-		"remoteCatalog": false
+		"remoteCatalog": false,
+		"displayName": "zcode-cli"
 	},
 	"pi": {
 		"extensions": [
@@ -16,7 +17,7 @@
 		]
 	},
 	"bin": {
-		"zcode": "dist/bundle/cli.js"
+		"zcode-cli": "dist/bundle/cli.js"
 	},
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",

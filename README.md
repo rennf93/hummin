@@ -22,7 +22,7 @@ From a clone:
 ```bash
 npm install
 npm run build
-cd packages/coding-agent && npm link     # puts `zcode` on your PATH
+cd packages/coding-agent && npm link     # puts `zcode-cli` on your PATH
 ```
 
 Requires Node >= 22.19.
@@ -30,9 +30,9 @@ Requires Node >= 22.19.
 ## Quickstart (Z.ai cloud)
 
 ```bash
-export ZAI_API_KEY=your-key      # or run `zcode auth login zai`
-zcode                            # interactive TUI; GLM-5.3 is the default suggestion
-zcode -p "summarize this repo"   # oneshot mode
+export ZAI_API_KEY=your-key      # or run `zcode-cli auth login zai`
+zcode-cli                            # interactive TUI; GLM-5.3 is the default suggestion
+zcode-cli -p "summarize this repo"   # oneshot mode
 ```
 
 GLM-5.3, GLM-5.3-Flash and GLM-5.3-highspeed ship in the `zai` provider catalog (1M-token context, reasoning variants mapped to `reasoning_effort`). Pick models with `/model`; set a persistent default with the picker's "set as default" action.
@@ -46,7 +46,7 @@ GLM-5.3, GLM-5.3-Flash and GLM-5.3-highspeed ship in the `zai` provider catalog 
 ```bash
 export ZCODE_COLIBRI_INSTANCES="http://nas:9998,http://nas:9997"
 export COLI_API_KEY=...                    # only if the server enforces COLI_API_KEY
-zcode -e /path/to/packages/coding-agent/extensions/colibri.ts
+zcode-cli -e /path/to/packages/coding-agent/extensions/colibri.ts
 ```
 
 Behavior:
@@ -64,7 +64,7 @@ A mock colibri server speaks the same surface (streaming, `/health`, `/v1/models
 ```bash
 node scripts/mock-colibri.mjs --port 9998 --model glm-5.3-flash
 ZCODE_COLIBRI_INSTANCES="http://127.0.0.1:9998" \
-  zcode -e packages/coding-agent/extensions/colibri.ts -p "hello"
+  zcode-cli -e packages/coding-agent/extensions/colibri.ts -p "hello"
 ```
 
 ## GLM-first curation
@@ -75,7 +75,7 @@ ZCODE_COLIBRI_INSTANCES="http://127.0.0.1:9998" \
 
 ## Differences from upstream pi
 
-- Rebranded binary/config (`zcode`, `~/.zcode/agent`) via pi's official `piConfig` fork support.
+- Rebranded binary/config (`zcode-cli`, `~/.zcode-cli/agent`) via pi's official `piConfig` fork support.
 - GLM-first provider curation and defaults (this README).
 - `zcode-colibri` extension + mock server.
 - One upstream build fix (`FinishReason.TOO_MANY_TOOL_CALLS` handling) pending upstream discussion.
