@@ -41,6 +41,8 @@ GLM-5.3, GLM-5.3-Flash and GLM-5.3-highspeed ship in the `zai` provider catalog 
 
 [Colibri](https://github.com/JustVugg/colibri) streams frontier MoE models (GLM-5.3, GLM-5.3-Flash, ...) off NVMe on consumer hardware and serves an OpenAI-compatible API. The bundled `zcode-colibri` extension registers one provider per instance:
 
+**Full walkthrough - installing colibri, downloading the model containers, running and keeping the server alive on any Linux box or Mac: [COLIBRI-SETUP.md](COLIBRI-SETUP.md).**
+
 ```bash
 export ZCODE_COLIBRI_INSTANCES="http://nas:9998,http://nas:9997"
 export COLI_API_KEY=...                    # only if the server enforces COLI_API_KEY
