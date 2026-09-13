@@ -67,13 +67,13 @@ function readTranscriptTail(path: string, maxChars: number): string {
 				const entry = JSON.parse(line);
 				if (entry.type !== "message") continue;
 				const msg = entry.message;
-				if (!msg || (msg.role !== "user" && msg.role !== "assistant")) continue;
+				if (!msg || (msg.role !== "user" && msg.role !== "assistant" && msg.role !== "toolResult")) continue;
 				const text = (msg.content ?? [])
 					.filter((c: { type: string }) => c.type === "text")
 					.map((c: { text?: string }) => c.text ?? "")
 					.join(" ")
 					.trim();
-				if (text) turns.push(`${msg.role === "user" ? "USER" : "ASSISTANT"}: ${text}`);
+				if (text) turns.push(`${msg.role.toUpperCase()}: ${text}`);
 			} catch {
 				// skip malformed lines
 			}
@@ -105,7 +105,9 @@ ${transcript}`;
 	const res = spawnSync("hummin", ["-p", prompt, "--provider", provider, "--model", modelId, "--thinking", "low"], {
 		encoding: "utf8",
 		timeout: 300_000,
-		env: process.env,
+		// The distillation call is itself a hummin session: disable memory inside
+		// it or its shutdown handler distills again, recursing without bound.
+		env: { ...process.env, HUMMIN_MEMORY: "0" },
 	});
 	const out = `${res.stdout ?? ""}`.trim();
 	if (res.status !== 0 || !out) return null;
@@ -158,7 +160,7 @@ export default function humminMemory(pi: ExtensionAPI): void {
 			if (!sessionFile || alreadyProcessed(sessionFile)) return;
 
 			const tail = readTranscriptTail(sessionFile, Number(process.env.HUMMIN_MEMORY_MAX_CHARS ?? 12000));
-			if (tail.length < 200) return; // trivial session, nothing to distill
+			if (tail.length < 120) return; // trivial session, nothing to distill
 
 			const lesson = distill(tail, cwd);
 			if (!lesson) return; // NONE or failed: store nothing
