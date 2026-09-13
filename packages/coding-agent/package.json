@@ -7,6 +7,9 @@
 		"name": "zcode",
 		"configDir": ".zcode"
 	},
+	"pi": {
+		"extensions": ["extensions/colibri.ts"]
+	},
 	"bin": {
 		"zcode": "dist/bundle/cli.js"
 	},
@@ -34,6 +37,8 @@
 		"!dist/cli/experimental",
 		"docs",
 		"examples",
+		"extensions",
+		"themes",
 		"containerization.md",
 		"CHANGELOG.md",
 		"npm-shrinkwrap.json"
