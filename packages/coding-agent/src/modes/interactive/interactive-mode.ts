@@ -47,6 +47,7 @@ import { spawn } from "child_process";
 import {
 	APP_NAME,
 	APP_TITLE,
+	CHECK_NEW_VERSION,
 	CONFIG_DIR_NAME,
 	getAgentDir,
 	getAuthPath,
@@ -910,7 +911,7 @@ export class InteractiveMode {
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			const bird = ["    __", " __(o>", "( __<)", "  `--`"];
+			const bird = ["   ▄▄▄▄", " ▄█████▄█", "▀██████▀", "   ▀▀▀"];
 			const logo = [
 				theme.fg("accent", bird[0]),
 				theme.fg("accent", bird[1]) +
@@ -1053,11 +1054,13 @@ export class InteractiveMode {
 		}
 
 		// Start version check asynchronously
-		checkForNewPiVersion(this.version).then((newRelease) => {
-			if (newRelease) {
-				this.showNewVersionNotification(newRelease);
-			}
-		});
+		if (CHECK_NEW_VERSION) {
+			checkForNewPiVersion(this.version).then((newRelease) => {
+				if (newRelease) {
+					this.showNewVersionNotification(newRelease);
+				}
+			});
+		}
 
 		// Start package update check asynchronously
 		this.checkForPackageUpdates()

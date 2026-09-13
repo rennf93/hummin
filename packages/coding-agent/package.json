@@ -6,7 +6,8 @@
 	"piConfig": {
 		"name": "zcode",
 		"configDir": ".zcode",
-		"version": "0.1.0"
+		"version": "0.1.0",
+		"checkNewVersion": false
 	},
 	"pi": {
 		"extensions": ["extensions/colibri.ts"]
