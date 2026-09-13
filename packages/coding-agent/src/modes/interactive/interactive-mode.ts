@@ -911,7 +911,14 @@ export class InteractiveMode {
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			const bird = ["   ▄▄▄▄", " ▄█████▄█", "▀██████▀", "   ▀▀▀"];
+			const bird = [
+				"       ▄▄████▄▄",
+				"▀████▄█████████▄",
+				"    ▀███████████",
+				"      ▀████████▀",
+				"      ▀██████▀█▄",
+				"         ▀▀██ ██",
+			];
 			const logo = [
 				theme.fg("accent", bird[0]),
 				theme.fg("accent", bird[1]) +

@@ -31,3 +31,27 @@ decoration.
 - Never decorate streaming model output; decoration belongs to chrome only.
 - Post-mortems are data (JSON on disk), never rendered inline in the transcript.
 - Every state must survive 256-color and no-color terminals: pair each color with a text tag.
+
+## Mascot: the colibri hummingbird
+
+Pixel silhouette (16x12 grid, rendered with half-block glyphs at 2x vertical
+resolution, single accent color). Regenerate by editing the `#` map and
+converting pairs of rows: both=`█`, top-only=`▀`, bottom-only=`▄`.
+
+```
+.........####...
+.......########.
+#####.#########.
+.###############
+....############
+.....###########
+......##########
+.......########.
+......#########.
+.......######.##
+.........####.##
+...........##.##
+```
+
+Ships in the startup banner (interactive-mode.ts). Open-wings variant on file
+in the repo history if a second pose is ever needed.
