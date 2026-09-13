@@ -1211,7 +1211,7 @@ export class InteractiveMode {
 		}
 
 		if (extendedKeysFormat === "xterm") {
-			return "tmux extended-keys-format is xterm. Pi works best with csi-u. Add `set -g extended-keys-format csi-u` to ~/.tmux.conf and restart tmux.";
+			return "tmux extended-keys-format is xterm. zcode works best with csi-u. Add `set -g extended-keys-format csi-u` to ~/.tmux.conf and restart tmux.";
 		}
 
 		return undefined;
@@ -1671,7 +1671,11 @@ export class InteractiveMode {
 			if (options?.sort !== false) {
 				labels.sort((a, b) => a.localeCompare(b));
 			}
-			return theme.fg("dim", `  ${labels.join(", ")}`);
+			const maxCompact = 6;
+			const shown = labels.slice(0, maxCompact);
+			const rest = labels.length - shown.length;
+			const suffix = rest > 0 ? ` +${rest} more (ctrl+o for all)` : "";
+			return theme.fg("dim", `  ${shown.join(", ")}${suffix}`);
 		};
 		const addLoadedSection = (
 			name: string,

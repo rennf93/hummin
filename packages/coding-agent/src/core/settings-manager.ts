@@ -1071,7 +1071,7 @@ export class SettingsManager {
 	}
 
 	getEnableInstallTelemetry(): boolean {
-		return this.settings.enableInstallTelemetry ?? true;
+		return this.settings.enableInstallTelemetry ?? false;
 	}
 
 	setEnableInstallTelemetry(enabled: boolean): void {
