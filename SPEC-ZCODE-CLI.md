@@ -85,6 +85,10 @@ pi's TUI today is a single-pane vertical document (regular) or fullscreen altern
 - v1: `zcode` in one pane + shell in the other pane of a tmux/terminal split; shell escape inside the TUI (`!` command) and `zcode -p` oneshot mode cover most "run a command" needs. Document the recommended tmux layout in the README.
 - M5 (optional, post-v1): implement HStack in the TUI per upstream `tui-plan.md` and evaluate a real split layout. Do not block v1 on this.
 
+### UX design language
+
+Define the design language once with design-taste/brandkit skills (palette, tone, state hierarchy: streaming vs waiting vs parked vs budget-warning), then encode it manually into the theme JSONs and a `DESIGN.md` with component rules. The web-oriented taste skills inform language and hierarchy only; terminal constraints (monospace alignment, 256-color fallback, information density) are applied at translation time. TUI framework changes (split panes) stay M5 per upstream tui-plan.md.
+
 ## 9. Milestones
 
 | M | Scope | Effort | Acceptance |
@@ -92,6 +96,7 @@ pi's TUI today is a single-pane vertical document (regular) or fullscreen altern
 | M0 | Branch `zcode`, `piConfig` rebrand, build green (`npm install && npm run build`), `./pi-test.sh` runs, `zcode` binary boots | half day | `zcode --help` works, sessions land in `~/.zcode/agent/sessions/` |
 | M1 | Workstream A | 1-2 days | Streaming GLM session on Z.ai cloud with tools + reasoning |
 | M2 | Workstream B | 2-3 days | Multi-instance colibri demo from section 5 acceptance |
+| M2.5 | Guardrails + memory (section 13; RoboCo + obsidian-vexa-bridge inspired) | 2-4 sessions | Section 13.5 acceptance |
 | M3 | Workstreams C + D | 1-2 days | OSS-ready repo, binaries, docs, theme |
 | M4 | Polish + release | ongoing | npm/GitHub release, community post, upstream PR(s) if wanted |
 | M5 | Optional split-pane TUI | future | per upstream tui-plan.md |
@@ -116,7 +121,37 @@ Order note: M1 can start against Z.ai cloud immediately (no dependency on the co
 
 ## 12. Immediate next steps (M0 + M1 kickoff)
 
-1. `git checkout -b zcode` in `/Users/renzof/Documents/GitHub/ZZZ/pi`, apply `piConfig` rebrand, build, smoke test.
-2. Inspect `packages/ai/src/providers/data/zai*.json` + run `npm run generate-models` to see if GLM-5.3 arrives from models.dev for free.
-3. Add missing GLM-5.3 / GLM-5.3-Flash entries with `thinkingLevelMap` + limits.
-4. Smoke test against Z.ai with a real key, then move to the colibri extension.
+Status: M0 and M1 are done (branch `zcode`, rebrand, build green, `zcode` binary linked; catalog verified complete upstream). Local clone moved to `/Users/renzof/Documents/GitHub/ZZZ/zcode-cli`. The original kickoff steps are recorded in git history.
+
+## 13. M2.5: Guardrails and memory (post-M2)
+
+Decided 2026-09-13 (Renn): implement RoboCo-inspired hardening and obsidian-vexa-bridge-inspired knowledge capture **together** as one milestone, after M2-proper. Design distilled from full explorations of `~/Documents/GitHub/ZZZ/roboco-master/roboco` and `~/Documents/GitHub/ZZZ/obsidian-vexa-bridge`.
+
+### 13.1 Guardrails (RoboCo lineage)
+
+- **Policy module** `packages/coding-agent/extensions/zcode-guardrails/policy.ts` (pure data, no I/O): `BudgetPolicy` with `toolCallWarnAt: 100`, `toolCallHaltAt: 300`, `loopThreshold: 3` identical `sha256(tool+args)[:16]` calls within a rolling `loopWindow: 10` (action: deny, not warn), per-tool rejection windows (`perToolRetryWindowMs: 60000`) plus a session-absolute retry cap (`windowCap x 3`) to catch "slow drip" loops, and read-only verbs (read/grep/find/ls) exempt. Every constant overridable via `ZCODE_BUDGET_*` env vars. RoboCo's incident-annotated defaults are the starting values.
+- **SessionMetrics**: in-process singleton - total tool calls, per-tool histogram, rolling args-hash deque, stop attempts, token totals parsed from our own JSONL transcript with `message.id` dedup (RoboCo lesson: naive summing roughly doubles totals because one assistant message logs usage several lines).
+- **Wiring as an extension** (thin-overlay; the extension API can intercept tool calls): deny the 3rd identical call with structured remediation text ("stop retrying, tell the human"), warn/halt at budget thresholds with **in-band one-line reminders** the model sees next turn (`[Budget] 87/300 tool calls. Plan your remaining work.`) - RoboCo found in-band warnings beat silent kills. Halt = block + graceful stop. Guard side-channels fail open, never block shutdown.
+- **Rate-limit parking**: on 429, park with `2^attempt` exponential backoff, verify recovery with a free probe (`GET /v1/models` - no tokens), then resume. Distinguish "parked" from "crashed" in the status line. Doubles as colibri queue handling.
+- **Post-mortem**: structured record on session end (terminal tool, duration, tool count, loop/halt flags, reason) appended to a per-project log; `zcode status` surfaces SessionMetrics.
+
+### 13.2 Memory and knowledge vault (obsidian-vexa-bridge lineage)
+
+- **Distillation**: on session end, one model call (default: the session's own model, configurable) producing `Problem: / Approach: / Gotcha:` in <=120 words - or exactly `NONE` when there is no real lesson, so the store never fills with junk (RoboCo `memory_distiller.py` gate).
+- **Knowledge vault** (vexa-bridge patterns): git-backed Obsidian-compatible markdown folder curated by the agent under a **written conventions contract** file (entity layout, `[[wikilinks]]` by title, facts dated and attributed, dedup-before-create, do not invent); `inbox/` -> `processed/` queue; `log.md` journal. The pipeline keeps an atomic `state.json` (tmp+replace under lock), honors the **single-commit-point invariant** (mark-done is the only commit, always last), and applies the **5-strike poison limit** to items that keep failing.
+- **Two modes**: `lesson` (per-session distillation only) and `vault` (additionally folds sessions into the knowledge graph via an agent pass with the conventions contract - vexa graph-mode analog).
+- **Retrieval**: at session start, inject only lessons/notes clearing a relevance floor (lexical scoring first; no embeddings in v1). If retrieval grows, split indexes per source type and rescan by mtime (RoboCo optimal_brain shape).
+- **Config**: `memory.enabled` (default false - experimental), `memory.mode` (lesson|vault), `memory.vaultDir`, `memory.model`.
+- **Testing**: pure-function core with one impure seam per module (the vexa-bridge testability pattern); state-store unit tests; no network in tests.
+
+### 13.3 UI design language
+
+Run design-taste/brandkit skills once to fix palette, tone and state hierarchy (streaming / waiting / parked / budget-warning), then hand-translate into `zcode-dark`/`zcode-light` theme JSONs and a `DESIGN.md` component-rules doc. Terminal constraints applied at translation time.
+
+### 13.4 Explicitly deferred
+
+Injection guard (RoboCo `foundation/policy/injection_guard.py` port), `zcode bench` (RoboCo eval/runner shape), guard-core-ts protection for any exposed server mode - last, per Renn.
+
+### 13.5 Acceptance
+
+Third identical tool call denied with remediation text; halt at `toolCallHaltAt` with graceful exit; 429 parks the session and a free probe resumes it; post-mortem written on every session end; a vault note generated from a session is idempotent (re-run creates no duplicate); a poisoned item is skipped after 5 strikes; `npm run check` green throughout.
