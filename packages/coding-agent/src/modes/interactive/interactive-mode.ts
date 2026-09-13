@@ -49,6 +49,7 @@ import {
 	APP_TITLE,
 	CHECK_NEW_VERSION,
 	CONFIG_DIR_NAME,
+	DISPLAY_NAME,
 	getAgentDir,
 	getAuthPath,
 	getDebugLogPath,
@@ -946,7 +947,7 @@ export class InteractiveMode {
 				}
 				return `${line}\x1b[0m`;
 			});
-			const nameLine = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
+			const nameLine = theme.bold(theme.fg("accent", DISPLAY_NAME)) + theme.fg("dim", ` v${this.version}`);
 			const tagline = theme.fg("dim", "GLM-native coding agent");
 			const logo = [`${birdLines[0]}    ${nameLine}`, `${birdLines[1]}    ${tagline}`, ...birdLines.slice(2)].join(
 				"\n",

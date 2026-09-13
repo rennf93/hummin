@@ -487,6 +487,7 @@ interface PackageJson {
 		name?: string;
 		configDir?: string;
 		version?: string;
+		displayName?: string;
 		checkNewVersion?: boolean;
 		remoteCatalog?: boolean;
 	};
@@ -508,6 +509,9 @@ export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
 // piConfig.version lets a fork carry its own release version independently of
 // the upstream-synced workspace version.
 export const VERSION: string = pkg.piConfig?.version || pkg.version || "0.0.0";
+// Display name for user-facing surfaces (banner, titles) - may differ from
+// APP_NAME, which must stay shell-identifier friendly for env var derivation.
+export const DISPLAY_NAME: string = pkg.piConfig?.displayName || APP_NAME;
 // Fork gate for the pi.dev "new version available" banner: only enabled when a
 // fork explicitly opts in, since upstream releases do not apply to it.
 export const CHECK_NEW_VERSION: boolean = pkg.piConfig?.checkNewVersion === true;
