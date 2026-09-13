@@ -27,6 +27,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, appendFileSync, write
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { TextContent } from "@earendil-works/pi-ai";
 
 const LESSON_MAX_WORDS = 120;
 
@@ -148,6 +149,34 @@ function markProcessed(sessionFile: string): void {
 	}
 }
 
+
+// =============================================================================
+// Retrieval (v2): inject project-relevant lessons at session start.
+// Relevance floor v1 = exact project (cwd) match, most recent first, capped.
+// Below the floor nothing is injected - no briefing bloat.
+// =============================================================================
+
+const RETRIEVAL_MAX_LESSONS = 3;
+const RETRIEVAL_MAX_CHARS = 2000;
+
+function recallLessons(cwd: string): string[] {
+	const file = join(memoryDir(), "lessons.jsonl");
+	if (!existsSync(file)) return [];
+	const matches: string[] = [];
+	for (const line of readFileSync(file, "utf8").split("\n")) {
+		if (!line.trim()) continue;
+		try {
+			const record = JSON.parse(line);
+			if (record.cwd === cwd && typeof record.lesson === "string") {
+				matches.push(record.lesson);
+			}
+		} catch {
+			// skip malformed
+		}
+	}
+	return matches.slice(-RETRIEVAL_MAX_LESSONS);
+}
+
 export default function humminMemory(pi: ExtensionAPI): void {
 	if (process.env.HUMMIN_MEMORY !== "1") {
 		return;
@@ -193,6 +222,27 @@ export default function humminMemory(pi: ExtensionAPI): void {
 			},
 		});
 	}
+
+	pi.on("before_agent_start", async () => {
+		if (process.env.HUMMIN_MEMORY !== "1") return;
+		const lessons = recallLessons(process.cwd());
+		if (lessons.length === 0) return;
+		let briefing = "";
+		const parts: string[] = [];
+		for (const lesson of [...lessons].reverse()) {
+			if (briefing.length + lesson.length > RETRIEVAL_MAX_CHARS) break;
+			briefing += `\n\n${lesson}`;
+			parts.push(lesson);
+		}
+		if (parts.length === 0) return;
+		return {
+			message: {
+				customType: "hummin-memory-recall",
+				content: [{ type: "text", text: `Project memory (${parts.length} recent lesson(s) for this project):${briefing}` }] satisfies TextContent[],
+				display: false,
+			},
+		};
+	});
 
 	pi.on("session_shutdown", async () => {
 		try {
