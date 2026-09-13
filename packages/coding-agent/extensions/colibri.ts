@@ -1,18 +1,18 @@
 /**
- * zcode-colibri: registers one OpenAI-compatible provider per colibri
+ * hummin-colibri: registers one OpenAI-compatible provider per colibri
  * inference server (https://github.com/JustVugg/colibri) on the LAN.
  *
- * Configure instances with the ZCODE_COLIBRI_INSTANCES environment variable
+ * Configure instances with the HUMMIN_COLIBRI_INSTANCES environment variable
  * (comma-separated base URLs). Defaults to two local instances, which also
  * matches scripts/mock-colibri.mjs for testing without a NAS:
  *
- *   ZCODE_COLIBRI_INSTANCES="http://127.0.0.1:9998,http://127.0.0.1:9997"
+ *   HUMMIN_COLIBRI_INSTANCES="http://127.0.0.1:9998,http://127.0.0.1:9997"
  *
  * Optional environment variables:
  *   COLI_API_KEY       bearer token forwarded to the server. Keyless instances
  *                      work without it (a placeholder key is sent and ignored);
  *                      set it when the server runs with COLI_API_KEY enforced.
- *   ZCODE_COLIBRI_CTX  advertised context window per model (default: 16384,
+ *   HUMMIN_COLIBRI_CTX  advertised context window per model (default: 16384,
  *                      matching the colibri-flash.service CTX on the NAS).
  *
  * Colibri generates one response at a time per instance. This extension
@@ -49,7 +49,7 @@ interface ColibriModelInfo {
 }
 
 function parseInstances(): string[] {
-	const raw = process.env.ZCODE_COLIBRI_INSTANCES ?? "http://127.0.0.1:9998,http://127.0.0.1:9997";
+	const raw = process.env.HUMMIN_COLIBRI_INSTANCES ?? "http://127.0.0.1:9998,http://127.0.0.1:9997";
 	return raw
 		.split(",")
 		.map((entry) => entry.trim())
@@ -141,7 +141,7 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 	if (instances.length === 0) {
 		return;
 	}
-	const contextWindow = Number(process.env.ZCODE_COLIBRI_CTX ?? 16384);
+	const contextWindow = Number(process.env.HUMMIN_COLIBRI_CTX ?? 16384);
 
 	for (const [index, rawUrl] of instances.entries()) {
 		const baseUrl = rawUrl.replace(/\/+$/, "");

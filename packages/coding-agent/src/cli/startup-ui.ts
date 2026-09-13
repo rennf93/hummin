@@ -39,8 +39,8 @@ interface DistributionMetadata {
 }
 
 function isOfficialDistribution({ packageName, appName, configDirName }: DistributionMetadata): boolean {
-	// This fork ships its own first-run experience under the zcode identity.
-	if (appName === "zcode" && configDirName === ".zcode") {
+	// This fork ships its own first-run experience under the hummin identity.
+	if (appName === "hummin" && configDirName === ".hummin") {
 		return true;
 	}
 	return (

@@ -1,6 +1,6 @@
 {
 	"$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
-	"name": "zcode-dark",
+	"name": "hummin-dark",
 	"vars": {
 		"cyan": "#5eead4",
 		"blue": "#5f87ff",

@@ -1,5 +1,5 @@
 /**
- * zcode-guardrails: runaway protection for agent sessions, adapted from the
+ * hummin-guardrails: runaway protection for agent sessions, adapted from the
  * RoboCo harness (foundation/policy/agent_loop.py, agent_sdk/server.py).
  *
  * Three mechanisms, all session-local and fail-open:
@@ -12,13 +12,13 @@
  *   failing every few minutes ("slow drip") still trips a breaker.
  *
  * Configure via environment (all optional):
- *   ZCODE_BUDGET_TOOL_CALL_WARN_AT (100), ZCODE_BUDGET_TOOL_CALL_HALT_AT (300),
- *   ZCODE_BUDGET_LOOP_THRESHOLD (3), ZCODE_BUDGET_LOOP_WINDOW (10),
- *   ZCODE_BUDGET_PER_TOOL_WINDOW_MS (60000), ZCODE_BUDGET_PER_TOOL_RETRY_LIMIT (8),
- *   ZCODE_BUDGET_ABSOLUTE_RETRY_MULTIPLIER (3), ZCODE_BUDGET_EXEMPT_VERBS (read,grep,find,ls)
- *   ZCODE_GUARDRAILS=0 disables the extension.
+ *   HUMMIN_BUDGET_TOOL_CALL_WARN_AT (100), HUMMIN_BUDGET_TOOL_CALL_HALT_AT (300),
+ *   HUMMIN_BUDGET_LOOP_THRESHOLD (3), HUMMIN_BUDGET_LOOP_WINDOW (10),
+ *   HUMMIN_BUDGET_PER_TOOL_WINDOW_MS (60000), HUMMIN_BUDGET_PER_TOOL_RETRY_LIMIT (8),
+ *   HUMMIN_BUDGET_ABSOLUTE_RETRY_MULTIPLIER (3), HUMMIN_BUDGET_EXEMPT_VERBS (read,grep,find,ls)
+ *   HUMMIN_GUARDRAILS=0 disables the extension.
  *
- * Post-mortems land in ~/.zcode/agent/post-mortems/.
+ * Post-mortems land in ~/.hummin/agent/post-mortems/.
  */
 
 import { createHash } from "node:crypto";
@@ -45,14 +45,14 @@ export function defaultPolicy(env: NodeJS.ProcessEnv = process.env): BudgetPolic
 		return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 	};
 	return {
-		toolCallWarnAt: num("ZCODE_BUDGET_TOOL_CALL_WARN_AT", 100),
-		toolCallHaltAt: num("ZCODE_BUDGET_TOOL_CALL_HALT_AT", 300),
-		loopThreshold: num("ZCODE_BUDGET_LOOP_THRESHOLD", 3),
-		loopWindow: num("ZCODE_BUDGET_LOOP_WINDOW", 10),
-		perToolRetryWindowMs: num("ZCODE_BUDGET_PER_TOOL_WINDOW_MS", 60000),
-		perToolRetryLimit: num("ZCODE_BUDGET_PER_TOOL_RETRY_LIMIT", 8),
-		absoluteRetryMultiplier: num("ZCODE_BUDGET_ABSOLUTE_RETRY_MULTIPLIER", 3),
-		exemptVerbs: (env.ZCODE_BUDGET_EXEMPT_VERBS ?? "read,grep,find,ls").split(",").map((verb) => verb.trim()),
+		toolCallWarnAt: num("HUMMIN_BUDGET_TOOL_CALL_WARN_AT", 100),
+		toolCallHaltAt: num("HUMMIN_BUDGET_TOOL_CALL_HALT_AT", 300),
+		loopThreshold: num("HUMMIN_BUDGET_LOOP_THRESHOLD", 3),
+		loopWindow: num("HUMMIN_BUDGET_LOOP_WINDOW", 10),
+		perToolRetryWindowMs: num("HUMMIN_BUDGET_PER_TOOL_WINDOW_MS", 60000),
+		perToolRetryLimit: num("HUMMIN_BUDGET_PER_TOOL_RETRY_LIMIT", 8),
+		absoluteRetryMultiplier: num("HUMMIN_BUDGET_ABSOLUTE_RETRY_MULTIPLIER", 3),
+		exemptVerbs: (env.HUMMIN_BUDGET_EXEMPT_VERBS ?? "read,grep,find,ls").split(",").map((verb) => verb.trim()),
 	};
 }
 
@@ -159,7 +159,7 @@ export class GuardrailsState {
 
 function writePostMortem(state: GuardrailsState): void {
 	try {
-		const dir = join(homedir(), ".zcode", "agent", "post-mortems");
+		const dir = join(homedir(), ".hummin", "agent", "post-mortems");
 		mkdirSync(dir, { recursive: true });
 		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 		const record = {
@@ -175,8 +175,8 @@ function writePostMortem(state: GuardrailsState): void {
 	}
 }
 
-export default function zcodeGuardrails(pi: ExtensionAPI): void {
-	if (process.env.ZCODE_GUARDRAILS === "0") {
+export default function humminGuardrails(pi: ExtensionAPI): void {
+	if (process.env.HUMMIN_GUARDRAILS === "0") {
 		return;
 	}
 	const state = new GuardrailsState(defaultPolicy(process.env));

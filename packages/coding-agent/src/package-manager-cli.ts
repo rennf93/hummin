@@ -115,11 +115,11 @@ function verifyManagedRelease(releaseDir: string, expectedVersion: string): void
 	});
 	if (result.error || result.status !== 0) {
 		const reason = result.error?.message || result.stderr.trim() || `exit code ${result.status ?? "unknown"}`;
-		throw new Error(`Could not verify managed zcode ${expectedVersion}: ${reason}`);
+		throw new Error(`Could not verify managed hummin ${expectedVersion}: ${reason}`);
 	}
 	const installedVersion = result.stdout.trim();
 	if (installedVersion !== expectedVersion) {
-		throw new Error(`Managed zcode smoke test returned version ${installedVersion}; expected ${expectedVersion}.`);
+		throw new Error(`Managed hummin smoke test returned version ${installedVersion}; expected ${expectedVersion}.`);
 	}
 }
 
@@ -178,7 +178,7 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 		releaseLock = await lockfile.lock(join(managedRoot, "update"), { realpath: false });
 	} catch (error: unknown) {
 		if (error instanceof Error && "code" in error && error.code === "ELOCKED") {
-			throw new Error("Another managed zcode update is already running.");
+			throw new Error("Another managed hummin update is already running.");
 		}
 		throw error;
 	}
@@ -337,24 +337,24 @@ Examples:
 			console.log(`${chalk.bold("Usage:")}
   ${getPackageCommandUsage("update")}
 
-Update zcode, installed packages, or model catalogs.
+Update hummin, installed packages, or model catalogs.
 
 Options:
-  --self                  Update zcode only (default when no target is given)
+  --self                  Update hummin only (default when no target is given)
   --extensions            Update installed packages only
   --models                Refresh model catalogs only
-  --all                   Update zcode and installed packages
+  --all                   Update hummin and installed packages
   --extension <source>    Update one package only
   -a, --approve           Trust project-local files for this command
   -na, --no-approve       Ignore project-local files for this command
-  --force                 Reinstall zcode even if the current version is latest
+  --force                 Reinstall hummin even if the current version is latest
 
 Short forms:
-  ${APP_NAME} update                Update zcode only
-  ${APP_NAME} update --all          Update zcode and all extensions
+  ${APP_NAME} update                Update hummin only
+  ${APP_NAME} update --all          Update hummin and all extensions
   ${APP_NAME} update --models       Refresh model catalogs only
   ${APP_NAME} update <source>       Update one package
-  ${APP_NAME} update pi             Update zcode only (self works as alias to pi)
+  ${APP_NAME} update pi             Update hummin only (self works as alias to pi)
 `);
 			return;
 
@@ -660,9 +660,9 @@ interface SelfUpdatePlan {
 }
 
 async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
-	if (process.env.ZCODE_ALLOW_UPSTREAM_UPDATE !== "1") {
+	if (process.env.HUMMIN_ALLOW_UPSTREAM_UPDATE !== "1") {
 		throw new Error(
-			"zcode self-update is disabled: it would replace this fork with upstream pi. Update with git pull in your clone, or set ZCODE_ALLOW_UPSTREAM_UPDATE=1 to force.",
+			"hummin self-update is disabled: it would replace this fork with upstream pi. Update with git pull in your clone, or set HUMMIN_ALLOW_UPSTREAM_UPDATE=1 to force.",
 		);
 	}
 	let latestRelease: Awaited<ReturnType<typeof getLatestPiRelease>>;

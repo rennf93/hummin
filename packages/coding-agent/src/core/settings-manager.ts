@@ -782,7 +782,7 @@ export class SettingsManager {
 	getThemeSetting(): string | undefined {
 		const value = this.settings.theme;
 		if (typeof value === "string") return value;
-		return "zcode-dark";
+		return "hummin-dark";
 	}
 
 	getTheme(): string | undefined {

@@ -43,21 +43,21 @@ function getDefaultAttributionHeaders(
 
 	if (isOpenRouterModel(model)) {
 		return {
-			"HTTP-Referer": "https://github.com/rennf93/zcode-cli",
-			"X-OpenRouter-Title": "zcode",
+			"HTTP-Referer": "https://github.com/rennf93/hummin",
+			"X-OpenRouter-Title": "hummin",
 			"X-OpenRouter-Categories": "cli-agent",
 		};
 	}
 
 	if (isNvidiaNimModel(model)) {
 		return {
-			"X-BILLING-INVOKE-ORIGIN": "zcode",
+			"X-BILLING-INVOKE-ORIGIN": "hummin",
 		};
 	}
 
 	if (isCloudflareModel(model)) {
 		return {
-			"User-Agent": "zcode-coding-agent",
+			"User-Agent": "hummin-coding-agent",
 		};
 	}
 
@@ -73,7 +73,7 @@ function getSessionHeaders(model: Model<Api>, sessionId: string | undefined): Re
 	) {
 		return undefined;
 	}
-	return { "x-opencode-session": sessionId, "x-opencode-client": "zcode" };
+	return { "x-opencode-session": sessionId, "x-opencode-client": "hummin" };
 }
 
 export function mergeProviderAttributionHeaders(

@@ -1,4 +1,4 @@
 export function getPiUserAgent(version: string): string {
 	const runtime = process.versions.bun ? `bun/${process.versions.bun}` : `node/${process.version}`;
-	return `zcode/${version} (${process.platform}; ${runtime}; ${process.arch})`;
+	return `hummin/${version} (${process.platform}; ${runtime}; ${process.arch})`;
 }

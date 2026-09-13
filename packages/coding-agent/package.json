@@ -4,12 +4,12 @@
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
-		"name": "zcode",
-		"configDir": ".zcode",
+		"name": "hummin",
+		"configDir": ".hummin",
 		"version": "0.1.0",
+		"displayName": "hummin",
 		"checkNewVersion": false,
-		"remoteCatalog": false,
-		"displayName": "zcode-cli"
+		"remoteCatalog": false
 	},
 	"pi": {
 		"extensions": [
@@ -17,7 +17,7 @@
 		]
 	},
 	"bin": {
-		"zcode-cli": "dist/bundle/cli.js"
+		"hummin": "dist/bundle/cli.js"
 	},
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",

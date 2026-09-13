@@ -4,8 +4,8 @@ import { configureHttpDispatcher } from "../core/http-dispatcher.ts";
 export function setupCli(): void {
 	process.title = DISPLAY_NAME;
 	process.env.PI_CODING_AGENT = "true";
-	process.env.ZCODE_CODING_AGENT = "true";
-	process.env.AI_AGENT = "zcode";
+	process.env.HUMMIN_CODING_AGENT = "true";
+	process.env.AI_AGENT = "hummin";
 	aliasZcodeEnv();
 	process.emitWarning = (() => {}) as typeof process.emitWarning;
 

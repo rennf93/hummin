@@ -38,9 +38,9 @@ export function isAuthCommandHelp(args: string[]): boolean {
 
 export function printAuthCommandHelp(): void {
 	console.log(`Usage:
-  zcode auth print-api-key [--provider <provider>] [--model <model>]
-  zcode auth print-bearer-token [--provider <provider>] [--model <model>] [--min-expiry <duration>]
-  zcode auth check [--provider <provider>] [--model <model>] [--json] [--credentials] [--no-refresh]
+  hummin auth print-api-key [--provider <provider>] [--model <model>]
+  hummin auth print-bearer-token [--provider <provider>] [--model <model>] [--min-expiry <duration>]
+  hummin auth check [--provider <provider>] [--model <model>] [--json] [--credentials] [--no-refresh]
 
 Auth commands require at least one of --provider or --model. Checks refresh expired OAuth credentials by default; --no-refresh prevents this. --credentials emits the credential, or includes it in JSON output.`);
 }

@@ -406,11 +406,11 @@ function getBuiltinThemes(): Record<string, ThemeJson> {
 		const themesDir = getThemesDir();
 		const darkPath = path.join(themesDir, "dark.json");
 		const lightPath = path.join(themesDir, "light.json");
-		const zcodeDarkPath = path.join(themesDir, "zcode-dark.json");
+		const humminDarkPath = path.join(themesDir, "hummin-dark.json");
 		BUILTIN_THEMES = {
 			dark: JSON.parse(stripBom(fs.readFileSync(darkPath, "utf-8"))) as ThemeJson,
 			light: JSON.parse(stripBom(fs.readFileSync(lightPath, "utf-8"))) as ThemeJson,
-			"zcode-dark": JSON.parse(stripBom(fs.readFileSync(zcodeDarkPath, "utf-8"))) as ThemeJson,
+			"hummin-dark": JSON.parse(stripBom(fs.readFileSync(humminDarkPath, "utf-8"))) as ThemeJson,
 		};
 	}
 	return BUILTIN_THEMES;
@@ -577,7 +577,7 @@ export function getThemeByName(name: string): Theme | undefined {
 	}
 }
 
-export type TerminalTheme = "dark" | "light" | "zcode-dark";
+export type TerminalTheme = "dark" | "light" | "hummin-dark";
 
 export function parseAutoThemeSetting(
 	themeSetting: string | undefined,

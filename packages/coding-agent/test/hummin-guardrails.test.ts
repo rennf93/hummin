@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultPolicy, GuardrailsState, hashToolCall } from "../extensions/zcode-guardrails.ts";
+import { defaultPolicy, GuardrailsState, hashToolCall } from "../extensions/hummin-guardrails.ts";
 
 function fixedClock(start = 1_000_000) {
 	let now = start;
@@ -20,13 +20,13 @@ describe("defaultPolicy", () => {
 	});
 
 	it("honors env overrides", () => {
-		const policy = defaultPolicy({ ZCODE_BUDGET_TOOL_CALL_HALT_AT: "12", ZCODE_BUDGET_LOOP_THRESHOLD: "2" });
+		const policy = defaultPolicy({ HUMMIN_BUDGET_TOOL_CALL_HALT_AT: "12", HUMMIN_BUDGET_LOOP_THRESHOLD: "2" });
 		expect(policy.toolCallHaltAt).toBe(12);
 		expect(policy.loopThreshold).toBe(2);
 	});
 
 	it("ignores invalid overrides", () => {
-		const policy = defaultPolicy({ ZCODE_BUDGET_TOOL_CALL_HALT_AT: "nope", ZCODE_BUDGET_TOOL_CALL_WARN_AT: "-5" });
+		const policy = defaultPolicy({ HUMMIN_BUDGET_TOOL_CALL_HALT_AT: "nope", HUMMIN_BUDGET_TOOL_CALL_WARN_AT: "-5" });
 		expect(policy.toolCallHaltAt).toBe(300);
 		expect(policy.toolCallWarnAt).toBe(100);
 	});

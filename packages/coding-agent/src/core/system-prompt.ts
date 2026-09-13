@@ -124,7 +124,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
 
-	let prompt = `You are zcode, an expert coding assistant operating inside the zcode coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+	let prompt = `You are hummin, an expert coding assistant operating inside the hummin coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
 Available tools:
 ${toolsList}
@@ -134,14 +134,14 @@ In addition to the tools above, you may have access to other custom tools depend
 Guidelines:
 ${guidelines}
 
-zcode documentation (read only when the user asks about zcode itself, its SDK, extensions, themes, skills, or TUI):
+hummin documentation (read only when the user asks about hummin itself, its SDK, extensions, themes, skills, or TUI):
 - Main documentation: ${readmePath}
 - Additional docs: ${docsPath}
 - Examples: ${examplesPath} (extensions, custom tools, SDK)
-- When reading zcode docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
-- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), zcode packages (docs/packages.md), environment variables (docs/environment-variables.md)
-- When working on zcode topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read zcode .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
+- When reading hummin docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
+- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), hummin packages (docs/packages.md), environment variables (docs/environment-variables.md)
+- When working on hummin topics, read the docs and examples, and follow .md cross-references before implementing
+- Always read hummin .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
 
 	if (appendSection) {
 		prompt += appendSection;
