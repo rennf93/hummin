@@ -910,7 +910,16 @@ export class InteractiveMode {
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
+			const bird = ["    __", " __(o>", "( __<)", "  `--`"];
+			const logo = [
+				theme.fg("accent", bird[0]),
+				theme.fg("accent", bird[1]) +
+					"  " +
+					theme.bold(theme.fg("accent", APP_NAME)) +
+					theme.fg("dim", ` v${this.version}`),
+				theme.fg("accent", bird[2]) + "  " + theme.fg("dim", "GLM-native coding agent"),
+				theme.fg("accent", bird[3]),
+			].join("\n");
 
 			// Build startup instructions using keybinding hint helpers
 			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
@@ -949,7 +958,7 @@ export class InteractiveMode {
 			);
 			const onboarding = theme.fg(
 				"dim",
-				`Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.`,
+				`zcode can explain its own features and look up its docs. Ask it how to use or extend zcode.`,
 			);
 			this.builtInHeader = new ExpandableText(
 				() => `${logo}\n${compactInstructions}\n${compactOnboarding}\n\n${onboarding}`,

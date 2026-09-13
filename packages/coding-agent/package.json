@@ -5,7 +5,8 @@
 	"type": "module",
 	"piConfig": {
 		"name": "zcode",
-		"configDir": ".zcode"
+		"configDir": ".zcode",
+		"version": "0.1.0"
 	},
 	"pi": {
 		"extensions": ["extensions/colibri.ts"]
@@ -38,7 +39,6 @@
 		"docs",
 		"examples",
 		"extensions",
-		"themes",
 		"containerization.md",
 		"CHANGELOG.md",
 		"npm-shrinkwrap.json"
