@@ -73,6 +73,36 @@ HUMMIN_COLIBRI_INSTANCES="http://127.0.0.1:9998" \
 - `/login`: curated providers first. Other built-ins are hidden unless already configured; set `"providers": { "showAll": true }` in settings to always see everything.
 - Default theme: `hummin-dark` (override with `"theme"` in settings or the first-run dialog).
 
+
+## Persistent memory (experimental)
+
+Session distillation and a self-curating knowledge vault, off by default:
+
+```bash
+export HUMMIN_MEMORY=1                    # enable
+export HUMMIN_MEMORY_MODE=vault           # lesson (default) or vault
+export HUMMIN_MEMORY_VAULT_DIR=~/hummin-vault
+```
+
+- **lesson mode**: after each session, one distillation call summarizes it into a Problem/Approach/Gotcha note (or nothing, if there is no lesson) under `~/.hummin/agent/memory/`.
+- **vault mode**: lessons queue in a git-backed, Obsidian-compatible vault; `/vault-fold` runs an agent pass that folds them into an entity graph (`entities/<type>/<slug>.md`, wikilinks, dated facts) following the vault's own AGENTS.md conventions contract; `/vault-recall <query>` searches it.
+- Distillation provider defaults to cloud (`zai`); override with `HUMMIN_MEMORY_PROVIDER` / `HUMMIN_MEMORY_MODEL_ID`.
+
+## Bench
+
+Golden-task harness for measuring agent/provider changes:
+
+```bash
+node bench/run.mjs --provider zai --model glm-5.3-flash          # cloud
+node bench/run.mjs --provider colibri-1 --model glm-5.3-flash-colibri --thinking off --timeout 2400
+```
+
+Three fixtures (implement, fix, QA-catch) with deterministic checks; results land in `bench/results/` stamped with a config hash for A/B attribution. Local runs are slow - use `--timeout 2400`.
+
+## Recommended personal setup
+
+Copy [SYSTEM.example.md](SYSTEM.example.md) to `~/.hummin/agent/SYSTEM.md` for the GLM-tuned operating rules.
+
 ## Differences from upstream pi
 
 - Rebranded binary/config (`hummin`, `~/.hummin/agent`) via pi's official `piConfig` fork support.

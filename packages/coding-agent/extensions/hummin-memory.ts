@@ -153,6 +153,47 @@ export default function humminMemory(pi: ExtensionAPI): void {
 		return;
 	}
 
+	if (process.env.HUMMIN_MEMORY_MODE === "vault") {
+		ensureVault();
+		pi.registerCommand("vault-fold", {
+			description: "Fold inbox lessons into the vault entity graph",
+			handler: async () => vaultFold("command"),
+		});
+		pi.registerCommand("vault-recall", {
+			description: "Search vault entities",
+			handler: async (args, ctx) => {
+				const query = (args ?? "").trim().toLowerCase();
+				if (!query) {
+					ctx.ui.notify("usage: /vault-recall <query>", "warning");
+					return;
+				}
+				const matches: string[] = [];
+				const entitiesDir = join(vaultDir(), "entities");
+				const walk = (dir: string) => {
+					for (const f of readdirSync(dir)) {
+						const full = join(dir, f);
+						if (!existsSync(full)) continue;
+						try {
+							if (full.endsWith(".md")) {
+								const content = readFileSync(full, "utf8");
+								if (content.toLowerCase().includes(query)) {
+									const hits = content.split("\n").filter((l) => l.toLowerCase().includes(query)).slice(0, 3);
+									matches.push(`${full.replace(vaultDir() + "/", "")}\n  ${hits.join("\n  ")}`);
+								}
+							} else {
+								walk(full);
+							}
+						} catch {
+							// skip unreadable
+						}
+					}
+				};
+				walk(entitiesDir);
+				ctx.ui.notify(matches.length ? `vault: ${matches.length} file(s) matching "${query}"\n\n${matches.join("\n\n")}` : `vault: no matches for "${query}"`, "info");
+			},
+		});
+	}
+
 	pi.on("session_shutdown", async () => {
 		try {
 			const cwd = process.cwd();
@@ -182,8 +223,113 @@ export default function humminMemory(pi: ExtensionAPI): void {
 				writeFileSync(mdPath, `# Lessons - ${cwd}\n\n`);
 			}
 			appendFileSync(mdPath, `## ${record.timestamp}\n\n${lesson}\n\n`);
+
+			// vault mode: queue the lesson for the fold pass
+			if (process.env.HUMMIN_MEMORY_MODE === "vault") {
+				lessonToInbox(cwd, lesson, record.session);
+			}
 		} catch {
 			// fail-open: memory must never block shutdown
 		}
 	});
+}
+
+// =============================================================================
+// Vault mode (HUMMIN_MEMORY_MODE=vault): a git-backed, Obsidian-compatible
+// knowledge graph that the agent itself maintains. Lessons land in inbox/,
+// a fold pass (on demand via /vault-fold) runs a hummin session with the
+// vault as cwd - so the vault's AGENTS.md conventions contract is its system
+// context - and the agent folds lessons into entities, updates log.md, and
+// commits. The git repo is the source of truth (vexa-bridge pattern).
+// =============================================================================
+
+const FOLD_TIMEOUT_SEC = 900;
+
+function vaultDir(): string {
+	return process.env.HUMMIN_MEMORY_VAULT_DIR ?? join(agentDir(), "vault");
+}
+
+function vaultContract(): string {
+	return `# Vault conventions
+
+This vault is the persistent memory of hummin coding sessions. You are the
+curator. Rules:
+
+- Entity files live at entities/<type>/<slug>.md with type one of:
+  project, concept, decision, gotcha, tool, person.
+- Slug is kebab-case. Reference entities anywhere in the vault as [[slug]].
+- Facts inside entities are dated and attributed: (from [[lesson-slug]], YYYY-MM-DD).
+- Before creating an entity, search entities/ for an existing one; extend it
+  instead of duplicating. Never invent facts that are not in an inbox lesson.
+- Each entity ends with a "## Links" section listing related [[entities]].
+- Keep entity files short: one overview paragraph, then dated bullet facts.
+
+## Fold procedure
+
+1. Read every file in inbox/.
+2. For each lesson: extract entities (projects, concepts, decisions, gotchas,
+   tools), create or extend their entity files, and reference the lesson as
+   [[<lesson-slug>]] where slug is the lesson filename without extension.
+3. Move folded lessons from inbox/ to processed/ (keep filenames).
+4. Append one line per folded lesson to log.md: "- <date> folded <lesson-slug>".
+5. Stage and commit everything: git add -A && git commit -m "fold: <N> lessons".
+Do not skip the commit. Do not touch anything outside the vault.`;
+}
+
+function ensureVault(): string {
+	const dir = vaultDir();
+	for (const sub of ["inbox", "processed", join("entities", "project"), join("entities", "concept"), join("entities", "decision"), join("entities", "gotcha"), join("entities", "tool")]) {
+		mkdirSync(join(dir, sub), { recursive: true });
+	}
+	if (!existsSync(join(dir, "AGENTS.md"))) writeFileSync(join(dir, "AGENTS.md"), vaultContract());
+	if (!existsSync(join(dir, "log.md"))) writeFileSync(join(dir, "log.md"), "# Fold log\n");
+	if (!existsSync(join(dir, ".git"))) {
+		spawnSync("git", ["init", "-q"], { cwd: dir });
+	}
+	return dir;
+}
+
+function lessonToInbox(cwd: string, lesson: string, sessionFile?: string): string {
+	const dir = ensureVault();
+	const slug = `lesson-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+	const body = `---
+type: lesson
+date: ${new Date().toISOString().slice(0, 10)}
+project: ${cwd}
+session: ${sessionFile ?? "unknown"}
+---
+
+${lesson}
+`;
+	writeFileSync(join(dir, "inbox", `${slug}.md`), body);
+	return slug;
+}
+
+function vaultFold(label: string): void {
+	const dir = ensureVault();
+	const inboxCount = existsSync(join(dir, "inbox")) ? readdirSync(join(dir, "inbox")).filter((f) => f.endsWith(".md")).length : 0;
+	if (inboxCount === 0) {
+		console.log("vault: inbox is empty, nothing to fold");
+		return;
+	}
+	console.log(`vault: folding ${inboxCount} lesson(s) from ${dir}`);
+	const provider = process.env.HUMMIN_MEMORY_PROVIDER ?? "zai";
+	const modelId = process.env.HUMMIN_MEMORY_MODEL_ID ?? "glm-5.3-flash";
+	const res = spawnSync("hummin", [
+		"-p", `Fold the inbox lessons into the entity graph now, following AGENTS.md exactly. Inbox has ${inboxCount} lesson(s).`,
+		"--provider", provider, "--model", modelId, "--thinking", "low",
+	], {
+		cwd: dir,
+		encoding: "utf8",
+		timeout: FOLD_TIMEOUT_SEC * 1000,
+		env: { ...process.env, HUMMIN_MEMORY: "0" },
+	});
+	const out = `${res.stdout ?? ""}${res.stderr ?? ""}`.trim();
+	console.log(out.split("\n").slice(-6).join("\n"));
+	if (res.status !== 0) {
+		console.log(`vault: fold exited ${res.status}`);
+		process.exitCode = 1;
+	} else {
+		console.log(`vault: fold complete (${label})`);
+	}
 }
