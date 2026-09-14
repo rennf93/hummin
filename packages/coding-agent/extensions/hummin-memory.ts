@@ -152,29 +152,68 @@ function markProcessed(sessionFile: string): void {
 
 // =============================================================================
 // Retrieval (v2): inject project-relevant lessons at session start.
-// Relevance floor v1 = exact project (cwd) match, most recent first, capped.
-// Below the floor nothing is injected - no briefing bloat.
+// Relevance v3: project lessons always eligible (ranked by query overlap,
+// then recency); cross-project lessons surface only with >= 2 keyword
+// overlaps against the opening prompt. Below the floor nothing is injected -
+// no briefing bloat. Deterministic: no embeddings, plain term overlap.
 // =============================================================================
 
 const RETRIEVAL_MAX_LESSONS = 3;
 const RETRIEVAL_MAX_CHARS = 2000;
+const CROSS_PROJECT_MIN_OVERLAP = 2;
 
-function recallLessons(cwd: string): string[] {
+const STOPWORDS = new Set([
+	"that", "this", "with", "from", "have", "been", "were", "their", "there",
+	"which", "about", "would", "could", "should", "these", "those", "then",
+	"than", "them", "they", "when", "what", "your", "will", "into", "also",
+	"just", "like", "over", "under", "after", "before", "only", "more",
+	"most", "some", "such", "each", "very", "here", "where", "while",
+]);
+
+function tokenize(text: string): Set<string> {
+	return new Set(
+		text
+			.toLowerCase()
+			.split(/[^a-z0-9_./-]+/)
+			.filter((word) => word.length >= 4 && !STOPWORDS.has(word)),
+	);
+}
+
+function parentDir(cwd: string): string {
+	const parts = cwd.split("/");
+	parts.pop();
+	return parts.join("/");
+}
+
+export function recallLessons(cwd: string, query: string): string[] {
 	const file = join(memoryDir(), "lessons.jsonl");
 	if (!existsSync(file)) return [];
-	const matches: string[] = [];
+	const queryTerms = tokenize(query);
+	const scored: { lesson: string; score: number }[] = [];
+	let index = 0;
 	for (const line of readFileSync(file, "utf8").split("\n")) {
 		if (!line.trim()) continue;
+		index++;
 		try {
 			const record = JSON.parse(line);
-			if (record.cwd === cwd && typeof record.lesson === "string") {
-				matches.push(record.lesson);
+			if (typeof record.lesson !== "string" || typeof record.cwd !== "string") continue;
+			const overlap = [...tokenize(record.lesson)].filter((term) => queryTerms.has(term)).length;
+			let score = overlap;
+			if (record.cwd === cwd) {
+				score += 5;
+			} else if (parentDir(record.cwd) === parentDir(cwd)) {
+				score += 2;
+			} else if (overlap < CROSS_PROJECT_MIN_OVERLAP) {
+				continue;
 			}
+			score += index * 0.01;
+			scored.push({ lesson: record.lesson, score });
 		} catch {
 			// skip malformed
 		}
 	}
-	return matches.slice(-RETRIEVAL_MAX_LESSONS);
+	scored.sort((a, b) => b.score - a.score);
+	return scored.slice(0, RETRIEVAL_MAX_LESSONS).map((entry) => entry.lesson);
 }
 
 export default function humminMemory(pi: ExtensionAPI): void {
@@ -234,9 +273,9 @@ export default function humminMemory(pi: ExtensionAPI): void {
 		});
 	}
 
-	pi.on("before_agent_start", async () => {
+	pi.on("before_agent_start", async (event) => {
 		if (process.env.HUMMIN_MEMORY !== "1") return;
-		const lessons = recallLessons(process.cwd());
+		const lessons = recallLessons(process.cwd(), event?.prompt ?? "");
 		if (lessons.length === 0) return;
 		let briefing = "";
 		const parts: string[] = [];
