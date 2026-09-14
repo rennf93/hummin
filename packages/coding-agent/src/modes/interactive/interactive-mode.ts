@@ -910,8 +910,9 @@ export class InteractiveMode {
 
 		await this.themeController.applyFromSettings();
 
-		// Add header with keybindings from config (unless silenced)
-		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
+		// Add header: logo + keybinding hints. quietStartup silences only the
+		// loaded-resources listing, never the header.
+		{
 			// Exact pixel transcription of the red-throated hummingbird reference
 			// (native 16x12 grid, sampled colors, rendered at 2x scale).
 			const BIRD_PALETTE: Record<string, string> = {
@@ -980,18 +981,11 @@ export class InteractiveMode {
 				rawKeyHint(`${keyText("app.clear")}/${keyText("app.exit")}`, "clear/exit"),
 				rawKeyHint("/", "commands"),
 				rawKeyHint("!", "bash"),
-				hint("app.tools.expand", "more"),
+				hint("app.tools.expand", "everything else"),
 			].join(theme.fg("muted", " · "));
-			const compactOnboarding = theme.fg(
-				"dim",
-				`Press ${keyText("app.tools.expand")} to show full startup help and loaded resources.`,
-			);
-			const onboarding = theme.fg(
-				"dim",
-				`hummin can explain its own features and look up its docs. Ask it how to use or extend hummin.`,
-			);
+			const onboarding = theme.fg("dim", `hummin can explain its own features and look up its docs - just ask.`);
 			this.builtInHeader = new ExpandableText(
-				() => `${logo}\n${compactInstructions}\n${compactOnboarding}\n\n${onboarding}`,
+				() => `${logo}\n${compactInstructions}\n${onboarding}`,
 				() => `${logo}\n${expandedInstructions}\n\n${onboarding}`,
 				this.getStartupExpansionState(),
 				1,
@@ -1002,10 +996,6 @@ export class InteractiveMode {
 			this.headerContainer.addChild(new Spacer(1));
 			this.headerContainer.addChild(this.builtInHeader);
 			this.headerContainer.addChild(new Spacer(1));
-		} else {
-			// Minimal header when silenced
-			this.builtInHeader = new Text("", 0, 0);
-			this.headerContainer.addChild(this.builtInHeader);
 		}
 		this.ui.requestRender();
 

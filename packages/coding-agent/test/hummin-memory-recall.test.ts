@@ -26,7 +26,7 @@ const UNRELATED = "/Users/renzof/elsewhere";
 function seedLessons(lines: Array<{ cwd: string; lesson: string }>): void {
 	writeFileSync(
 		join(process.env.HUMMIN_MEMORY_DIR!, "lessons.jsonl"),
-		lines.map((line) => JSON.stringify(line)).join("\n") + "\n",
+		` ${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
 	);
 }
 

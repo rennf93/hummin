@@ -165,6 +165,27 @@ function isQwenFamily(modelId: string): boolean {
 	return /^qwen/i.test(modelId);
 }
 
+// Staged-model catalog: models OUR servers serve, kept visible in the picker
+// even while their server is off (the fleet is on-demand). Only applies to
+// the LAN hosts and only fills models discovery did not already return, so a
+// live server's real /v1/models always wins. Aliases must match what the
+// servers advertise (--alias flags and colibri's model ids).
+const LAN_HOSTS = new Set(["192.168.50.111", "192.168.50.199"]);
+const MODEL_CATALOG: Array<{ id: string; port: number; contextWindow: number }> = [
+	{ id: "qwen3.8-27b", port: 9998, contextWindow: 65536 },           // Mac llama.cpp
+	{ id: "qwen3.8-27b", port: 9996, contextWindow: 262144 },          // NAS llama.cpp
+	{ id: "glm-5.3-flash-colibri", port: 9998, contextWindow: 16384 }, // NAS colibri
+	{ id: "glm-5.3-flash", port: 9995, contextWindow: 32768 },         // Mac unsloth fork
+	{ id: "glm-5.3-flash", port: 9995, contextWindow: 32768 },         // NAS unsloth fork
+	{ id: "glm-5.3", port: 9994, contextWindow: 16384 },               // NAS unsloth fork
+	{ id: "kimi-k3", port: 9993, contextWindow: 16384 },               // NAS unsloth fork
+];
+
+function instancePort(baseUrl: string): number {
+	const match = baseUrl.match(/:(\d+)\/?$/);
+	return match ? Number(match[1]) : 0;
+}
+
 export default async function colibriExtension(pi: ExtensionAPI): Promise<void> {
 	const instances = parseInstances();
 	if (instances.length === 0) {
@@ -191,6 +212,23 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 			if (!serving.has(modelId)) {
 				serving.set(modelId, { baseUrl: result.value.baseUrl, contextWindow: result.value.contextWindow });
 			}
+		}
+	}
+	// Catalog fill-in: staged-but-off servers still get their known models
+	// listed (marked by their known context window until the server comes up
+	// and a fresh session reads /props). Generation against an off server
+	// fails with connection refused - start it from the menubar.
+	for (const entry of MODEL_CATALOG) {
+		if (serving.has(entry.id)) continue;
+		const baseUrl = instances.find((url) => {
+			try {
+				return LAN_HOSTS.has(new URL(url).hostname) && instancePort(url) === entry.port;
+			} catch {
+				return false;
+			}
+		});
+		if (baseUrl) {
+			serving.set(entry.id, { baseUrl, contextWindow: entry.contextWindow });
 		}
 	}
 	if (serving.size === 0) {

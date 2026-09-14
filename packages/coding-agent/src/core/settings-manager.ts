@@ -1020,7 +1020,9 @@ export class SettingsManager {
 	}
 
 	getQuietStartup(): boolean {
-		return this.settings.quietStartup ?? false;
+		// hummin curation: clean startup by default - the Skills/Extensions/
+		// Context listing stays available behind ctrl+o and /settings.
+		return this.settings.quietStartup ?? true;
 	}
 
 	setQuietStartup(quiet: boolean): void {
