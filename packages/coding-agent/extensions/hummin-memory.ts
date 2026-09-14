@@ -273,7 +273,11 @@ export default function humminMemory(pi: ExtensionAPI): void {
 		});
 	}
 
-	pi.on("before_agent_start", async (event) => {
+	// Surface memory once per session so the user knows retrieval is active
+	// without a notice on every turn.
+	let memoryNotified = false;
+
+	pi.on("before_agent_start", async (event, ctx) => {
 		if (process.env.HUMMIN_MEMORY !== "1") return;
 		const lessons = recallLessons(process.cwd(), event?.prompt ?? "");
 		if (lessons.length === 0) return;
@@ -285,6 +289,10 @@ export default function humminMemory(pi: ExtensionAPI): void {
 			parts.push(lesson);
 		}
 		if (parts.length === 0) return;
+		if (!memoryNotified && ctx?.ui?.notify) {
+			memoryNotified = true;
+			ctx.ui.notify(`memory: ${parts.length} project lesson(s) applied to this session`, "info");
+		}
 		return {
 			message: {
 				customType: "hummin-memory-recall",

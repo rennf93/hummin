@@ -369,7 +369,22 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		} else {
 			const selected = this.filteredModels[this.selectedIndex];
 			this.listContainer.addChild(new Spacer(1));
-			this.listContainer.addChild(new Text(theme.fg("muted", `  Model Name: ${selected.model.name}`), 0, 0));
+			const dim = (text: string): string => theme.fg("muted", text);
+			const model = selected.model;
+			this.listContainer.addChild(new Text(dim(`  ${model.name || model.id}`), 0, 0));
+			const facts: string[] = [dim(`provider: ${selected.provider}`)];
+			if (model.contextWindow && model.contextWindow > 0) {
+				const ctx = model.contextWindow;
+				facts.push(
+					dim(
+						`context: ${ctx >= 1_000_000 ? `${(ctx / 1_000_000).toFixed(1).replace(/\.0$/, "")}M` : `${Math.round(ctx / 1000)}K`}`,
+					),
+				);
+			}
+			facts.push(dim(`reasoning: ${model.reasoning ? "yes" : "no"}`));
+			const endpoint = model.baseUrl ? model.baseUrl.replace(/^https?:\/\//, "") : undefined;
+			if (endpoint) facts.push(dim(`endpoint: ${endpoint}`));
+			this.listContainer.addChild(new Text(`  ${facts.join(dim("  ·  "))}`, 0, 0));
 		}
 		if (this.refreshStatusMessage) {
 			this.listContainer.addChild(new Spacer(1));
