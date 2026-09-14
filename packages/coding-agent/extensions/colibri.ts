@@ -185,7 +185,13 @@ async function registerInstance(
 		api: "openai-completions",
 		provider: id,
 		baseUrl: `${baseUrl}/v1`,
-		reasoning: false,
+		// Reasoning-capable: hummin's thinking level flows into the request as
+		// chat_template_kwargs.enable_thinking (qwen-style templates, used by
+		// llama.cpp and similar OpenAI-compatible servers). "off" maps to false,
+		// every other level to true. The server's /v1/models discovery may list
+		// models that are not reasoning-capable; the harmless upside is a
+		// thinking knob that such templates ignore.
+		reasoning: true,
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow,
@@ -195,6 +201,7 @@ async function registerInstance(
 			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,
 			maxTokensField: "max_tokens",
+			thinkingFormat: "qwen-chat-template",
 		},
 	}));
 
