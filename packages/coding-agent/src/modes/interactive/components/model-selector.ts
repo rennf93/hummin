@@ -335,7 +335,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			// puts engine + format there); the id stays in the search text.
 			const rowLabel = item.model.name && item.model.name !== item.id ? item.model.name : item.id;
 			const modelText = isSelected ? theme.fg("accent", rowLabel) : rowLabel;
-			const providerBadge = theme.fg("muted", `[${item.provider}]`);
+			const providerName = this.modelRuntime.getProvider(item.provider)?.name ?? item.provider;
+			const providerBadge = theme.fg("muted", `[${providerName}]`);
 			const ctx = item.model.contextWindow;
 			const ctxLabel =
 				!ctx || ctx <= 0

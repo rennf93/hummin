@@ -160,7 +160,9 @@ export class FooterComponent implements Component {
 		const modelName = state.model?.id || "no-model";
 		const rightParts: string[] = [];
 		if (this.footerData.getAvailableProviderCount() > 1 && state.model) {
-			rightParts.push(theme.fg("dim", `(${state.model.provider})`));
+			// Provider display name (engine - host) when registered; id fallback.
+			const providerName = this.session.modelRuntime.getProvider(state.model.provider)?.name ?? state.model.provider;
+			rightParts.push(theme.fg("dim", `(${providerName})`));
 		}
 		rightParts.push(theme.fg("accent", modelName));
 		if (state.model?.reasoning) {

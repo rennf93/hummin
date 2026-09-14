@@ -4227,7 +4227,11 @@ export class InteractiveMode {
 			.catch(() => []);
 		const credentialed = new Set(credentials.map((entry) => entry.providerId));
 		const curated = (id: string): boolean =>
-			id === "zai" || id === "zai-coding-cn" || id.startsWith("colibri") || credentialed.has(id);
+			id === "zai" ||
+			id === "zai-coding-cn" ||
+			id.startsWith("colibri") ||
+			id.startsWith("llamacpp") ||
+			credentialed.has(id);
 		return models.filter((model) => curated(model.provider)).map((model) => ({ model }));
 	}
 

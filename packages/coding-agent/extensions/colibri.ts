@@ -163,6 +163,28 @@ function isQwenFamily(modelId: string): boolean {
 	return /^qwen/i.test(modelId);
 }
 
+// Per-engine, per-host providers: the footer and picker badges must say
+// WHICH engine (colibri container vs unsloth/llama.cpp GGUF) and WHICH host
+// (Mac/NAS) serves a model - a single "colibri" provider hid both.
+const HOST_LABELS: Record<string, string> = {
+	"192.168.50.111": "NAS",
+	"192.168.50.199": "Mac",
+};
+
+function engineFor(host: string, port: number): "colibri" | "llamacpp" {
+	if (host === "192.168.50.111" && port === 9998) return "colibri";
+	if (host === "192.168.50.199" && port === 9997) return "colibri";
+	return "llamacpp";
+}
+
+function parseHost(baseUrl: string): string {
+	try {
+		return new URL(baseUrl).hostname;
+	} catch {
+		return "";
+	}
+}
+
 // Staged-model catalog: models OUR servers serve, kept visible in the picker
 // even while their server is off (the fleet is on-demand). Only applies to
 // the LAN hosts and only fills models discovery did not already return, so a
@@ -189,11 +211,11 @@ function instancePort(baseUrl: string): number {
 // actually serves it (engine + format), because "[colibri]" is the provider
 // label for all of them and tells the user nothing about the model itself.
 const DISPLAY_NAMES: Record<string, string> = {
-	"qwen3.8-27b": "Qwen 3.8 27B - llama.cpp GGUF",
-	"glm-5.3-flash": "GLM 5.3 Flash - llama.cpp GGUF (unsloth)",
-	"glm-5.3": "GLM 5.3 - llama.cpp GGUF (unsloth)",
-	"kimi-k3": "Kimi K3 - llama.cpp GGUF (unsloth)",
-	"glm-5.3-flash-colibri": "GLM 5.3 Flash - colibri int4 container",
+	"qwen3.8-27b": "Qwen 3.8 27B",
+	"glm-5.3-flash": "GLM 5.3 Flash",
+	"glm-5.3": "GLM 5.3",
+	"kimi-k3": "Kimi K3",
+	"glm-5.3-flash-colibri": "GLM 5.3 Flash (int4)",
 };
 
 function displayName(modelId: string): string {
@@ -207,10 +229,16 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 	}
 	const contextWindow = Number(process.env.HUMMIN_COLIBRI_CTX ?? 16384);
 
-	// One model namespace across all servers: the first instance in the list
-	// that serves a model wins (instance order is preference order). Context
-	// windows come from each server's own /props when available.
-	const serving = new Map<string, { baseUrl: string; contextWindow: number }>();
+	// Per-instance model discovery: no cross-host dedupe - each host is a
+	// distinct, explicitly selectable endpoint (engine + host are visible).
+	const serving: Array<{
+		modelId: string;
+		baseUrl: string;
+		host: string;
+		port: number;
+		engine: "colibri" | "llamacpp";
+		contextWindow: number;
+	}> = [];
 	const discovered = await Promise.allSettled(
 		instances.map(async (baseUrl) => {
 			const [ids, contextWindow] = await Promise.all([
@@ -220,20 +248,35 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 			return { baseUrl, ids, contextWindow };
 		}),
 	);
+	const instanceMeta = new Map(
+		instances.map((baseUrl) => {
+			const host = parseHost(baseUrl);
+			return [baseUrl, { host, port: instancePort(baseUrl), engine: engineFor(host, instancePort(baseUrl)) }];
+		}),
+	);
 	for (const result of discovered) {
 		if (result.status !== "fulfilled") continue;
+		const meta = instanceMeta.get(result.value.baseUrl)!;
 		for (const modelId of result.value.ids) {
-			if (!serving.has(modelId)) {
-				serving.set(modelId, { baseUrl: result.value.baseUrl, contextWindow: result.value.contextWindow });
-			}
+			serving.push({
+				modelId,
+				baseUrl: result.value.baseUrl,
+				host: meta.host,
+				port: meta.port,
+				engine: meta.engine,
+				contextWindow: result.value.contextWindow,
+			});
 		}
 	}
 	// Catalog fill-in: staged-but-off servers still get their known models
-	// listed (marked by their known context window until the server comes up
-	// and a fresh session reads /props). Generation against an off server
-	// fails with connection refused - start it from the menubar.
+	// listed (with their known context window until the server comes up and a
+	// fresh session reads /props). Generation against an off server fails
+	// with connection refused - start it from the menubar.
 	for (const entry of MODEL_CATALOG) {
-		if (serving.has(entry.id)) continue;
+		const already = serving.some(
+			(entry2) => entry2.modelId === entry.id && entry2.host === entry.host && entry2.port === entry.port,
+		);
+		if (already) continue;
 		const baseUrl = instances.find((url) => {
 			try {
 				const hostname = new URL(url).hostname;
@@ -243,10 +286,17 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 			}
 		});
 		if (baseUrl) {
-			serving.set(entry.id, { baseUrl, contextWindow: entry.contextWindow });
+			serving.push({
+				modelId: entry.id,
+				baseUrl,
+				host: entry.host,
+				port: entry.port,
+				engine: engineFor(entry.host, entry.port),
+				contextWindow: entry.contextWindow,
+			});
 		}
 	}
-	if (serving.size === 0) {
+	if (serving.length === 0) {
 		return;
 	}
 
@@ -261,38 +311,60 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 	};
 
 	const base = openAICompletionsApi();
-	const models: Model<"openai-completions">[] = [...serving.entries()].map(([modelId, served]) => ({
-		id: modelId,
-		name: displayName(modelId),
-		api: "openai-completions",
-		provider: "colibri",
-		baseUrl: `${served.baseUrl}/v1`,
-		reasoning: isQwenFamily(modelId),
-		input: ["text"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: served.contextWindow,
-		maxTokens: 4096,
-		compat: {
-			supportsStore: false,
-			supportsDeveloperRole: false,
-			supportsReasoningEffort: false,
-			maxTokensField: "max_tokens",
-			...(isQwenFamily(modelId) ? { thinkingFormat: "qwen-chat-template" as const } : {}),
-		},
-	}));
 
-	const provider = createProvider({
-		id: "colibri",
-		name: `Colibri (${serving.size} model${serving.size === 1 ? "" : "s"})`,
-		baseUrl: `${instances[0]}/v1`,
-		auth: { apiKey: colibriAuth() },
-		models,
-		api: {
-			stream: (model, context, options) =>
-				mutexFor(model.baseUrl)(() => Promise.resolve(retrying(() => base.stream(model, context, options)))),
-			streamSimple: (model, context, options) =>
-				mutexFor(model.baseUrl)(() => Promise.resolve(retrying(() => base.streamSimple(model, context, options)))),
-		},
-	});
-	pi.registerProvider(provider);
+	// Group by engine + host: one provider per combination so badges read
+	// e.g. "unsloth/llama.cpp - NAS" and "colibri - Mac".
+	const ENGINE_NAMES: Record<string, string> = { colibri: "colibri", llamacpp: "unsloth/llama.cpp" };
+	const groups = new Map<
+		string,
+		{ engine: string; host: string; entries: typeof serving }
+	>();
+	for (const entry of serving) {
+		const key = `${entry.engine}-${entry.host}`;
+		let group = groups.get(key);
+		if (!group) {
+			group = { engine: entry.engine, host: entry.host, entries: [] };
+			groups.set(key, group);
+		}
+		group.entries.push(entry);
+	}
+
+	for (const [key, group] of groups) {
+		const hostLabel = HOST_LABELS[group.host] ?? group.host;
+		const providerId = `${group.engine}-${hostLabel.toLowerCase()}`;
+		const providerName = `${ENGINE_NAMES[group.engine]} - ${hostLabel}`;
+		const models: Model<"openai-completions">[] = group.entries.map((entry) => ({
+			id: entry.modelId,
+			name: displayName(entry.modelId),
+			api: "openai-completions",
+			provider: providerId,
+			baseUrl: `${entry.baseUrl}/v1`,
+			reasoning: isQwenFamily(entry.modelId),
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: entry.contextWindow,
+			maxTokens: 4096,
+			compat: {
+				supportsStore: false,
+				supportsDeveloperRole: false,
+				supportsReasoningEffort: false,
+				maxTokensField: "max_tokens",
+				...(isQwenFamily(entry.modelId) ? { thinkingFormat: "qwen-chat-template" as const } : {}),
+			},
+		}));
+		const provider = createProvider({
+			id: providerId,
+			name: providerName,
+			baseUrl: `${group.entries[0]!.baseUrl}/v1`,
+			auth: { apiKey: colibriAuth() },
+			models,
+			api: {
+				stream: (model, context, options) =>
+					mutexFor(model.baseUrl)(() => Promise.resolve(retrying(() => base.stream(model, context, options)))),
+				streamSimple: (model, context, options) =>
+					mutexFor(model.baseUrl)(() => Promise.resolve(retrying(() => base.streamSimple(model, context, options)))),
+			},
+		});
+		pi.registerProvider(provider);
+	}
 }
