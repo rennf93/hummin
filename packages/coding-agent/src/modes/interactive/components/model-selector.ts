@@ -331,7 +331,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 			const cursor = isSelected ? theme.fg("accent", "→ ") : "  ";
 			const currentMarker = isCurrent ? theme.fg("accent", "✓ ") : "  ";
-			const modelText = isSelected ? theme.fg("accent", item.id) : item.id;
+			// Rows show the human name when one exists (the colibri extension
+			// puts engine + format there); the id stays in the search text.
+			const rowLabel = item.model.name && item.model.name !== item.id ? item.model.name : item.id;
+			const modelText = isSelected ? theme.fg("accent", rowLabel) : rowLabel;
 			const providerBadge = theme.fg("muted", `[${item.provider}]`);
 			const line = `${cursor}${currentMarker}${modelText} ${providerBadge}${defaultBadge}`;
 

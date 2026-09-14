@@ -187,6 +187,21 @@ function instancePort(baseUrl: string): number {
 	return match ? Number(match[1]) : 0;
 }
 
+// Picker display names: id stays the stable identifier, the name says what
+// actually serves it (engine + format), because "[colibri]" is the provider
+// label for all of them and tells the user nothing about the model itself.
+const DISPLAY_NAMES: Record<string, string> = {
+	"qwen3.8-27b": "Qwen 3.8 27B - llama.cpp GGUF",
+	"glm-5.3-flash": "GLM 5.3 Flash - llama.cpp GGUF (unsloth)",
+	"glm-5.3": "GLM 5.3 - llama.cpp GGUF (unsloth)",
+	"kimi-k3": "Kimi K3 - llama.cpp GGUF (unsloth)",
+	"glm-5.3-flash-colibri": "GLM 5.3 Flash - colibri int4 container",
+};
+
+function displayName(modelId: string): string {
+	return DISPLAY_NAMES[modelId] ?? modelId;
+}
+
 export default async function colibriExtension(pi: ExtensionAPI): Promise<void> {
 	const instances = parseInstances();
 	if (instances.length === 0) {
@@ -250,7 +265,7 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 	const base = openAICompletionsApi();
 	const models: Model<"openai-completions">[] = [...serving.entries()].map(([modelId, served]) => ({
 		id: modelId,
-		name: modelId,
+		name: displayName(modelId),
 		api: "openai-completions",
 		provider: "colibri",
 		baseUrl: `${served.baseUrl}/v1`,
