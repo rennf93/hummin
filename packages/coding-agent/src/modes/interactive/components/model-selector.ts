@@ -336,7 +336,17 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			const rowLabel = item.model.name && item.model.name !== item.id ? item.model.name : item.id;
 			const modelText = isSelected ? theme.fg("accent", rowLabel) : rowLabel;
 			const providerBadge = theme.fg("muted", `[${item.provider}]`);
-			const line = `${cursor}${currentMarker}${modelText} ${providerBadge}${defaultBadge}`;
+			const ctx = item.model.contextWindow;
+			const ctxLabel =
+				!ctx || ctx <= 0
+					? ""
+					: ctx >= 1_000_000
+						? `${(ctx / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`
+						: ctx >= 1000
+							? `${Math.round(ctx / 1000)}K`
+							: `${ctx}`;
+			const ctxBadge = ctxLabel ? theme.fg("muted", ` ${ctxLabel} ·`) : "";
+			const line = `${cursor}${currentMarker}${modelText}${ctxBadge} ${providerBadge}${defaultBadge}`;
 
 			this.listContainer.addChild(new Text(line, 0, 0));
 		}

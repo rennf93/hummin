@@ -978,10 +978,10 @@ export class InteractiveMode {
 			].join("\n");
 			const compactInstructions = [
 				hint("app.interrupt", "interrupt"),
-				rawKeyHint(`${keyText("app.clear")}/${keyText("app.exit")}`, "clear/exit"),
+				hint("app.clear", "clear"),
 				rawKeyHint("/", "commands"),
 				rawKeyHint("!", "bash"),
-				hint("app.tools.expand", "everything else"),
+				hint("app.tools.expand", "all"),
 			].join(theme.fg("muted", " · "));
 			const onboarding = theme.fg("dim", `hummin can explain its own features and look up its docs - just ask.`);
 			this.builtInHeader = new ExpandableText(
