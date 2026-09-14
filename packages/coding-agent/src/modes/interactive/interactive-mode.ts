@@ -2917,8 +2917,8 @@ export class InteractiveMode {
 		this.defaultEditor.onCtrlD = () => this.handleCtrlD();
 		this.defaultEditor.onAction("app.suspend", () => this.handleCtrlZ());
 		this.defaultEditor.onAction("app.thinking.cycle", () => this.cycleThinkingLevel());
-		this.defaultEditor.onAction("app.model.cycleForward", () => this.cycleModel("forward"));
-		this.defaultEditor.onAction("app.model.cycleBackward", () => this.cycleModel("backward"));
+		this.defaultEditor.onAction("app.model.cycleForward", () => void this.cycleModelCurated("forward"));
+		this.defaultEditor.onAction("app.model.cycleBackward", () => void this.cycleModelCurated("backward"));
 
 		// Global debug handler on TUI (works regardless of focus)
 		this.ui.onDebug = () => this.handleDebugCommand();
@@ -4218,6 +4218,28 @@ export class InteractiveMode {
 			this.updateEditorBorderColor();
 			this.showStatus(`Thinking level: ${newLevel}`);
 		}
+	}
+
+	private async curatedModelScope(): Promise<Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>> {
+		const models = this.session.modelRuntime.getAvailableSnapshot();
+		const credentials = await this.session.modelRuntime
+			.listCredentials({ signal: AbortSignal.timeout(5_000) })
+			.catch(() => []);
+		const credentialed = new Set(credentials.map((entry) => entry.providerId));
+		const curated = (id: string): boolean =>
+			id === "zai" || id === "zai-coding-cn" || id.startsWith("colibri") || credentialed.has(id);
+		return models.filter((model) => curated(model.provider)).map((model) => ({ model }));
+	}
+
+	// hummin curation: ctrl+P/N walks only curated and credentialed models.
+	// Cycling the full 167-model catalog lands on unconfigured providers,
+	// which reads as the app being broken.
+	private async cycleModelCurated(direction: "forward" | "backward"): Promise<void> {
+		if (this.session.scopedModels.length === 0) {
+			const scope = await this.curatedModelScope();
+			if (scope.length > 0) this.session.setScopedModels(scope);
+		}
+		await this.cycleModel(direction);
 	}
 
 	private async cycleModel(direction: "forward" | "backward"): Promise<void> {
