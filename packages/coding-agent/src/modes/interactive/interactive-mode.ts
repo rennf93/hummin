@@ -985,7 +985,7 @@ export class InteractiveMode {
 			].join(theme.fg("muted", " · "));
 			const onboarding = theme.fg("dim", `hummin can explain its own features and look up its docs - just ask.`);
 			this.builtInHeader = new ExpandableText(
-				() => `${logo}\n${compactInstructions}\n${onboarding}`,
+				() => `${logo}\n${compactInstructions}\n\n${onboarding}`,
 				() => `${logo}\n${expandedInstructions}\n\n${onboarding}`,
 				this.getStartupExpansionState(),
 				1,

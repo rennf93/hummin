@@ -171,14 +171,15 @@ function isQwenFamily(modelId: string): boolean {
 // live server's real /v1/models always wins. Aliases must match what the
 // servers advertise (--alias flags and colibri's model ids).
 const LAN_HOSTS = new Set(["192.168.50.111", "192.168.50.199"]);
-const MODEL_CATALOG: Array<{ id: string; port: number; contextWindow: number }> = [
-	{ id: "qwen3.8-27b", port: 9998, contextWindow: 65536 },           // Mac llama.cpp
-	{ id: "qwen3.8-27b", port: 9996, contextWindow: 262144 },          // NAS llama.cpp
-	{ id: "glm-5.3-flash-colibri", port: 9998, contextWindow: 16384 }, // NAS colibri
-	{ id: "glm-5.3-flash", port: 9995, contextWindow: 32768 },         // Mac unsloth fork
-	{ id: "glm-5.3-flash", port: 9995, contextWindow: 32768 },         // NAS unsloth fork
-	{ id: "glm-5.3", port: 9994, contextWindow: 16384 },               // NAS unsloth fork
-	{ id: "kimi-k3", port: 9993, contextWindow: 16384 },               // NAS unsloth fork
+const MODEL_CATALOG: Array<{ id: string; host: string; port: number; contextWindow: number }> = [
+	{ id: "qwen3.8-27b", host: "192.168.50.199", port: 9998, contextWindow: 131072 },  // Mac llama.cpp
+	{ id: "qwen3.8-27b", host: "192.168.50.111", port: 9996, contextWindow: 262144 },  // NAS llama.cpp
+	{ id: "glm-5.3-flash-colibri", host: "192.168.50.111", port: 9998, contextWindow: 32768 }, // NAS colibri
+	{ id: "glm-5.3-flash-colibri", host: "192.168.50.199", port: 9997, contextWindow: 32768 }, // Mac colibri (staged)
+	{ id: "glm-5.3-flash", host: "192.168.50.199", port: 9995, contextWindow: 65536 },  // Mac unsloth fork
+	{ id: "glm-5.3-flash", host: "192.168.50.111", port: 9995, contextWindow: 262144 }, // NAS unsloth fork
+	{ id: "glm-5.3", host: "192.168.50.111", port: 9994, contextWindow: 262144 },       // NAS unsloth fork
+	{ id: "kimi-k3", host: "192.168.50.111", port: 9993, contextWindow: 1048576 },      // NAS unsloth fork
 ];
 
 function instancePort(baseUrl: string): number {
@@ -222,7 +223,8 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 		if (serving.has(entry.id)) continue;
 		const baseUrl = instances.find((url) => {
 			try {
-				return LAN_HOSTS.has(new URL(url).hostname) && instancePort(url) === entry.port;
+				const hostname = new URL(url).hostname;
+				return LAN_HOSTS.has(hostname) && hostname === entry.host && instancePort(url) === entry.port;
 			} catch {
 				return false;
 			}
