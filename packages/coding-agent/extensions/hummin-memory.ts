@@ -348,7 +348,12 @@ function ensureVault(): string {
 	for (const sub of ["inbox", "processed", join("entities", "project"), join("entities", "concept"), join("entities", "decision"), join("entities", "gotcha"), join("entities", "tool"), join("entities", "person")]) {
 		mkdirSync(join(dir, sub), { recursive: true });
 	}
-	if (!existsSync(join(dir, "AGENTS.md"))) writeFileSync(join(dir, "AGENTS.md"), vaultContract());
+	// The contract is machine-managed (it is the feature's spec, not user
+	// content), so existing vaults pick up conventions updates on the next
+	// fold instead of staying frozen at the version that created them.
+	if (!existsSync(join(dir, "AGENTS.md")) || readFileSync(join(dir, "AGENTS.md"), "utf8") !== vaultContract()) {
+		writeFileSync(join(dir, "AGENTS.md"), vaultContract());
+	}
 	if (!existsSync(join(dir, "log.md"))) writeFileSync(join(dir, "log.md"), "# Fold log\n");
 	if (!existsSync(join(dir, ".git"))) {
 		spawnSync("git", ["init", "-q"], { cwd: dir });
