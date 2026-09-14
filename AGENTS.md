@@ -119,6 +119,16 @@ Attribution:
 
 For release preparation, publishing, verification, or recovery, load and follow [.pi/skills/release.md](.pi/skills/release.md).
 
+## hummin specifics (this fork)
+
+- Fork policy: thin overlay on upstream pi - zero deletions, and `@earendil-works/*` internal package names stay for cheap upstream merges. Do not sweep renames without the user's explicit go.
+- Private design docs live OUTSIDE the repo at `~/Documents/GitHub/ZZZ/hummin-docs/` (SPEC, DESIGN, HANDOFF progress doc). Do not move them into the repo.
+- `packages/coding-agent/extensions/colibri.ts` invariants: ONE provider id `colibri`; model list = union of `HUMMIN_COLIBRI_INSTANCES` discoveries, first server serving a model wins (duplicates dedupe with fallback); per-model context windows come from server `/props` with `HUMMIN_COLIBRI_CTX` as fallback; qwen-family models carry `thinkingFormat: "qwen-chat-template"`. Never reintroduce guessed placeholder model ids for unreachable servers.
+- `packages/coding-agent/extensions/hummin-memory.ts`: any spawned child (distill, fold) MUST set `HUMMIN_MEMORY=0` in its child env - otherwise the shutdown handler recurses unboundedly (bug class, fixed once already).
+- `src/core/http-dispatcher.ts` replaces the global fetch with an undici `EnvHttpProxyAgent`. Local model servers need `httpIdleTimeoutMs: 0` in user settings (slow prefills otherwise look like dead connections); do not "fix" reported hangs by shortening default timeouts.
+- Runtime process title is `hummin`; a TUI session and spawned `-p` children look identical in `ps` - never kill by name pattern.
+- Extensions autoload from `~/.hummin/agent/extensions/` (runtime TS, synced from `packages/coding-agent/extensions/` after changes).
+
 ## User Override
 
 If the user's instructions conflict with any rule in this document, ask for explicit confirmation before overriding. Only then execute their instructions.
