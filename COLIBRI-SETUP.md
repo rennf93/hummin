@@ -1,143 +1,131 @@
-# Local inference with colibri
+# Local inference setup
 
-hummin is built to work against a local colibri server, so you can run GLM-5.3 and GLM-5.3-Flash on your own hardware and point the agent at it. This is a hardware-agnostic walkthrough: any x86_64 Linux machine or Apple Silicon Mac works. No cloud account required.
+hummin works against any OpenAI-compatible server on your LAN. The bundled
+`hummin-colibri` extension registers ONE provider (`colibri`) whose model list
+is the union of what every configured server reports - so GLM, Qwen, or any
+other model becomes a picker entry, regardless of which engine serves it.
 
-[Colibri](https://github.com/JustVugg/colibri) is a standalone inference engine for Mixture-of-Experts models. It keeps dense weights in RAM and streams expert weights from disk on demand, which means big models run on modest machines - at modest speed. A GPU is optional.
+Two engines cover the currently interesting models:
 
-## 1. Sizing: can your machine run it?
+| Engine | Reads | Best at | Used here for |
+|---|---|---|---|
+| [colibri](https://github.com/JustVugg/colibri) (C, Apache-2.0) | its own int4 group-64 safetensors containers | huge MoE models streamed off disk on modest RAM | GLM-5.3-Flash, GLM-5.3 |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT) | GGUF | dense models that fit in RAM, fast interactive use | Qwen3.8-27B |
 
-| Model | colibri container | Download | Disk | Notes |
-|---|---|---|---|---|
-| GLM-5.3-Flash | `Justvugg/GLM-5.3-Flash-colibri-int4-g64` | ~195 GB | ~195 GB + a few GB runtime files | daily driver |
-| GLM-5.3 | `Justvugg/GLM-5.3-colibri-int4-g64` | ~114 GB | ~114 GB | flagship |
+Rule of thumb: dense model that fits your RAM -> GGUF via llama.cpp. Frontier
+MoE bigger than your RAM -> colibri container streamed from fast storage.
 
-- **RAM**: works from ~16 GB, comfortable at 32 GB. More RAM means a bigger hot-expert cache and faster warm responses.
-- **Disk**: a fast NVMe SSD is strongly recommended. Colibri reads experts from disk on every token, so disk speed is speed. Put the model on NVMe if you can; a fast external SSD works on Mac.
-- **CPU**: anything reasonable; the workload is mostly streaming plus modest compute.
-- **Speed expectations**: roughly 0.5-2 tok/s warm on typical hardware. This is a "frontier model, slow sip" setup - great for agent runs, not for interactive chat. Measure on your machine with `coli tune`.
-
-## 2. Install colibri
-
-Prebuilt binaries are on the [releases page](https://github.com/JustVugg/colibri/releases) (check it for the latest version):
+## 1. Configure hummin
 
 ```bash
-# Linux x86_64 (use colibri-vX-linux-x86_64.tar.gz on Mac: macos-arm64)
-mkdir -p ~/colibri && cd ~/colibri
-curl -LO https://github.com/JustVugg/colibri/releases/download/v1.10.2/colibri-v1.10.2-linux-x86_64.tar.gz
-tar xzf colibri-v1.10.2-linux-x86_64.tar.gz -C ~/colibri
-cd colibri
-python3 coli info
+# ~/.zshrc - order is preference: first server serving a model wins,
+# later duplicates become automatic fallbacks
+export HUMMIN_COLIBRI_INSTANCES="http://nas:9996,http://nas:9998,http://mac:9998"
+export COLI_API_KEY=your-key                   # omit if servers run keyless
 ```
-
-Only Python 3 is needed on top (the engine is C, the launcher is Python). If the prebuilt binary fails on your distro, build from source:
-
-```bash
-sudo apt install -y build-essential git python3
-git clone https://github.com/JustVugg/colibri ~/colibri-src
-cd ~/colibri-src/c
-./setup.sh
-make glm53
-```
-
-## 3. Download a model container
-
-Colibri reads its own int4 safetensors containers (not GGUF). Downloads are resumable - re-run the same command if interrupted. If the download hangs at 0%, disable the Xet transfer path (`export HF_HUB_DISABLE_XET=1`) and retry.
-
-```bash
-python3 -m pip install --user -U huggingface_hub
-export PATH="$HOME/.local/bin:$PATH"
-
-hf download Justvugg/GLM-5.3-Flash-colibri-int4-g64 \
-  --local-dir ~/colibri-models/GLM-5.3-Flash-colibri-int4-g64
-```
-
-Debian 12+ may refuse `pip install` with an "externally managed environment" error; add `--break-system-packages` to the pip call, or use a venv.
-
-## 4. Verify, tune, chat
-
-```bash
-export COLI_MODEL=~/colibri-models/GLM-5.3-Flash-colibri-int4-g64
-python3 ~/colibri/coli doctor --deep    # checks RAM, disk, container
-python3 ~/colibri/coli plan             # shows weight/expert placement
-python3 ~/colibri/coli tune             # measures the best profile for your disk
-COLI_MODEL=$COLI_MODEL python3 ~/colibri/coli chat --topp 0.85
-```
-
-First replies can be slow (experts cold from disk); it warms up as colibri caches hot experts in RAM. `--topp 0.85` reads fewer expert bytes per token - the documented speed tip.
-
-## 5. Serve on the network
-
-```bash
-export COLI_API_KEY=$(openssl rand -hex 24)   # save this; hummin will need it
-COLI_MODEL=$COLI_MODEL COLI_API_KEY=$COLI_API_KEY \
-  python3 ~/colibri/coli serve --host 0.0.0.0 --port 9998 --no-browser
-```
-
-Endpoints: `/v1/models`, `/v1/chat/completions` (OpenAI), `/v1/messages` (Anthropic protocol), `/health`. One generation runs at a time; extra requests queue, and overflow gets HTTP 429. Clients authenticate with `Authorization: Bearer $COLI_API_KEY`.
-
-Pick an uncommon port (colibri uses 9998/9997 in the examples below). Repeat with a second terminal and a second `COLI_MODEL`/port to serve both models.
-
-### Keep it running (Linux, systemd)
-
-```ini
-# /etc/systemd/system/colibri.service
-[Unit]
-Description=Colibri OpenAI-compatible server (GLM-5.3-Flash)
-After=network-online.target
-
-[Service]
-User=youruser
-Environment=COLI_MODEL=/home/youruser/colibri-models/GLM-5.3-Flash-colibri-int4-g64
-Environment=COLI_API_KEY=your-key
-Environment=RAM_GB=100
-Environment=CTX=16384
-ExecStartPre=/usr/bin/test -f /home/youruser/colibri-models/GLM-5.3-Flash-colibri-int4-g64/config.json
-ExecStart=/usr/bin/python3 /home/youruser/colibri/coli serve --host 0.0.0.0 --port 9998 --no-browser
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload && sudo systemctl enable --now colibri
-```
-
-`RAM_GB` caps how much RAM colibri claims (leave headroom for everything else on the box); `CTX` sets the context window (default 4096; 16384 fits coding-agent prompts, more costs RAM). On macOS, run the same command under `tmux` or a launchd plist.
-
-## 6. Connect hummin
-
-```bash
-export HUMMIN_COLIBRI_INSTANCES="http://your-server:9998,http://your-server:9997"
-export COLI_API_KEY=your-key                   # omit if the server runs keyless
-hummin -e /path/to/hummin/packages/coding-agent/extensions/colibri.ts
-```
-
-Then `/model` and pick a `colibri` entry. Each instance becomes a provider; models are discovered from `/v1/models` automatically. The extension serializes requests per instance and retries the documented busy response (429 + `x-colibri-queue-wait-ms`) with capped backoff.
-
-Environment variables:
 
 | Variable | Purpose |
 |---|---|
-| `HUMMIN_COLIBRI_INSTANCES` | comma-separated server base URLs (default: two local instances on 9998/9997) |
-| `COLI_API_KEY` | bearer token; placeholder is sent for keyless servers |
-| `HUMMIN_COLIBRI_CTX` | advertised context window per model (default: 16384) |
+| `HUMMIN_COLIBRI_INSTANCES` | comma-separated server base URLs; order = preference, duplicates dedupe |
+| `COLI_API_KEY` | bearer token; a placeholder is sent for keyless servers |
+| `HUMMIN_COLIBRI_CTX` | fallback context window (default 16384) - used only when the server does not report one |
 
-`-e` loads the extension for one run. To install it persistently, use `hummin install /path/to/packages/coding-agent/extensions/colibri.ts` (built-in autoload is on the roadmap; see [SPEC-ZCODE-CLI.md](SPEC-ZCODE-CLI.md)).
+The extension autoloads from `~/.hummin/agent/extensions/` (no `-e` needed).
+Sessions discover models at start: restart the session after changing servers.
+Context windows are read from each server's `/props` (llama.cpp serves it;
+colibri does not, so its models use the fallback).
 
-## 7. Troubleshooting
+Reasoning: qwen-family models map hummin's `/thinking` level onto
+`chat_template_kwargs.enable_thinking` per request (llama.cpp applies it).
+Default is ON (hummin's default thinking level is medium); `/thinking off`
+disables. Other families register without thinking controls.
+
+## 2. Worked example (single NAS + Mac)
+
+### Qwen3.8-27B (dense, ~17.5GB GGUF) - the fast daily driver
+
+Mac (Apple Silicon, brew):
+
+```bash
+brew install llama.cpp
+hf download unsloth/Qwen3.8-27B-GGUF --include "Qwen3.8-27B-UD-Q4_K_XL.gguf" \
+  --local-dir /Volumes/YourVolume/Qwen3.8-27B-GGUF    # export HF_HUB_DISABLE_XET=1 if stalls
+
+# serve: port 9998, 64K context (KV costs ~64KB/token - size to your RAM headroom)
+llama-server --host 0.0.0.0 --port 9998 \
+  --model /Volumes/YourVolume/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf \
+  --alias qwen3.8-27b --ctx-size 65536 --jinja --api-key YOURKEY
+```
+
+Run it under launchd (`KeepAlive` on failed exit) or tmux; expect ~17.6GB RSS
+plus ~64KB/token of KV. Apple Silicon M2 Pro measured: ~7-10 tok/s generation,
+~54 tok/s prompt processing.
+
+NAS (Linux, docker compose - the image is official and small):
+
+```yaml
+name: local-llm
+services:
+  qwen-27b:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: qwen-27b
+    restart: unless-stopped
+    ports: ["9996:9996"]
+    volumes: ["/volume1/ai-models/llama.cpp:/models:ro"]
+    command: ["--host", "0.0.0.0", "--port", "9996",
+              "--model", "/models/Qwen3.8-27B-UD-Q4_K_XL.gguf",
+              "--alias", "qwen3.8-27b", "--ctx-size", "262144",
+              "--threads", "4", "--jinja", "--api-key", "YOURKEY"]
+```
+
+Set `--threads` to your real core count - llama.cpp defaults to physical
+cores and undercounts efficiency-core CPUs. Context is cheap here: 262K
+(the model's native max) is ~17GB of KV. CPU-only generation on a 4-core
+efficiency CPU measured ~1.5 tok/s: an always-on fallback and batch host,
+not an interactive endpoint.
+
+### GLM-5.3-Flash (frontier MoE, ~195GB int4) - on-demand depth
+
+GLM ships as colibri containers, NOT GGUF (mainline llama.cpp has no
+`glm5next` support yet; watch their PRs). Colibri keeps dense weights in RAM
+and streams experts from disk, so a 195GB model runs in 128GB of RAM at
+~0.3-3 tok/s depending on cold/warm state.
+
+- Models: `Justvugg/GLM-5.3-Flash-colibri-int4-g64` (~195GB, daily driver)
+  and `Justvugg/GLM-5.3-colibri-int4-g64` (~114GB flagship). Verify a
+  downloaded container with a tensor census against its `config.json` before
+  trusting it - a broken republish once shipped with whole shard ranges empty.
+- RAM: 64GB+ comfortable (engine cache `--ram` sizes the hot-expert pool).
+  32GB-class machines cannot hold GLM-5.3-Flash at all.
+- Disk: fast NVMe matters - experts are read per token.
+- Serve: `coli serve --ram 48 --host 0.0.0.0 --port 9998` with
+  `COLI_MODEL`, `COLI_API_KEY`, `CTX=16384`. Keep it running and warm:
+  the first generation after a start can take up to an hour (cold page
+  cache), warm runs settle ~3s/token on a 4-core NAS.
+- Because it is slow, treat GLM as on-demand depth, not the default model.
+
+## 3. Operating notes
+
+- hummin's own prompt is ~5.4K tokens (system + tools). llama.cpp's prefix
+  cache absorbs that across turns in one session; the first request of a
+  session pays it.
+- One generation at a time per colibri instance; llama.cpp queues by KV
+  budget. The extension serializes per server and retries 429s.
+- Client timeouts: hummin's `httpIdleTimeoutMs` should be `0` (disabled) for
+  local models - slow prefills otherwise look like dead connections.
+- Downstream client test scripts must export the same `COLI_API_KEY` as the
+  server, or they get 401s that surface as "Connection error".
+- Restarting a colibri server resets its warm cache (the expensive part);
+  restart llama.cpp containers freely.
+
+## 4. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| Download stalls at 0% | `export HF_HUB_DISABLE_XET=1`, re-run the download (it resumes) |
-| Prebuilt binary fails to start | build from source (step 2) |
-| `doctor` complains about disk speed | move the model to NVMe; this directly buys tokens/s |
-| HTTP 429 from the server | the instance is mid-generation; the hummin extension retries automatically |
-| HTTP 401 | `COLI_API_KEY` mismatch between server and client |
-| Port already in use | pick another port in `serve` and in `HUMMIN_COLIBRI_INSTANCES` |
-| Everything works but it is slow | that is the design point of colibri: check `coli tune`, keep the model on NVMe, raise RAM |
-
-## 8. Running both models
-
-Download both containers and run one `serve` per model on different ports (e.g. 9998 for Flash, 9997 for GLM-5.3). hummin lists them as separate providers and the picker groups them first. Each server generates one response at a time; running two servers doubles your concurrency ceiling, though they share the same disk pipe.
+| Download stalls at 0% | `export HF_HUB_DISABLE_XET=1`, re-run (resumes) |
+| HTTP 401 | key mismatch between server and client |
+| HTTP 429 | server mid-generation; the extension retries automatically |
+| Model missing from the picker | its server was unreachable at session start; restart the session |
+| Picker shows the wrong context size | server was loading during discovery; `/props` is only read at start |
+| First token takes forever on the NAS | cold colibri cache (up to 1h) or slow CPU prefill - use the fast machine for interactive work |
+| llama.cpp slow on an efficiency-core CPU | set `--threads` to the real core count |

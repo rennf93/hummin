@@ -37,34 +37,32 @@ hummin -p "summarize this repo"   # oneshot mode
 
 GLM-5.3, GLM-5.3-Flash and GLM-5.3-highspeed ship in the `zai` provider catalog (1M-token context, reasoning variants mapped to `reasoning_effort`). Pick models with `/model`; set a persistent default with the picker's "set as default" action.
 
-## Local colibri
+## Local inference (colibri, llama.cpp, ...)
 
-[Colibri](https://github.com/JustVugg/colibri) streams frontier MoE models (GLM-5.3, GLM-5.3-Flash, ...) off NVMe on consumer hardware and serves an OpenAI-compatible API. The bundled `hummin-colibri` extension registers one provider per instance:
+The bundled `hummin-colibri` extension registers ONE provider (`colibri`) that exposes every model found on your local OpenAI-compatible servers. The engine behind each server does not matter - colibri (MoE streaming), llama.cpp, Ollama all work; the server's own `/v1/models` is the source of truth for model ids, and the first server in the list that serves a model wins (duplicates dedupe into one entry with fallback ordering).
 
-**Full walkthrough - installing colibri, downloading the model containers, running and keeping the server alive on any Linux box or Mac: [COLIBRI-SETUP.md](COLIBRI-SETUP.md).**
+**Full walkthrough - engines, model choices, server setup on Linux/Mac, and a worked example: [COLIBRI-SETUP.md](COLIBRI-SETUP.md).**
 
 ```bash
-export HUMMIN_COLIBRI_INSTANCES="http://nas:9998,http://nas:9997"
-export COLI_API_KEY=...                    # only if the server enforces COLI_API_KEY
-hummin -e /path/to/packages/coding-agent/extensions/colibri.ts
+export HUMMIN_COLIBRI_INSTANCES="http://nas:9996,http://nas:9998,http://mac:9998"   # order = preference
+export COLI_API_KEY=...                    # only if the servers enforce a key
+hummin                                     # extensions autoload from ~/.hummin/agent/extensions/
 ```
 
 Behavior:
 
-- Instances without a reachable `/v1/models` register nothing (no broken providers).
-- One generation at a time per instance is handled, not thrown at you: requests are serialized per instance and the documented busy response (429 + `x-colibri-queue-wait-ms`) is retried with capped backoff.
-- `HUMMIN_COLIBRI_CTX` overrides the advertised context window (default 16384).
+- One model namespace across all servers; unreachable servers contribute no models until a session restart (no guessed placeholder ids).
+- One generation at a time per server is handled, not thrown at you: requests are serialized per server and the documented busy response (429 + `x-colibri-queue-wait-ms`) is retried with capped backoff.
+- Context windows are read from each server's `/props` when available (llama.cpp), falling back to `HUMMIN_COLIBRI_CTX` (default 16384).
+- Reasoning: qwen-family models map hummin's thinking level to `chat_template_kwargs.enable_thinking` - on by default, `/thinking off` disables. Other model families register without thinking controls.
 
-Making the extension load without `-e` is M2 work (see spec).
+### Developing without a server
 
-### Developing without a NAS
-
-A mock colibri server speaks the same surface (streaming, `/health`, `/v1/models`, 429 queueing):
+A mock server speaks the same surface (streaming, `/health`, `/v1/models`, 429 queueing):
 
 ```bash
 node scripts/mock-colibri.mjs --port 9998 --model glm-5.3-flash
-HUMMIN_COLIBRI_INSTANCES="http://127.0.0.1:9998" \
-  hummin -e packages/coding-agent/extensions/colibri.ts -p "hello"
+HUMMIN_COLIBRI_INSTANCES="http://127.0.0.1:9998" hummin -p "hello"
 ```
 
 ## GLM-first curation
@@ -93,11 +91,11 @@ export HUMMIN_MEMORY_VAULT_DIR=~/hummin-vault
 Golden-task harness for measuring agent/provider changes:
 
 ```bash
-node bench/run.mjs --provider zai --model glm-5.3-flash          # cloud
-node bench/run.mjs --provider colibri-1 --model glm-5.3-flash-colibri --thinking off --timeout 2400
+node bench/run.mjs --provider zai --model glm-5.3-flash          # cloud baseline (fast)
+node bench/run.mjs --provider colibri --model qwen3.8-27b --thinking off   # local llama.cpp
 ```
 
-Three fixtures (implement, fix, QA-catch) with deterministic checks; results land in `bench/results/` stamped with a config hash for A/B attribution. Local runs are slow - use `--timeout 2400`.
+Three fixtures (implement, fix, QA-catch) with deterministic checks; results land in `bench/results/` stamped with a config hash for A/B attribution.
 
 ## Recommended personal setup
 
