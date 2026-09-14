@@ -330,6 +330,7 @@ curator. Rules:
   Link notes inside the vault with [[wikilinks]]; keep [text](url) for
   external URLs only.
 - Keep entity files short: one overview paragraph, then dated bullet facts.
+- Never use em-dashes or en-dashes; use a hyphen, comma, or parentheses.
 
 ## Fold procedure
 
