@@ -1,6 +1,8 @@
 /**
- * hummin-colibri: registers one OpenAI-compatible provider per colibri
- * inference server (https://github.com/JustVugg/colibri) on the LAN.
+ * hummin-colibri: registers one OpenAI-compatible provider per local
+ * inference server on the LAN. The engine behind each endpoint does not
+ * matter (colibri, llama.cpp, Ollama, ...): the server's own /v1/models
+ * response is the source of truth for model ids.
  *
  * Configure instances with the HUMMIN_COLIBRI_INSTANCES environment variable
  * (comma-separated base URLs). Defaults to two local instances, which also
@@ -14,6 +16,12 @@
  *                      set it when the server runs with COLI_API_KEY enforced.
  *   HUMMIN_COLIBRI_CTX  advertised context window per model (default: 16384,
  *                      matching the colibri-flash.service CTX on the NAS).
+ *
+ * If an instance cannot be reached at session start, it is still registered
+ * (so the picker never loses the slot) but with an explicit "unknown" model
+ * instead of a guessed id - a stale guess used to display the wrong model
+ * family (e.g. GLM) for a slot that actually serves something else. Restart
+ * the session once the server is back to pick up the real model list.
  *
  * Colibri generates one response at a time per instance. This extension
  * serializes requests per instance and retries the documented busy response
@@ -161,18 +169,19 @@ async function registerInstance(
 	try {
 		modelIds = await fetchModels(baseUrl, process.env.COLI_API_KEY);
 	} catch {
-		// Unreachable instance (server down, host asleep): still register with the
-		// documented default model id so the picker always shows colibri entries.
-		// Requests fail at generation time until the server is back.
-		modelIds = ["glm-5.3-flash-colibri"];
+		// Unreachable instance (server down, host asleep): still register so the
+		// picker keeps the slot, but with an explicit "unknown" model. A guessed
+		// id here used to display the wrong model family and sent that wrong id
+		// in requests once the server came back.
+		modelIds = [];
 	}
 	if (modelIds.length === 0) {
-		modelIds = ["glm-5.3-flash-colibri"];
+		modelIds = ["unknown"];
 	}
 
 	const models: Model<"openai-completions">[] = modelIds.map((modelId) => ({
 		id: modelId,
-		name: modelId,
+		name: modelId === "unknown" ? "unknown (server unreachable at session start)" : modelId,
 		api: "openai-completions",
 		provider: id,
 		baseUrl: `${baseUrl}/v1`,
@@ -193,7 +202,7 @@ async function registerInstance(
 	const base = serializeWithBusyRetry(openAICompletionsApi());
 	const provider = createProvider({
 		id,
-		name: `Colibri (${baseUrl})`,
+		name: `Local (${baseUrl})`,
 		baseUrl: `${baseUrl}/v1`,
 		auth: { apiKey: colibriAuth() },
 		models,
