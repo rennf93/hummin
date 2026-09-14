@@ -46,7 +46,7 @@ import {
 	type AssistantMessageEventStream,
 	type Model,
 } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const MAX_BUSY_RETRIES = 5;
 const BUSY_BASE_DELAY_MS = 2000;
@@ -59,11 +59,9 @@ interface ColibriModelInfo {
 }
 
 function parseInstances(): string[] {
-	const raw = process.env.HUMMIN_COLIBRI_INSTANCES ?? "http://127.0.0.1:9998,http://127.0.0.1:9997";
-	return raw
-		.split(",")
-		.map((entry) => entry.trim())
-		.filter((entry) => entry.length > 0);
+	// Settings first-class (hummin init), env overrides, documented dev default last.
+	const settings = SettingsManager.create(process.cwd());
+	return settings.getColibriInstances();
 }
 
 async function fetchModels(baseUrl: string, apiKey: string | undefined): Promise<string[]> {

@@ -126,6 +126,14 @@ export interface Settings {
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: boolean;
+	/** hummin: project-memory distillation + vault (env HUMMIN_MEMORY overrides) */
+	memoryEnabled?: boolean;
+	/** hummin: lesson (default) or vault */
+	memoryMode?: "lesson" | "vault";
+	/** hummin: where the knowledge-graph vault lives (env HUMMIN_MEMORY_VAULT_DIR overrides) */
+	memoryVaultDir?: string;
+	/** hummin: local inference server base URLs for the colibri provider (env HUMMIN_COLIBRI_INSTANCES overrides) */
+	colibriInstances?: string[];
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
@@ -1023,6 +1031,92 @@ export class SettingsManager {
 		// hummin curation: clean startup by default - the Skills/Extensions/
 		// Context listing stays available behind ctrl+o and /settings.
 		return this.settings.quietStartup ?? true;
+	}
+
+	// hummin memory + local fleet. Env variables take precedence over stored
+	// settings so explicit environment always wins; settings fill the gap so
+	// `hummin init` can configure everything without shell edits.
+
+	getMemoryEnabled(): boolean {
+		const env = process.env.HUMMIN_MEMORY;
+		if (env === "1") return true;
+		if (env === "0") return false;
+		return this.settings.memoryEnabled ?? false;
+	}
+
+	getMemoryMode(): "lesson" | "vault" {
+		const env = process.env.HUMMIN_MEMORY_MODE;
+		if (env === "vault" || env === "lesson") return env;
+		return this.settings.memoryMode ?? "lesson";
+	}
+
+	getMemoryVaultDir(): string {
+		const env = process.env.HUMMIN_MEMORY_VAULT_DIR;
+		if (env && env.trim().length > 0) return env;
+		return this.settings.memoryVaultDir ?? join(getAgentDir(), "vault");
+	}
+
+	getColibriInstances(): string[] {
+		const env = process.env.HUMMIN_COLIBRI_INSTANCES;
+		if (env && env.trim().length > 0) {
+			return env
+				.split(",")
+				.map((entry) => entry.trim())
+				.filter((entry) => entry.length > 0);
+		}
+		const stored = this.settings.colibriInstances;
+		if (Array.isArray(stored) && stored.length > 0) {
+			return stored.map((entry) => String(entry).trim()).filter((entry) => entry.length > 0);
+		}
+		return ["http://127.0.0.1:9998", "http://127.0.0.1:9997"];
+	}
+
+	setMemoryEnabled(enabled: boolean, scope: "global" | "project" = "global"): void {
+		if (scope === "project") {
+			this.updateProjectSettings("memoryEnabled", (settings) => {
+				settings.memoryEnabled = enabled;
+			});
+			return;
+		}
+		this.globalSettings.memoryEnabled = enabled;
+		this.markModified("memoryEnabled");
+		this.save();
+	}
+
+	setMemoryMode(mode: "lesson" | "vault", scope: "global" | "project" = "global"): void {
+		if (scope === "project") {
+			this.updateProjectSettings("memoryMode", (settings) => {
+				settings.memoryMode = mode;
+			});
+			return;
+		}
+		this.globalSettings.memoryMode = mode;
+		this.markModified("memoryMode");
+		this.save();
+	}
+
+	setMemoryVaultDir(dir: string, scope: "global" | "project" = "global"): void {
+		if (scope === "project") {
+			this.updateProjectSettings("memoryVaultDir", (settings) => {
+				settings.memoryVaultDir = dir;
+			});
+			return;
+		}
+		this.globalSettings.memoryVaultDir = dir;
+		this.markModified("memoryVaultDir");
+		this.save();
+	}
+
+	setColibriInstances(instances: string[], scope: "global" | "project" = "global"): void {
+		if (scope === "project") {
+			this.updateProjectSettings("colibriInstances", (settings) => {
+				settings.colibriInstances = instances;
+			});
+			return;
+		}
+		this.globalSettings.colibriInstances = instances;
+		this.markModified("colibriInstances");
+		this.save();
 	}
 
 	setQuietStartup(quiet: boolean): void {

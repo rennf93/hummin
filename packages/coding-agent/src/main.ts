@@ -28,6 +28,7 @@ import {
 } from "./cli/auth-command.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
+import { isInitCommand, runInitCommand } from "./cli/init.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
@@ -566,6 +567,11 @@ export async function main(args: string[], options?: MainOptions) {
 	if (offlineMode) {
 		process.env.PI_OFFLINE = "1";
 		process.env.PI_SKIP_VERSION_CHECK = "1";
+	}
+
+	if (isInitCommand(args)) {
+		await runInitCommand(args);
+		return;
 	}
 
 	if (await runAuthCommand(args)) {

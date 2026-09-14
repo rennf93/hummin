@@ -26,13 +26,15 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, appendFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { TextContent } from "@earendil-works/pi-ai";
 
 const LESSON_MAX_WORDS = 120;
 
+
+
 function agentDir(): string {
-	return process.env.HUMMIN_CODING_AGENT_DIR ?? join(homedir(), ".hummin", "agent");
+	return getAgentDir();
 }
 
 function memoryDir(): string {
@@ -216,12 +218,16 @@ export function recallLessons(cwd: string, query: string): string[] {
 	return scored.slice(0, RETRIEVAL_MAX_LESSONS).map((entry) => entry.lesson);
 }
 
+let cachedSettings: SettingsManager | undefined;
+
 export default function humminMemory(pi: ExtensionAPI): void {
-	if (process.env.HUMMIN_MEMORY !== "1") {
+	const settings = SettingsManager.create(process.cwd());
+	cachedSettings = settings;
+	if (!settings.getMemoryEnabled()) {
 		return;
 	}
 
-	if (process.env.HUMMIN_MEMORY_MODE === "vault") {
+	if (settings.getMemoryMode() === "vault") {
 		ensureVault();
 		pi.registerCommand("vault-fold", {
 			description: "Fold inbox lessons into the vault entity graph",
@@ -247,7 +253,7 @@ export default function humminMemory(pi: ExtensionAPI): void {
 					return;
 				}
 				const matches: string[] = [];
-				const entitiesDir = join(vaultDir(), "entities");
+				const entitiesDir = join(vaultDir(cachedSettings), "entities");
 				const walk = (dir: string) => {
 					for (const f of readdirSync(dir)) {
 						const full = join(dir, f);
@@ -257,7 +263,7 @@ export default function humminMemory(pi: ExtensionAPI): void {
 								const content = readFileSync(full, "utf8");
 								if (content.toLowerCase().includes(query)) {
 									const hits = content.split("\n").filter((l) => l.toLowerCase().includes(query)).slice(0, 3);
-									matches.push(`${full.replace(vaultDir() + "/", "")}\n  ${hits.join("\n  ")}`);
+									matches.push(`${full.replace(vaultDir(cachedSettings) + "/", "")}\n  ${hits.join("\n  ")}`);
 								}
 							} else {
 								walk(full);
@@ -353,8 +359,11 @@ export default function humminMemory(pi: ExtensionAPI): void {
 
 const FOLD_TIMEOUT_SEC = 900;
 
-function vaultDir(): string {
-	return process.env.HUMMIN_MEMORY_VAULT_DIR ?? join(agentDir(), "vault");
+function vaultDir(settings: SettingsManager | undefined): string {
+	if (settings) return settings.getMemoryVaultDir();
+	const env = process.env.HUMMIN_MEMORY_VAULT_DIR;
+	if (env && env.trim().length > 0) return env;
+	return join(getAgentDir(), "vault");
 }
 
 function vaultContract(): string {
@@ -391,8 +400,8 @@ curator. Rules:
 Do not skip the commit. Do not touch anything outside the vault.`;
 }
 
-function ensureVault(): string {
-	const dir = vaultDir();
+function ensureVault(settings?: SettingsManager): string {
+	const dir = vaultDir(settings ?? cachedSettings);
 	for (const sub of ["inbox", "processed", join("entities", "project"), join("entities", "concept"), join("entities", "decision"), join("entities", "gotcha"), join("entities", "tool"), join("entities", "person")]) {
 		mkdirSync(join(dir, sub), { recursive: true });
 	}
