@@ -71,9 +71,42 @@ function assertFetchable(rawUrl: string): URL {
 	return url;
 }
 
-function capOutput(text: string): string {
-	if (text.length <= MAX_OUTPUT_CHARS) return text;
-	return `${text.slice(0, MAX_OUTPUT_CHARS)}\n\n[truncated: output exceeded ${MAX_OUTPUT_CHARS} chars]`;
+
+// Structure-preserving HTML-to-text: headings become markdown headers,
+// http(s) links become [text](href), list items become "- " lines - the
+// model reads page structure, not just a word salad.
+function inlineFrom(html: string): string {
+	return decodeEntities(html.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+}
+
+function htmlToText(html: string): string {
+	const cleaned = html
+		.replace(/<script[\s\S]*?<\/script>/gi, " ")
+		.replace(/<style[\s\S]*?<\/style>/gi, " ")
+		.replace(/<!--[^>]*-->/g, " ");
+	return decodeEntities(
+		cleaned
+			.replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_m, level: string, inner: string) => `\n\n${"#".repeat(Number(level))} ${inlineFrom(inner)}\n`)
+			.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_m, inner: string) => `\n- ${inlineFrom(inner)}`)
+			.replace(
+				/<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi,
+				(_m, href: string, inner: string) => {
+					const label = inlineFrom(inner);
+					return label ? `[${label}](${href})` : "";
+				},
+			)
+			.replace(/<(br|\/p|\/div|\/tr|\/h[1-6]|\/li|\/table|\/ul|\/ol)[^>]*>/gi, "\n")
+			.replace(/<[^>]+>/g, " "),
+	)
+		.replace(/[ \t]+/g, " ")
+		.replace(/\n[ \t]+/g, "\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
+}
+
+function capOutput(text: string, maxChars: number = MAX_OUTPUT_CHARS): string {
+	if (text.length <= maxChars) return text;
+	return `${text.slice(0, maxChars)}\n\n[truncated: output exceeded ${maxChars} chars]`;
 }
 
 interface SearchResult {
@@ -136,12 +169,16 @@ export default function humminWeb(pi: ExtensionAPI): void {
 		name: "web_fetch",
 		label: "Web Fetch",
 		description:
-			"Fetch a public http(s) URL and return its content as text (HTML is converted to plain text, 20K char cap). Blocked for private/loopback hosts.",
+			"Fetch a public http(s) URL and return its content as text. HTML keeps headings (#), links ([text](url)) and lists (-) so page structure survives. Blocked for private/loopback hosts.",
 		promptSnippet: "web_fetch: fetch a public URL and return its text content",
 		parameters: Type.Object({
 			url: Type.String({ description: "The http(s) URL to fetch" }),
+			max_chars: Type.Optional(
+				Type.Number({ description: "Output character cap (default 20000)" }),
+			),
 		}),
 		async execute(_toolCallId, params) {
+			const maxChars = typeof params.max_chars === "number" && params.max_chars > 0 ? Math.floor(params.max_chars) : MAX_OUTPUT_CHARS;
 			const url = assertFetchable(params.url);
 			const response = await fetch(url, {
 				headers: { "User-Agent": USER_AGENT, Accept: "text/html,text/plain,application/json;q=0.9,*/*;q=0.5" },
@@ -158,10 +195,10 @@ export default function humminWeb(pi: ExtensionAPI): void {
 			}
 			const text =
 				contentType.includes("html") || /^\s*<!doctype html|<html/i.test(body)
-					? stripTags(body)
+					? htmlToText(body)
 					: body;
 			const meta = `[url: ${url.href} | status: ${response.status} | type: ${contentType || "unknown"}]`;
-			return { content: [{ type: "text", text: capOutput(`${meta}\n\n${text}`) }] };
+			return { content: [{ type: "text", text: capOutput(`${meta}\n\n${text}`, maxChars) }] };
 		},
 	});
 }
