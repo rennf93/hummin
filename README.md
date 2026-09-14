@@ -99,7 +99,17 @@ Three fixtures (implement, fix, QA-catch) with deterministic checks; results lan
 
 ## Recommended personal setup
 
-Copy [SYSTEM.example.md](SYSTEM.example.md) to `~/.hummin/agent/SYSTEM.md` for the GLM-tuned operating rules.
+Run the interactive setup once - it writes real settings (globally, or per-project with `--project`), so no shell exports are needed:
+
+```bash
+hummin init                # local servers, project memory, vault directory
+hummin init --yes --memory vault --vault-dir ~/hummin-vault \
+  --instances "http://nas:9996,http://nas:9998,http://mac:9998"   # scriptable
+```
+
+Env vars (`HUMMIN_COLIBRI_INSTANCES`, `HUMMIN_MEMORY`, `HUMMIN_MEMORY_MODE`, `HUMMIN_MEMORY_VAULT_DIR`) still override stored settings when set.
+
+Then copy [SYSTEM.example.md](SYSTEM.example.md) to `~/.hummin/agent/SYSTEM.md` for the tuned operating rules, and `/model` to pick a default.
 
 ## Differences from upstream pi
 
