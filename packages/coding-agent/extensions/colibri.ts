@@ -191,7 +191,6 @@ async function registerInstance(
 
 	const mutex = createMutex();
 	const base = serializeWithBusyRetry(openAICompletionsApi());
-	const trace = (m: string) => import("node:fs").then((fs) => fs.appendFileSync("/tmp/colibri-trace.log", `${new Date().toISOString()} [${id}] ${m}\n`));
 	const provider = createProvider({
 		id,
 		name: `Colibri (${baseUrl})`,
@@ -199,14 +198,8 @@ async function registerInstance(
 		auth: { apiKey: colibriAuth() },
 		models,
 		api: {
-			stream: (model, context, options) => {
-				void trace(`stream called, model baseUrl=${model.baseUrl}`);
-				return mutex(() => Promise.resolve(base.stream(model, context, options)));
-			},
-			streamSimple: (model, context, options) => {
-				void trace(`streamSimple called, model baseUrl=${model.baseUrl}`);
-				return mutex(() => Promise.resolve(base.streamSimple(model, context, options)));
-			},
+			stream: (model, context, options) => mutex(() => Promise.resolve(base.stream(model, context, options))),
+			streamSimple: (model, context, options) => mutex(() => Promise.resolve(base.streamSimple(model, context, options))),
 		},
 	});
 	pi.registerProvider(provider);

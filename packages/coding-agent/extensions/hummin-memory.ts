@@ -188,6 +188,17 @@ export default function humminMemory(pi: ExtensionAPI): void {
 			description: "Fold inbox lessons into the vault entity graph",
 			handler: async () => vaultFold("command"),
 		});
+		pi.registerCommand("vault-canvas", {
+			description: "Render the vault entity graph as graph.canvas",
+			handler: async (_args, ctx) => {
+				const dir = ensureVault();
+				const count = writeCanvas(dir);
+				ctx.ui.notify(
+					count > 0 ? `vault: graph.canvas written (${count} entities)` : "vault: no entities to draw yet",
+					count > 0 ? "info" : "warning",
+				);
+			},
+		});
 		pi.registerCommand("vault-recall", {
 			description: "Search vault entities",
 			handler: async (args, ctx) => {
@@ -308,10 +319,16 @@ curator. Rules:
 - Entity files live at entities/<type>/<slug>.md with type one of:
   project, concept, decision, gotcha, tool, person.
 - Slug is kebab-case. Reference entities anywhere in the vault as [[slug]].
+- Every entity file starts with YAML properties (frontmatter) that Obsidian
+  reads: type, created (YYYY-MM-DD), and tags (e.g. tags: [gotcha, zfs]).
 - Facts inside entities are dated and attributed: (from [[lesson-slug]], YYYY-MM-DD).
+- Gotcha entities open with an Obsidian callout one line long:
+  > [!warning] <one-sentence summary>
 - Before creating an entity, search entities/ for an existing one; extend it
   instead of duplicating. Never invent facts that are not in an inbox lesson.
 - Each entity ends with a "## Links" section listing related [[entities]].
+  Link notes inside the vault with [[wikilinks]]; keep [text](url) for
+  external URLs only.
 - Keep entity files short: one overview paragraph, then dated bullet facts.
 
 ## Fold procedure
@@ -328,7 +345,7 @@ Do not skip the commit. Do not touch anything outside the vault.`;
 
 function ensureVault(): string {
 	const dir = vaultDir();
-	for (const sub of ["inbox", "processed", join("entities", "project"), join("entities", "concept"), join("entities", "decision"), join("entities", "gotcha"), join("entities", "tool")]) {
+	for (const sub of ["inbox", "processed", join("entities", "project"), join("entities", "concept"), join("entities", "decision"), join("entities", "gotcha"), join("entities", "tool"), join("entities", "person")]) {
 		mkdirSync(join(dir, sub), { recursive: true });
 	}
 	if (!existsSync(join(dir, "AGENTS.md"))) writeFileSync(join(dir, "AGENTS.md"), vaultContract());
@@ -353,6 +370,61 @@ ${lesson}
 `;
 	writeFileSync(join(dir, "inbox", `${slug}.md`), body);
 	return slug;
+}
+
+// Graph canvas (jsoncanvas.org format, opens natively in Obsidian): file
+// nodes pointing at entity notes, one column per entity type, edges drawn
+// from each entity's "## Links" wikilinks. Regenerated after every fold so
+// the vault always has a current visual map of the graph.
+const CANVAS_ENTITY_TYPES = ["project", "concept", "decision", "gotcha", "tool", "person"];
+const CANVAS_TYPE_COLORS: Record<string, string> = {
+	project: "1", concept: "4", decision: "5", gotcha: "2", tool: "6", person: "3",
+};
+
+export function writeCanvas(dir: string): number {
+	const nodes: Record<string, unknown>[] = [];
+	const idBySlug = new Map<string, string>();
+	const colWidth = 320;
+	const rowHeight = 110;
+	const nodeWidth = 260;
+	const nodeHeight = 80;
+
+	for (const [col, type] of CANVAS_ENTITY_TYPES.entries()) {
+		const typeDir = join(dir, "entities", type);
+		if (!existsSync(typeDir)) continue;
+		for (const [row, file] of readdirSync(typeDir).filter((f) => f.endsWith(".md")).entries()) {
+			const slug = file.slice(0, -3);
+			const id = `node-${idBySlug.size + 1}`;
+			idBySlug.set(slug, id);
+			nodes.push({
+				id,
+				type: "file",
+				file: `entities/${type}/${file}`,
+				x: col * colWidth,
+				y: row * rowHeight,
+				width: nodeWidth,
+				height: nodeHeight,
+				color: CANVAS_TYPE_COLORS[type],
+			});
+		}
+	}
+	if (nodes.length === 0) return 0;
+
+	const edges: Record<string, unknown>[] = [];
+	for (const node of nodes) {
+		const file = node.file as string;
+		const content = readFileSync(join(dir, file), "utf8");
+		const linksSection = content.split(/^## Links\b/m)[1] ?? "";
+		for (const match of linksSection.matchAll(/\[\[([^\]|#]+)/g)) {
+			const target = match[1].trim();
+			const to = idBySlug.get(target);
+			if (to && to !== node.id) {
+				edges.push({ id: `edge-${edges.length + 1}`, fromNode: node.id, toNode: to });
+			}
+		}
+	}
+	writeFileSync(join(dir, "graph.canvas"), JSON.stringify({ nodes, edges }, null, "\t") + "\n");
+	return nodes.length;
 }
 
 function vaultFold(label: string): void {
@@ -381,5 +453,6 @@ function vaultFold(label: string): void {
 		process.exitCode = 1;
 	} else {
 		console.log(`vault: fold complete (${label})`);
+		writeCanvas(dir);
 	}
 }
