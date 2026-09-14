@@ -80,6 +80,27 @@ async function fetchModels(baseUrl: string, apiKey: string | undefined): Promise
 		.filter((id) => typeof id === "string" && id.length > 0);
 }
 
+// llama.cpp servers report their real context window on /props; colibri does
+// not serve that endpoint. Used as a per-model contextWindow override so the
+// advertised window matches what the server actually accepts.
+async function fetchContextWindow(baseUrl: string, apiKey: string | undefined): Promise<number | null> {
+	try {
+		const response = await fetch(`${baseUrl}/props`, {
+			signal: AbortSignal.timeout(3000),
+			headers: { Authorization: `Bearer ${apiKey ?? "colibri"}` },
+		});
+		if (!response.ok) return null;
+		const body = (await response.json()) as {
+			default_generation_settings?: { n_ctx?: number };
+			n_ctx?: number;
+		};
+		const nCtx = body.default_generation_settings?.n_ctx ?? body.n_ctx;
+		return typeof nCtx === "number" && nCtx > 0 ? Math.floor(nCtx) : null;
+	} catch {
+		return null;
+	}
+}
+
 function createMutex(): <T>(task: () => Promise<T>) => Promise<T> {
 	let tail: Promise<void> = Promise.resolve();
 	return <T>(task: () => Promise<T>): Promise<T> => {
@@ -152,16 +173,23 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 	const contextWindow = Number(process.env.HUMMIN_COLIBRI_CTX ?? 16384);
 
 	// One model namespace across all servers: the first instance in the list
-	// that serves a model wins (instance order is preference order).
-	const serving = new Map<string, string>();
+	// that serves a model wins (instance order is preference order). Context
+	// windows come from each server's own /props when available.
+	const serving = new Map<string, { baseUrl: string; contextWindow: number }>();
 	const discovered = await Promise.allSettled(
-		instances.map((baseUrl) => fetchModels(baseUrl, process.env.COLI_API_KEY).then((ids) => ({ baseUrl, ids }))),
+		instances.map(async (baseUrl) => {
+			const [ids, contextWindow] = await Promise.all([
+				fetchModels(baseUrl, process.env.COLI_API_KEY),
+				fetchContextWindow(baseUrl, process.env.COLI_API_KEY),
+			]);
+			return { baseUrl, ids, contextWindow };
+		}),
 	);
 	for (const result of discovered) {
 		if (result.status !== "fulfilled") continue;
 		for (const modelId of result.value.ids) {
 			if (!serving.has(modelId)) {
-				serving.set(modelId, result.value.baseUrl);
+				serving.set(modelId, { baseUrl: result.value.baseUrl, contextWindow: result.value.contextWindow });
 			}
 		}
 	}
@@ -180,16 +208,16 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 	};
 
 	const base = openAICompletionsApi();
-	const models: Model<"openai-completions">[] = [...serving.entries()].map(([modelId, baseUrl]) => ({
+	const models: Model<"openai-completions">[] = [...serving.entries()].map(([modelId, served]) => ({
 		id: modelId,
 		name: modelId,
 		api: "openai-completions",
 		provider: "colibri",
-		baseUrl: `${baseUrl}/v1`,
+		baseUrl: `${served.baseUrl}/v1`,
 		reasoning: isQwenFamily(modelId),
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow,
+		contextWindow: served.contextWindow,
 		maxTokens: 4096,
 		compat: {
 			supportsStore: false,
