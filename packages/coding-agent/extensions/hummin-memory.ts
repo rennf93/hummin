@@ -191,7 +191,7 @@ export function recallLessons(cwd: string, query: string): string[] {
 	const file = join(memoryDir(), "lessons.jsonl");
 	if (!existsSync(file)) return [];
 	const queryTerms = tokenize(query);
-	const scored: { lesson: string; score: number }[] = [];
+	const scored: { lesson: string; score: number; index: number }[] = [];
 	let index = 0;
 	for (const line of readFileSync(file, "utf8").split("\n")) {
 		if (!line.trim()) continue;
@@ -208,13 +208,12 @@ export function recallLessons(cwd: string, query: string): string[] {
 			} else if (overlap < CROSS_PROJECT_MIN_OVERLAP) {
 				continue;
 			}
-			score += index * 0.01;
-			scored.push({ lesson: record.lesson, score });
+			scored.push({ lesson: record.lesson, score, index });
 		} catch {
 			// skip malformed
 		}
 	}
-	scored.sort((a, b) => b.score - a.score);
+	scored.sort((a, b) => b.score - a.score || b.index - a.index);
 	return scored.slice(0, RETRIEVAL_MAX_LESSONS).map((entry) => entry.lesson);
 }
 
