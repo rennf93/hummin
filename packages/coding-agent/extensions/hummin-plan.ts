@@ -26,7 +26,7 @@ function reconstructState(ctx: ExtensionContext): boolean {
 	return enabled;
 }
 
-const BLOCKED_TOOLS = new Set(["edit", "write", "bash", "powershell"]);
+const BLOCKED_TOOLS = new Set(["edit", "write", "bash", "powershell", "task", "monitor"]);
 
 export default function humminPlan(pi: ExtensionAPI): void {
 	let planMode = false;
@@ -41,6 +41,7 @@ export default function humminPlan(pi: ExtensionAPI): void {
 
 	pi.on("tool_call", async (event) => {
 		if (!planMode) return;
+		if (event.toolName === "monitor" && event.input.action !== "start") return;
 		if (!BLOCKED_TOOLS.has(event.toolName)) return;
 		return {
 			block: true,
