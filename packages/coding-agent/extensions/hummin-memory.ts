@@ -17,13 +17,21 @@
  *   HUMMIN_MEMORY_MODEL_ID     model id (default: glm-5.3-flash)
  *   HUMMIN_MEMORY_DIR          storage dir (default: <agentDir>/memory)
  *   HUMMIN_MEMORY_MAX_CHARS    transcript tail passed to the distiller (default: 12000)
+ *   HUMMIN_MEMORY_AUTO_FOLD_THRESHOLD  inbox lesson count that triggers an
+ *                              automatic fold pass (default 3; 0 disables)
+ *
+ * In vault mode the fold pass also runs automatically: at session start, on
+ * agent_end, and after shutdown distillation, whenever the inbox holds at
+ * least the threshold number of lessons. Folds run as a detached hummin
+ * child (HUMMIN_MEMORY=0) writing to <vault>/fold.log, so neither startup,
+ * turns, nor shutdown ever block on the fold.
  *
  * Retrieval is v2 (relevance-floored injection at session start); lessons are
  * plain JSONL plus a human-readable markdown mirror.
  */
 
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, appendFileSync, writeFileSync, renameSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, appendFileSync, writeFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -323,6 +331,23 @@ export default function humminMemory(pi: ExtensionAPI): void {
 			category: "Memory/Vault",
 			handler: async () => vaultFold("command"),
 		});
+
+		// Automatic folds: pending lessons fold in the background once they
+		// reach the threshold, checked at session start and after each turn.
+		let foldCheckedAtStart = false;
+		pi.on("before_agent_start", async (_event, ctx) => {
+			if (foldCheckedAtStart) return;
+			foldCheckedAtStart = true;
+			const dir = ensureVault();
+			const pending = inboxLessonCount(dir);
+			if (pending > 0 && ctx?.ui?.notify) {
+				ctx.ui.notify(`vault: ${pending} lesson(s) waiting to fold`, "info");
+			}
+			triggerAutoFold(dir, "session start");
+		});
+		pi.on("agent_end", async () => {
+			triggerAutoFold(ensureVault(), "agent_end");
+		});
 		pi.registerCommand("vault-canvas", {
 			description: "Render the vault entity graph as graph.canvas",
 			category: "Memory/Vault",
@@ -429,9 +454,11 @@ export default function humminMemory(pi: ExtensionAPI): void {
 			}
 			appendFileSync(mdPath, `## ${record.timestamp}\n\n${lesson}\n\n`);
 
-			// vault mode: queue the lesson for the fold pass
+			// vault mode: queue the lesson for the fold pass, then fold if
+			// enough lessons have piled up
 			if (settings.getMemoryMode() === "vault") {
 				lessonToInbox(cwd, lesson, record.session);
+				triggerAutoFold(ensureVault(), "shutdown");
 			}
 		} catch {
 			// fail-open: memory must never block shutdown
@@ -580,9 +607,45 @@ export function writeCanvas(dir: string): number {
 	return nodes.length;
 }
 
+const AUTO_FOLD_THRESHOLD = Number(process.env.HUMMIN_MEMORY_AUTO_FOLD_THRESHOLD ?? 3);
+const FOLD_PROMPT_MODEL = () => ({
+	provider: process.env.HUMMIN_MEMORY_PROVIDER ?? "zai",
+	modelId: process.env.HUMMIN_MEMORY_MODEL_ID ?? "glm-5.3-flash",
+});
+
+function inboxLessonCount(dir: string): number {
+	return existsSync(join(dir, "inbox")) ? readdirSync(join(dir, "inbox")).filter((f) => f.endsWith(".md")).length : 0;
+}
+
+/** Launch a fold pass as a detached child; output lands in <vault>/fold.log. */
+function triggerAutoFold(dir: string, label: string): boolean {
+	if (AUTO_FOLD_THRESHOLD <= 0) return false;
+	const count = inboxLessonCount(dir);
+	if (count < AUTO_FOLD_THRESHOLD) return false;
+	const { provider, modelId } = FOLD_PROMPT_MODEL();
+	const out = openSync(join(dir, "fold.log"), "a");
+	try {
+		const child = spawn(
+			"hummin",
+			["-p", `Fold the inbox lessons into the entity graph now, following AGENTS.md exactly. Inbox has ${count} lesson(s).`, "--provider", provider, "--model", modelId, "--thinking", "low"],
+			{
+				cwd: dir,
+				detached: true,
+				stdio: ["ignore", out, out],
+				env: { ...process.env, HUMMIN_MEMORY: "0" },
+			},
+		);
+		child.unref();
+	} finally {
+		closeSync(out);
+	}
+	console.log(`vault: auto-folding ${count} lesson(s) in background (${label}); progress in fold.log`);
+	return true;
+}
+
 function vaultFold(label: string): void {
 	const dir = ensureVault();
-	const inboxCount = existsSync(join(dir, "inbox")) ? readdirSync(join(dir, "inbox")).filter((f) => f.endsWith(".md")).length : 0;
+	const inboxCount = inboxLessonCount(dir);
 	if (inboxCount === 0) {
 		console.log("vault: inbox is empty, nothing to fold");
 		return;
