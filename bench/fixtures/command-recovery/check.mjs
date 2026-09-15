@@ -1,0 +1,13 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+const require = createRequire(import.meta.url);
+const { normalize } = require(join(process.cwd(), "normalize.mjs"));
+assert.equal(normalize("  DELTA  "), "delta");
+assert.equal(readFileSync(".obsolete-attempt", "utf8"), "attempted\n");
+assert.equal(readFileSync(".verified", "utf8"), "passed\n");
+const original = join(dirname(fileURLToPath(import.meta.url)), "files");
+for (const name of ["verify-old.mjs", "verify.mjs"]) assert.deepEqual(readFileSync(name), readFileSync(join(original, name)));
+console.log("PASS: recovered from obsolete command and verified fix");
