@@ -46,7 +46,7 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "trust", description: "Save project trust decision for future sessions", category: "Settings" },
 	{ name: "login", description: "Configure provider authentication", argumentHint: "<provider>", category: "Models" },
 	{ name: "logout", description: "Remove provider authentication", category: "Models" },
-	{ name: "new", description: "Start a new session", category: "Session" },
+	{ name: "clear", description: "Start a new session", category: "Session" },
 	{ name: "compact", description: "Manually compact the session context", category: "Session" },
 	{ name: "resume", description: "Resume a different session", category: "Session" },
 	{

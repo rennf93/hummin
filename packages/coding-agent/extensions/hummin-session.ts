@@ -41,17 +41,6 @@ export default function humminSession(pi: ExtensionAPI): void {
 	pi.on("agent_end", () => {
 		pending.clear();
 	});
-	pi.registerCommand("clear", {
-		description: "Start a fresh session (same as /new; keeps saved history and files)",
-		category: "Session",
-		handler: async (_args, ctx) => {
-			if (!ctx.isIdle()) {
-				ctx.ui.notify("Stop the current response before clearing.", "warning");
-				return;
-			}
-			await ctx.newSession();
-		},
-	});
 	pi.registerCommand("rewind", {
 		description: "Restore tracked edits and/or conversation to an earlier prompt",
 		category: "Session",
