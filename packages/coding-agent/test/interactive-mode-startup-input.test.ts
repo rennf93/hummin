@@ -14,6 +14,7 @@ type SubmitContext = {
 		prompt: (text: string, options?: unknown) => Promise<void>;
 	};
 	flushPendingBashComponents: () => void;
+	rememberPromptHistory: (text: string) => void;
 	onInputCallback?: (text: string) => void;
 	pendingUserInputs: string[];
 };
@@ -37,7 +38,7 @@ type InteractiveModePrivate = {
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrivate;
 
 function createSubmitContext(): SubmitContext {
-	return {
+	const context = {
 		defaultEditor: {},
 		editor: {
 			addToHistory: vi.fn(),
@@ -51,7 +52,9 @@ function createSubmitContext(): SubmitContext {
 		},
 		flushPendingBashComponents: vi.fn(),
 		pendingUserInputs: [],
+		rememberPromptHistory: (text: string) => context.editor.addToHistory?.(text),
 	};
+	return context;
 }
 
 describe("InteractiveMode startup input", () => {

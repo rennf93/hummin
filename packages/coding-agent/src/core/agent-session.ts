@@ -13,8 +13,8 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
-import { readFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type {
 	Agent,
 	AgentContext,
@@ -47,6 +47,7 @@ import {
 	resetApiProviders,
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
+import { getAgentDir } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { sleep } from "../utils/sleep.ts";
@@ -319,6 +320,7 @@ export class AgentSession {
 	private _resolveIdleWait: (() => void) | undefined;
 
 	/** Tracks pending steering messages for UI display. Removed when delivered. */
+	private readonly modelMemoryFile = join(getAgentDir(), "history", "model-memory.json");
 	private _steeringMessages: string[] = [];
 	/** Tracks pending follow-up messages for UI display. Removed when delivered. */
 	private _followUpMessages: string[] = [];
@@ -1668,12 +1670,51 @@ export class AgentSession {
 	// Model Management
 	// =========================================================================
 
+	/**
+	 * Per-project memory of the last used model, so new sessions start where
+	 * the previous one left off. Keyed by cwd in one file under the agent dir.
+	 */
+	private readModelMemory(): Record<string, { provider: string; modelId: string }> {
+		try {
+			const parsed: unknown = JSON.parse(readFileSync(this.modelMemoryFile, "utf8"));
+			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+				return parsed as Record<string, { provider: string; modelId: string }>;
+			}
+		} catch {
+			// Missing or corrupt memory just means nothing to restore.
+		}
+		return {};
+	}
+
+	private rememberModelMemory(model: Model<any>): void {
+		try {
+			const file = this.modelMemoryFile;
+			mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+			const memory = this.readModelMemory();
+			memory[this.sessionManager.getCwd()] = { provider: model.provider, modelId: model.id };
+			writeFileSync(file, JSON.stringify(memory), { mode: 0o600 });
+		} catch {
+			// Best effort.
+		}
+	}
+
+	/** Start this session on the project's last used model, when it is still available. */
+	async restoreRememberedModel(): Promise<void> {
+		const remembered = this.readModelMemory()[this.sessionManager.getCwd()];
+		if (!remembered) return;
+		if (this.model && this.model.provider === remembered.provider && this.model.id === remembered.modelId) return;
+		const restored = this._modelRuntime.getModel(remembered.provider, remembered.modelId);
+		if (!restored || !(await this._modelRuntime.checkAuth(restored.provider).catch(() => false))) return;
+		await this.setModel(restored);
+	}
+
 	private async _emitModelSelect(
 		nextModel: Model<any>,
 		previousModel: Model<any> | undefined,
 		source: "set" | "cycle" | "restore",
 	): Promise<void> {
 		if (modelsAreEqual(previousModel, nextModel)) return;
+		this.rememberModelMemory(nextModel);
 		await this._extensionRunner.emit({
 			type: "model_select",
 			model: nextModel,

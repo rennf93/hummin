@@ -412,6 +412,19 @@ export class Editor implements Component, Focusable {
 	 * Add a prompt to history for up/down arrow navigation.
 	 * Called after successful submission.
 	 */
+	/** Seed the history with prior entries (most recent first). */
+	setHistory(entries: readonly string[]): void {
+		this.history = [];
+		let previous: string | undefined;
+		for (const raw of entries) {
+			const trimmed = raw.trim();
+			if (!trimmed || trimmed === previous) continue;
+			previous = trimmed;
+			this.history.push(trimmed);
+			if (this.history.length >= 100) break;
+		}
+	}
+
 	addToHistory(text: string): void {
 		const trimmed = text.trim();
 		if (!trimmed) return;

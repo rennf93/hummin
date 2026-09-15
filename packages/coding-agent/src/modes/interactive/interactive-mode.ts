@@ -567,6 +567,8 @@ export class InteractiveMode {
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
 		this.editorContainer.addChild(this.editor as Component);
+		this.loadPromptHistory();
+		void this.session.restoreRememberedModel().catch(() => {});
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
@@ -3156,7 +3158,7 @@ export class InteractiveMode {
 						this.editor.setText(text);
 						return;
 					}
-					this.editor.addToHistory?.(text);
+					this.rememberPromptHistory(text);
 					await this.handleBashCommand(command, isExcluded);
 					this.isBashMode = false;
 					this.updateEditorBorderColor();
@@ -3167,7 +3169,7 @@ export class InteractiveMode {
 			// Queue input during compaction (extension commands execute immediately)
 			if (this.session.isCompacting) {
 				if (this.isExtensionCommand(text)) {
-					this.editor.addToHistory?.(text);
+					this.rememberPromptHistory(text);
 					this.editor.setText("");
 					await this.session.prompt(text);
 				} else {
@@ -3179,7 +3181,7 @@ export class InteractiveMode {
 			// If streaming, submit per the streamingSubmitMode setting
 			// This handles extension commands (execute immediately), prompt template expansion, and queueing
 			if (this.session.isStreaming) {
-				this.editor.addToHistory?.(text);
+				this.rememberPromptHistory(text);
 				this.editor.setText("");
 				const streamingSubmitMode = this.settingsManager.getStreamingSubmitMode();
 				await this.session.prompt(text, { streamingBehavior: streamingSubmitMode });
@@ -3201,7 +3203,7 @@ export class InteractiveMode {
 			} else {
 				this.pendingUserInputs.push(text);
 			}
-			this.editor.addToHistory?.(text);
+			this.rememberPromptHistory(text);
 		};
 	}
 
@@ -3708,7 +3710,7 @@ export class InteractiveMode {
 						this.chatContainer.addChild(userComponent);
 					}
 					if (options?.populateHistory) {
-						this.editor.addToHistory?.(textContent);
+						this.rememberPromptHistory(textContent);
 					}
 				}
 				break;
@@ -4181,7 +4183,7 @@ export class InteractiveMode {
 		// Queue input during compaction (extension commands execute immediately)
 		if (this.session.isCompacting) {
 			if (this.isExtensionCommand(text)) {
-				this.editor.addToHistory?.(text);
+				this.rememberPromptHistory(text);
 				this.editor.setText("");
 				await this.session.prompt(text);
 			} else {
@@ -4193,7 +4195,7 @@ export class InteractiveMode {
 		// Alt+Enter queues a follow-up message (waits until agent finishes)
 		// This handles extension commands (execute immediately), prompt template expansion, and queueing
 		if (this.session.isStreaming) {
-			this.editor.addToHistory?.(text);
+			this.rememberPromptHistory(text);
 			this.editor.setText("");
 			await this.session.prompt(text, { streamingBehavior: "followUp" });
 			this.updatePendingMessagesDisplay();
@@ -4485,7 +4487,7 @@ export class InteractiveMode {
 
 	private queueCompactionMessage(text: string, mode: "steer" | "followUp"): void {
 		this.compactionQueuedMessages.push({ text, mode });
-		this.editor.addToHistory?.(text);
+		this.rememberPromptHistory(text);
 		this.editor.setText("");
 		this.updatePendingMessagesDisplay();
 		this.showStatus("Queued message for after compaction");
@@ -5219,6 +5221,49 @@ export class InteractiveMode {
 				},
 			};
 		});
+	}
+
+	/**
+	 * Prompt history persists across sessions per project (cwd), stored under
+	 * the agent directory so project dirs stay clean. Newest entries first.
+	 */
+	private promptHistoryFile = path.join(
+		getAgentDir(),
+		"history",
+		`${crypto.createHash("sha256").update(this.sessionManager.getCwd()).digest("hex").slice(0, 16)}.json`,
+	);
+
+	private loadPromptHistory(): void {
+		try {
+			const file = this.promptHistoryFile;
+			if (!fs.existsSync(file)) return;
+			const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+			if (!Array.isArray(parsed)) return;
+			const entries = parsed.filter((entry): entry is string => typeof entry === "string");
+			this.defaultEditor.setHistory(entries);
+		} catch {
+			// Corrupt or unreadable history is not worth reporting.
+		}
+	}
+
+	private rememberPromptHistory(text: string): void {
+		const trimmed = text.trim();
+		this.rememberPromptHistory(text);
+		if (!trimmed) return;
+		try {
+			const file = this.promptHistoryFile;
+			fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+			let entries: string[] = [];
+			if (fs.existsSync(file)) {
+				const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+				if (Array.isArray(parsed)) entries = parsed.filter((entry): entry is string => typeof entry === "string");
+			}
+			if (entries[0] === trimmed) return;
+			entries = [trimmed, ...entries.filter((entry) => entry !== trimmed)].slice(0, 500);
+			fs.writeFileSync(file, JSON.stringify(entries), { mode: 0o600 });
+		} catch {
+			// Best effort persistence.
+		}
 	}
 
 	private showQueueManager(): void {
@@ -6581,6 +6626,7 @@ export class InteractiveMode {
 			}
 			this.chatContainer.addChild(new Spacer(1));
 			this.chatContainer.addChild(new Text(`${theme.fg("accent", "✓ New session started")}`, 1, 1));
+			void this.session.restoreRememberedModel().catch(() => {});
 			this.ui.requestRender();
 		} catch (error: unknown) {
 			await this.handleFatalRuntimeError("Failed to create session", error);
