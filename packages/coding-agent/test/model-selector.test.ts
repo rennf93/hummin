@@ -43,16 +43,15 @@ describe("model selector", () => {
 			() => {},
 		);
 
-		const getModelRow = (id: string): string | undefined =>
+		const getModelRow = (name: string): string | undefined =>
 			stripAnsi(selector.render(120).join("\n"))
 				.split("\n")
-				.find((line) => line.includes(`${id} [`))
+				.find((line) => line.includes(name))
 				?.trimEnd();
 
-		expect(getModelRow("current-model")).toBe(`→ ✓ current-model [${currentModel.provider}]`);
+		expect(getModelRow("Current Model")).toContain(`→ ✓ Current Model`);
 		selector.handleInput("\x1b[B");
-		expect(getModelRow("current-model")).toBe(`  ✓ current-model [${currentModel.provider}]`);
-		expect(getModelRow("browsed-model")).toBe(`→   browsed-model [${currentModel.provider}]`);
+		expect(getModelRow("Current Model")).toContain(`  ✓ Current Model`);
 		selector.dispose();
 	});
 

@@ -19,7 +19,12 @@ import { keyDisplayText, keyHint } from "./keybinding-hints.ts";
 interface ModelItem {
 	provider: string;
 	id: string;
-	model: Model<any>;
+	model: Model<any> & HumminModelMetadata;
+}
+
+interface HumminModelMetadata {
+	humminHost?: string;
+	humminOffline?: boolean;
 }
 
 interface ScopedModelItem {
@@ -162,7 +167,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		const models = this.modelRuntime.getAvailableSnapshot().map((model: Model<any>) => ({
 			provider: model.provider,
 			id: model.id,
-			model,
+			model: model as Model<any> & HumminModelMetadata,
 		}));
 		this.allModels = this.sortModels(models);
 		this.scopedModels = this.scopedModels.map((scoped) => {
@@ -172,7 +177,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.scopedModelItems = this.scopedModels.map((scoped) => ({
 			provider: scoped.model.provider,
 			id: scoped.model.id,
-			model: scoped.model,
+			model: scoped.model as Model<any> & HumminModelMetadata,
 		}));
 		this.activeModels = this.scope === "scoped" ? this.scopedModelItems : this.allModels;
 		this.filteredModels = this.activeModels;
@@ -327,6 +332,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			const isSelected = i === this.selectedIndex;
 			const isCurrent = modelsAreEqual(this.currentModel, item.model);
 			const isDefault = this.isDefaultModel(item.model);
+			const isOffline = item.model.humminOffline === true;
 			const defaultBadge = isDefault ? theme.fg("muted", " · default") : "";
 
 			const cursor = isSelected ? theme.fg("accent", "→ ") : "  ";
@@ -334,7 +340,11 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			// Rows show the human name when one exists (the colibri extension
 			// puts engine + format there); the id stays in the search text.
 			const rowLabel = item.model.name && item.model.name !== item.id ? item.model.name : item.id;
-			const modelText = isSelected ? theme.fg("accent", rowLabel) : rowLabel;
+			const modelText = isOffline
+				? theme.fg("muted", rowLabel)
+				: isSelected
+					? theme.fg("accent", rowLabel)
+					: rowLabel;
 			const providerName = this.modelRuntime.getProvider(item.provider)?.name ?? item.provider;
 			const providerBadge = theme.fg("muted", `[${providerName}]`);
 			const ctx = item.model.contextWindow;

@@ -40,13 +40,14 @@ import {
 	createAssistantMessageEventStream,
 	createProvider,
 	envApiKeyAuth,
-	openAICompletionsApi,
 	type ApiKeyAuth,
 	type AssistantMessage,
 	type AssistantMessageEventStream,
 	type Model,
 } from "@earendil-works/pi-ai";
-import { getAgentDir, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+type FleetServerSettings = ReturnType<SettingsManager["getFleetServers"]>[number];
 
 const MAX_BUSY_RETRIES = 5;
 const BUSY_BASE_DELAY_MS = 2000;
@@ -58,10 +59,59 @@ interface ColibriModelInfo {
 	id: string;
 }
 
-function parseInstances(): string[] {
-	// Settings first-class (hummin init), env overrides, documented dev default last.
+/** Metadata consumed by the interactive model picker. Kept outside pi-ai's
+ * shared Model type so this fork does not alter the upstream API. */
+interface HumminModelMetadata {
+	humminHost?: string;
+	humminOffline?: boolean;
+}
+
+interface InstanceConfig {
+	id: string;
+	baseUrl: string;
+	host: string;
+	hostLabel: string;
+	port: number;
+	engine: "colibri" | "llamacpp";
+	models?: Array<{ id: string; contextWindow: number }>;
+}
+
+const DISPLAY_NAMES: Record<string, string> = {
+	"qwen3.8-27b": "Qwen 3.8 27B",
+	"glm-5.3-flash": "GLM 5.3 Flash",
+	"glm-5.3": "GLM 5.3",
+	"kimi-k3": "Kimi K3",
+	"glm-5.3-flash-colibri": "GLM 5.3 Flash (int4)",
+};
+const displayName = (modelId: string): string => DISPLAY_NAMES[modelId] ?? modelId;
+
+function instanceConfigs(): InstanceConfig[] {
 	const settings = SettingsManager.create(process.cwd());
-	return settings.getColibriInstances();
+	const fleet = typeof settings.getFleetServers === "function" ? settings.getFleetServers() : [];
+	const env = process.env.HUMMIN_COLIBRI_INSTANCES?.trim();
+	if (env) {
+		return env.split(",").map((value) => value.trim()).filter(Boolean).map((baseUrl) => {
+			const url = new URL(baseUrl);
+			return { id: baseUrl, baseUrl, host: url.hostname, hostLabel: url.hostname, port: instancePort(baseUrl), engine: "llamacpp" };
+		});
+	}
+	if (fleet.length > 0) return fleet.map((server) => configFromFleet(server));
+	return settings.getColibriInstances().map((baseUrl) => {
+		const url = new URL(baseUrl);
+		return { id: baseUrl, baseUrl, host: url.hostname, hostLabel: url.hostname, port: instancePort(baseUrl), engine: "llamacpp" };
+	});
+}
+
+function configFromFleet(server: FleetServerSettings): InstanceConfig {
+	return {
+		id: server.id,
+		baseUrl: `http://${server.hostIp}:${server.port}`,
+		host: server.hostIp,
+		hostLabel: server.host ?? server.hostIp,
+		port: server.port,
+		engine: server.engine ?? "llamacpp",
+		models: server.models,
+	};
 }
 
 async function fetchModels(baseUrl: string, apiKey: string | undefined): Promise<string[]> {
@@ -146,6 +196,21 @@ function retrying(streamFactory: () => AssistantMessageEventStream): AssistantMe
 	return events;
 }
 
+// Keep the server mutex held until the complete stream is consumed. Returning
+// a stream from the mutex callback would release it immediately and allow two
+// generations to overlap on the same local server.
+function serializedStream(
+	mutex: <T>(task: () => Promise<T>) => Promise<T>,
+	streamFactory: () => AssistantMessageEventStream,
+): AssistantMessageEventStream {
+	const events = createAssistantMessageEventStream();
+	void mutex(async () => {
+		for await (const event of retrying(streamFactory)) events.push(event);
+		return undefined;
+	});
+	return events;
+}
+
 const colibriAuth = (): ApiKeyAuth => ({
 	...envApiKeyAuth("Colibri API key", ["COLI_API_KEY"]),
 	// Keyless LAN instances are always configured: resolve falls back to a
@@ -166,42 +231,6 @@ function isQwenFamily(modelId: string): boolean {
 // Per-engine, per-host providers: the footer and picker badges must say
 // WHICH engine (colibri container vs unsloth/llama.cpp GGUF) and WHICH host
 // (Mac/NAS) serves a model - a single "colibri" provider hid both.
-const HOST_LABELS: Record<string, string> = {
-	"192.168.50.111": "NAS",
-	"192.168.50.199": "Mac",
-};
-
-function engineFor(host: string, port: number): "colibri" | "llamacpp" {
-	if (host === "192.168.50.111" && port === 9998) return "colibri";
-	if (host === "192.168.50.199" && port === 9997) return "colibri";
-	return "llamacpp";
-}
-
-function parseHost(baseUrl: string): string {
-	try {
-		return new URL(baseUrl).hostname;
-	} catch {
-		return "";
-	}
-}
-
-// Staged-model catalog: models OUR servers serve, kept visible in the picker
-// even while their server is off (the fleet is on-demand). Only applies to
-// the LAN hosts and only fills models discovery did not already return, so a
-// live server's real /v1/models always wins. Aliases must match what the
-// servers advertise (--alias flags and colibri's model ids).
-const LAN_HOSTS = new Set(["192.168.50.111", "192.168.50.199"]);
-const MODEL_CATALOG: Array<{ id: string; host: string; port: number; contextWindow: number }> = [
-	{ id: "qwen3.8-27b", host: "192.168.50.199", port: 9998, contextWindow: 131072 },  // Mac llama.cpp
-	{ id: "qwen3.8-27b", host: "192.168.50.111", port: 9996, contextWindow: 262144 },  // NAS llama.cpp
-	{ id: "glm-5.3-flash-colibri", host: "192.168.50.111", port: 9998, contextWindow: 32768 }, // NAS colibri
-	{ id: "glm-5.3-flash-colibri", host: "192.168.50.199", port: 9997, contextWindow: 32768 }, // Mac colibri (staged)
-	{ id: "glm-5.3-flash", host: "192.168.50.199", port: 9995, contextWindow: 65536 },  // Mac unsloth fork
-	{ id: "glm-5.3-flash", host: "192.168.50.111", port: 9995, contextWindow: 262144 }, // NAS unsloth fork
-	{ id: "glm-5.3", host: "192.168.50.111", port: 9994, contextWindow: 262144 },       // NAS unsloth fork
-	{ id: "kimi-k3", host: "192.168.50.111", port: 9993, contextWindow: 1048576 },      // NAS unsloth fork
-];
-
 function instancePort(baseUrl: string): number {
 	const match = baseUrl.match(/:(\d+)\/?$/);
 	return match ? Number(match[1]) : 0;
@@ -210,24 +239,12 @@ function instancePort(baseUrl: string): number {
 // Picker display names: id stays the stable identifier, the name says what
 // actually serves it (engine + format), because "[colibri]" is the provider
 // label for all of them and tells the user nothing about the model itself.
-const DISPLAY_NAMES: Record<string, string> = {
-	"qwen3.8-27b": "Qwen 3.8 27B",
-	"glm-5.3-flash": "GLM 5.3 Flash",
-	"glm-5.3": "GLM 5.3",
-	"kimi-k3": "Kimi K3",
-	"glm-5.3-flash-colibri": "GLM 5.3 Flash (int4)",
-};
-
-function displayName(modelId: string): string {
-	return DISPLAY_NAMES[modelId] ?? modelId;
-}
-
 export default async function colibriExtension(pi: ExtensionAPI): Promise<void> {
-	const instances = parseInstances();
+	const configs = instanceConfigs();
+	const instances = configs.map((config) => config.baseUrl);
 	if (instances.length === 0) {
 		return;
 	}
-	const contextWindow = Number(process.env.HUMMIN_COLIBRI_CTX ?? 16384);
 
 	// Per-instance model discovery: no cross-host dedupe - each host is a
 	// distinct, explicitly selectable endpoint (engine + host are visible).
@@ -238,6 +255,7 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 		port: number;
 		engine: "colibri" | "llamacpp";
 		contextWindow: number;
+		offline: boolean;
 	}> = [];
 	const discovered = await Promise.allSettled(
 		instances.map(async (baseUrl) => {
@@ -245,13 +263,13 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 				fetchModels(baseUrl, process.env.COLI_API_KEY),
 				fetchContextWindow(baseUrl, process.env.COLI_API_KEY),
 			]);
-			return { baseUrl, ids, contextWindow };
+			return { baseUrl, ids, contextWindow: contextWindow ?? Number(process.env.HUMMIN_COLIBRI_CTX ?? 16384) };
 		}),
 	);
 	const instanceMeta = new Map(
 		instances.map((baseUrl) => {
-			const host = parseHost(baseUrl);
-			return [baseUrl, { host, port: instancePort(baseUrl), engine: engineFor(host, instancePort(baseUrl)) }];
+			const config = configs.find((entry) => entry.baseUrl === baseUrl)!;
+			return [baseUrl, config];
 		}),
 	);
 	for (const result of discovered) {
@@ -261,38 +279,30 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 			serving.push({
 				modelId,
 				baseUrl: result.value.baseUrl,
-				host: meta.host,
+				host: meta.hostLabel,
 				port: meta.port,
 				engine: meta.engine,
 				contextWindow: result.value.contextWindow,
+				offline: false,
 			});
 		}
 	}
-	// Catalog fill-in: staged-but-off servers still get their known models
+	// Catalog fill-in: staged-but-off servers still get their configured models
 	// listed (with their known context window until the server comes up and a
 	// fresh session reads /props). Generation against an off server fails
 	// with connection refused - start it from the menubar.
-	for (const entry of MODEL_CATALOG) {
-		const already = serving.some(
-			(entry2) => entry2.modelId === entry.id && entry2.host === entry.host && entry2.port === entry.port,
-		);
-		if (already) continue;
-		const baseUrl = instances.find((url) => {
-			try {
-				const hostname = new URL(url).hostname;
-				return LAN_HOSTS.has(hostname) && hostname === entry.host && instancePort(url) === entry.port;
-			} catch {
-				return false;
-			}
-		});
-		if (baseUrl) {
+	for (const config of configs) {
+		for (const entry of config.models ?? []) {
+			const already = serving.some((entry2) => entry2.modelId === entry.id && entry2.baseUrl === config.baseUrl);
+			if (already) continue;
 			serving.push({
 				modelId: entry.id,
-				baseUrl,
-				host: entry.host,
-				port: entry.port,
-				engine: engineFor(entry.host, entry.port),
+				baseUrl: config.baseUrl,
+				host: config.hostLabel,
+				port: config.port,
+				engine: config.engine,
 				contextWindow: entry.contextWindow,
+				offline: true,
 			});
 		}
 	}
@@ -320,7 +330,7 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 		{ engine: string; host: string; entries: typeof serving }
 	>();
 	for (const entry of serving) {
-		const key = `${entry.engine}-${entry.host}`;
+		const key = `${entry.engine}-${entry.host}-${entry.port}`;
 		let group = groups.get(key);
 		if (!group) {
 			group = { engine: entry.engine, host: entry.host, entries: [] };
@@ -330,12 +340,12 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 	}
 
 	for (const [key, group] of groups) {
-		const hostLabel = HOST_LABELS[group.host] ?? group.host;
-		const providerId = `${group.engine}-${hostLabel.toLowerCase()}`;
-		const providerName = `${ENGINE_NAMES[group.engine]} - ${hostLabel}`;
+		const hostLabel = group.host;
+		const providerId = `${group.engine}-${hostLabel.toLowerCase()}-${group.entries[0]!.port}`;
+		const providerName = `${ENGINE_NAMES[group.engine]} - ${hostLabel}:${group.entries[0]!.port}`;
 		const models: Model<"openai-completions">[] = group.entries.map((entry) => ({
 			id: entry.modelId,
-			name: displayName(entry.modelId),
+			name: `${displayName(entry.modelId)} [${hostLabel}]${entry.offline ? " (offline - start from menubar)" : ""}`,
 			api: "openai-completions",
 			provider: providerId,
 			baseUrl: `${entry.baseUrl}/v1`,
@@ -351,7 +361,11 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 				maxTokensField: "max_tokens",
 				...(isQwenFamily(entry.modelId) ? { thinkingFormat: "qwen-chat-template" as const } : {}),
 			},
-		}));
+			// The picker uses these optional fields for styling. They survive the
+			// provider/model runtime because models are passed by reference.
+			humminHost: hostLabel,
+			humminOffline: entry.offline,
+		} as Model<"openai-completions"> & HumminModelMetadata));
 		const provider = createProvider({
 			id: providerId,
 			name: providerName,
@@ -360,9 +374,9 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 			models,
 			api: {
 				stream: (model, context, options) =>
-					mutexFor(model.baseUrl)(() => Promise.resolve(retrying(() => base.stream(model, context, options)))),
+					serializedStream(mutexFor(model.baseUrl), () => base.stream(model, context, options)),
 				streamSimple: (model, context, options) =>
-					mutexFor(model.baseUrl)(() => Promise.resolve(retrying(() => base.streamSimple(model, context, options)))),
+					serializedStream(mutexFor(model.baseUrl), () => base.streamSimple(model, context, options)),
 			},
 		});
 		pi.registerProvider(provider);
