@@ -13,6 +13,7 @@ export interface SelectItem {
 	value: string;
 	label: string;
 	description?: string;
+	category?: string;
 }
 
 export interface SelectListTheme {
@@ -87,9 +88,21 @@ export class SelectList implements Component {
 		const { startIndex, endIndex } = this.getVisibleRange();
 
 		// Render visible items
+		let previousCategory: string | undefined;
+		if (startIndex > 0) previousCategory = this.filteredItems[startIndex - 1]?.category;
 		for (let i = startIndex; i < endIndex; i++) {
 			const item = this.filteredItems[i];
 			if (!item) continue;
+			if (
+				this.hasCategories() &&
+				this.maxVisible > 1 &&
+				item.category &&
+				item.category !== previousCategory &&
+				lines.length < this.maxVisible
+			) {
+				lines.push(this.theme.description(`  ${item.category}`));
+			}
+			previousCategory = item.category;
 
 			const isSelected = i === this.selectedIndex;
 			const descriptionSingleLine = item.description ? normalizeToSingleLine(item.description) : undefined;
@@ -97,7 +110,7 @@ export class SelectList implements Component {
 		}
 
 		// Add scroll indicators if needed
-		if (startIndex > 0 || endIndex < this.filteredItems.length) {
+		if ((startIndex > 0 || endIndex < this.filteredItems.length) && lines.length < this.maxVisible) {
 			const scrollText = `  (${this.selectedIndex + 1}/${this.filteredItems.length})`;
 			// Truncate if too long for terminal
 			lines.push(this.theme.scrollInfo(truncateToWidth(scrollText, width - 2, "")));
@@ -118,8 +131,8 @@ export class SelectList implements Component {
 		// Hover must not change selection: the visible range is centered on it.
 		if (event.button !== "left" || (event.type !== "press" && event.type !== "click")) return undefined;
 		const { startIndex, endIndex } = this.getVisibleRange();
-		const itemIndex = startIndex + event.y;
-		if (itemIndex < startIndex || itemIndex >= endIndex) return undefined;
+		const itemIndex = this.itemIndexAtRow(event.y, startIndex, endIndex);
+		if (itemIndex === undefined) return undefined;
 
 		if (event.type === "press") {
 			this.mousePressedIndex = itemIndex;
@@ -170,14 +183,70 @@ export class SelectList implements Component {
 	}
 
 	private getVisibleRange(): { startIndex: number; endIndex: number } {
-		const startIndex = Math.max(
+		if (!this.hasCategories()) {
+			const startIndex = Math.max(
+				0,
+				Math.min(this.selectedIndex - Math.floor(this.maxVisible / 2), this.filteredItems.length - this.maxVisible),
+			);
+			return { startIndex, endIndex: Math.min(startIndex + this.maxVisible, this.filteredItems.length) };
+		}
+		let startIndex = Math.max(
 			0,
-			Math.min(this.selectedIndex - Math.floor(this.maxVisible / 2), this.filteredItems.length - this.maxVisible),
+			Math.min(this.selectedIndex - Math.floor(this.maxVisible / 2), this.filteredItems.length - 1),
 		);
+		let endIndex = Math.min(startIndex + this.maxVisible, this.filteredItems.length);
+		while (startIndex < this.selectedIndex && this.renderedLineCount(startIndex, endIndex) > this.maxVisible)
+			startIndex++;
+		while (endIndex > this.selectedIndex + 1 && this.renderedLineCount(startIndex, endIndex) > this.maxVisible)
+			endIndex--;
+		while (startIndex > 0 && this.renderedLineCount(startIndex - 1, endIndex) <= this.maxVisible) startIndex--;
+		while (
+			endIndex < this.filteredItems.length &&
+			this.renderedLineCount(startIndex, endIndex + 1) <= this.maxVisible
+		)
+			endIndex++;
 		return {
 			startIndex,
-			endIndex: Math.min(startIndex + this.maxVisible, this.filteredItems.length),
+			endIndex,
 		};
+	}
+
+	private renderedLineCount(startIndex: number, endIndex: number): number {
+		let count = 0;
+		let previousCategory: string | undefined =
+			startIndex > 0 ? this.filteredItems[startIndex - 1]?.category : undefined;
+		for (let i = startIndex; i < endIndex; i++) {
+			const category = this.filteredItems[i]?.category;
+			if (this.maxVisible > 1 && category && category !== previousCategory) count++;
+			count++;
+			previousCategory = category;
+		}
+		return count;
+	}
+
+	private itemIndexAtRow(row: number, startIndex: number, endIndex: number): number | undefined {
+		let renderedRow = 0;
+		let previousCategory: string | undefined =
+			startIndex > 0 ? this.filteredItems[startIndex - 1]?.category : undefined;
+		for (let i = startIndex; i < endIndex; i++) {
+			const category = this.filteredItems[i]?.category;
+			if (
+				this.hasCategories() &&
+				this.maxVisible > 1 &&
+				category &&
+				category !== previousCategory &&
+				renderedRow < this.maxVisible
+			)
+				renderedRow++;
+			if (renderedRow === row) return i;
+			renderedRow++;
+			previousCategory = category;
+		}
+		return undefined;
+	}
+
+	private hasCategories(): boolean {
+		return this.filteredItems.some((item) => item.category !== undefined);
 	}
 
 	private renderItem(

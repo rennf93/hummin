@@ -321,6 +321,8 @@ export interface ExtensionContext {
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
 	model: Model<any> | undefined;
+	/** Loaded extension module paths, for diagnostics. */
+	getExtensionPaths?: () => readonly string[];
 	/** Models scoped to this session (resolved from `--models` /
 	 *  `enabledModels` settings against the available catalogue). Same set
 	 *  the `/scoped-models` command shows. Empty when no scoping is
@@ -1230,6 +1232,8 @@ export interface RegisteredCommand {
 	name: string;
 	sourceInfo: SourceInfo;
 	description?: string;
+	/** Optional category shown in the slash-command autocomplete menu. */
+	category?: string;
 	getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;
 	handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 }

@@ -8,36 +8,51 @@ export interface SlashCommandInfo {
 	description?: string;
 	source: SlashCommandSource;
 	sourceInfo: SourceInfo;
+	category?: string;
 }
 
 export interface BuiltinSlashCommand {
 	name: string;
 	description: string;
 	argumentHint?: string;
+	category?: string;
 }
 
 export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
-	{ name: "settings", description: "Open settings menu" },
-	{ name: "model", description: "Select model (opens selector UI)", argumentHint: "<provider/model>" },
-	{ name: "tree", description: "Navigate session tree (switch branches)" },
-	{ name: "thinking", description: "Set thinking level", argumentHint: "<level>" },
-	{ name: "scoped-models", description: "Enable/disable models for Ctrl+P cycling" },
-	{ name: "export", description: "Export session (HTML default, or specify path: .html/.jsonl)" },
-	{ name: "import", description: "Import and resume a session from a JSONL file" },
-	{ name: "share", description: "Share session as a secret GitHub gist" },
-	{ name: "copy", description: "Copy last agent message to clipboard" },
-	{ name: "name", description: "Set session display name" },
-	{ name: "session", description: "Show session info and stats" },
-	{ name: "changelog", description: "Show changelog entries" },
-	{ name: "hotkeys", description: "Show all keyboard shortcuts" },
-	{ name: "fork", description: "Create a new fork from a previous user message" },
-	{ name: "clone", description: "Duplicate the current session at the current position" },
-	{ name: "trust", description: "Save project trust decision for future sessions" },
-	{ name: "login", description: "Configure provider authentication", argumentHint: "<provider>" },
-	{ name: "logout", description: "Remove provider authentication" },
-	{ name: "new", description: "Start a new session" },
-	{ name: "compact", description: "Manually compact the session context" },
-	{ name: "resume", description: "Resume a different session" },
-	{ name: "reload", description: "Reload keybindings, extensions, skills, prompts, themes, and context files" },
-	{ name: "quit", description: `Quit ${APP_NAME}` },
+	{ name: "settings", description: "Open settings menu", category: "Settings" },
+	{
+		name: "model",
+		description: "Select model (opens selector UI)",
+		argumentHint: "<provider/model>",
+		category: "Models",
+	},
+	{ name: "tree", description: "Navigate session tree (switch branches)", category: "Session" },
+	{ name: "thinking", description: "Set thinking level", argumentHint: "<level>", category: "Models" },
+	{ name: "scoped-models", description: "Enable/disable models for Ctrl+P cycling", category: "Models" },
+	{
+		name: "export",
+		description: "Export session (Markdown default, or specify path: .md/.html/.jsonl)",
+		category: "Session",
+	},
+	{ name: "import", description: "Import and resume a session from a JSONL file", category: "Session" },
+	{ name: "share", description: "Share session as a secret GitHub gist", category: "Tools" },
+	{ name: "copy", description: "Copy last agent message to clipboard", category: "Tools" },
+	{ name: "name", description: "Set session display name", category: "Session" },
+	{ name: "session", description: "Show session info and stats", category: "Session" },
+	{ name: "changelog", description: "Show changelog entries", category: "Tools" },
+	{ name: "hotkeys", description: "Show all keyboard shortcuts", category: "Settings" },
+	{ name: "fork", description: "Create a new fork from a previous user message", category: "Session" },
+	{ name: "clone", description: "Duplicate the current session at the current position", category: "Session" },
+	{ name: "trust", description: "Save project trust decision for future sessions", category: "Settings" },
+	{ name: "login", description: "Configure provider authentication", argumentHint: "<provider>", category: "Models" },
+	{ name: "logout", description: "Remove provider authentication", category: "Models" },
+	{ name: "new", description: "Start a new session", category: "Session" },
+	{ name: "compact", description: "Manually compact the session context", category: "Session" },
+	{ name: "resume", description: "Resume a different session", category: "Session" },
+	{
+		name: "reload",
+		description: "Reload keybindings, extensions, skills, prompts, themes, and context files",
+		category: "Settings",
+	},
+	{ name: "quit", description: `Quit ${APP_NAME}`, category: "Session" },
 ];

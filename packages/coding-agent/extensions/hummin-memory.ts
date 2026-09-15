@@ -23,7 +23,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, appendFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, appendFileSync, writeFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -144,8 +144,8 @@ function markProcessed(sessionFile: string): void {
 		state.processed[sessionFile] = new Date().toISOString();
 		// atomic tmp+replace (vexa-bridge pattern)
 		writeFileSync(statePath() + ".tmp", JSON.stringify(state, null, 1));
-		// node has no atomic rename flag here; rename is atomic on POSIX
-		import("node:fs").then((fs) => fs.renameSync(statePath() + ".tmp", statePath()));
+		// rename is atomic on POSIX
+		renameSync(statePath() + ".tmp", statePath());
 	} catch {
 		// fail-open: bookkeeping must never break shutdown
 	}
@@ -218,23 +218,115 @@ export function recallLessons(cwd: string, query: string): string[] {
 	return scored.slice(0, RETRIEVAL_MAX_LESSONS).map((entry) => entry.lesson);
 }
 
+/** Write a user quick-capture note, choosing a suffix if the timestamp repeats. */
+export function writeQuickCapture(vault: string, cwd: string, text: string, now = new Date()): string {
+	const inbox = join(vault, "inbox");
+	mkdirSync(inbox, { recursive: true });
+	const stamp = now.toISOString().replace(/[:.]/g, "-");
+	const body = `---\ntype: note\ndate: ${JSON.stringify(now.toISOString())}\nproject: ${JSON.stringify(cwd)}\n---\n\n${text}\n`;
+	for (let suffix = 0; ; suffix++) {
+		const filename = `note-${stamp}${suffix === 0 ? "" : `-${suffix}`}.md`;
+		const path = join(inbox, filename);
+		try {
+			writeFileSync(path, body, { flag: "wx" });
+			return path;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+		}
+	}
+}
+
+function countMarkdownFiles(dir: string): number {
+	if (!existsSync(dir)) return 0;
+	let count = 0;
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		const path = join(dir, entry.name);
+		if (entry.isDirectory()) count += countMarkdownFiles(path);
+		else if (entry.isFile() && entry.name.endsWith(".md")) count++;
+	}
+	return count;
+}
+
+export interface MemoryDashboard {
+	enabled: boolean;
+	mode: string;
+	vault: string;
+	entities: Record<string, number>;
+	inbox: number;
+	processed: number;
+	log: string[];
+}
+
+export function getMemoryDashboard(settings: SettingsManager | undefined = cachedSettings): MemoryDashboard {
+	const dir = vaultDir(settings);
+	const entities: Record<string, number> = {};
+	for (const type of ["project", "concept", "decision", "gotcha", "tool", "person"]) {
+		entities[type] = countMarkdownFiles(join(dir, "entities", type));
+	}
+	let log: string[] = [];
+	try {
+		log = readFileSync(join(dir, "log.md"), "utf8").split("\n").filter((line) => line.startsWith("- ")).slice(-3).reverse();
+	} catch {
+		// A missing log is an empty vault, not an error.
+	}
+	return {
+		enabled: settings?.getMemoryEnabled() ?? process.env.HUMMIN_MEMORY === "1",
+		mode: settings?.getMemoryMode() ?? process.env.HUMMIN_MEMORY_MODE ?? "lessons",
+		vault: dir,
+		entities,
+		inbox: countMarkdownFiles(join(dir, "inbox")),
+		processed: countMarkdownFiles(join(dir, "processed")),
+		log,
+	};
+}
+
+function dashboardText(dashboard: MemoryDashboard): string {
+	const entityCount = Object.values(dashboard.entities).reduce((sum, count) => sum + count, 0);
+	const byType = Object.entries(dashboard.entities).filter(([, count]) => count > 0).map(([type, count]) => `${type} ${count}`).join(", ") || "none";
+	const recent = dashboard.log.length > 0 ? `\nRecent folds:\n${dashboard.log.join("\n")}` : "";
+	return `memory: ${dashboard.enabled ? "on" : "off"} (${dashboard.mode})\nvault: ${dashboard.vault}\nentities: ${entityCount} (${byType})\ninbox: ${dashboard.inbox} | processed: ${dashboard.processed}${recent}`;
+}
+
 let cachedSettings: SettingsManager | undefined;
 
 export default function humminMemory(pi: ExtensionAPI): void {
 	const settings = SettingsManager.create(process.cwd());
 	cachedSettings = settings;
-	if (!settings.getMemoryEnabled()) {
-		return;
-	}
+	pi.registerCommand("memory", {
+		description: "Show memory and vault status",
+		category: "Memory/Vault",
+		handler: async (_args, ctx) => {
+			try {
+				ctx.ui.notify(dashboardText(getMemoryDashboard(settings)), "info");
+			} catch (error) {
+				ctx.ui.notify(`memory: unable to read dashboard (${error instanceof Error ? error.message : String(error)})`, "error");
+			}
+		},
+	});
+	if (!settings.getMemoryEnabled()) return;
+
+	pi.on("input", async (event, ctx) => {
+		if (!event.text.startsWith("# ")) return { action: "continue" as const };
+		if (!settings.getMemoryEnabled()) return { action: "continue" as const };
+		try {
+			const path = writeQuickCapture(settings.getMemoryVaultDir(), ctx.cwd, event.text.slice(2));
+			ctx.ui.notify(`captured to vault inbox: ${path}`, "info");
+		} catch (error) {
+			ctx.ui.notify(`memory: quick capture failed (${error instanceof Error ? error.message : String(error)})`, "error");
+		}
+		return { action: "handled" as const };
+	});
 
 	if (settings.getMemoryMode() === "vault") {
 		ensureVault();
 		pi.registerCommand("vault-fold", {
 			description: "Fold inbox lessons into the vault entity graph",
+			category: "Memory/Vault",
 			handler: async () => vaultFold("command"),
 		});
 		pi.registerCommand("vault-canvas", {
 			description: "Render the vault entity graph as graph.canvas",
+			category: "Memory/Vault",
 			handler: async (_args, ctx) => {
 				const dir = ensureVault();
 				const count = writeCanvas(dir);
@@ -246,6 +338,7 @@ export default function humminMemory(pi: ExtensionAPI): void {
 		});
 		pi.registerCommand("vault-recall", {
 			description: "Search vault entities",
+			category: "Memory/Vault",
 			handler: async (args, ctx) => {
 				const query = (args ?? "").trim().toLowerCase();
 				if (!query) {
@@ -284,7 +377,6 @@ export default function humminMemory(pi: ExtensionAPI): void {
 	let memoryNotified = false;
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		if (process.env.HUMMIN_MEMORY !== "1") return;
 		const lessons = recallLessons(process.cwd(), event?.prompt ?? "");
 		if (lessons.length === 0) return;
 		let briefing = "";
@@ -339,7 +431,7 @@ export default function humminMemory(pi: ExtensionAPI): void {
 			appendFileSync(mdPath, `## ${record.timestamp}\n\n${lesson}\n\n`);
 
 			// vault mode: queue the lesson for the fold pass
-			if (process.env.HUMMIN_MEMORY_MODE === "vault") {
+			if (settings.getMemoryMode() === "vault") {
 				lessonToInbox(cwd, lesson, record.session);
 			}
 		} catch {
@@ -413,7 +505,7 @@ function ensureVault(settings?: SettingsManager): string {
 	}
 	if (!existsSync(join(dir, "log.md"))) writeFileSync(join(dir, "log.md"), "# Fold log\n");
 	if (!existsSync(join(dir, ".git"))) {
-		spawnSync("git", ["init", "-q"], { cwd: dir });
+		spawnSync("git", ["init", "-q"], { cwd: dir, env: { ...process.env, HUMMIN_MEMORY: "0" } });
 	}
 	return dir;
 }

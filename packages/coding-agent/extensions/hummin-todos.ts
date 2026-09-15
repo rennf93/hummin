@@ -154,6 +154,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerCommand("todos", {
 		description: "Show the current todo list",
+		category: "Memory/Vault",
 		handler: async (_args, ctx) => {
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify("/todos requires interactive mode", "error");

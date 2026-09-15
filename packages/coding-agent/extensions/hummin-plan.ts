@@ -51,6 +51,7 @@ export default function humminPlan(pi: ExtensionAPI): void {
 
 	pi.registerCommand("plan", {
 		description: "Toggle plan mode (read-only; blocks write/edit/bash)",
+		category: "Session",
 		handler: async (_args, ctx) => {
 			if (planMode) {
 				const confirmed = await ctx.ui.confirm(

@@ -5,6 +5,7 @@ import { basename, dirname, join } from "path";
 import { fuzzyFilter } from "./fuzzy.ts";
 
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
+const COMMAND_CATEGORY_ORDER = ["Session", "Models", "Fleet", "Memory/Vault", "Settings", "Tools"];
 
 function toDisplayPath(value: string): string {
 	return value.replace(/\\/g, "/");
@@ -225,6 +226,7 @@ export interface AutocompleteItem {
 	value: string;
 	label: string;
 	description?: string;
+	category?: string;
 }
 
 type Awaitable<T> = T | Promise<T>;
@@ -233,6 +235,7 @@ export interface SlashCommand {
 	name: string;
 	description?: string;
 	argumentHint?: string;
+	category?: string;
 	// Function to get argument completions for this command
 	// Returns null if no argument completion is available
 	getArgumentCompletions?(argumentPrefix: string): Awaitable<AutocompleteItem[] | null>;
@@ -324,13 +327,24 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 						name,
 						label: name,
 						description: fullDesc || undefined,
+						category: "category" in cmd ? cmd.category : undefined,
 					};
 				});
 
-				const filtered = fuzzyFilter(commandItems, prefix, (item) => item.name).map((item) => ({
+				const ordered = prefix
+					? commandItems
+					: [...commandItems].sort((a, b) => {
+							const categoryAIndex = a.category ? COMMAND_CATEGORY_ORDER.indexOf(a.category) : -1;
+							const categoryBIndex = b.category ? COMMAND_CATEGORY_ORDER.indexOf(b.category) : -1;
+							const categoryA = categoryAIndex < 0 ? COMMAND_CATEGORY_ORDER.length : categoryAIndex;
+							const categoryB = categoryBIndex < 0 ? COMMAND_CATEGORY_ORDER.length : categoryBIndex;
+							return categoryA - categoryB;
+						});
+				const filtered = fuzzyFilter(ordered, prefix, (item) => item.name).map((item) => ({
 					value: item.name,
 					label: item.label,
 					...(item.description && { description: item.description }),
+					...(item.category && { category: item.category }),
 				}));
 
 				if (filtered.length === 0) return null;
