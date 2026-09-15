@@ -1,59 +1,24 @@
-/**
- * hummin-colibri: registers ONE provider ("colibri") that exposes every
- * model found on the configured local inference servers. The servers are
- * OpenAI-compatible endpoints on the LAN; the engine behind them does not
- * matter (colibri, llama.cpp, Ollama, ...). Selection is by model id, not by
- * server: each discovered model is served by the first instance in
- * HUMMIN_COLIBRI_INSTANCES that lists it, so the same model on several
- * machines deduplicates into one picker entry with fallback ordering.
- *
- * Configure instances with the HUMMIN_COLIBRI_INSTANCES environment variable
- * (comma-separated base URLs). Defaults to two local instances, which also
- * matches scripts/mock-colibri.mjs for testing without a NAS:
- *
- *   HUMMIN_COLIBRI_INSTANCES="http://127.0.0.1:9998,http://127.0.0.1:9997"
- *
- * Optional environment variables:
- *   COLI_API_KEY       bearer token forwarded to the server. Keyless instances
- *                      work without it (a placeholder key is sent and ignored);
- *                      set it when the server runs with COLI_API_KEY enforced.
- *   HUMMIN_COLIBRI_CTX  advertised context window per model (default: 16384).
- *
- * A model is only listed while its server answers at session start; a server
- * that comes back later needs a session restart to reappear. There are no
- * guessed placeholder ids - a stale guess used to display the wrong model
- * family for a slot that served something else.
- *
- * Per-model reasoning: qwen-family chat templates accept
- * chat_template_kwargs.enable_thinking (llama.cpp applies it), so qwen*
- * models map hummin's thinking level onto it ("off" => false, any other
- * level => true). Other models (e.g. glm-* via colibri) register without
- * thinking controls.
- *
- * Each colibri instance generates one response at a time. Requests are
- * serialized per server (mutex keyed by base URL) and the documented busy
- * response (HTTP 429 + x-colibri-queue-wait-ms) is retried with capped
- * backoff instead of surfacing as an error.
- */
-
+/** Fleet-driven, per-engine/host providers. Local requests share an abortable
+ * process lock through the end of the stream. Discovery never invents IDs. */
+import { setTimeout as delay } from "node:timers/promises";
 import {
-	createAssistantMessageEventStream,
-	createProvider,
-	envApiKeyAuth,
+	type Api,
 	type ApiKeyAuth,
 	type AssistantMessage,
 	type AssistantMessageEventStream,
+	createAssistantMessageEventStream,
+	createProvider,
+	envApiKeyAuth,
 	type Model,
 } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import { SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, SettingsManager, withLocalInferenceLock } from "@earendil-works/pi-coding-agent";
+
 type FleetServerSettings = ReturnType<SettingsManager["getFleetServers"]>[number];
 
 const MAX_BUSY_RETRIES = 5;
 const BUSY_BASE_DELAY_MS = 2000;
 const BUSY_MAX_DELAY_MS = 30000;
-
-const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 interface ColibriModelInfo {
 	id: string;
@@ -90,15 +55,33 @@ function instanceConfigs(): InstanceConfig[] {
 	const fleet = typeof settings.getFleetServers === "function" ? settings.getFleetServers() : [];
 	const env = process.env.HUMMIN_COLIBRI_INSTANCES?.trim();
 	if (env) {
-		return env.split(",").map((value) => value.trim()).filter(Boolean).map((baseUrl) => {
-			const url = new URL(baseUrl);
-			return { id: baseUrl, baseUrl, host: url.hostname, hostLabel: url.hostname, port: instancePort(baseUrl), engine: "llamacpp" };
-		});
+		return env
+			.split(",")
+			.map((value) => value.trim())
+			.filter(Boolean)
+			.map((baseUrl) => {
+				const url = new URL(baseUrl);
+				return {
+					id: baseUrl,
+					baseUrl,
+					host: url.hostname,
+					hostLabel: url.hostname,
+					port: instancePort(baseUrl),
+					engine: "llamacpp",
+				};
+			});
 	}
 	if (fleet.length > 0) return fleet.map((server) => configFromFleet(server));
 	return settings.getColibriInstances().map((baseUrl) => {
 		const url = new URL(baseUrl);
-		return { id: baseUrl, baseUrl, host: url.hostname, hostLabel: url.hostname, port: instancePort(baseUrl), engine: "llamacpp" };
+		return {
+			id: baseUrl,
+			baseUrl,
+			host: url.hostname,
+			hostLabel: url.hostname,
+			port: instancePort(baseUrl),
+			engine: "llamacpp",
+		};
 	});
 }
 
@@ -123,9 +106,7 @@ async function fetchModels(baseUrl: string, apiKey: string | undefined): Promise
 		throw new Error(`HTTP ${response.status} from ${baseUrl}/v1/models`);
 	}
 	const body = (await response.json()) as { data?: ColibriModelInfo[] };
-	return (body.data ?? [])
-		.map((entry) => entry.id)
-		.filter((id) => typeof id === "string" && id.length > 0);
+	return (body.data ?? []).map((entry) => entry.id).filter((id) => typeof id === "string" && id.length > 0);
 }
 
 // llama.cpp servers report their real context window on /props; colibri does
@@ -149,64 +130,56 @@ async function fetchContextWindow(baseUrl: string, apiKey: string | undefined): 
 	}
 }
 
-function createMutex(): <T>(task: () => Promise<T>) => Promise<T> {
-	let tail: Promise<void> = Promise.resolve();
-	return <T>(task: () => Promise<T>): Promise<T> => {
-		const run = tail.then(task, task);
-		tail = run.then(
-			() => undefined,
-			() => undefined,
-		);
-		return run;
-	};
-}
-
-function isBusy(error: AssistantMessage): boolean {
-	const text = `${error.errorMessage ?? ""} ${error.stopReason ?? ""}`;
-	return /\b429\b/.test(text) || /\bbusy\b/i.test(text) || /\boverloaded\b/i.test(text);
-}
-
-// Serializes requests through one instance and retries colibri's busy
-// response (429 + x-colibri-queue-wait-ms) with capped backoff instead of
-// surfacing it as an error to the agent loop.
-function retrying(streamFactory: () => AssistantMessageEventStream): AssistantMessageEventStream {
-	const events = createAssistantMessageEventStream();
-	void (async () => {
-		for (let attempt = 0; ; attempt++) {
-			if (attempt > 0) {
-				await sleep(Math.min(BUSY_BASE_DELAY_MS * attempt, BUSY_MAX_DELAY_MS));
-			}
-			let busyRetry = false;
-			let terminal = false;
-			for await (const event of streamFactory()) {
-				if (event.type === "error" && isBusy(event.error) && attempt < MAX_BUSY_RETRIES) {
-					busyRetry = true;
-					break;
-				}
-				if (event.type === "done" || event.type === "error") {
-					terminal = true;
-				}
-				events.push(event);
-			}
-			if (terminal || !busyRetry) {
-				return;
-			}
-		}
-	})();
-	return events;
-}
-
-// Keep the server mutex held until the complete stream is consumed. Returning
-// a stream from the mutex callback would release it immediately and allow two
-// generations to overlap on the same local server.
-function serializedStream(
-	mutex: <T>(task: () => Promise<T>) => Promise<T>,
-	streamFactory: () => AssistantMessageEventStream,
+export function serializedLocalStream(
+	model: Model<Api>,
+	signal: AbortSignal | undefined,
+	streamFactory: (signal: AbortSignal) => AssistantMessageEventStream,
 ): AssistantMessageEventStream {
 	const events = createAssistantMessageEventStream();
-	void mutex(async () => {
-		for await (const event of retrying(streamFactory)) events.push(event);
-		return undefined;
+	void withLocalInferenceLock(model.baseUrl, signal, async (lockedSignal) => {
+		for (let attempt = 0; ; attempt++) {
+			lockedSignal.throwIfAborted();
+			if (attempt)
+				await delay(Math.min(BUSY_BASE_DELAY_MS * attempt, BUSY_MAX_DELAY_MS), undefined, { signal: lockedSignal });
+			let retry = false;
+			let emittedContent = false;
+			for await (const event of streamFactory(lockedSignal)) {
+				if (
+					event.type === "error" &&
+					!emittedContent &&
+					attempt < MAX_BUSY_RETRIES &&
+					/\b429\b|\bbusy\b|\boverloaded\b/i.test(event.error.errorMessage ?? "")
+				) {
+					retry = true;
+					break;
+				}
+				if (event.type !== "start" && event.type !== "error") emittedContent = true;
+				events.push(event);
+				if (event.type === "done" || event.type === "error") return;
+			}
+			if (!retry) throw new Error("Local provider stream ended without a terminal event");
+		}
+	}).catch((error: unknown) => {
+		const aborted = signal?.aborted || (error instanceof Error && error.name === "AbortError");
+		const message: AssistantMessage = {
+			role: "assistant",
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			content: [],
+			stopReason: aborted ? "aborted" : "error",
+			errorMessage: String(error),
+			timestamp: Date.now(),
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+		};
+		events.push({ type: "error", reason: message.stopReason as "aborted" | "error", error: message });
 	});
 	return events;
 }
@@ -310,25 +283,12 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 		return;
 	}
 
-	const mutexes = new Map<string, <T>(task: () => Promise<T>) => Promise<T>>();
-	const mutexFor = (baseUrl: string): (<T>(task: () => Promise<T>) => Promise<T>) => {
-		let mutex = mutexes.get(baseUrl);
-		if (!mutex) {
-			mutex = createMutex();
-			mutexes.set(baseUrl, mutex);
-		}
-		return mutex;
-	};
-
 	const base = openAICompletionsApi();
 
 	// Group by engine + host: one provider per combination so badges read
 	// e.g. "unsloth/llama.cpp - NAS" and "colibri - Mac".
 	const ENGINE_NAMES: Record<string, string> = { colibri: "colibri", llamacpp: "unsloth/llama.cpp" };
-	const groups = new Map<
-		string,
-		{ engine: string; host: string; entries: typeof serving }
-	>();
+	const groups = new Map<string, { engine: string; host: string; entries: typeof serving }>();
 	for (const entry of serving) {
 		const key = `${entry.engine}-${entry.host}-${entry.port}`;
 		let group = groups.get(key);
@@ -339,33 +299,36 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 		group.entries.push(entry);
 	}
 
-	for (const [key, group] of groups) {
+	for (const group of groups.values()) {
 		const hostLabel = group.host;
 		const providerId = `${group.engine}-${hostLabel.toLowerCase()}-${group.entries[0]!.port}`;
 		const providerName = `${ENGINE_NAMES[group.engine]} - ${hostLabel}:${group.entries[0]!.port}`;
-		const models: Model<"openai-completions">[] = group.entries.map((entry) => ({
-			id: entry.modelId,
-			name: `${displayName(entry.modelId)} [${hostLabel}]${entry.offline ? " (offline - start from menubar)" : ""}`,
-			api: "openai-completions",
-			provider: providerId,
-			baseUrl: `${entry.baseUrl}/v1`,
-			reasoning: isQwenFamily(entry.modelId),
-			input: ["text"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: entry.contextWindow,
-			maxTokens: 4096,
-			compat: {
-				supportsStore: false,
-				supportsDeveloperRole: false,
-				supportsReasoningEffort: false,
-				maxTokensField: "max_tokens",
-				...(isQwenFamily(entry.modelId) ? { thinkingFormat: "qwen-chat-template" as const } : {}),
-			},
-			// The picker uses these optional fields for styling. They survive the
-			// provider/model runtime because models are passed by reference.
-			humminHost: hostLabel,
-			humminOffline: entry.offline,
-		} as Model<"openai-completions"> & HumminModelMetadata));
+		const models: Model<"openai-completions">[] = group.entries.map(
+			(entry) =>
+				({
+					id: entry.modelId,
+					name: `${displayName(entry.modelId)} [${hostLabel}]${entry.offline ? " (offline - start from menubar)" : ""}`,
+					api: "openai-completions",
+					provider: providerId,
+					baseUrl: `${entry.baseUrl}/v1`,
+					reasoning: isQwenFamily(entry.modelId),
+					input: ["text"],
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: entry.contextWindow,
+					maxTokens: 4096,
+					compat: {
+						supportsStore: false,
+						supportsDeveloperRole: false,
+						supportsReasoningEffort: false,
+						maxTokensField: "max_tokens",
+						...(isQwenFamily(entry.modelId) ? { thinkingFormat: "qwen-chat-template" as const } : {}),
+					},
+					// The picker uses these optional fields for styling. They survive the
+					// provider/model runtime because models are passed by reference.
+					humminHost: hostLabel,
+					humminOffline: entry.offline,
+				}) as Model<"openai-completions"> & HumminModelMetadata,
+		);
 		const provider = createProvider({
 			id: providerId,
 			name: providerName,
@@ -374,9 +337,13 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 			models,
 			api: {
 				stream: (model, context, options) =>
-					serializedStream(mutexFor(model.baseUrl), () => base.stream(model, context, options)),
+					serializedLocalStream(model, options?.signal, (signal) =>
+						base.stream(model, context, { ...options, signal }),
+					),
 				streamSimple: (model, context, options) =>
-					serializedStream(mutexFor(model.baseUrl), () => base.streamSimple(model, context, options)),
+					serializedLocalStream(model, options?.signal, (signal) =>
+						base.streamSimple(model, context, { ...options, signal }),
+					),
 			},
 		});
 		pi.registerProvider(provider);
