@@ -81,6 +81,7 @@ function createSession(options: {
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
 		modelRuntime: {
 			isUsingSubscription: () => options.usingSubscription ?? false,
+			getProvider: () => undefined,
 		},
 	};
 
@@ -204,7 +205,7 @@ describe("FooterComponent width handling", () => {
 		const footer = new FooterComponent(session, createFooterData(1));
 
 		const statsLine = stripAnsi(footer.render(120)[1]);
-		expect(statsLine).toContain("CH25.0%");
+		expect(statsLine).toContain("hit 25.0%");
 	});
 
 	it("marks Kimi Coding costs as subscription estimates", () => {

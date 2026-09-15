@@ -124,14 +124,15 @@ export class FooterComponent implements Component {
 			pwd = `${pwd} • ${sessionName}`;
 		}
 
-		// Build stats: tokens + cost on the left, context meter, model on the right
-		const statsParts = [];
-		if (usageTotals.input) statsParts.push(`↑${formatTokens(usageTotals.input)}`);
-		if (usageTotals.output) statsParts.push(`↓${formatTokens(usageTotals.output)}`);
-		if (usageTotals.cacheRead) statsParts.push(`R${formatTokens(usageTotals.cacheRead)}`);
-		if (usageTotals.cacheWrite) statsParts.push(`W${formatTokens(usageTotals.cacheWrite)}`);
+		// Build stats: labeled segments on the left (dim label, bright value),
+		// context meter, model on the right.
+		const statsParts: Array<{ label: string; value: string }> = [];
+		if (usageTotals.input) statsParts.push({ label: "in", value: formatTokens(usageTotals.input) });
+		if (usageTotals.output) statsParts.push({ label: "out", value: formatTokens(usageTotals.output) });
+		if (usageTotals.cacheRead) statsParts.push({ label: "rd", value: formatTokens(usageTotals.cacheRead) });
+		if (usageTotals.cacheWrite) statsParts.push({ label: "wr", value: formatTokens(usageTotals.cacheWrite) });
 		if ((usageTotals.cacheRead > 0 || usageTotals.cacheWrite > 0) && latestCacheHitRate !== undefined) {
-			statsParts.push(`CH${latestCacheHitRate.toFixed(1)}%`);
+			statsParts.push({ label: "hit", value: `${latestCacheHitRate.toFixed(1)}%` });
 		}
 
 		// Kimi Coding is subscription-backed despite using API-key authentication.
@@ -139,7 +140,10 @@ export class FooterComponent implements Component {
 			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(state.model.provider)
 			: false;
 		if (usageTotals.cost || usingSubscription) {
-			statsParts.push(`$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`);
+			statsParts.push({
+				label: "",
+				value: `$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`,
+			});
 		}
 
 		// Context meter: ctx [████░░░░░░] 3.2%
@@ -148,13 +152,16 @@ export class FooterComponent implements Component {
 		const filled = Math.max(0, Math.min(barCells, Math.round((contextPercentValue / 100) * barCells)));
 		const bar = "█".repeat(filled) + "░".repeat(barCells - filled);
 		const meterColor = contextPercentValue > 90 ? "error" : contextPercentValue > 70 ? "warning" : "accent";
-		const contextMeter =
+		const contextValue =
 			contextPercent === "?"
-				? `${theme.fg("dim", "ctx ?/")}${formatTokens(contextWindow)}`
-				: `ctx ${theme.fg(meterColor, bar)} ${theme.fg("dim", `${contextPercent}%${autoTag}`)}`;
+				? `${theme.fg("dim", "?")}/${formatTokens(contextWindow)}`
+				: `${theme.fg(meterColor, bar)} ${theme.fg("dim", `${contextPercent}%${autoTag}`)}`;
+		statsParts.push({ label: "ctx", value: contextValue });
 
-		const statsLeft = theme.fg("dim", statsParts.join(theme.fg("dim", " ")));
-		const meterBlock = [statsLeft, contextMeter].filter((part) => visibleWidth(part) > 0).join(theme.fg("dim", "  "));
+		const renderedSegments = statsParts.map(({ label, value }) =>
+			label ? `${theme.fg("dim", label)} ${value}`.trim() : value,
+		);
+		const meterBlock = renderedSegments.join(theme.fg("dim", " · "));
 
 		// Right side: provider (when ambiguous), model, thinking level
 		const modelName = state.model?.id || "no-model";
