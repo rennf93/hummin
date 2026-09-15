@@ -3,6 +3,7 @@ import { DEFAULT_MAX_AGENT_RETRY_DELAY_MS, type Model, type Transport } from "@e
 import type { TuiMode as RendererTuiMode, ScrollViewScrollbar, TerminalCapabilities } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { homedir } from "os";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
@@ -107,6 +108,54 @@ export type PackageSource =
 			themes?: string[];
 	  };
 
+/** hummin: one local inference server in the fleet */
+export interface FleetServerSettings {
+	/** stable id (e.g. "mac-qwen") */
+	id: string;
+	/** display label (e.g. "Qwen 3.8 27B"); defaults to the id */
+	label?: string;
+	/** display host name (e.g. "Mac"); defaults to hostIp */
+	host?: string;
+	/** routable IP/hostname used to build the OpenAI-compatible base URL */
+	hostIp: string;
+	/** port of the OpenAI-compatible endpoint */
+	port: number;
+	/** service manager used for probe/start/stop/restart */
+	kind: "launchd" | "docker";
+	/** inference engine used by this endpoint; defaults to llamacpp */
+	engine?: "colibri" | "llamacpp";
+	/** launchd service label, or docker compose service / container name */
+	target: string;
+	/** staged models this server serves (picker catalog fill-in while the server is off) */
+	models?: Array<{ id: string; contextWindow: number }>;
+}
+
+/** hummin: launchd control endpoints for kind "launchd" fleet servers */
+export interface FleetLaunchdSettings {
+	/** launchd domain (default: gui/<uid>) */
+	domain?: string;
+	/** directory holding the LaunchAgents plists (default: ~/Library/LaunchAgents) */
+	plistDir?: string;
+}
+
+/** hummin: docker control endpoints for kind "docker" fleet servers */
+export interface FleetDockerSettings {
+	/** ssh target of the docker host (e.g. "user@host"; "localhost" for local docker) */
+	sshHost?: string;
+	/** docker compose project directory on the docker host */
+	composeDir?: string;
+}
+
+/**
+ * hummin: local inference fleet. Server list order is priority: when several
+ * servers serve the same model, the first match wins (later ones are fallback).
+ */
+export interface FleetSettings {
+	servers?: FleetServerSettings[];
+	launchd?: FleetLaunchdSettings;
+	docker?: FleetDockerSettings;
+}
+
 export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
@@ -134,6 +183,8 @@ export interface Settings {
 	memoryVaultDir?: string;
 	/** hummin: local inference server base URLs for the colibri provider (env HUMMIN_COLIBRI_INSTANCES overrides) */
 	colibriInstances?: string[];
+	/** hummin: local inference fleet (ordered list = priority). Drives /fleet, /status, and the colibri provider's instance list + staged-model catalog. */
+	fleet?: FleetSettings;
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
@@ -1069,6 +1120,43 @@ export class SettingsManager {
 			return stored.map((entry) => String(entry).trim()).filter((entry) => entry.length > 0);
 		}
 		return ["http://127.0.0.1:9998", "http://127.0.0.1:9997"];
+	}
+
+	/** hummin fleet: ordered server list (list order = priority). Empty when unconfigured. */
+	getFleetServers(): FleetServerSettings[] {
+		const servers = this.settings.fleet?.servers;
+		if (!Array.isArray(servers)) return [];
+		return servers.filter(
+			(s): s is FleetServerSettings =>
+				Boolean(s) &&
+				typeof s.id === "string" &&
+				typeof s.hostIp === "string" &&
+				typeof s.port === "number" &&
+				typeof s.target === "string" &&
+				(s.kind === "launchd" || s.kind === "docker"),
+		);
+	}
+
+	/** hummin fleet: launchd control endpoints (env HUMMIN_FLEET_LAUNCHD_DOMAIN / HUMMIN_FLEET_PLIST_DIR override). */
+	getFleetLaunchd(): { domain: string; plistDir: string } {
+		const stored = this.settings.fleet?.launchd;
+		const uid = typeof process.getuid === "function" ? process.getuid() : 501;
+		return {
+			domain: process.env.HUMMIN_FLEET_LAUNCHD_DOMAIN?.trim() || stored?.domain?.trim() || `gui/${uid}`,
+			plistDir:
+				process.env.HUMMIN_FLEET_PLIST_DIR?.trim() ||
+				stored?.plistDir?.trim() ||
+				join(homedir(), "Library", "LaunchAgents"),
+		};
+	}
+
+	/** hummin fleet: docker control endpoints (env HUMMIN_FLEET_SSH_HOST / HUMMIN_FLEET_COMPOSE_DIR override). Values stay empty until configured. */
+	getFleetDocker(): { sshHost: string; composeDir: string } {
+		const stored = this.settings.fleet?.docker;
+		return {
+			sshHost: process.env.HUMMIN_FLEET_SSH_HOST?.trim() || stored?.sshHost?.trim() || "",
+			composeDir: process.env.HUMMIN_FLEET_COMPOSE_DIR?.trim() || stored?.composeDir?.trim() || "",
+		};
 	}
 
 	setMemoryEnabled(enabled: boolean, scope: "global" | "project" = "global"): void {
