@@ -753,6 +753,7 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return getModel();
 			},
+			getExtensionPaths: () => runner.getExtensionPaths(),
 			get scopedModels() {
 				runner.assertActive();
 				return getScopedModels();

@@ -1,0 +1,162 @@
+/** Project bootstrap and diagnostics commands. */
+import { execFile } from "node:child_process";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import type { Api, Context, Model } from "@earendil-works/pi-ai";
+import { SettingsManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { probeFleet, serversFor } from "./hummin-fleet.ts";
+
+const execFileAsync = promisify(execFile);
+
+function projectSummary(ctx: ExtensionContext): string {
+	const entries = readdirSync(ctx.cwd, { withFileTypes: true }).filter((entry) => !entry.name.startsWith("."));
+	const packagePath = join(ctx.cwd, "package.json");
+	const packageText = existsSync(packagePath) ? readFileSync(packagePath, "utf8").slice(0, 8000) : "(no package.json)";
+	const readme = ["README.md", "README", "readme.md"].find((name) => existsSync(join(ctx.cwd, name)));
+	const readmeText = readme ? readFileSync(join(ctx.cwd, readme), "utf8").slice(0, 8000) : "(no README)";
+	const agents = existsSync(join(ctx.cwd, "AGENTS.md"))
+		? readFileSync(join(ctx.cwd, "AGENTS.md"), "utf8").slice(0, 12000)
+		: "(none)";
+	return `Repository: ${ctx.cwd}\nTop-level entries: ${entries.map((entry) => entry.name).join(", ")}\nExisting AGENTS.md:\n${agents}\npackage.json:\n${packageText}\nREADME:\n${readmeText}`;
+}
+
+async function chooseCloudModel(ctx: ExtensionContext) {
+	const fleetHosts = new Set(SettingsManager.create(ctx.cwd).getFleetServers().map((server) => server.hostIp));
+	const isCloud = (model: Model<Api>): boolean => {
+		if (/colibri|llamacpp|ollama|local/i.test(model.provider)) return false;
+		try {
+			const url = new URL(model.baseUrl);
+			const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+			if (url.protocol !== "https:" || fleetHosts.has(host)) return false;
+			if (!host.includes(".") || /(?:^|\.)(?:localhost|local|internal)$/.test(host)) return false;
+			if (/^(?:0|10|127)\.|^169\.254\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\./.test(host)) return false;
+			if (host.includes(":")) return false;
+			return ctx.modelRegistry.getProviderAuthStatus(model.provider).configured;
+		} catch {
+			return false;
+		}
+	};
+	if (ctx.model && isCloud(ctx.model)) return ctx.model;
+	const models = ctx.modelRegistry.getAvailable().filter(isCloud);
+	if (models.length === 0) return undefined;
+	const choice = await ctx.ui.select(
+		"Choose a cloud model for /init",
+		models.map((model) => `${model.provider}/${model.id}`),
+	);
+	return choice ? models.find((model) => `${model.provider}/${model.id}` === choice) : undefined;
+}
+
+async function initProject(ctx: ExtensionContext): Promise<void> {
+	const path = join(ctx.cwd, "AGENTS.md");
+	const original = existsSync(path) ? readFileSync(path, "utf8") : undefined;
+	if (original !== undefined && !(await ctx.ui.confirm("AGENTS.md exists", "Generate a replacement?"))) return;
+	const model = await chooseCloudModel(ctx);
+	if (!model) {
+		ctx.ui.notify("No cloud model selected", "warning");
+		return;
+	}
+	const prompt = `Generate a concise, practical AGENTS.md for this repository. Include commands, code conventions, testing rules, and architecture facts supported by the supplied files. Return only Markdown.\n\n${projectSummary(ctx)}`;
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 120000);
+	let response;
+	try {
+		response = await ctx.modelRegistry.complete(
+			model,
+			{
+				messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }],
+			} satisfies Context,
+			{ signal: controller.signal },
+		);
+	} catch {
+		clearTimeout(timeout);
+		ctx.ui.notify("AGENTS.md generation failed", "error");
+		return;
+	}
+	clearTimeout(timeout);
+	if (response.stopReason === "error" || response.stopReason === "aborted") {
+		ctx.ui.notify("AGENTS.md generation failed", "error");
+		return;
+	}
+	const draft = response.content.filter((block) => block.type === "text").map((block) => block.text).join("\n").trim();
+	if (!draft) {
+		ctx.ui.notify("Model returned an empty AGENTS.md", "error");
+		return;
+	}
+	const reviewed = await ctx.ui.editor("Review generated AGENTS.md", draft);
+	if (reviewed === undefined || !reviewed.trim()) return;
+	if (
+		(original === undefined && existsSync(path)) ||
+		(original !== undefined && (!existsSync(path) || readFileSync(path, "utf8") !== original))
+	) {
+		ctx.ui.notify("AGENTS.md changed while generating; refusing to overwrite", "warning");
+		return;
+	}
+	writeFileSync(path, reviewed.endsWith("\n") ? reviewed : `${reviewed}\n`, {
+		encoding: "utf8",
+		flag: original === undefined ? "wx" : "w",
+	});
+	ctx.ui.notify(`wrote ${path}`, "info");
+}
+
+async function doctor(ctx: ExtensionContext): Promise<void> {
+	const settings = SettingsManager.create(ctx.cwd);
+	const servers = serversFor(ctx);
+	const health = await probeFleet(servers, ctx);
+	let vaultGit = "not a git repository";
+	const vault = settings.getMemoryVaultDir();
+	try {
+		if (!existsSync(join(vault, ".git"))) throw new Error("missing .git");
+		const options = { timeout: 5000, env: { ...process.env, HUMMIN_MEMORY: "0" } };
+		await execFileAsync("git", ["-C", vault, "rev-parse", "--is-inside-work-tree"], options);
+		const result = await execFileAsync("git", ["-C", vault, "status", "--porcelain"], options);
+		vaultGit = result.stdout.trim() ? "dirty" : "clean";
+	} catch {
+		/* vault may not be initialized */
+	}
+	const auth = ctx.modelRegistry.getProviderAuthStatus("zai");
+	const fleetLines = servers.length
+		? servers.map((server) => `${server.id}: ${health.get(server.id) ? "running" : "stopped or unreachable"}`)
+		: [];
+	const extensionCount = ctx.getExtensionPaths?.().length;
+	ctx.ui.notify(
+		[
+			`settings parse: ${settings.drainErrors().length === 0 ? "OK" : "ERROR"}`,
+			`fleet: ${servers.length ? `${servers.length} configured` : "not configured"}`,
+			`zai credential: ${auth.configured ? "present" : "missing"}`,
+			`extensions loaded: ${extensionCount === undefined ? "unknown" : extensionCount}`,
+			`vault git: ${vaultGit}`,
+			...fleetLines,
+		].join("\n"),
+		"info",
+	);
+}
+
+export default function (pi: ExtensionAPI): void {
+	pi.registerCommand("init", {
+		description: "Generate a project AGENTS.md",
+		category: "Session",
+		handler: async (_args, ctx) => {
+			if (ctx.mode !== "tui") {
+				ctx.ui.notify("/init requires interactive review", "warning");
+				return;
+			}
+			try {
+				await initProject(ctx);
+			} catch (error) {
+				ctx.ui.notify(`/init failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+			}
+		},
+	});
+	pi.registerCommand("doctor", {
+		description: "Check hummin settings, fleet, credentials, extensions, and vault",
+		category: "Settings",
+		handler: async (_args, ctx) => {
+			try {
+				await doctor(ctx);
+			} catch (error) {
+				ctx.ui.notify(`/doctor failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+			}
+		},
+	});
+}
