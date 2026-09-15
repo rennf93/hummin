@@ -75,6 +75,10 @@
         {
           "title": "Custom Providers",
           "path": "custom-provider.md"
+        },
+        {
+          "title": "hummin UX",
+          "path": "hummin-ux.md"
         }
       ]
     },
