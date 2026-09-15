@@ -165,6 +165,10 @@ export interface Settings {
 	transport?: TransportSetting; // default: "auto"
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
+	/** What Enter does while the agent is streaming: "steer" interrupts now, "followUp" queues until the turn ends. */
+	streamingSubmitMode?: "steer" | "followUp";
+	/** Show local timestamps under user and extension messages. */
+	messageTimestamps?: boolean;
 	theme?: string;
 	compaction?: CompactionSettings;
 	branchSummary?: BranchSummarySettings;
@@ -820,6 +824,16 @@ export class SettingsManager {
 
 	getSteeringMode(): "all" | "one-at-a-time" {
 		return this.settings.steeringMode || "one-at-a-time";
+	}
+
+	/** What Enter does while streaming. Default "steer" (interrupt the current turn). */
+	getStreamingSubmitMode(): "steer" | "followUp" {
+		return this.settings.streamingSubmitMode ?? "steer";
+	}
+
+	/** Whether user and extension messages show local timestamps. Default true. */
+	getMessageTimestamps(): boolean {
+		return this.settings.messageTimestamps ?? true;
 	}
 
 	setSteeringMode(mode: "all" | "one-at-a-time"): void {

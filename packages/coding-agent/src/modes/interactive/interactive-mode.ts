@@ -3170,12 +3170,17 @@ export class InteractiveMode {
 				return;
 			}
 
-			// If streaming, use prompt() with steer behavior
+			// If streaming, submit per the streamingSubmitMode setting
 			// This handles extension commands (execute immediately), prompt template expansion, and queueing
 			if (this.session.isStreaming) {
 				this.editor.addToHistory?.(text);
 				this.editor.setText("");
-				await this.session.prompt(text, { streamingBehavior: "steer" });
+				const streamingSubmitMode = this.settingsManager.getStreamingSubmitMode();
+				await this.session.prompt(text, { streamingBehavior: streamingSubmitMode });
+				if (streamingSubmitMode === "followUp") {
+					const dequeueHint = this.getAppKeyDisplay("app.message.dequeue");
+					this.showStatus(`Queued as follow-up; ${dequeueHint} restores queued messages`);
+				}
 				this.updatePendingMessagesDisplay();
 				this.ui.requestRender();
 				return;
@@ -3638,6 +3643,7 @@ export class InteractiveMode {
 						renderer,
 						this.getMarkdownThemeWithSettings(),
 						this.outputPad,
+						this.settingsManager.getMessageTimestamps(),
 					);
 					component.setExpanded(this.toolOutputExpanded);
 					this.chatContainer.addChild(component);
@@ -3681,6 +3687,7 @@ export class InteractiveMode {
 								this.getMarkdownThemeWithSettings(),
 								this.outputPad,
 								this.getMarkdownTransformers(),
+								this.settingsManager.getMessageTimestamps() ? message.timestamp : undefined,
 							);
 							this.chatContainer.addChild(userComponent);
 						}
@@ -3690,6 +3697,7 @@ export class InteractiveMode {
 							this.getMarkdownThemeWithSettings(),
 							this.outputPad,
 							this.getMarkdownTransformers(),
+							this.settingsManager.getMessageTimestamps() ? message.timestamp : undefined,
 						);
 						this.chatContainer.addChild(userComponent);
 					}

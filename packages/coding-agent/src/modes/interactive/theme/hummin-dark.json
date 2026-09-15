@@ -14,10 +14,12 @@
 		"accent": "#2dd4bf",
 		"selectedBg": "#12333b",
 		"userMsgBg": "#1c2b33",
+		"userMsgText": "#efe6d8",
 		"toolPendingBg": "#242c31",
 		"toolSuccessBg": "#22302a",
 		"toolErrorBg": "#3c2828",
-		"customMsgBg": "#24303d"
+		"customMsgBg": "#24303d",
+		"customMsgText": "#c7d3e6"
 	},
 	"colors": {
 		"accent": "accent",
@@ -38,9 +40,9 @@
 		"searchMatchBg": "selectedBg",
 		"searchMatchText": "text",
 		"userMessageBg": "userMsgBg",
-		"userMessageText": "text",
+		"userMessageText": "userMsgText",
 		"customMessageBg": "customMsgBg",
-		"customMessageText": "text",
+		"customMessageText": "customMsgText",
 		"customMessageLabel": "#9575cd",
 		"toolPendingBg": "toolPendingBg",
 		"toolSuccessBg": "toolSuccessBg",

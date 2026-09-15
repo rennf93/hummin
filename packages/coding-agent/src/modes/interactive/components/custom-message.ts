@@ -1,9 +1,19 @@
 import type { TextContent } from "@earendil-works/pi-ai";
 import type { Component } from "@earendil-works/pi-tui";
-import { Box, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import {
+	Box,
+	Container,
+	Markdown,
+	type MarkdownTheme,
+	Spacer,
+	Text,
+	truncateToWidth,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import type { MessageRenderer } from "../../../core/extensions/types.ts";
 import type { CustomMessage } from "../../../core/messages.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { formatMessageTimestamp } from "./user-message.ts";
 
 /**
  * Component that renders a custom message entry from extensions.
@@ -17,18 +27,21 @@ export class CustomMessageComponent extends Container {
 	private markdownTheme: MarkdownTheme;
 	private _expanded = false;
 	private outputPad: number;
+	private showTimestamp: boolean;
 
 	constructor(
 		message: CustomMessage<unknown>,
 		customRenderer?: MessageRenderer,
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
 		outputPad = 1,
+		showTimestamp = false,
 	) {
 		super();
 		this.message = message;
 		this.customRenderer = customRenderer;
 		this.markdownTheme = markdownTheme;
 		this.outputPad = outputPad;
+		this.showTimestamp = showTimestamp;
 
 		this.addChild(new Spacer(1));
 
@@ -109,5 +122,16 @@ export class CustomMessageComponent extends Container {
 				color: (text: string) => theme.fg("customMessageText", text),
 			}),
 		);
+	}
+
+	override render(width: number): string[] {
+		const lines = super.render(width);
+		if (!this.showTimestamp || lines.length === 0) {
+			return lines;
+		}
+		const tag = theme.fg("dim", formatMessageTimestamp(this.message.timestamp));
+		const padWidth = Math.max(0, width - 1 - visibleWidth(tag));
+		lines.push(truncateToWidth(" ".repeat(padWidth) + tag, width));
+		return lines;
 	}
 }
