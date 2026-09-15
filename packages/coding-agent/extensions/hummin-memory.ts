@@ -1,9 +1,10 @@
 /**
  * hummin-memory: session distillation (spec 13.2, lesson mode).
  *
- * On session shutdown, distills the session into ONE lesson in a fixed shape
- * (Problem: / Approach: / Gotcha:, max 120 words) using a one-shot print-mode
- * hummin call, and appends it to the project's lessons file. If there is no
+ * On session shutdown, the session is queued for distillation into ONE lesson
+ * in a fixed shape (Problem: / Approach: / Gotcha:, max 120 words). A detached
+ * worker makes the one-shot print-mode hummin call and appends the lesson to
+ * the project's lessons file, so shutdown never blocks on the model call. If there is no
  * real lesson, the model replies NONE and nothing is stored - the store never
  * fills with junk (RoboCo memory_distiller gate).
  *
@@ -31,7 +32,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, appendFileSync, writeFileSync, renameSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, appendFileSync, unlinkSync, writeFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -95,35 +96,172 @@ function readTranscriptTail(path: string, maxChars: number): string {
 	}
 }
 
-function distill(transcript: string, cwd: string): string | null {
-	const prompt = `You are distilling a coding-agent session into exactly one reusable lesson.
+/**
+ * The distill worker is a self-contained script (node builtins only) so it
+ * can run detached: shutdown only enqueues a pending job and returns, while
+ * the worker makes the model call and appends the lesson. Machine-managed -
+ * rewritten when its source changes, like the vault AGENTS.md contract.
+ */
+const DISTILL_WORKER_SOURCE = `#!/usr/bin/env node
+// Machine-managed by hummin-memory. Do not edit.
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { dirname, join } from "node:path";
 
-Rules:
-- Reply with ONLY the lesson in this exact shape:
-Problem: <what the session was trying to do>
-Approach: <what actually worked>
-Gotcha: <the non-obvious thing a future session would need>
-- Max ${LESSON_MAX_WORDS} words total.
-- If there is no real lesson worth keeping, reply with exactly: NONE
+const LESSON_MAX_WORDS = 120;
 
-Working directory: ${cwd}
+const pendingPath = process.argv[2];
+if (!pendingPath) process.exit(0);
+let job;
+try {
+	job = JSON.parse(readFileSync(pendingPath, "utf8"));
+} catch {
+	process.exit(0);
+}
+const { memoryDir, sessionFile, cwd, tail, provider, modelId, project, session, vaultMode, vaultDir } = job;
 
-Session transcript (tail):
-${transcript}`;
+const statePath = join(memoryDir, "state.json");
+let state = {};
+try {
+	state = JSON.parse(readFileSync(statePath, "utf8"));
+} catch {}
+if (state.processed?.[sessionFile]) {
+	unlinkSync(pendingPath);
+	process.exit(0);
+}
 
-	const provider = process.env.HUMMIN_MEMORY_PROVIDER ?? "zai";
-	const modelId = process.env.HUMMIN_MEMORY_MODEL_ID ?? "glm-5.3-flash";
-	const res = spawnSync("hummin", ["-p", prompt, "--provider", provider, "--model", modelId, "--thinking", "low"], {
-		encoding: "utf8",
-		timeout: 300_000,
-		// The distillation call is itself a hummin session: disable memory inside
-		// it or its shutdown handler distills again, recursing without bound.
+const prompt = [
+	"You are distilling a coding-agent session into exactly one reusable lesson.",
+	"",
+	"Rules:",
+	"- Reply with ONLY the lesson in this exact shape:",
+	"Problem: <what the session was trying to do>",
+	"Approach: <what actually worked>",
+	"Gotcha: <the non-obvious thing a future session would need>",
+	"- Max " + LESSON_MAX_WORDS + " words total.",
+	"- If there is no real lesson worth keeping, reply with exactly: NONE",
+	"",
+	"Working directory: " + cwd,
+	"",
+	"Session transcript (tail):",
+	tail,
+].join("\n");
+
+const res = spawnSync("hummin", ["-p", prompt, "--provider", provider, "--model", modelId, "--thinking", "low"], {
+	encoding: "utf8",
+	timeout: 300_000,
+	// The distillation call is itself a hummin session: disable memory inside
+	// it or its shutdown handler distills again, recursing without bound.
+	env: { ...process.env, HUMMIN_MEMORY: "0" },
+});
+const out = \`\${res.stdout ?? ""}\`.trim();
+if (res.status !== 0 || !out) process.exit(1); // leave the pending job for a retry
+if (/^NONE$/i.test(out.split("\n").at(-1)?.trim() ?? "")) {
+	unlinkSync(pendingPath);
+	process.exit(0);
+}
+const lesson = out;
+
+state.processed = state.processed ?? {};
+state.processed[sessionFile] = new Date().toISOString();
+try {
+	writeFileSync(statePath + ".tmp", JSON.stringify(state, null, 1));
+	renameSync(statePath + ".tmp", statePath);
+} catch {}
+
+mkdirSync(memoryDir, { recursive: true });
+const record = {
+	timestamp: new Date().toISOString(),
+	cwd,
+	project,
+	session,
+	lesson,
+};
+appendFileSync(join(memoryDir, "lessons.jsonl"), JSON.stringify(record) + "\n");
+
+const mdPath = join(memoryDir, project + ".lessons.md");
+if (!existsSync(mdPath)) {
+	writeFileSync(mdPath, "# Lessons - " + cwd + "\n\n");
+}
+appendFileSync(mdPath, "## " + record.timestamp + "\n\n" + lesson + "\n\n");
+
+if (vaultMode) {
+	mkdirSync(join(vaultDir, "inbox"), { recursive: true });
+	const slug = "lesson-" + new Date().toISOString().replace(/[:.]/g, "-");
+	const body = [
+		"---",
+		"type: lesson",
+		"date: " + new Date().toISOString().slice(0, 10),
+		"project: " + cwd,
+		"session: " + (session ?? "unknown"),
+		"---",
+		"",
+		lesson,
+		"",
+	].join("\n");
+	writeFileSync(join(vaultDir, "inbox", slug + ".md"), body);
+}
+
+unlinkSync(pendingPath);
+`;
+
+function ensureDistillWorker(): string {
+	mkdirSync(memoryDir(), { recursive: true, mode: 0o700 });
+	const file = join(memoryDir(), "distill-worker.mjs");
+	try {
+		if (readFileSync(file, "utf8") === DISTILL_WORKER_SOURCE) return file;
+	} catch {
+		// first write
+	}
+	writeFileSync(file, DISTILL_WORKER_SOURCE, { mode: 0o700 });
+	return file;
+}
+
+/** Queue distillation for this session and run it in a detached worker. */
+function enqueueDistill(sessionFile: string, cwd: string, vaultMode: boolean): void {
+	const tail = readTranscriptTail(sessionFile, Number(process.env.HUMMIN_MEMORY_MAX_CHARS ?? 12000));
+	if (tail.length < 120) return; // trivial session, nothing to distill
+
+	const dir = memoryDir();
+	mkdirSync(join(dir, "pending"), { recursive: true, mode: 0o700 });
+	const pendingPath = join(dir, "pending", `${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+	writeFileSync(
+		pendingPath,
+		JSON.stringify({
+			memoryDir: dir,
+			sessionFile,
+			cwd,
+			tail,
+			provider: process.env.HUMMIN_MEMORY_PROVIDER ?? "zai",
+			modelId: process.env.HUMMIN_MEMORY_MODEL_ID ?? "glm-5.3-flash",
+			project: projectKey(cwd),
+			session: sessionFile.split("/").pop(),
+			vaultMode,
+			vaultDir: vaultDir(cachedSettings),
+		}),
+		{ mode: 0o600 },
+	);
+
+	// Prune pending jobs older than 7 days (crashed workers, abandoned jobs).
+	try {
+		const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+		for (const f of readdirSync(join(dir, "pending"))) {
+			const full = join(dir, "pending", f);
+			if (f.endsWith(".json") && existsSync(full)) {
+				const stat = statSync(full);
+				if (stat.mtimeMs < cutoff) unlinkSync(full);
+			}
+		}
+	} catch {
+		// pruning is best effort
+	}
+
+	const child = spawn(process.execPath, [ensureDistillWorker(), pendingPath], {
+		detached: true,
+		stdio: "ignore",
 		env: { ...process.env, HUMMIN_MEMORY: "0" },
 	});
-	const out = `${res.stdout ?? ""}`.trim();
-	if (res.status !== 0 || !out) return null;
-	if (/^NONE$/i.test(out.split("\n").at(-1)?.trim() ?? "")) return null;
-	return out;
+	child.unref();
 }
 
 function statePath(): string {
@@ -429,37 +567,9 @@ export default function humminMemory(pi: ExtensionAPI): void {
 			const cwd = process.cwd();
 			const sessionFile = newestSessionFile(cwd);
 			if (!sessionFile || alreadyProcessed(sessionFile)) return;
-
-			const tail = readTranscriptTail(sessionFile, Number(process.env.HUMMIN_MEMORY_MAX_CHARS ?? 12000));
-			if (tail.length < 120) return; // trivial session, nothing to distill
-
-			const lesson = distill(tail, cwd);
-			if (!lesson) return; // NONE or failed: store nothing
-
-			markProcessed(sessionFile);
-			mkdirSync(memoryDir(), { recursive: true });
-			const record = {
-				timestamp: new Date().toISOString(),
-				cwd,
-				project: projectKey(cwd),
-				session: sessionFile.split("/").pop(),
-				lesson,
-			};
-			appendFileSync(join(memoryDir(), "lessons.jsonl"), `${JSON.stringify(record)}\n`);
-
-			// human-readable mirror per project
-			const mdPath = join(memoryDir(), `${record.project}.lessons.md`);
-			if (!existsSync(mdPath)) {
-				writeFileSync(mdPath, `# Lessons - ${cwd}\n\n`);
-			}
-			appendFileSync(mdPath, `## ${record.timestamp}\n\n${lesson}\n\n`);
-
-			// vault mode: queue the lesson for the fold pass, then fold if
-			// enough lessons have piled up
-			if (settings.getMemoryMode() === "vault") {
-				lessonToInbox(cwd, lesson, record.session);
-				triggerAutoFold(ensureVault(), "shutdown");
-			}
+			// Distillation runs in a detached worker; shutdown never blocks on
+			// the model call (fail-open: memory must never break shutdown).
+			enqueueDistill(sessionFile, cwd, settings.getMemoryMode() === "vault");
 		} catch {
 			// fail-open: memory must never block shutdown
 		}
