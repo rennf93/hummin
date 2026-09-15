@@ -138,6 +138,7 @@ import {
 	formatAuthSelectorProviderType,
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
+import { type QueuedMessageEntry, QueueManagerComponent } from "./components/queue-manager.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
@@ -3103,6 +3104,11 @@ export class InteractiveMode {
 				await this.handleClearCommand();
 				return;
 			}
+			if (text === "/queue") {
+				this.editor.setText("");
+				this.showQueueManager();
+				return;
+			}
 			if (text === "/compact" || text.startsWith("/compact ")) {
 				const customInstructions = text.startsWith("/compact ") ? text.slice(9).trim() : undefined;
 				this.editor.setText("");
@@ -4451,7 +4457,7 @@ export class InteractiveMode {
 				this.pendingMessagesContainer.addChild(new TruncatedText(text, 1, 0));
 			}
 			const dequeueHint = this.getAppKeyDisplay("app.message.dequeue");
-			const hintText = theme.fg("dim", `↳ ${dequeueHint} to edit all queued messages`);
+			const hintText = theme.fg("dim", `↳ ${dequeueHint} edits all · /queue manages individually`);
 			this.pendingMessagesContainer.addChild(new TruncatedText(hintText, 1, 0));
 		}
 	}
@@ -5212,6 +5218,46 @@ export class InteractiveMode {
 					controller.abort();
 				},
 			};
+		});
+	}
+
+	private showQueueManager(): void {
+		const readEntries = (): QueuedMessageEntry[] => [
+			...this.session.getSteeringMessages().map((text, index) => ({ kind: "steering" as const, index, text })),
+			...this.session.getFollowUpMessages().map((text, index) => ({ kind: "followUp" as const, index, text })),
+		];
+		const entries = readEntries();
+		if (entries.length === 0) {
+			this.showStatus("No queued messages");
+			return;
+		}
+
+		this.showSelector((done) => {
+			const refresh = () => {
+				done();
+				this.updatePendingMessagesDisplay();
+				this.ui.requestRender();
+				if (readEntries().length > 0) this.showQueueManager();
+			};
+			const component = new QueueManagerComponent(
+				entries,
+				(action, entry) => {
+					if (action === "delete") {
+						this.session.removeQueuedMessage(entry.kind, entry.index);
+						refresh();
+						return;
+					}
+					const text = this.session.removeQueuedMessage(entry.kind, entry.index);
+					const currentText = this.editor.getText();
+					this.editor.setText([text, currentText].filter((t) => t?.trim()).join("\n\n"));
+					refresh();
+				},
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+			);
+			return { component, focus: component };
 		});
 	}
 

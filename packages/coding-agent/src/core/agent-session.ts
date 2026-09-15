@@ -1631,6 +1631,17 @@ export class AgentSession {
 		return this._followUpMessages;
 	}
 
+	/** Remove one queued message by kind and position. Returns the removed text if it existed. */
+	removeQueuedMessage(kind: "steering" | "followUp", index: number): string | undefined {
+		const list = kind === "steering" ? this._steeringMessages : this._followUpMessages;
+		if (index < 0 || index >= list.length) return undefined;
+		const [text] = list.splice(index, 1);
+		if (kind === "steering") this.agent.removeSteeringAt(index);
+		else this.agent.removeFollowUpAt(index);
+		this._emitQueueUpdate();
+		return text;
+	}
+
 	get resourceLoader(): ResourceLoader {
 		return this._resourceLoader;
 	}
