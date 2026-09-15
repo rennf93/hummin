@@ -5227,11 +5227,15 @@ export class InteractiveMode {
 	 * Prompt history persists across sessions per project (cwd), stored under
 	 * the agent directory so project dirs stay clean. Newest entries first.
 	 */
-	private promptHistoryFile = path.join(
-		getAgentDir(),
-		"history",
-		`${crypto.createHash("sha256").update(this.sessionManager.getCwd()).digest("hex").slice(0, 16)}.json`,
-	);
+	private get promptHistoryFile(): string {
+		// Lazy: class field initializers run before the constructor binds
+		// runtimeHost, so the session cwd is not available there.
+		return path.join(
+			getAgentDir(),
+			"history",
+			`${crypto.createHash("sha256").update(this.sessionManager.getCwd()).digest("hex").slice(0, 16)}.json`,
+		);
+	}
 
 	private loadPromptHistory(): void {
 		try {
