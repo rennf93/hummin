@@ -46,8 +46,9 @@ import type {
 	ToolDefinition,
 } from "./types.ts";
 
-/** Modules available to extensions via virtualModules (for compiled binaries) */
-const VIRTUAL_MODULES: Record<string, unknown> = {
+/** Modules available to extensions via virtualModules (for compiled binaries).
+ * Wrapped with withPiAiApiSubpaths() below. */
+const VIRTUAL_MODULE_TARGET: Record<string, unknown> = {
 	typebox: _bundledTypebox,
 	"typebox/compile": _bundledTypeboxCompile,
 	"typebox/value": _bundledTypeboxValue,
@@ -72,6 +73,51 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@mariozechner/pi-ai/providers/all": _bundledPiAiProviders,
 	"@mariozechner/pi-coding-agent": _bundledPiCodingAgent,
 };
+
+const VIRTUAL_MODULES: Record<string, unknown> = withPiAiApiSubpaths(VIRTUAL_MODULE_TARGET);
+
+/**
+ * pi-ai ships code-split lazy api entrypoints (for example
+ * "@earendil-works/pi-ai/api/openai-completions.lazy"). The compat namespace
+ * re-exports every lazy api symbol, so serve any documented api/* subpath from
+ * it instead of enumerating entrypoints here. jiti looks modules up with
+ * `specifier in virtualModules` and `virtualModules[specifier]`, so the `has`
+ * and `get` traps cover the subpath pattern generically.
+ */
+const PI_AI_API_PREFIX = /^@(?:earendil-works|mariozechner)\/pi-ai\/api\//;
+
+function withPiAiApiSubpaths(modules: Record<string, unknown>): Record<string, unknown> {
+	return new Proxy(modules, {
+		has(target, key) {
+			return key in target || (typeof key === "string" && PI_AI_API_PREFIX.test(key));
+		},
+		get(target, key, receiver) {
+			if (typeof key === "string" && PI_AI_API_PREFIX.test(key)) {
+				// Symbols missing from compat fail with a clear error when accessed
+				// instead of silently being undefined (bad import or typo).
+				const compat = target["@earendil-works/pi-ai"] as object;
+				return new Proxy(compat, {
+					has(compatTarget, prop) {
+						// Route property reads through the guarded get below.
+						return typeof prop === "symbol" ? Reflect.has(compatTarget, prop) : true;
+					},
+					get(compatTarget, prop) {
+						if (typeof prop === "symbol") return Reflect.get(compatTarget, prop);
+						// Thenable probes from awaiting module namespaces are not exports.
+						if (prop === "then" || prop === "catch" || prop === "finally") return undefined;
+						if (prop !== "default" && !(prop in compatTarget)) {
+							throw new Error(
+								`"${String(prop)}" is not exported by @earendil-works/pi-ai api modules (available via the compat entrypoint)`,
+							);
+						}
+						return Reflect.get(compatTarget, prop);
+					},
+				});
+			}
+			return Reflect.get(target, key, receiver);
+		},
+	});
+}
 
 const require = createRequire(import.meta.url);
 
@@ -112,6 +158,8 @@ function getAliases(): Record<string, string> {
 	// superset of the core entrypoint): existing extensions using the old
 	// global API keep working at runtime until compat is removed.
 	const piAiCompatEntry = resolveWorkspaceOrImport("ai/dist/compat.js", "@earendil-works/pi-ai/compat");
+	// Prefix alias so any pi-ai api/* subpath resolves into the split api chunks.
+	const piAiApiDir = path.join(path.dirname(piAiCompatEntry), "api");
 	const piAiOauthEntry = resolveWorkspaceOrImport("ai/dist/oauth.js", "@earendil-works/pi-ai/oauth");
 	const piAiProvidersEntry = resolveWorkspaceOrImport(
 		"ai/dist/providers/all.js",
@@ -125,6 +173,7 @@ function getAliases(): Record<string, string> {
 		"@earendil-works/pi-ai/providers/all": piAiProvidersEntry,
 		"@earendil-works/pi-ai/compat": piAiCompatEntry,
 		"@earendil-works/pi-ai/oauth": piAiOauthEntry,
+		"@earendil-works/pi-ai/api/": piAiApiDir,
 		"@earendil-works/pi-ai": piAiCompatEntry,
 		"@mariozechner/pi-coding-agent": piCodingAgentEntry,
 		"@mariozechner/pi-agent-core": piAgentCoreEntry,
@@ -132,6 +181,7 @@ function getAliases(): Record<string, string> {
 		"@mariozechner/pi-ai/providers/all": piAiProvidersEntry,
 		"@mariozechner/pi-ai/compat": piAiCompatEntry,
 		"@mariozechner/pi-ai/oauth": piAiOauthEntry,
+		"@mariozechner/pi-ai/api/": piAiApiDir,
 		"@mariozechner/pi-ai": piAiCompatEntry,
 		typebox: typeboxEntry,
 		"typebox/compile": typeboxCompileEntry,

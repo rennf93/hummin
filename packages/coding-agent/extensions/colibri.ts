@@ -10,8 +10,8 @@ import {
 	createProvider,
 	envApiKeyAuth,
 	type Model,
-} from "@earendil-works/pi-ai";
-import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+	openAICompletionsApi,
+} from "@earendil-works/pi-ai/compat";
 import { type ExtensionAPI, SettingsManager, withLocalInferenceLock } from "@earendil-works/pi-coding-agent";
 
 type FleetServerSettings = ReturnType<SettingsManager["getFleetServers"]>[number];
