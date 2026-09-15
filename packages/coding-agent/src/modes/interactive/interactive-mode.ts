@@ -67,6 +67,7 @@ import {
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "../../core/defaults.ts";
+import { exportSessionToMarkdown } from "../../core/export-markdown.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -638,6 +639,7 @@ export class InteractiveMode {
 		const slashCommands: SlashCommand[] = BUILTIN_SLASH_COMMANDS.map((command) => ({
 			name: command.name,
 			description: command.description,
+			category: command.category,
 			...(command.argumentHint && { argumentHint: command.argumentHint }),
 		}));
 
@@ -709,6 +711,7 @@ export class InteractiveMode {
 			.map((cmd) => ({
 				name: cmd.invocationName,
 				description: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
+				category: cmd.category,
 				getArgumentCompletions: cmd.getArgumentCompletions,
 			}));
 
@@ -6133,6 +6136,22 @@ export class InteractiveMode {
 		try {
 			if (outputPath?.endsWith(".jsonl")) {
 				const filePath = this.session.exportToJsonl(outputPath);
+				this.showStatus(`Session exported to: ${filePath}`);
+			} else if (outputPath?.endsWith(".md")) {
+				let filePath: string;
+				try {
+					filePath = exportSessionToMarkdown(this.sessionManager, outputPath);
+				} catch (error) {
+					if (!(error instanceof Error) || !error.message.startsWith("File already exists:")) throw error;
+					const confirmed = await this.session.extensionRunner
+						.getUIContext()
+						.confirm("Overwrite Markdown export?", error.message);
+					if (!confirmed) return;
+					filePath = exportSessionToMarkdown(this.sessionManager, outputPath, true);
+				}
+				this.showStatus(`Session exported to: ${filePath}`);
+			} else if (!outputPath) {
+				const filePath = exportSessionToMarkdown(this.sessionManager);
 				this.showStatus(`Session exported to: ${filePath}`);
 			} else {
 				const filePath = await this.session.exportToHtml(outputPath, {

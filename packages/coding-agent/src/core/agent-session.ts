@@ -68,6 +68,7 @@ import {
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
+import { exportSessionToMarkdown } from "./export-markdown.ts";
 import {
 	type ContextUsage,
 	type ExtensionCommandContextActions,
@@ -3487,6 +3488,11 @@ export class AgentSession {
 	 */
 	exportToJsonl(outputPath?: string): string {
 		return exportSessionToJsonl(this.sessionManager, outputPath);
+	}
+
+	/** Export the current session branch to a Markdown transcript. */
+	exportToMarkdown(outputPath?: string, overwrite = false): string {
+		return exportSessionToMarkdown(this.sessionManager, outputPath, overwrite);
 	}
 
 	// =========================================================================
