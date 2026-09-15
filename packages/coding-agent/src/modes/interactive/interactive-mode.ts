@@ -5252,7 +5252,7 @@ export class InteractiveMode {
 
 	private rememberPromptHistory(text: string): void {
 		const trimmed = text.trim();
-		this.rememberPromptHistory(text);
+		this.editor.addToHistory?.(text);
 		if (!trimmed) return;
 		try {
 			const file = this.promptHistoryFile;
