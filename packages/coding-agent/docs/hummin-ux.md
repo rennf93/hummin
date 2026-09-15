@@ -47,8 +47,8 @@ Environment overrides:
 - `HUMMIN_FLEET_LAUNCHD_DOMAIN`
 - `HUMMIN_FLEET_PLIST_DIR`
 
-Model discovery uses `HUMMIN_COLIBRI_INSTANCES` when set, then configured fleet
-servers, then the `colibriInstances` setting. To show a known model while its
+Model discovery uses `HUMMIN_INSTANCES` when set, then configured fleet
+servers, then the `localInstances` setting. To show a known model while its
 server is stopped, add an explicit `models` array to that server:
 
 ```json

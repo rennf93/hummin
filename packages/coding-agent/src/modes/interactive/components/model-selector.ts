@@ -235,10 +235,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 	private sortModels(models: ModelItem[]): ModelItem[] {
 		const curated = (provider: string): boolean =>
-			provider === "zai" || provider === "zai-coding-cn" || provider.startsWith("colibri");
+			provider === "zai" || provider === "zai-coding-cn" || provider.startsWith("hummin");
 		const sorted = [...models];
 		// Sort: current model first, default model second, curated providers
-		// (zai, colibri) next, then remaining providers alphabetically.
+		// (zai, hummin) next, then remaining providers alphabetically.
 		sorted.sort((a, b) => {
 			const aIsCurrent = modelsAreEqual(this.currentModel, a.model);
 			const bIsCurrent = modelsAreEqual(this.currentModel, b.model);
@@ -337,7 +337,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 			const cursor = isSelected ? theme.fg("accent", "→ ") : "  ";
 			const currentMarker = isCurrent ? theme.fg("accent", "✓ ") : "  ";
-			// Rows show the human name when one exists (the colibri extension
+			// Rows show the human name when one exists (the hummin local provider extension
 			// puts engine + format there); the id stays in the search text.
 			const rowLabel = item.model.name && item.model.name !== item.id ? item.model.name : item.id;
 			const modelText = isOffline

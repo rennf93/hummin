@@ -13,7 +13,7 @@
 	},
 	"pi": {
 		"extensions": [
-			"extensions/colibri.ts"
+			"extensions/hummin-local.ts"
 		]
 	},
 	"bin": {

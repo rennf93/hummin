@@ -1,7 +1,7 @@
 import type * as PiAi from "@earendil-works/pi-ai";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import colibriExtension from "../extensions/colibri.ts";
+import humminLocalExtension from "../extensions/hummin-local.ts";
 import type { ExtensionAPI } from "../src/core/extensions/types.ts";
 
 vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
@@ -31,19 +31,19 @@ afterEach(() => {
 	vi.unstubAllEnvs();
 });
 
-describe("hummin colibri fleet discovery", () => {
+describe("hummin local provider fleet discovery", () => {
 	it("does not invent offline models when discovery is unavailable", async () => {
-		vi.stubEnv("HUMMIN_COLIBRI_INSTANCES", "http://127.0.0.1:19991");
+		vi.stubEnv("HUMMIN_INSTANCES", "http://127.0.0.1:19991");
 		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
 		const providers: RegisteredProvider[] = [];
 
-		await colibriExtension(fakeApi(providers));
+		await humminLocalExtension(fakeApi(providers));
 
 		expect(providers).toHaveLength(0);
 	});
 
 	it("uses the configured context fallback and preserves host and port identity", async () => {
-		vi.stubEnv("HUMMIN_COLIBRI_INSTANCES", "http://127.0.0.1:19991,http://127.0.0.1:19992");
+		vi.stubEnv("HUMMIN_INSTANCES", "http://127.0.0.1:19991,http://127.0.0.1:19992");
 		const fetchMock = vi.fn((input: string | URL): Promise<Response> => {
 			const url = String(input);
 			if (url.endsWith("/v1/models")) return Promise.resolve(response({ data: [{ id: "same-model" }] }));
@@ -52,7 +52,7 @@ describe("hummin colibri fleet discovery", () => {
 		vi.stubGlobal("fetch", fetchMock);
 		const providers: RegisteredProvider[] = [];
 
-		await colibriExtension(fakeApi(providers));
+		await humminLocalExtension(fakeApi(providers));
 
 		expect(providers.map((provider) => provider.id)).toEqual([
 			"llamacpp-127.0.0.1-19991",
@@ -64,7 +64,7 @@ describe("hummin colibri fleet discovery", () => {
 
 	it("labels explicit fleet catalog models as offline", async () => {
 		// Env overrides fleet; clear it so the mocked fleet config is actually used.
-		vi.stubEnv("HUMMIN_COLIBRI_INSTANCES", "");
+		vi.stubEnv("HUMMIN_INSTANCES", "");
 		vi.spyOn(SettingsManager, "create").mockReturnValue({
 			getFleetServers: () => [
 				{
@@ -84,7 +84,7 @@ describe("hummin colibri fleet discovery", () => {
 		vi.stubGlobal("fetch", fetchMock);
 		const providers: RegisteredProvider[] = [];
 
-		await colibriExtension(fakeApi(providers));
+		await humminLocalExtension(fakeApi(providers));
 
 		expect(providers.map((provider) => provider.id)).toEqual(["llamacpp-test-19993"]);
 		const model = providers[0]?.getModels()[0];

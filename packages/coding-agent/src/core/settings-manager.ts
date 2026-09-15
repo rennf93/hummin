@@ -48,7 +48,7 @@ export interface RetrySettings {
 }
 
 export interface ProvidersSettings {
-	showAll?: boolean; // default: false - /login surfaces curated providers (zai, colibri) plus already-configured ones only
+	showAll?: boolean; // default: false - /login surfaces curated providers (zai, hummin) plus already-configured ones only
 }
 
 export type TuiMode = RendererTuiMode;
@@ -123,7 +123,7 @@ export interface FleetServerSettings {
 	/** service manager used for probe/start/stop/restart */
 	kind: "launchd" | "docker";
 	/** inference engine used by this endpoint; defaults to llamacpp */
-	engine?: "colibri" | "llamacpp";
+	engine?: "colibri" | "llamacpp"; // colibri = the external container engine (github.com/JustVugg/colibri), like llamacpp
 	/** launchd service label, or docker compose service / container name */
 	target: string;
 	/** staged models this server serves (picker catalog fill-in while the server is off) */
@@ -185,9 +185,11 @@ export interface Settings {
 	memoryMode?: "lesson" | "vault";
 	/** hummin: where the knowledge-graph vault lives (env HUMMIN_MEMORY_VAULT_DIR overrides) */
 	memoryVaultDir?: string;
-	/** hummin: local inference server base URLs for the colibri provider (env HUMMIN_COLIBRI_INSTANCES overrides) */
+	/** hummin: local inference server base URLs for the hummin provider (env HUMMIN_INSTANCES overrides) */
+	localInstances?: string[];
+	/** @deprecated pre-rename key, read as a fallback for localInstances */
 	colibriInstances?: string[];
-	/** hummin: local inference fleet (ordered list = priority). Drives /fleet, /status, and the colibri provider's instance list + staged-model catalog. */
+	/** hummin: local inference fleet (ordered list = priority). Drives /fleet, /status, and the hummin provider's instance list + staged-model catalog. */
 	fleet?: FleetSettings;
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
@@ -1121,15 +1123,19 @@ export class SettingsManager {
 		return this.settings.memoryVaultDir ?? join(getAgentDir(), "vault");
 	}
 
-	getColibriInstances(): string[] {
-		const env = process.env.HUMMIN_COLIBRI_INSTANCES;
+	/** hummin: local inference server base URLs for the hummin provider.
+	 * HUMMIN_INSTANCES overrides (HUMMIN_COLIBRI_INSTANCES kept as a
+	 * pre-rename fallback); settings key `localInstances` (`colibriInstances`
+	 * kept as a pre-rename fallback). */
+	getLocalInstances(): string[] {
+		const env = process.env.HUMMIN_INSTANCES ?? process.env.HUMMIN_COLIBRI_INSTANCES;
 		if (env && env.trim().length > 0) {
 			return env
 				.split(",")
 				.map((entry) => entry.trim())
 				.filter((entry) => entry.length > 0);
 		}
-		const stored = this.settings.colibriInstances;
+		const stored = this.settings.localInstances ?? this.settings.colibriInstances;
 		if (Array.isArray(stored) && stored.length > 0) {
 			return stored.map((entry) => String(entry).trim()).filter((entry) => entry.length > 0);
 		}
@@ -1209,15 +1215,15 @@ export class SettingsManager {
 		this.save();
 	}
 
-	setColibriInstances(instances: string[], scope: "global" | "project" = "global"): void {
+	setLocalInstances(instances: string[], scope: "global" | "project" = "global"): void {
 		if (scope === "project") {
-			this.updateProjectSettings("colibriInstances", (settings) => {
-				settings.colibriInstances = instances;
+			this.updateProjectSettings("localInstances", (settings) => {
+				settings.localInstances = instances;
 			});
 			return;
 		}
-		this.globalSettings.colibriInstances = instances;
-		this.markModified("colibriInstances");
+		this.globalSettings.localInstances = instances;
+		this.markModified("localInstances");
 		this.save();
 	}
 

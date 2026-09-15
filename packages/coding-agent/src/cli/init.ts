@@ -72,7 +72,7 @@ export async function runInitCommand(args: string[]): Promise<boolean> {
 					.split(",")
 					.map((entry) => entry.trim())
 					.filter((entry) => /^https?:\/\//.test(entry))
-			: settings.getColibriInstances();
+			: settings.getLocalInstances();
 		if (instancesFlag && instances.length === 0) {
 			console.error(chalk.red("No valid instances (need http:// or https:// URLs)."));
 			process.exitCode = 1;
@@ -86,7 +86,7 @@ export async function runInitCommand(args: string[]): Promise<boolean> {
 			: settings.getMemoryMode();
 		const vaultDir = vaultDirFlag ? vaultDirFlag.replace("--vault-dir=", "") : settings.getMemoryVaultDir();
 
-		settings.setColibriInstances(instances, scope);
+		settings.setLocalInstances(instances, scope);
 		settings.setMemoryEnabled(memoryEnabled, scope);
 		settings.setMemoryMode(memoryMode, scope);
 		if (memoryMode === "vault") settings.setMemoryVaultDir(vaultDir, scope);
@@ -122,8 +122,8 @@ export async function runInitCommand(args: string[]): Promise<boolean> {
 
 		// 2. Local inference fleet (validated)
 		console.log("");
-		console.log(chalk.dim("Local model servers (OpenAI-compatible endpoints the colibri provider talks to)."));
-		let instances = settings.getColibriInstances();
+		console.log(chalk.dim("Local model servers (OpenAI-compatible endpoints the hummin provider talks to)."));
+		let instances = settings.getLocalInstances();
 		for (;;) {
 			const answer = await ask(rl, "Server base URLs (comma-separated, http(s) only)", instances.join(", "));
 			const candidate = answer
@@ -158,7 +158,7 @@ export async function runInitCommand(args: string[]): Promise<boolean> {
 			return true;
 		}
 
-		settings.setColibriInstances(instances, scope);
+		settings.setLocalInstances(instances, scope);
 		settings.setMemoryEnabled(memoryEnabled, scope);
 		if (memoryEnabled) {
 			settings.setMemoryMode(memoryMode, scope);

@@ -29,12 +29,12 @@ Overview text.
 > [!warning] Cap summary
 
 ## Links
-- related to [[colibri]]
+- related to [[hummin]]
 - also [[zfs]] (missing entity, no edge)
 `,
 	);
 	writeFileSync(
-		join(dir, "entities", "tool", "colibri.md"),
+		join(dir, "entities", "tool", "hummin.md"),
 		`---
 type: tool
 created: 2026-09-14
@@ -62,14 +62,14 @@ test("writeCanvas builds typed file nodes and Link-section edges", () => {
 	expect(canvas.nodes).toHaveLength(2);
 
 	const ramCap = canvas.nodes.find((n) => n.file === "entities/gotcha/ram-cap.md");
-	const colibri = canvas.nodes.find((n) => n.file === "entities/tool/colibri.md");
+	const hummin = canvas.nodes.find((n) => n.file === "entities/tool/hummin.md");
 	expect(ramCap?.color).toBe("2");
-	expect(colibri?.color).toBe("6");
+	expect(hummin?.color).toBe("6");
 	expect(ramCap?.type).toBe("file");
-	expect(colibri?.type).toBe("file");
+	expect(hummin?.type).toBe("file");
 
 	// Edges drawn only for wikilinks that resolve to existing entities, and
-	// only from the "## Links" section: ram-cap -> colibri, colibri -> ram-cap;
+	// only from the "## Links" section: ram-cap -> hummin, hummin -> ram-cap;
 	// the dangling [[zfs]] and the frontmatter/overview produce no edges.
 	expect(canvas.edges).toHaveLength(2);
 	const edgeFiles = canvas.edges.map((e) => {
@@ -77,8 +77,8 @@ test("writeCanvas builds typed file nodes and Link-section edges", () => {
 		const to = canvas.nodes.find((n) => n.id === e.toNode);
 		return `${from?.file}->${to?.file}`;
 	});
-	expect(edgeFiles).toContain("entities/gotcha/ram-cap.md->entities/tool/colibri.md");
-	expect(edgeFiles).toContain("entities/tool/colibri.md->entities/gotcha/ram-cap.md");
+	expect(edgeFiles).toContain("entities/gotcha/ram-cap.md->entities/tool/hummin.md");
+	expect(edgeFiles).toContain("entities/tool/hummin.md->entities/gotcha/ram-cap.md");
 	expect(existsSync(join(dir, "graph.canvas"))).toBe(true);
 });
 

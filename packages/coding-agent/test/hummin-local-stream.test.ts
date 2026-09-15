@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Api, createAssistantMessageEventStream, fauxAssistantMessage, type Model } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { serializedLocalStream } from "../extensions/colibri.ts";
+import { serializedLocalStream } from "../extensions/hummin-local.ts";
 
 const model = {
 	id: "test",

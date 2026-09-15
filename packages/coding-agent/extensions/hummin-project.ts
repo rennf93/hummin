@@ -24,7 +24,7 @@ function projectSummary(ctx: ExtensionContext): string {
 async function chooseCloudModel(ctx: ExtensionContext) {
 	const fleetHosts = new Set(SettingsManager.create(ctx.cwd).getFleetServers().map((server) => server.hostIp));
 	const isCloud = (model: Model<Api>): boolean => {
-		if (/colibri|llamacpp|ollama|local/i.test(model.provider)) return false;
+		if (/hummin|llamacpp|ollama|local/i.test(model.provider)) return false;
 		try {
 			const url = new URL(model.baseUrl);
 			const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");

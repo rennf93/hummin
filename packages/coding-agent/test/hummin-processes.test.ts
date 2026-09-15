@@ -107,7 +107,7 @@ describe("subagent model routing", () => {
 		expect(resolveTaskModel(undefined, ctx)).toBe(models[2]);
 	});
 	it("rejects unknown and offline models", () => {
-		expect(() => resolveTaskModel("colibri", ctx)).toThrow();
+		expect(() => resolveTaskModel("hummin", ctx)).toThrow();
 		expect(() => resolveTaskModel("llamacpp-first-9000/offline", ctx)).toThrow("offline");
 	});
 });

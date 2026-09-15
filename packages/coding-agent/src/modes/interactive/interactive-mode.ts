@@ -4248,7 +4248,7 @@ export class InteractiveMode {
 		const curated = (id: string): boolean =>
 			id === "zai" ||
 			id === "zai-coding-cn" ||
-			id.startsWith("colibri") ||
+			id.startsWith("hummin") ||
 			id.startsWith("llamacpp") ||
 			credentialed.has(id);
 		return models.filter((model) => curated(model.provider)).map((model) => ({ model }));
@@ -5619,7 +5619,7 @@ export class InteractiveMode {
 			}
 		}
 		const showAll = this.settingsManager.getProvidersShowAll();
-		const curated = (id: string): boolean => id === "zai" || id === "zai-coding-cn" || id.startsWith("colibri");
+		const curated = (id: string): boolean => id === "zai" || id === "zai-coding-cn" || id.startsWith("hummin");
 		const visible = options.filter((option) => showAll || curated(option.id) || option.status !== undefined);
 		return visible.sort((a, b) => {
 			const aCurated = curated(a.id);

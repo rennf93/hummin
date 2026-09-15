@@ -20,7 +20,7 @@ const MAX_BUSY_RETRIES = 5;
 const BUSY_BASE_DELAY_MS = 2000;
 const BUSY_MAX_DELAY_MS = 30000;
 
-interface ColibriModelInfo {
+interface LocalModelInfo {
 	id: string;
 }
 
@@ -46,14 +46,14 @@ const DISPLAY_NAMES: Record<string, string> = {
 	"glm-5.3-flash": "GLM 5.3 Flash",
 	"glm-5.3": "GLM 5.3",
 	"kimi-k3": "Kimi K3",
-	"glm-5.3-flash-colibri": "GLM 5.3 Flash (int4)",
+	"glm-5.3-flash-local": "GLM 5.3 Flash (int4)",
 };
 const displayName = (modelId: string): string => DISPLAY_NAMES[modelId] ?? modelId;
 
 function instanceConfigs(): InstanceConfig[] {
 	const settings = SettingsManager.create(process.cwd());
 	const fleet = typeof settings.getFleetServers === "function" ? settings.getFleetServers() : [];
-	const env = process.env.HUMMIN_COLIBRI_INSTANCES?.trim();
+	const env = process.env.HUMMIN_INSTANCES?.trim() ?? process.env.HUMMIN_COLIBRI_INSTANCES?.trim();
 	if (env) {
 		return env
 			.split(",")
@@ -72,7 +72,7 @@ function instanceConfigs(): InstanceConfig[] {
 			});
 	}
 	if (fleet.length > 0) return fleet.map((server) => configFromFleet(server));
-	return settings.getColibriInstances().map((baseUrl) => {
+	return settings.getLocalInstances().map((baseUrl) => {
 		const url = new URL(baseUrl);
 		return {
 			id: baseUrl,
@@ -100,23 +100,23 @@ function configFromFleet(server: FleetServerSettings): InstanceConfig {
 async function fetchModels(baseUrl: string, apiKey: string | undefined): Promise<string[]> {
 	const response = await fetch(`${baseUrl}/v1/models`, {
 		signal: AbortSignal.timeout(5000),
-		headers: { Authorization: `Bearer ${apiKey ?? "colibri"}` },
+		headers: { Authorization: `Bearer ${apiKey ?? "hummin"}` },
 	});
 	if (!response.ok) {
 		throw new Error(`HTTP ${response.status} from ${baseUrl}/v1/models`);
 	}
-	const body = (await response.json()) as { data?: ColibriModelInfo[] };
+	const body = (await response.json()) as { data?: LocalModelInfo[] };
 	return (body.data ?? []).map((entry) => entry.id).filter((id) => typeof id === "string" && id.length > 0);
 }
 
-// llama.cpp servers report their real context window on /props; colibri does
+// llama.cpp servers report their real context window on /props; hummin docker does
 // not serve that endpoint. Used as a per-model contextWindow override so the
 // advertised window matches what the server actually accepts.
 async function fetchContextWindow(baseUrl: string, apiKey: string | undefined): Promise<number | null> {
 	try {
 		const response = await fetch(`${baseUrl}/props`, {
 			signal: AbortSignal.timeout(3000),
-			headers: { Authorization: `Bearer ${apiKey ?? "colibri"}` },
+			headers: { Authorization: `Bearer ${apiKey ?? "hummin"}` },
 		});
 		if (!response.ok) return null;
 		const body = (await response.json()) as {
@@ -184,13 +184,13 @@ export function serializedLocalStream(
 	return events;
 }
 
-const colibriAuth = (): ApiKeyAuth => ({
-	...envApiKeyAuth("Colibri API key", ["COLI_API_KEY"]),
+const localAuth = (): ApiKeyAuth => ({
+	...envApiKeyAuth("Hummin API key", ["HUMMIN_API_KEY"]),
 	// Keyless LAN instances are always configured: resolve falls back to a
-	// placeholder key that colibri ignores when it runs without COLI_API_KEY.
+	// placeholder key that local servers ignore without an API key.
 	resolve: async ({ credential }) => {
 		const key = credential?.key ?? process.env.COLI_API_KEY;
-		return { auth: { apiKey: key ?? "colibri" }, source: credential?.key ? "stored credential" : "default" };
+		return { auth: { apiKey: key ?? "hummin" }, source: credential?.key ? "stored credential" : "default" };
 	},
 });
 
@@ -203,16 +203,16 @@ function isQwenFamily(modelId: string): boolean {
 
 // Per-engine, per-host providers: the footer and picker badges must say
 // WHICH engine (colibri container vs unsloth/llama.cpp GGUF) and WHICH host
-// (Mac/NAS) serves a model - a single "colibri" provider hid both.
+// (Mac/NAS) serves a model - a single local provider hid both.
 function instancePort(baseUrl: string): number {
 	const match = baseUrl.match(/:(\d+)\/?$/);
 	return match ? Number(match[1]) : 0;
 }
 
 // Picker display names: id stays the stable identifier, the name says what
-// actually serves it (engine + format), because "[colibri]" is the provider
+// actually serves it (engine + format), because "[hummin]" is the provider
 // label for all of them and tells the user nothing about the model itself.
-export default async function colibriExtension(pi: ExtensionAPI): Promise<void> {
+export default async function humminLocalExtension(pi: ExtensionAPI): Promise<void> {
 	const configs = instanceConfigs();
 	const instances = configs.map((config) => config.baseUrl);
 	if (instances.length === 0) {
@@ -236,7 +236,7 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 				fetchModels(baseUrl, process.env.COLI_API_KEY),
 				fetchContextWindow(baseUrl, process.env.COLI_API_KEY),
 			]);
-			return { baseUrl, ids, contextWindow: contextWindow ?? Number(process.env.HUMMIN_COLIBRI_CTX ?? 16384) };
+			return { baseUrl, ids, contextWindow: contextWindow ?? Number(process.env.HUMMIN_CTX ?? process.env.HUMMIN_COLIBRI_CTX ?? 16384) };
 		}),
 	);
 	const instanceMeta = new Map(
@@ -286,7 +286,7 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 	const base = openAICompletionsApi();
 
 	// Group by engine + host: one provider per combination so badges read
-	// e.g. "unsloth/llama.cpp - NAS" and "colibri - Mac".
+	// e.g. "unsloth/llama.cpp - NAS" and "hummin - Mac".
 	const ENGINE_NAMES: Record<string, string> = { colibri: "colibri", llamacpp: "unsloth/llama.cpp" };
 	const groups = new Map<string, { engine: string; host: string; entries: typeof serving }>();
 	for (const entry of serving) {
@@ -333,7 +333,7 @@ export default async function colibriExtension(pi: ExtensionAPI): Promise<void> 
 			id: providerId,
 			name: providerName,
 			baseUrl: `${group.entries[0]!.baseUrl}/v1`,
-			auth: { apiKey: colibriAuth() },
+			auth: { apiKey: localAuth() },
 			models,
 			api: {
 				stream: (model, context, options) =>

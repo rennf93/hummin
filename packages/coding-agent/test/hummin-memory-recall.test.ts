@@ -37,7 +37,7 @@ test("project lessons rank before sibling lessons, query overlap breaks ties", (
 		// sibling lesson, strong overlap with the query
 		{ cwd: SIBLING, lesson: "Gotcha: docker compose needs --force-recreate after mem_limit changes to apply" },
 		// newest project lesson, strong overlap
-		{ cwd: PROJ, lesson: "Gotcha: restart the colibri container to clear orphaned docker compose generations" },
+		{ cwd: PROJ, lesson: "Gotcha: restart the hummin container to clear orphaned docker compose generations" },
 	]);
 	const lessons = recallLessons(PROJ, "docker compose container restart not applying mem_limit");
 	expect(lessons).toHaveLength(3);
