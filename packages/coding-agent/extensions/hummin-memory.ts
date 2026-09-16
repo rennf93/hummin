@@ -383,8 +383,43 @@ export function searchVault(query: string, cwd: string): string {
 	if (entities.length > 0) {
 		sections.push(`Vault entities:\n${entities.join("\n")}`);
 	}
-	if (sections.length === 0) return `vault: no lessons or entities match "${query}".`;
-	return sections.join("\n\n").slice(0, 4000);
+	if (sections.length === 0) sections.push(`no lessons or entities match "${query}".`);
+	// Header names the vault actually searched: HUMMIN_MEMORY_VAULT_DIR can
+	// point sessions at a different vault than the default dir, and raw file
+	// inspection of the default dir has produced duplicate graphs before.
+	const dir = vaultDir(cachedSettings);
+	return `vault: ${dir} · ${countVaultEntities(dir)} entities · ${countVaultLessons()} lessons\n\n${sections.join("\n\n")}`.slice(0, 4200);
+}
+
+function countVaultEntities(dir: string): number {
+	const entitiesDir = join(dir, "entities");
+	if (!existsSync(entitiesDir)) return 0;
+	let count = 0;
+	const walk = (d: string): void => {
+		for (const f of readdirSync(d)) {
+			const full = join(d, f);
+			let isDir = false;
+			try {
+				isDir = statSync(full).isDirectory();
+			} catch {
+				continue;
+			}
+			if (isDir) walk(full);
+			else if (f.endsWith(".md")) count++;
+		}
+	};
+	walk(entitiesDir);
+	return count;
+}
+
+function countVaultLessons(): number {
+	const file = join(memoryDir(), "lessons.jsonl");
+	if (!existsSync(file)) return 0;
+	try {
+		return readFileSync(file, "utf8").split("\n").filter((line) => line.trim().length > 0).length;
+	} catch {
+		return 0;
+	}
 }
 
 function searchEntities(query: string, limit: number): string[] {
@@ -721,6 +756,10 @@ curator. Rules:
   invent facts that are not in an inbox lesson.
 - After folding, list entities/ and verify every [[link]] you wrote resolves
   to an existing file and that no two entities cover the same topic.
+- One project entity per repository is the graph's hub (e.g. project/hummin);
+  every other entity links to it directly or through its topic entities. A
+  second project entity is only for a distinct deliverable and must link to
+  the hub. Never let unanchored entities accumulate.
 - Each entity ends with a "## Links" section listing related [[entities]].
   Link notes inside the vault with [[wikilinks]]; keep [text](url) for
   external URLs only.

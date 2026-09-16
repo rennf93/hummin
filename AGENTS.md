@@ -128,6 +128,11 @@ For release preparation, publishing, verification, or recovery, load and follow 
 - `src/core/http-dispatcher.ts` replaces the global fetch with an undici `EnvHttpProxyAgent`. Local model servers need `httpIdleTimeoutMs: 0` in user settings (slow prefills otherwise look like dead connections); do not "fix" reported hangs by shortening default timeouts.
 - Runtime process title is `hummin`; a TUI session and spawned `-p` children look identical in `ps` - never kill by name pattern.
 - Extensions autoload from `~/.hummin/agent/extensions/` (runtime TS, synced from `packages/coding-agent/extensions/` after changes).
+- Verify absence claims with a search before asserting them - both a `/copy` command and the vault contents were wrongly declared missing before (2026-09).
+- Inspect uncommitted worktree changes (`git diff`) before attributing them to other sessions; never invent ownership. Ask the user if genuinely unclear.
+- Memory/vault tests must point `HUMMIN_MEMORY_DIR` and `HUMMIN_MEMORY_VAULT_DIR` at temp dirs; never let tests write the real `~/.hummin/agent/memory` store (65 test lessons had to be pruned once).
+- When a `HUMMIN_*` setting "doesn't apply", check env overrides first: `HUMMIN_MEMORY_VAULT_DIR`, `HUMMIN_MEMORY_PROVIDER`, `HUMMIN_MEMORY_MODEL_ID`, `HUMMIN_INSTANCES`, `HUMMIN_CTX` silently beat `settings.json`.
+- Spawning parallel child tasks in one worktree: state each child's file ownership explicitly in its brief, and expect transient in-flight parse errors in cross-package test runs.
 - Memory: inspect the vault through the built-in `vault` tool, not raw `find`/`cat` over vault directories. The live vault dir is `HUMMIN_MEMORY_VAULT_DIR` (`~/hummin-vault`), which overrides the default `~/.hummin/agent/vault` and the settings value - working in the default dir when the env var is set creates duplicate graphs. Fold/curate guardrails live in the vault's AGENTS.md (machine-managed by `vaultContract()` in hummin-memory.ts).
 
 ## User Override
