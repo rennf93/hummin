@@ -185,6 +185,10 @@ export interface Settings {
 	memoryMode?: "lesson" | "vault";
 	/** hummin: where the knowledge-graph vault lives (env HUMMIN_MEMORY_VAULT_DIR overrides) */
 	memoryVaultDir?: string;
+	/** hummin: provider for vault fold + distillation calls (env HUMMIN_MEMORY_PROVIDER overrides) */
+	memoryProvider?: string;
+	/** hummin: model id for vault fold + distillation calls (env HUMMIN_MEMORY_MODEL_ID overrides) */
+	memoryModelId?: string;
 	/** hummin: local inference server base URLs for the hummin provider (env HUMMIN_INSTANCES overrides) */
 	localInstances?: string[];
 	/** @deprecated pre-rename key, read as a fallback for localInstances */
@@ -1133,6 +1137,23 @@ export class SettingsManager {
 		const env = process.env.HUMMIN_MEMORY_VAULT_DIR;
 		if (env && env.trim().length > 0) return env;
 		return this.settings.memoryVaultDir ?? join(getAgentDir(), "vault");
+	}
+
+	/** Provider for vault fold + distillation calls. Env wins, then settings,
+	 * then the zai default - the model the user actually runs, so vault work
+	 * does not depend on a second configured provider. */
+	getMemoryProvider(): string {
+		const env = process.env.HUMMIN_MEMORY_PROVIDER;
+		if (env && env.trim().length > 0) return env;
+		return this.settings.memoryProvider ?? "zai";
+	}
+
+	/** Model id for vault fold + distillation calls. Env wins, then settings,
+	 * then the glm-5.3-flash default. */
+	getMemoryModelId(): string {
+		const env = process.env.HUMMIN_MEMORY_MODEL_ID;
+		if (env && env.trim().length > 0) return env;
+		return this.settings.memoryModelId ?? "glm-5.3-flash";
 	}
 
 	/** hummin: local inference server base URLs for the hummin provider.

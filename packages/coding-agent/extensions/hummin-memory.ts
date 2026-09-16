@@ -14,8 +14,12 @@
  *
  * Config (all optional):
  *   HUMMIN_MEMORY=1            enable (default off - experimental)
- *   HUMMIN_MEMORY_PROVIDER     provider for the distillation call (default: zai)
- *   HUMMIN_MEMORY_MODEL_ID     model id (default: glm-5.3-flash)
+ *   HUMMIN_MEMORY_PROVIDER     provider for fold/distill calls; overrides the
+ *                              session's selected model (default: the model
+ *                              selected in the session, falling back to zai)
+ *   HUMMIN_MEMORY_MODEL_ID     model id for fold/distill calls (default: the
+ *                              session's selected model, falling back to
+ *                              glm-5.3-flash)
  *   HUMMIN_MEMORY_DIR          storage dir (default: <agentDir>/memory)
  *   HUMMIN_MEMORY_MAX_CHARS    transcript tail passed to the distiller (default: 12000)
  *   HUMMIN_MEMORY_AUTO_FOLD_THRESHOLD  inbox lesson count that triggers an
@@ -36,8 +40,9 @@
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, appendFileSync, unlinkSync, writeFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Type } from "typebox";
+import type { Model } from "@earendil-works/pi-ai";
 import { getAgentDir, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { TextContent } from "@earendil-works/pi-ai";
 
@@ -235,8 +240,8 @@ function enqueueDistill(sessionFile: string, cwd: string, vaultMode: boolean): v
 			sessionFile,
 			cwd,
 			tail,
-			provider: process.env.HUMMIN_MEMORY_PROVIDER ?? "zai",
-			modelId: process.env.HUMMIN_MEMORY_MODEL_ID ?? "glm-5.3-flash",
+			provider: memoryModel().provider,
+			modelId: memoryModel().modelId,
 			project: projectKey(cwd),
 			session: sessionFile.split("/").pop(),
 			vaultMode,
@@ -304,15 +309,15 @@ function markProcessed(sessionFile: string): void {
 // =============================================================================
 // Retrieval: relevance-floored lesson injection, once per session (first
 // prompt), so the briefing is a single message in session history.
-// Relevance v3: project lessons always eligible (ranked by query overlap,
-// then recency); cross-project lessons surface only with >= 2 keyword
-// overlaps against the opening prompt. Below the floor nothing is injected -
-// no briefing bloat. Deterministic: no embeddings, plain term overlap.
+// Automatic briefings use matching lessons from this project only. Explicit
+// vault searches may also retrieve other projects with >= 2 keyword overlaps.
+// Rank by overlap, then project identity, then recency. No directory bonuses.
 // =============================================================================
 
 const RETRIEVAL_MAX_LESSONS = 3;
 const RETRIEVAL_MAX_CHARS = 2000;
 const CROSS_PROJECT_MIN_OVERLAP = 2;
+const BRIEFING_CHECKED = "hummin-memory-briefing-checked";
 
 const STOPWORDS = new Set([
 	"that", "this", "with", "from", "have", "been", "were", "their", "there",
@@ -320,6 +325,7 @@ const STOPWORDS = new Set([
 	"than", "them", "they", "when", "what", "your", "will", "into", "also",
 	"just", "like", "over", "under", "after", "before", "only", "more",
 	"most", "some", "such", "each", "very", "here", "where", "while",
+	"problem", "approach", "gotcha", "please", "help", "need", "want", "the", "and", "for", "are", "was",
 ]);
 
 function tokenize(text: string): Set<string> {
@@ -327,21 +333,22 @@ function tokenize(text: string): Set<string> {
 		text
 			.toLowerCase()
 			.split(/[^a-z0-9_./-]+/)
-			.filter((word) => word.length >= 4 && !STOPWORDS.has(word)),
+			.filter((word) => word.length >= 3 && !STOPWORDS.has(word)),
 	);
 }
 
-function parentDir(cwd: string): string {
-	const parts = cwd.split("/");
-	parts.pop();
-	return parts.join("/");
-}
-
-export function recallLessons(cwd: string, query: string, limit = RETRIEVAL_MAX_LESSONS): string[] {
+export function recallLessons(
+	cwd: string,
+	query: string,
+	limit = RETRIEVAL_MAX_LESSONS,
+	scope: "project" | "all" = "project",
+): string[] {
 	const file = join(memoryDir(), "lessons.jsonl");
 	if (!existsSync(file)) return [];
 	const queryTerms = tokenize(query);
-	const scored: { lesson: string; score: number; index: number }[] = [];
+	if (queryTerms.size === 0) return [];
+	const project = resolve(cwd);
+	const scored: { lesson: string; score: number; sameProject: boolean; index: number }[] = [];
 	let index = 0;
 	for (const line of readFileSync(file, "utf8").split("\n")) {
 		if (!line.trim()) continue;
@@ -350,20 +357,14 @@ export function recallLessons(cwd: string, query: string, limit = RETRIEVAL_MAX_
 			const record = JSON.parse(line);
 			if (typeof record.lesson !== "string" || typeof record.cwd !== "string") continue;
 			const overlap = [...tokenize(record.lesson)].filter((term) => queryTerms.has(term)).length;
-			let score = overlap;
-			if (record.cwd === cwd) {
-				score += 5;
-			} else if (parentDir(record.cwd) === parentDir(cwd)) {
-				score += 2;
-			} else if (overlap < CROSS_PROJECT_MIN_OVERLAP) {
-				continue;
-			}
-			scored.push({ lesson: record.lesson, score, index });
+			const sameProject = resolve(record.cwd) === project;
+			if (sameProject ? overlap === 0 : scope !== "all" || overlap < CROSS_PROJECT_MIN_OVERLAP) continue;
+			scored.push({ lesson: record.lesson, score: overlap, sameProject, index });
 		} catch {
 			// skip malformed
 		}
 	}
-	scored.sort((a, b) => b.score - a.score || b.index - a.index);
+	scored.sort((a, b) => b.score - a.score || Number(b.sameProject) - Number(a.sameProject) || b.index - a.index);
 	return scored.slice(0, limit).map((entry) => entry.lesson);
 }
 
@@ -374,7 +375,7 @@ export function recallLessons(cwd: string, query: string, limit = RETRIEVAL_MAX_
  */
 export function searchVault(query: string, cwd: string): string {
 	const sections: string[] = [];
-	const lessons = recallLessons(cwd, query, 5);
+	const lessons = recallLessons(cwd, query, 5, "all");
 	if (lessons.length > 0) {
 		sections.push(`Lessons (${lessons.length}):\n${lessons.join("\n\n")}`);
 	}
@@ -494,7 +495,21 @@ function dashboardText(dashboard: MemoryDashboard): string {
 	return `memory: ${dashboard.enabled ? "on" : "off"} (${dashboard.mode})\nvault: ${dashboard.vault}\nentities: ${entityCount} (${byType})\ninbox: ${dashboard.inbox} | processed: ${dashboard.processed}${recent}`;
 }
 
-let cachedSettings: SettingsManager | undefined;
+let cachedSettings: SettingsManager | undefined; // set by the extension's default export (real runs only; tests leave it undefined)
+
+/** The model the user is running (updated on model_select). Memory fold and
+ * distillation calls follow it, so the vault is managed by the same
+ * provider/model as the session; the zai/glm-5.3-flash defaults are the
+ * fallback when no model is selected yet (and the env vars can pin either). */
+let sessionModel: Model<any> | undefined;
+
+function memoryModel(): { provider: string; modelId: string } {
+	if (sessionModel) return { provider: sessionModel.provider, modelId: sessionModel.id };
+	return {
+		provider: cachedSettings?.getMemoryProvider() ?? "zai",
+		modelId: cachedSettings?.getMemoryModelId() ?? "glm-5.3-flash",
+	};
+}
 
 export default function humminMemory(pi: ExtensionAPI): void {
 	const settings = SettingsManager.create(process.cwd());
@@ -512,6 +527,10 @@ export default function humminMemory(pi: ExtensionAPI): void {
 	});
 	if (!settings.getMemoryEnabled()) return;
 
+	pi.on("model_select", (event) => {
+		sessionModel = event.model;
+	});
+
 	pi.registerTool({
 		name: "vault",
 		label: "Vault Search",
@@ -521,10 +540,10 @@ export default function humminMemory(pi: ExtensionAPI): void {
 		parameters: Type.Object({
 			query: Type.String({ description: "What to recall, e.g. the feature or area you are about to work on" }),
 		}),
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const query = params.query.trim();
 			if (!query) return { content: [{ type: "text" as const, text: "Error: empty query" }], details: {}, isError: true };
-			return { content: [{ type: "text" as const, text: searchVault(query, process.cwd()) }], details: {} };
+			return { content: [{ type: "text" as const, text: searchVault(query, ctx.cwd) }], details: {} };
 		},
 	});
 
@@ -612,25 +631,31 @@ export default function humminMemory(pi: ExtensionAPI): void {
 		});
 	}
 
-	// Inject at most once per session so the briefing is a single message in
-	// session history, not one per turn. If the first prompt has no matching
-	// lessons the flag stays false and a later turn can inject (e.g. a lesson
-	// distilled by another session meanwhile); on-demand recall is the `vault` tool.
-	let memoryInjected = false;
+	// Persist the attempt, including an empty result, outside the model context.
+	// Scan all entries so reloads, resumed sessions, and tree navigation cannot
+	// append another briefing. Later retrieval is explicit through the vault tool.
+	let briefingCheckedFor: string | undefined;
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		if (memoryInjected) return;
-		const lessons = recallLessons(process.cwd(), event?.prompt ?? "");
+		const sessionId = ctx.sessionManager.getSessionId();
+		if (briefingCheckedFor === sessionId) return;
+		briefingCheckedFor = sessionId;
+		if (ctx.sessionManager.getEntries().some((entry) =>
+			(entry.type === "custom" && entry.customType === BRIEFING_CHECKED) ||
+			(entry.type === "custom_message" && entry.customType === "hummin-memory-recall") ||
+			(entry.type === "message" && entry.message.role === "user")
+		)) return;
+		pi.appendEntry(BRIEFING_CHECKED, { version: 1 });
+		const lessons = recallLessons(ctx.cwd, event.prompt);
 		if (lessons.length === 0) return;
 		let briefing = "";
 		const parts: string[] = [];
-		for (const lesson of [...lessons].reverse()) {
-			if (briefing.length + lesson.length > RETRIEVAL_MAX_CHARS) break;
+		for (const lesson of lessons) {
+			if (briefing.length + lesson.length + 2 > RETRIEVAL_MAX_CHARS) continue;
 			briefing += `\n\n${lesson}`;
 			parts.push(lesson);
 		}
 		if (parts.length === 0) return;
-		memoryInjected = true;
 		if (ctx?.ui?.notify) {
 			ctx.ui.notify(`memory: ${parts.length} project lesson(s) applied to this session`, "info");
 		}
@@ -643,10 +668,11 @@ export default function humminMemory(pi: ExtensionAPI): void {
 		};
 	});
 
-	pi.on("session_shutdown", async () => {
+	pi.on("session_shutdown", async (event, ctx) => {
+		if (event.reason === "reload") return;
 		try {
-			const cwd = process.cwd();
-			const sessionFile = newestSessionFile(cwd);
+			const cwd = ctx.cwd;
+			const sessionFile = ctx.sessionManager.getSessionFile();
 			if (!sessionFile || alreadyProcessed(sessionFile)) return;
 			// Distillation runs in a detached worker; shutdown never blocks on
 			// the model call (fail-open: memory must never break shutdown).
@@ -799,10 +825,6 @@ export function writeCanvas(dir: string): number {
 }
 
 const AUTO_FOLD_THRESHOLD = Number(process.env.HUMMIN_MEMORY_AUTO_FOLD_THRESHOLD ?? 3);
-const FOLD_PROMPT_MODEL = () => ({
-	provider: process.env.HUMMIN_MEMORY_PROVIDER ?? "zai",
-	modelId: process.env.HUMMIN_MEMORY_MODEL_ID ?? "glm-5.3-flash",
-});
 
 function inboxLessonCount(dir: string): number {
 	return existsSync(join(dir, "inbox")) ? readdirSync(join(dir, "inbox")).filter((f) => f.endsWith(".md")).length : 0;
@@ -813,7 +835,7 @@ function triggerAutoFold(dir: string, label: string): boolean {
 	if (AUTO_FOLD_THRESHOLD <= 0) return false;
 	const count = inboxLessonCount(dir);
 	if (count < AUTO_FOLD_THRESHOLD) return false;
-	const { provider, modelId } = FOLD_PROMPT_MODEL();
+	const { provider, modelId } = memoryModel();
 	const out = openSync(join(dir, "fold.log"), "a");
 	try {
 		const child = spawn(
@@ -842,8 +864,7 @@ function vaultFold(label: string): void {
 		return;
 	}
 	console.log(`vault: folding ${inboxCount} lesson(s) from ${dir}`);
-	const provider = process.env.HUMMIN_MEMORY_PROVIDER ?? "zai";
-	const modelId = process.env.HUMMIN_MEMORY_MODEL_ID ?? "glm-5.3-flash";
+	const { provider, modelId } = memoryModel();
 	const res = spawnSync("hummin", [
 		"-p", `Fold the inbox lessons into the entity graph now, following AGENTS.md exactly. Inbox has ${inboxCount} lesson(s).`,
 		"--provider", provider, "--model", modelId, "--thinking", "low",

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { searchVault } from "../extensions/hummin-memory.ts";
 
 const createdDirs: string[] = [];
@@ -11,6 +11,12 @@ let vaultDirOriginal: string | undefined;
 beforeAll(() => {
 	memoryDirOriginal = process.env.HUMMIN_MEMORY_DIR;
 	vaultDirOriginal = process.env.HUMMIN_MEMORY_VAULT_DIR;
+});
+
+// Isolate each test's temp dirs: the module reads both env vars at call time,
+// so other test files that override them concurrently must not leak their temp
+// dirs into these calls.
+beforeEach(() => {
 	process.env.HUMMIN_MEMORY_DIR = mkdtempSync(join(tmpdir(), "hummin-vault-search-memory-"));
 	process.env.HUMMIN_MEMORY_VAULT_DIR = mkdtempSync(join(tmpdir(), "hummin-vault-search-vault-"));
 	createdDirs.push(process.env.HUMMIN_MEMORY_DIR, process.env.HUMMIN_MEMORY_VAULT_DIR);
@@ -39,7 +45,7 @@ function seedEntity(rel: string, content: string): void {
 	writeFileSync(path, content);
 }
 
-test("returns matching lessons and entities, labeled by section", () => {
+test("searches all projects' lessons and vault entities, labeled by section", () => {
 	seedLesson({
 		cwd: PROJ,
 		lesson:
@@ -59,31 +65,21 @@ test("returns matching lessons and entities, labeled by section", () => {
 	expect(result).toContain("Lessons (");
 	expect(result).toContain("Vault entities:");
 	expect(result).toContain("dataset quotas silently cap");
+	// cross-project lesson reachable via the "all" scope floor
+	expect(result).toContain("stall when quotas are hit");
 	expect(result).toContain("entities/gotcha/docker-quotas.md");
 	expect(result).not.toContain("decision/unrelated.md");
 });
 
-test("reports no entity matches when only lessons overlap", () => {
-	// Same-project lessons always qualify (no floor), so the lessons section is
-	// present; the vault entities section is absent because nothing matched.
+test("reports no matches when nothing overlaps", () => {
+	seedLesson({ cwd: PROJ, lesson: "Gotcha: docker compose needs --force-recreate after mem_limit changes to apply" });
+	seedEntity("gotcha/docker-quotas.md", "# Docker quotas\n\n- dataset quotas stall docker volume writes\n");
 	const result = searchVault("quantum chromodynamics lattice", PROJ);
-	expect(result).toContain("Lessons (");
-	expect(result).not.toContain("Vault entities:");
+	expect(result).toContain("no lessons or entities match");
 });
 
 test("works with an empty vault and no lessons", () => {
-	const emptyVault = mkdtempSync(join(tmpdir(), "hummin-vault-search-empty-"));
-	createdDirs.push(emptyVault);
-	const emptyMemory = mkdtempSync(join(tmpdir(), "hummin-vault-search-nomem-"));
-	createdDirs.push(emptyMemory);
-	const memOriginal = process.env.HUMMIN_MEMORY_DIR;
-	process.env.HUMMIN_MEMORY_VAULT_DIR = emptyVault;
-	process.env.HUMMIN_MEMORY_DIR = emptyMemory;
-	try {
-		const result = searchVault("docker dataset quotas", PROJ);
-		expect(result).toContain("no lessons or entities match");
-	} finally {
-		process.env.HUMMIN_MEMORY_DIR = memOriginal;
-		process.env.HUMMIN_MEMORY_VAULT_DIR = createdDirs[1];
-	}
+	// beforeEach already gave this test fresh empty memory + vault dirs.
+	const result = searchVault("docker dataset quotas", PROJ);
+	expect(result).toContain("no lessons or entities match");
 });
