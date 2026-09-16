@@ -370,6 +370,23 @@ export function generateUnifiedPatch(path: string, oldContent: string, newConten
 }
 
 /**
+ * Count added/removed lines between two contents without materializing a diff string.
+ * Counts whole changed lines, matching countDiffStat semantics on a line diff.
+ */
+export function countLineChanges(oldContent: string, newContent: string): { added: number; removed: number } {
+	let added = 0;
+	let removed = 0;
+	for (const part of Diff.diffLines(oldContent, newContent)) {
+		if (!part.added && !part.removed) continue;
+		const lines = part.value.split("\n");
+		if (lines[lines.length - 1] === "") lines.pop();
+		if (part.added) added += lines.length;
+		else removed += lines.length;
+	}
+	return { added, removed };
+}
+
+/**
  * Generate a display-oriented diff string with line numbers and context.
  * Returns both the diff string and the first changed line number (in the new file).
  */

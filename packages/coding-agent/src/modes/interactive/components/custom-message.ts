@@ -28,6 +28,7 @@ export class CustomMessageComponent extends Container {
 	private _expanded = false;
 	private outputPad: number;
 	private showTimestamp: boolean;
+	readonly scrollbarMarkerKind = "system";
 
 	constructor(
 		message: CustomMessage<unknown>,

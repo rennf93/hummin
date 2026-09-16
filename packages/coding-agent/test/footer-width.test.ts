@@ -95,6 +95,7 @@ function createSession(options: {
 function createFooterData(providerCount: number): ReadonlyFooterDataProvider {
 	const provider = {
 		getGitBranch: () => "main",
+		getGitStatus: () => null,
 		getExtensionStatuses: () => new Map<string, string>(),
 		getAvailableProviderCount: () => providerCount,
 		onBranchChange: (callback: () => void) => {

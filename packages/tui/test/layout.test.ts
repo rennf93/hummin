@@ -6,6 +6,7 @@ import { Text } from "../src/components/text.ts";
 import { VStack } from "../src/components/v-stack.ts";
 import { renderLayoutFrame } from "../src/layout.ts";
 import { encodeKitty, registerKittyImageMetadata } from "../src/terminal-image.ts";
+import type { Component } from "../src/tui.ts";
 import { stripTerminalSequences } from "../src/utils.ts";
 
 function visibleLines(lines: string[]): string[] {
@@ -363,5 +364,52 @@ describe("viewport layout", () => {
 
 		assert.strictEqual(first.root.children[0]?.lines?.length, 1);
 		assert.strictEqual(second.root.children[0]?.lines?.length, 3);
+	});
+});
+
+class MarkedText extends Text {
+	scrollbarMarkerKind: string;
+	constructor(text: string, kind: string) {
+		super(text, 0, 0);
+		this.scrollbarMarkerKind = kind;
+	}
+}
+
+describe("scrollbar index markers", () => {
+	it("paints proportional marker dots for marked components, under the thumb", () => {
+		const userStyle = (text: string) => `\x1b[31m${text}\x1b[39m`;
+		const systemStyle = (text: string) => `\x1b[34m${text}\x1b[39m`;
+		const entries = Array.from({ length: 12 }, (_, i) => {
+			const text = `L${i}`;
+			if (i === 0) return { component: new MarkedText(text, "user") as Component, basis: 1 as const, shrink: 0 };
+			if (i === 11) return { component: new MarkedText(text, "system") as Component, basis: 1 as const, shrink: 0 };
+			return { component: new Text(text, 0, 0) as Component, basis: 1 as const, shrink: 0 };
+		});
+		const scrollView = new ScrollView(new VStack(entries), {
+			scrollbar: "always",
+			scrollbarMarkerStyles: { user: userStyle, system: systemStyle },
+		});
+
+		// First layout establishes geometry: content 12, viewport 6, thumb height 3.
+		renderLayoutFrame(scrollView, 10, 6, () => {});
+
+		// scrollTop 2 -> thumb occupies track rows 1-3.
+		scrollView.scrollTo(2);
+		const lines = renderLayoutFrame(scrollView, 10, 6, () => {}).lines;
+		const visible = lines.map(stripTerminalSequences);
+
+		assert.deepStrictEqual(visible, [
+			"L2       ▌",
+			"L3       ┃",
+			"L4       ┃",
+			"L5       ┃",
+			"L6       │",
+			"L7       ▌",
+		]);
+		// user marker (content row 0) lands on track row 0, system (content row 11) on row 5
+		assert.ok(lines[0].includes(userStyle("▌")), `expected user marker on row 0: ${lines[0]}`);
+		assert.ok(lines[5].includes(systemStyle("▌")), `expected system marker on row 5: ${lines[5]}`);
+		// thumb is not overdrawn by markers
+		assert.ok(lines[2].includes("┃") && !lines[2].includes(systemStyle("▌")) && !lines[2].includes(userStyle("▌")));
 	});
 });

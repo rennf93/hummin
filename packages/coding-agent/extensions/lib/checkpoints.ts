@@ -44,17 +44,27 @@ export class CheckpointStore {
 		this.blobs = blobs;
 	}
 
+	/** True when the absolute path is inside the project root and outside .git,
+	 * i.e. a file rewind is able to track. Outside-project writes (temp scripts,
+	 * agent-dir files) are legitimate but untracked; they should skip silently. */
+	isTrackable(input: string): boolean {
+		const absolute = resolve(this.inputRoot, input);
+		let name = relative(this.inputRoot, absolute);
+		if (name === ".." || name.startsWith(`..${sep}`) || isAbsolute(name)) name = relative(this.root, absolute);
+		return (
+			name !== "" &&
+			name !== ".." &&
+			!name.startsWith(`..${sep}`) &&
+			!isAbsolute(name) &&
+			!name.split(sep).includes(".git")
+		);
+	}
+
 	path(input: string): string {
 		const absolute = resolve(this.inputRoot, input);
 		let name = relative(this.inputRoot, absolute);
 		if (name === ".." || name.startsWith(`..${sep}`) || isAbsolute(name)) name = relative(this.root, absolute);
-		if (
-			!name ||
-			name === ".." ||
-			name.startsWith(`..${sep}`) ||
-			isAbsolute(name) ||
-			name.split(sep).includes(".git")
-		) {
+		if (!this.isTrackable(input)) {
 			throw new Error("Checkpoint path must be a project file outside .git");
 		}
 		let cursor = this.root;

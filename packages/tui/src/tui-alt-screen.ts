@@ -1040,13 +1040,20 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	private setScrollbarHover(scrollView: ScrollView | undefined): void {
 		if (scrollView === this.scrollbarHover) return;
+		this.scrollbarHover?.setScrollbarHoverTrackRow(undefined);
 		this.scrollbarHover?.setScrollbarActive(false);
 		this.scrollbarHover = scrollView;
 		this.scrollbarHover?.setScrollbarActive(true);
 	}
 
 	private updateScrollbarHover(x: number, y: number): void {
-		this.setScrollbarHover(this.getScrollbarTargetAt(x, y, true)?.scrollView);
+		const target = this.getScrollbarTargetAt(x, y, true);
+		if (target) {
+			target.scrollView.setScrollbarHoverTrackRow(y - target.geometry.trackTop);
+		} else if (this.scrollbarHover) {
+			this.scrollbarHover.setScrollbarHoverTrackRow(undefined);
+		}
+		this.setScrollbarHover(target?.scrollView);
 	}
 
 	private stopScrollbarHover(): void {
@@ -1099,6 +1106,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.pressedUrl = undefined;
 		this.selectionDragged = false;
 		this.setScrollbarHover(target.scrollView);
+		// Click on a marker dot: jump exactly to the marked message (top of viewport)
+		const pressRow = event.y - target.geometry.trackTop;
+		const marker = target.scrollView.scrollbarPaintedMarkers.find((m) => m.trackRow === pressRow);
+		if (marker) {
+			target.scrollView.scrollTo(marker.contentRow, { disableFollow: true });
+			this.requestRender();
+			return true;
+		}
 		const onThumb =
 			event.y >= target.geometry.thumbTop && event.y < target.geometry.thumbTop + target.geometry.thumbHeight;
 		const grabOffset = onThumb ? event.y - target.geometry.thumbTop : Math.floor(target.geometry.thumbHeight / 2);

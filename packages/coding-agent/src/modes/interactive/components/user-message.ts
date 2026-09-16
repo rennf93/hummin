@@ -24,6 +24,7 @@ export function formatMessageTimestamp(timestamp: number, now = new Date()): str
  * Component that renders a user message
  */
 export class UserMessageComponent extends Container {
+	readonly scrollbarMarkerKind = "user";
 	private text: string;
 	private markdownTheme: MarkdownTheme;
 	private outputPad: number;

@@ -169,6 +169,7 @@ import {
 	getEditorTheme,
 	getMarkdownTheme,
 	getThemeByName,
+	highlightCode,
 	onThemeChange,
 	setRegisteredThemes,
 	stopThemeWatcher,
@@ -180,6 +181,36 @@ import { InteractiveThemeController } from "./theme/theme-controller.ts";
 import { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
 
 export { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
+
+/** A scrollbar marker dot painted on the transcript viewport. */
+export interface TranscriptMarker {
+	trackRow: number;
+	contentRow: number;
+	kind: string;
+}
+
+export type MarkerJumpDirection = "previous" | "next";
+
+/**
+ * Find the content row to scroll to when jumping to the previous/next marker.
+ * "previous" = largest contentRow strictly below scrollTop + 1; "next" = smallest
+ * contentRow strictly above scrollTop. Returns undefined when no target exists.
+ */
+export function findMarkerJumpTarget(
+	markers: ReadonlyArray<TranscriptMarker>,
+	scrollTop: number,
+	direction: MarkerJumpDirection,
+): number | undefined {
+	let best: number | undefined;
+	for (const marker of markers) {
+		if (direction === "previous" ? marker.contentRow < scrollTop + 1 : marker.contentRow > scrollTop) {
+			if (best === undefined || (direction === "previous" ? marker.contentRow > best : marker.contentRow < best)) {
+				best = marker.contentRow;
+			}
+		}
+	}
+	return best;
+}
 
 /** Interface for components that can be expanded/collapsed */
 interface Expandable {
@@ -387,6 +418,7 @@ export class InteractiveMode {
 	private chatContainer: Container;
 	private documentContainer: Container;
 	private transcriptScrollView: TuiLayouts.ScrollView | undefined;
+	private highlightCache = new Map<string, string>();
 	private fullscreenLayoutRoot: Component | undefined;
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
@@ -435,6 +467,14 @@ export class InteractiveMode {
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
+	/** Coalesced partial tool results waiting for their trailing render. */
+	private pendingPartialUpdates = new Map<
+		string,
+		{
+			result: { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>; details?: any };
+			timer: ReturnType<typeof setTimeout>;
+		}
+	>();
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
@@ -456,6 +496,8 @@ export class InteractiveMode {
 
 	// Track if editor is in bash mode (text starts with !)
 	private isBashMode = false;
+	/** Coalescing window for streaming partial tool results. */
+	private static readonly PARTIAL_RENDER_INTERVAL_MS = 16;
 
 	// Track current bash execution component
 	private bashComponent: BashExecutionComponent | undefined = undefined;
@@ -565,6 +607,7 @@ export class InteractiveMode {
 			paddingX: editorPaddingX,
 			autocompleteMaxVisible,
 			embedWorkingStatus: true,
+			highlighter: (text) => this.highlightEditorLine(text),
 		});
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
@@ -894,6 +937,10 @@ export class InteractiveMode {
 			scrollbar: this.settingsManager.getFullscreenScrollbar(),
 			scrollbarTrackStyle: (text) => theme.fg("scrollbarTrack", text),
 			scrollbarThumbStyle: (text) => theme.fg("scrollbarThumb", text),
+			scrollbarMarkerStyles: {
+				user: (text) => theme.fg("accent", text),
+				system: (text) => theme.fg("muted", text),
+			},
 		});
 		this.transcriptScrollView = viewport.transcript;
 		this.fullscreenLayoutRoot = viewport.root;
@@ -1029,6 +1076,7 @@ export class InteractiveMode {
 
 		// Set up theme file watcher
 		onThemeChange(() => {
+			this.highlightCache.clear();
 			this.ui.invalidate();
 			this.updateEditorBorderColor();
 			this.ui.requestRender();
@@ -1038,6 +1086,8 @@ export class InteractiveMode {
 		this.footerDataProvider.onBranchChange(() => {
 			this.ui.requestRender();
 		});
+		// Populate working-tree status for the footer
+		this.footerDataProvider.scheduleGitStatusRefresh();
 
 		// Initialize available provider count for footer display
 		await this.updateAvailableProviderCount();
@@ -2940,6 +2990,8 @@ export class InteractiveMode {
 			"app.message.copy",
 			() => void this.handleCopyCommand({ flashConfirmation: true, preferSelection: true }),
 		);
+		this.defaultEditor.onAction("app.message.jumpToPreviousMarker", () => this.jumpToMarker("previous"));
+		this.defaultEditor.onAction("app.message.jumpToNextMarker", () => this.jumpToMarker("next"));
 		this.defaultEditor.onAction("app.message.followUp", () => this.handleFollowUp());
 		this.defaultEditor.onAction("app.message.dequeue", () => this.handleDequeue());
 		this.defaultEditor.onAction("app.session.new", () => this.handleClearCommand());
@@ -3404,10 +3456,30 @@ export class InteractiveMode {
 
 			case "tool_execution_update": {
 				const component = this.pendingTools.get(event.toolCallId);
-				if (component) {
-					component.updateResult({ ...event.partialResult, isError: false }, true);
-					this.ui.requestRender();
+				if (!component) break;
+				// Leading-edge render immediately, then coalesce bursts into one trailing render.
+				// Partial streams can emit many chunks per second; each updateResult rebuilds the
+				// component tree, so per-chunk renders waste work.
+				const pending = this.pendingPartialUpdates.get(event.toolCallId);
+				if (pending) {
+					pending.result = event.partialResult;
+					break;
 				}
+				component.updateResult({ ...event.partialResult, isError: false }, true);
+				const toolCallId = event.toolCallId;
+				this.pendingPartialUpdates.set(toolCallId, {
+					result: event.partialResult,
+					timer: setTimeout(() => {
+						const queued = this.pendingPartialUpdates.get(toolCallId);
+						this.pendingPartialUpdates.delete(toolCallId);
+						if (!queued) return;
+						const target = this.pendingTools.get(toolCallId);
+						if (target) {
+							target.updateResult({ ...queued.result, isError: false }, true);
+							this.ui.requestRender();
+						}
+					}, InteractiveMode.PARTIAL_RENDER_INTERVAL_MS),
+				});
 				break;
 			}
 
@@ -3418,6 +3490,14 @@ export class InteractiveMode {
 					this.pendingTools.delete(event.toolCallId);
 					this.ui.requestRender();
 				}
+				// Drop any queued partial render; the final result already rendered above.
+				const queued = this.pendingPartialUpdates.get(event.toolCallId);
+				if (queued) {
+					clearTimeout(queued.timer);
+					this.pendingPartialUpdates.delete(event.toolCallId);
+				}
+				// File edits may have changed the working tree; refresh footer git state (debounced)
+				this.footerDataProvider.scheduleGitStatusRefresh();
 				break;
 			}
 
@@ -4234,6 +4314,43 @@ export class InteractiveMode {
 		}
 		this.activeStatusIndicator?.invalidate();
 		this.ui.requestRender();
+	}
+
+	/** Syntax-highlight bash-mode input lines; other input renders unstyled. */
+	private highlightEditorLine(text: string): string {
+		if (!this.isBashMode || !text.trimStart().startsWith("!")) {
+			return text;
+		}
+		const cached = this.highlightCache.get(text);
+		if (cached !== undefined) {
+			return cached;
+		}
+		let highlighted: string;
+		try {
+			highlighted = highlightCode(text, "bash")[0] ?? text;
+		} catch {
+			highlighted = text;
+		}
+		if (this.highlightCache.size >= 256) {
+			const oldest = this.highlightCache.keys().next().value;
+			if (oldest !== undefined) {
+				this.highlightCache.delete(oldest);
+			}
+		}
+		this.highlightCache.set(text, highlighted);
+		return highlighted;
+	}
+
+	private jumpToMarker(direction: MarkerJumpDirection): void {
+		const transcript = this.transcriptScrollView;
+		if (!transcript) {
+			return;
+		}
+		const target = findMarkerJumpTarget(transcript.scrollbarPaintedMarkers, transcript.scrollTop, direction);
+		if (target === undefined) {
+			return;
+		}
+		transcript.scrollTo(target, { disableFollow: true });
 	}
 
 	private cycleThinkingLevel(): void {

@@ -1,8 +1,10 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { existsSync, readFileSync } from "fs";
 import { mkdir as fsMkdir, writeFile as fsWriteFile } from "fs/promises";
 import { dirname } from "path";
 import { type Static, Type } from "typebox";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { countLineChanges } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { writeRenderers } from "./renderers/write.ts";
@@ -41,10 +43,18 @@ export interface WriteToolOptions {
 	operations?: WriteOperations;
 }
 
+/** Display-oriented metadata stored with write tool results. */
+export interface WriteToolDetails {
+	/** Lines added relative to the previous file content (whole content for new files) */
+	added: number;
+	/** Lines removed relative to the previous file content */
+	removed: number;
+}
+
 export function createWriteToolDefinition(
 	cwd: string,
 	options?: WriteToolOptions,
-): ToolDefinition<typeof writeSchema, undefined> {
+): ToolDefinition<typeof writeSchema, WriteToolDetails> {
 	const ops = options?.operations ?? defaultWriteOperations;
 	return {
 		name: "write",
@@ -78,13 +88,17 @@ export function createWriteToolDefinition(
 				await ops.mkdir(dir);
 				throwIfAborted();
 
+				// Capture previous content for the diff stat before overwriting.
+				const previousContent = existsSync(absolutePath) ? readFileSync(absolutePath, "utf8") : "";
+				const stat = countLineChanges(previousContent, content);
+
 				// Write the file contents.
 				await ops.writeFile(absolutePath, content);
 				throwIfAborted();
 
 				return {
 					content: [{ type: "text", text: `Successfully wrote to ${path}` }],
-					details: undefined,
+					details: { added: stat.added, removed: stat.removed } satisfies WriteToolDetails,
 				};
 			});
 		},

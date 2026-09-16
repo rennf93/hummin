@@ -119,6 +119,9 @@ export interface Component {
 	/** Optional handler for keyboard input when component has focus. */
 	handleInput?(data: string): void;
 
+	/** Optional marker kind rendered as an index dot on the transcript scrollbar. */
+	scrollbarMarkerKind?: string;
+
 	/** Optional normalized mouse handler. */
 	handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
 

@@ -306,6 +306,23 @@ export function getScrollbarGeometry(box: LayoutBox, includeHiddenAuto = false):
 	};
 }
 
+/**
+ * Collect scrollbar index markers from the scroll content's layout tree.
+ * Positions are content-space rows (screen row + scrollTop offset).
+ */
+function collectScrollbarMarkers(box: LayoutBox, contentTopScreenRow: number): Array<{ kind: string; row: number }> {
+	const markers: Array<{ kind: string; row: number }> = [];
+	const visit = (node: LayoutBox): void => {
+		const kind = node.component?.scrollbarMarkerKind;
+		if (typeof kind === "string") {
+			markers.push({ kind, row: node.rect.y - contentTopScreenRow });
+		}
+		for (const child of node.children) visit(child);
+	};
+	for (const child of box.children) visit(child);
+	return markers;
+}
+
 function paintScrollbar(box: LayoutBox, screen: string[], totalWidth: number): void {
 	const geometry = getScrollbarGeometry(box);
 	if (!geometry || !box.scrollView) return;
@@ -322,6 +339,43 @@ function paintScrollbar(box: LayoutBox, screen: string[], totalWidth: number): v
 			geometry.column,
 			totalWidth,
 			replacement,
+			box.scrollView.scrollbar !== "always",
+		);
+	}
+
+	// Index markers: one dot per marked component, positioned proportionally in the track.
+	const markerStyles = box.scrollView.scrollbarMarkerStyles;
+	const markerKinds = Object.keys(markerStyles);
+	const paintedMarkers: Array<{ trackRow: number; contentRow: number; kind: string }> = [];
+	box.scrollView.scrollbarPaintedMarkers = paintedMarkers;
+	if (markerKinds.length === 0 || geometry.trackHeight === 0) return;
+	const contentTopScreenRow = box.rect.y - box.scrollView.scrollTop;
+	const markers = collectScrollbarMarkers(box, contentTopScreenRow);
+	const contentHeight = Math.max(1, box.children[0]?.rect.height ?? 1);
+	const maxTrackRow = geometry.trackHeight - 1;
+
+	for (const marker of markers) {
+		const style = markerStyles[marker.kind];
+		if (!style) continue;
+		const trackOffset = Math.max(0, Math.min(maxTrackRow, Math.round((marker.row / contentHeight) * maxTrackRow)));
+		paintedMarkers.push({ trackRow: trackOffset, contentRow: marker.row, kind: marker.kind });
+		const trackRow = geometry.trackTop + trackOffset;
+		if (
+			trackRow < box.clip.y ||
+			trackRow >= box.clip.y + box.clip.height ||
+			trackRow < 0 ||
+			trackRow >= screen.length
+		) {
+			continue;
+		}
+		// The thumb stays visible on top of marker dots
+		if (trackRow >= geometry.thumbTop && trackRow < geometry.thumbTop + geometry.thumbHeight) continue;
+		const hovered = trackOffset === box.scrollView.scrollbarHoverTrackRow;
+		screen[trackRow] = replaceScrollbarCell(
+			screen[trackRow] ?? "",
+			geometry.column,
+			totalWidth,
+			style(hovered ? "█" : "▌"),
 			box.scrollView.scrollbar !== "always",
 		);
 	}

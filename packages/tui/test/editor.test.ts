@@ -4163,3 +4163,174 @@ describe("Editor component", () => {
 		});
 	});
 });
+
+describe("Editor input highlighting", () => {
+	it("applies the highlighter to rendered lines and preserves visible width", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, {
+			highlighter: (text) => (text.includes("cmd") ? `\x1b[31m${text}\x1b[0m` : text),
+		});
+		editor.setText("run cmd now");
+
+		const lines = editor.render(40);
+		const content = lines.join("\n");
+		assert.ok(content.includes("\x1b[31m"), "expected highlighter output in render");
+		// Styling must not change visible width: strip VT and check the text is intact
+		assert.ok(stripVTControlCharacters(content).includes("run cmd now"));
+	});
+
+	it("wraps the cursor character with the highlighter around it", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, {
+			highlighter: (text) => `<h>${text}</h>`,
+		});
+		editor.setText("abc");
+		// Move cursor to start
+		editor.handleInput("\x1b[H"); // home
+		const lines = editor.render(40);
+		const stripped = stripVTControlCharacters(lines.join("\n"));
+		// before-part, cursor char, after-part are highlighted separately
+		assert.ok(stripped.includes("<h>bc</h>"), `expected highlighted after-part, got: ${stripped}`);
+	});
+});
+
+describe("Editor incremental history search", () => {
+	it("ctrl+r enters search mode, types filter the query, and enter accepts", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.addToHistory("npm run build");
+		editor.addToHistory("git status");
+
+		editor.handleInput("\x12"); // ctrl+r
+		editor.handleInput("g");
+		editor.handleInput("i");
+		editor.handleInput("t");
+		assert.strictEqual(editor.getText(), "git status");
+
+		editor.handleInput("\x12"); // next older match matching "git"
+		assert.strictEqual(editor.getText(), "git status");
+	});
+
+	it("subsequent ctrl+r cycles to older matches", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.addToHistory("npm test one");
+		editor.addToHistory("npm test two");
+
+		editor.handleInput("\x12");
+		for (const ch of "npm") editor.handleInput(ch);
+		assert.strictEqual(editor.getText(), "npm test two");
+		editor.handleInput("\x12");
+		assert.strictEqual(editor.getText(), "npm test one");
+	});
+
+	it("escape cancels the search and restores the draft", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.addToHistory("history entry");
+		editor.setText("my draft");
+
+		editor.handleInput("\x12");
+		for (const ch of "history") editor.handleInput(ch);
+		assert.strictEqual(editor.getText(), "history entry");
+		editor.handleInput("\x1b"); // escape
+		assert.strictEqual(editor.getText(), "my draft");
+	});
+
+	it("empty query backspace exits search mode and restores the draft", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.addToHistory("history entry");
+		editor.setText("my draft");
+
+		editor.handleInput("\x12");
+		editor.handleInput("\x7f"); // backspace on empty query
+		assert.strictEqual(editor.getText(), "my draft");
+
+		// Search mode is off: typing goes into the editor again
+		editor.handleInput("x");
+		assert.strictEqual(editor.getText(), "my draftx");
+	});
+
+	it("shows the search query on the bottom border while active", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.addToHistory("history entry");
+
+		editor.handleInput("\x12");
+		for (const ch of "hi") editor.handleInput(ch);
+		const lines = editor.render(60);
+		assert.ok(
+			lines.some((line) => stripVTControlCharacters(line).includes("bck-i-search: hi")),
+			"expected search indicator in bottom border",
+		);
+	});
+});
+
+describe("Editor auto-pairing", () => {
+	function type(editor: Editor, text: string): void {
+		for (const char of text) editor.handleInput(char);
+	}
+
+	it("inserts a matching closer when typing an opener", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		type(editor, "(foo");
+		assert.strictEqual(editor.getText(), "(foo)");
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 4 });
+	});
+
+	it("pairs all bracket types and quotes", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		type(editor, "[a]{b");
+		assert.strictEqual(editor.getText(), "[a]{b}");
+		const quotes = new Editor(createTestTUI(), defaultEditorTheme);
+		quotes.handleInput('"');
+		assert.strictEqual(quotes.getText(), '""');
+		assert.deepStrictEqual(quotes.getCursor(), { line: 0, col: 1 });
+		quotes.setText("");
+		quotes.handleInput("'");
+		assert.strictEqual(quotes.getText(), "''");
+		quotes.setText("");
+		quotes.handleInput("`");
+		assert.strictEqual(quotes.getText(), "``");
+	});
+
+	it("skips over a typed closer when the same closer is at the cursor", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		type(editor, "(foo)");
+		assert.strictEqual(editor.getText(), "(foo)");
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 5 });
+		// A stray closer with no matching partner still inserts normally
+		editor.handleInput(")");
+		assert.strictEqual(editor.getText(), "(foo))");
+	});
+
+	it("does not auto-pair an apostrophe inside a word", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		type(editor, "don");
+		editor.handleInput("'");
+		assert.strictEqual(editor.getText(), "don'");
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 4 });
+	});
+
+	it("does not auto-pair after a backslash escape", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		type(editor, "a\\");
+		editor.handleInput("(");
+		assert.strictEqual(editor.getText(), "a\\(");
+	});
+
+	it("pairs before whitespace but not before word characters", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		type(editor, "x ");
+		editor.handleInput("(");
+		assert.strictEqual(editor.getText(), "x ()");
+		const beforeWord = new Editor(createTestTUI(), defaultEditorTheme);
+		type(beforeWord, "x");
+		beforeWord.handleInput("(");
+		assert.strictEqual(beforeWord.getText(), "x(");
+	});
+
+	it("can be disabled via autoPairing: false", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, { autoPairing: false });
+		type(editor, "(foo");
+		assert.strictEqual(editor.getText(), "(foo");
+		// No skip-over: typing the closers manually duplicates them
+		editor.handleInput(")");
+		editor.handleInput(")");
+		assert.strictEqual(editor.getText(), "(foo))");
+	});
+});

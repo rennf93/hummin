@@ -70,6 +70,28 @@ export interface RenderDiffOptions {
 	filePath?: string;
 }
 
+export interface DiffStat {
+	added: number;
+	removed: number;
+}
+
+/**
+ * Count added/removed lines in a diff string.
+ * Works with both the display format ("+12 content") and unified patches
+ * (skips "+ ++"/"- --" file headers; context lines start with a space).
+ */
+export function countDiffStat(diffText: string): DiffStat {
+	let added = 0;
+	let removed = 0;
+	for (const line of diffText.split("\n")) {
+		if (line.startsWith("+++")) continue;
+		if (line.startsWith("---")) continue;
+		if (line.startsWith("+")) added++;
+		else if (line.startsWith("-")) removed++;
+	}
+	return { added, removed };
+}
+
 /**
  * Render a diff string with colored lines and intra-line change highlighting.
  * - Context lines: dim/gray

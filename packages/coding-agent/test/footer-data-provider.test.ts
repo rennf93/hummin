@@ -5,6 +5,7 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let resolvedBranch = "main";
+let resolvedStatus: string | null = "";
 
 vi.mock("child_process", () => ({
 	execFile: vi.fn(
@@ -26,6 +27,13 @@ vi.mock("child_process", () => ({
 				);
 				return;
 			}
+			if (args[1] === "status") {
+				setTimeout(
+					() => callback(resolvedStatus === null ? new Error("no repo") : null, resolvedStatus ?? "", ""),
+					0,
+				);
+				return;
+			}
 			setTimeout(() => callback(new Error("unsupported"), "", ""), 0);
 		},
 	),
@@ -37,7 +45,7 @@ vi.mock("child_process", () => ({
 	}),
 }));
 
-import { FooterDataProvider } from "../src/core/footer-data-provider.ts";
+import { FooterDataProvider, parseGitStatusPorcelain } from "../src/core/footer-data-provider.ts";
 
 type WorktreeFixture = {
 	worktreeDir: string;
@@ -189,7 +197,8 @@ describe("FooterDataProvider reftable branch detection", () => {
 			emitReftableChange(provider);
 			await vi.advanceTimersByTimeAsync(501);
 
-			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
+			// One debounced refresh = one branch call + one status call
+			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(2);
 			expect(vi.mocked(spawnSync)).not.toHaveBeenCalled();
 			expect(provider.getGitBranch()).toBe("main");
 			expect(onBranchChange).not.toHaveBeenCalled();
@@ -215,9 +224,11 @@ describe("FooterDataProvider reftable branch detection", () => {
 			await vi.advanceTimersByTimeAsync(499);
 			expect(vi.mocked(execFile)).not.toHaveBeenCalled();
 			await vi.advanceTimersByTimeAsync(2);
-			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
+			// One debounced refresh = one branch call + one status call
+			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(2);
 			await vi.advanceTimersByTimeAsync(650);
-			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
+			// One debounced refresh = one branch call + one status call
+			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(2);
 		} finally {
 			provider.dispose();
 			vi.useRealTimers();
@@ -236,10 +247,10 @@ describe("FooterDataProvider reftable branch detection", () => {
 			provider.onBranchChange(onBranchChange);
 
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
-			await waitFor(() => vi.mocked(execFile).mock.calls.length === 1);
 			await waitFor(() => provider.getGitBranch() === "foo");
 
-			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
+			// One refresh = one branch call + one status call
+			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(2);
 			expect(provider.getGitBranch()).toBe("foo");
 			expect(onBranchChange).toHaveBeenCalledTimes(1);
 		} finally {
@@ -273,6 +284,115 @@ describe("FooterDataProvider reftable branch detection", () => {
 		} finally {
 			provider.dispose();
 			vi.useRealTimers();
+		}
+	});
+});
+
+describe("parseGitStatusPorcelain", () => {
+	it("counts staged, modified, and untracked files", () => {
+		const output = [
+			"## main...origin/main [ahead 2, behind 1]",
+			"M  staged-only.txt",
+			"MM staged-and-modified.txt",
+			" D deleted-worktree.txt",
+			"?? untracked.txt",
+			"",
+		].join("\n");
+		expect(parseGitStatusPorcelain(output)).toEqual({
+			staged: 2,
+			modified: 2,
+			untracked: 1,
+			ahead: 2,
+			behind: 1,
+		});
+	});
+
+	it("returns null ahead/behind when no upstream is configured", () => {
+		const output = ["## main", " M dirty.txt", ""].join("\n");
+		expect(parseGitStatusPorcelain(output)).toEqual({
+			staged: 0,
+			modified: 1,
+			untracked: 0,
+			ahead: null,
+			behind: null,
+		});
+	});
+
+	it("handles a clean tree and detached HEAD", () => {
+		expect(parseGitStatusPorcelain("## main...origin/main\n")).toEqual({
+			staged: 0,
+			modified: 0,
+			untracked: 0,
+			ahead: null,
+			behind: null,
+		});
+		expect(parseGitStatusPorcelain("## HEAD (no branch)\n")).toEqual({
+			staged: 0,
+			modified: 0,
+			untracked: 0,
+			ahead: null,
+			behind: null,
+		});
+	});
+});
+
+describe("git status refresh", () => {
+	let originalCwd: string;
+	let tempDir: string;
+
+	beforeEach(() => {
+		originalCwd = process.cwd();
+		tempDir = mkdtempSync(join(tmpdir(), "footer-data-provider-status-"));
+		resolvedBranch = "main";
+		resolvedStatus = "";
+		vi.mocked(spawnSync).mockClear();
+		vi.mocked(execFile).mockClear();
+	});
+
+	afterEach(() => {
+		process.chdir(originalCwd);
+		if (tempDir && existsSync(tempDir)) {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("populates status via scheduleGitStatusRefresh and notifies on change", async () => {
+		const repoDir = createPlainRepo(tempDir);
+
+		const provider = new FooterDataProvider(repoDir);
+		try {
+			expect(provider.getGitStatus()).toEqual(null);
+
+			const onBranchChange = vi.fn();
+			provider.onBranchChange(onBranchChange);
+
+			resolvedStatus = "## main\n M dirty.txt\n";
+			provider.scheduleGitStatusRefresh();
+			await waitFor(() => onBranchChange.mock.calls.length > 0);
+
+			expect(provider.getGitStatus()).toEqual({
+				staged: 0,
+				modified: 1,
+				untracked: 0,
+				ahead: null,
+				behind: null,
+			});
+		} finally {
+			provider.dispose();
+		}
+	});
+
+	it("returns null status when git is unavailable", async () => {
+		const repoDir = createPlainRepo(tempDir);
+
+		resolvedStatus = null;
+		const provider = new FooterDataProvider(repoDir);
+		try {
+			provider.scheduleGitStatusRefresh();
+			await waitFor(() => vi.mocked(execFile).mock.calls.length >= 1);
+			expect(provider.getGitStatus()).toEqual(null);
+		} finally {
+			provider.dispose();
 		}
 	});
 });

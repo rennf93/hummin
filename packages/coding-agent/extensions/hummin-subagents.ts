@@ -4,7 +4,12 @@ import { join, resolve } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { describeJob, ProcessManager } from "./lib/processes.ts";
+import {
+	describeAllProcesses,
+	describeJob,
+	ProcessManager,
+	refreshBackgroundStatus,
+} from "./lib/processes.ts";
 
 export function resolveTaskModel(
 	requested: string | undefined,
@@ -31,9 +36,15 @@ export function resolveTaskModel(
 }
 
 export default function humminSubagents(pi: ExtensionAPI): void {
-	const manager = new ProcessManager(join(getAgentDir(), "subagents"));
+	const manager = new ProcessManager(join(getAgentDir(), "subagents"), "task");
 	pi.on("session_shutdown", async () => {
 		await manager.close();
+	});
+	pi.registerCommand("background", {
+		description: "List running background tasks and monitors",
+		handler: async (_args, ctx) => {
+			ctx.ui.notify(describeAllProcesses(), "info");
+		},
 	});
 	pi.registerTool({
 		name: "task",
@@ -56,15 +67,19 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 			const model = resolveTaskModel(params.model, ctx);
 			const cwd = resolve(ctx.cwd, params.cwd ?? ".");
 			if (!statSync(cwd).isDirectory()) throw new Error(`Not a directory: ${cwd}`);
+			const summary = params.prompt.replace(/\s+/g, " ").trim();
+			const what = summary.length > 72 ? `${summary.slice(0, 72)}…` : summary || "(empty prompt)";
 			const job = manager.start({
 				command: "hummin",
 				args: ["-p", params.prompt, "--provider", model.provider, "--model", model.id, "--thinking", "off"],
 				cwd,
-				label: `${model.provider}/${model.id}`,
+				kind: "task",
+				label: `"${what}" · ${model.provider}/${model.id}`,
 				timeoutMs: (params.timeout_sec ?? 600) * 1000,
 				signal,
 				onComplete: params.background
 					? (finished) => {
+							ctx.ui.notify(`Background ${describeJob(finished)}`, finished.state === "completed" ? "info" : "warning");
 							pi.sendMessage(
 								{ customType: "hummin-task", content: describeJob(finished), display: true },
 								{ deliverAs: "followUp", triggerTurn: true },
@@ -72,7 +87,11 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 						}
 					: undefined,
 			});
+			refreshBackgroundStatus(ctx.ui);
+			// Make the spawn visible to the user immediately, with what it is and where it logs
+			ctx.ui.notify(`Started background ${describeJob(job)}`, "info");
 			if (!params.background) await job.done;
+			refreshBackgroundStatus(ctx.ui);
 			return {
 				content: [{ type: "text", text: describeJob(job) }],
 				details: { taskId: job.id },
@@ -89,13 +108,14 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 					? "Read a child task's state and output tail."
 					: "Cancel a child task owned by this session.",
 			parameters: Type.Object({ task_id: Type.String() }),
-			async execute(_id, params) {
+			async execute(_id, params, _signal, _update, ctx) {
 				const job = manager.jobs.get(params.task_id);
 				if (!job) throw new Error(`Unknown task: ${params.task_id}`);
 				if (action === "cancel") {
 					job.stop();
 					await job.done;
 				}
+				refreshBackgroundStatus(ctx.ui);
 				return { content: [{ type: "text", text: describeJob(job) }], details: { taskId: job.id } };
 			},
 		});

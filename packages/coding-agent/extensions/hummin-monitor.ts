@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { type ExtensionAPI, getAgentDir, getShellConfig } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { describeJob, ProcessManager } from "./lib/processes.ts";
+import { describeJob, ProcessManager, refreshBackgroundStatus } from "./lib/processes.ts";
 
 /** Bounded line batches: literal matching, split-chunk support, duplicate
  * suppression and a cap even when a process never writes a newline. */
@@ -39,7 +39,7 @@ export class MonitorBuffer {
 }
 
 export default function humminMonitor(pi: ExtensionAPI): void {
-	const manager = new ProcessManager(join(getAgentDir(), "monitors"));
+	const manager = new ProcessManager(join(getAgentDir(), "monitors"), "monitor");
 	const timers = new Set<NodeJS.Timeout>();
 	let closed = false;
 	pi.on("session_shutdown", async () => {
@@ -100,6 +100,7 @@ export default function humminMonitor(pi: ExtensionAPI): void {
 				command: shell.shell,
 				args: [...shell.args, params.command],
 				cwd: ctx.cwd,
+				kind: "monitor",
 				label: params.command,
 				signal,
 				timeoutMs: (params.timeout_sec ?? 3600) * 1000,
@@ -119,12 +120,16 @@ export default function humminMonitor(pi: ExtensionAPI): void {
 							},
 							{ deliverAs: "followUp", triggerTurn: true },
 						);
+					refreshBackgroundStatus(ctx.ui);
 				},
 			});
 			if (job.state === "running") {
 				timer = setInterval(() => deliver(job.id), (params.interval_sec ?? 5) * 1000);
 				timers.add(timer);
 			}
+			refreshBackgroundStatus(ctx.ui);
+			// Spawn visibility: what is watching what, and where output lands
+			ctx.ui.notify(`Started background ${describeJob(job)}`, "info");
 			return { content: [{ type: "text", text: describeJob(job) }], details: { monitorId: job.id } };
 		},
 	});

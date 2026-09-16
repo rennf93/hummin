@@ -1,9 +1,11 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import type { Usage } from "@earendil-works/pi-ai/compat";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
-import { addUsageToTotals, createUsageTotals } from "../../../core/usage-totals.ts";
+import { addUsageToTotals, createUsageTotals, type UsageTotals } from "../../../core/usage-totals.ts";
 import { theme } from "../theme/theme.ts";
+import { countDiffStat, type DiffStat } from "./diff.ts";
 
 /**
  * Sanitize text for display in a single-line status.
@@ -51,6 +53,18 @@ export class FooterComponent implements Component {
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
 	private compactionQueueCount = 0;
+	/** Cached per-toolCall diff stats so re-renders don't re-count patches. */
+	private diffStatCache = new Map<string, DiffStat>();
+	/** Aggregated stats for all entries except the last; recomputed only when the entry set grows. */
+	private cachedPrefix:
+		| {
+				entryCount: number;
+				firstEntry: unknown;
+				usage: UsageTotals;
+				diff: DiffStat;
+				cacheHitRate: number | undefined;
+		  }
+		| undefined;
 
 	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
 		this.session = session;
@@ -85,27 +99,98 @@ export class FooterComponent implements Component {
 		// Git watcher cleanup handled by provider
 	}
 
+	/** Cached per-toolCall diff stat, or undefined when the result carries no diff. */
+	private getToolDiffStat(message: { toolCallId: string; details?: unknown }): DiffStat | undefined {
+		const details = message.details as { diff?: unknown; added?: unknown; removed?: unknown } | undefined;
+		// edit stores a display diff; write stores precomputed counts
+		if (typeof details?.added === "number" && typeof details.removed === "number") {
+			return { added: details.added, removed: details.removed };
+		}
+		if (typeof details?.diff !== "string" || details.diff === "") return undefined;
+		const cached = this.diffStatCache.get(message.toolCallId);
+		if (cached) return cached;
+		const stat = countDiffStat(details.diff);
+		this.diffStatCache.set(message.toolCallId, stat);
+		return stat;
+	}
+
+	/** Aggregate usage/diff stats from a single session entry. */
+	private aggregateEntry(
+		entry: { type: string; message?: unknown; usage?: unknown },
+		usage: UsageTotals,
+		diff: DiffStat,
+	): number | undefined {
+		const message = entry.message as
+			| { role?: string; usage?: Usage; details?: unknown; toolCallId?: string }
+			| undefined;
+		if (entry.type === "message" && message?.role === "assistant") {
+			const msgUsage = message.usage as Usage;
+			addUsageToTotals(usage, msgUsage);
+			const latestPromptTokens = msgUsage.input + msgUsage.cacheRead + msgUsage.cacheWrite;
+			return latestPromptTokens > 0 ? (msgUsage.cacheRead / latestPromptTokens) * 100 : undefined;
+		}
+		if (entry.type === "message" && message?.role === "toolResult") {
+			if (message.usage) {
+				addUsageToTotals(usage, message.usage);
+			}
+			const stat = this.getToolDiffStat({ toolCallId: message.toolCallId ?? "", details: message.details });
+			if (stat) {
+				diff.added += stat.added;
+				diff.removed += stat.removed;
+			}
+		}
+		if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
+			addUsageToTotals(usage, entry.usage as Usage);
+		}
+		return undefined;
+	}
+
+	/**
+	 * Compute session-wide stats. All entries except the last are cached (entries only grow, and
+	 * older entries never change); the last entry is folded in fresh each render because its
+	 * usage mutates while an assistant message streams.
+	 */
+	private computeSessionStats() {
+		const entries = this.session.sessionManager.getEntries();
+		const prefixCount = Math.max(0, entries.length - 1);
+		if (
+			!this.cachedPrefix ||
+			this.cachedPrefix.entryCount !== prefixCount ||
+			entries[0] !== this.cachedPrefix.firstEntry
+		) {
+			const usage = createUsageTotals();
+			const diff: DiffStat = { added: 0, removed: 0 };
+			let cacheHitRate: number | undefined;
+			for (let i = 0; i < prefixCount; i++) {
+				const hitRate = this.aggregateEntry(
+					entries[i] as { type: string; message?: unknown; usage?: unknown },
+					usage,
+					diff,
+				);
+				if (hitRate !== undefined) cacheHitRate = hitRate;
+			}
+			this.cachedPrefix = { entryCount: prefixCount, firstEntry: entries[0], usage, diff, cacheHitRate };
+		}
+
+		const usageTotals = { ...this.cachedPrefix.usage };
+		const sessionDiff: DiffStat = { ...this.cachedPrefix.diff };
+		let latestCacheHitRate = this.cachedPrefix.cacheHitRate;
+		if (entries.length > 0) {
+			const hitRate = this.aggregateEntry(
+				entries[entries.length - 1] as { type: string; message?: unknown; usage?: unknown },
+				usageTotals,
+				sessionDiff,
+			);
+			if (hitRate !== undefined) latestCacheHitRate = hitRate;
+		}
+		return { usageTotals, sessionDiff, latestCacheHitRate };
+	}
+
 	render(width: number): string[] {
 		const state = this.session.state;
 
 		// Calculate cumulative usage from ALL session entries (not just post-compaction messages)
-		const usageTotals = createUsageTotals();
-		let latestCacheHitRate: number | undefined;
-
-		for (const entry of this.session.sessionManager.getEntries()) {
-			if (entry.type === "message" && entry.message.role === "assistant") {
-				addUsageToTotals(usageTotals, entry.message.usage);
-
-				const latestPromptTokens =
-					entry.message.usage.input + entry.message.usage.cacheRead + entry.message.usage.cacheWrite;
-				latestCacheHitRate =
-					latestPromptTokens > 0 ? (entry.message.usage.cacheRead / latestPromptTokens) * 100 : undefined;
-			} else if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.usage) {
-				addUsageToTotals(usageTotals, entry.message.usage);
-			} else if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
-				addUsageToTotals(usageTotals, entry.usage);
-			}
-		}
+		const { usageTotals, sessionDiff, latestCacheHitRate } = this.computeSessionStats();
 
 		// Calculate context usage from session (handles compaction correctly).
 		// After compaction, tokens are unknown until the next LLM response.
@@ -117,10 +202,13 @@ export class FooterComponent implements Component {
 		// Replace home directory with ~
 		let pwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
 
-		// Add git branch if available
+		// Add git branch if available, with a dirty marker when the working tree has changes
+		const gitStatus = this.footerData.getGitStatus();
 		const branch = this.footerData.getGitBranch();
 		if (branch) {
-			pwd = `${pwd} (${branch})`;
+			const dirty =
+				gitStatus && (gitStatus.staged > 0 || gitStatus.modified > 0 || gitStatus.untracked > 0) ? "*" : "";
+			pwd = `${pwd} (${branch}${dirty})`;
 		}
 
 		// Add session name if set
@@ -134,6 +222,27 @@ export class FooterComponent implements Component {
 		const statsParts: Array<{ label: string; value: string }> = [];
 		const queueCount = this.session.pendingMessageCount + this.compactionQueueCount;
 		if (queueCount > 0) statsParts.push({ label: "queue", value: theme.fg("accent", String(queueCount)) });
+
+		// Cumulative diff made by the agent this session (from edit/write tool patches)
+		if (sessionDiff.added > 0 || sessionDiff.removed > 0) {
+			const diffParts: string[] = [];
+			if (sessionDiff.added > 0) diffParts.push(theme.fg("toolDiffAdded", `+${formatTokens(sessionDiff.added)}`));
+			if (sessionDiff.removed > 0)
+				diffParts.push(theme.fg("toolDiffRemoved", `-${formatTokens(sessionDiff.removed)}`));
+			statsParts.push({ label: "diff", value: diffParts.join(" ") });
+		}
+
+		// Git working-tree state (includes changes made outside the agent)
+		if (gitStatus) {
+			const gitParts: string[] = [];
+			if (gitStatus.staged > 0) gitParts.push(theme.fg("toolDiffAdded", `+${gitStatus.staged}`));
+			if (gitStatus.modified > 0) gitParts.push(theme.fg("warning", `~${gitStatus.modified}`));
+			if (gitStatus.untracked > 0) gitParts.push(theme.fg("dim", `?${gitStatus.untracked}`));
+			if (gitStatus.ahead) gitParts.push(theme.fg("accent", `↑${gitStatus.ahead}`));
+			if (gitStatus.behind) gitParts.push(theme.fg("accent", `↓${gitStatus.behind}`));
+			if (gitParts.length > 0) statsParts.push({ label: "git", value: gitParts.join(" ") });
+		}
+
 		if (usageTotals.input) statsParts.push({ label: "in", value: formatTokens(usageTotals.input) });
 		if (usageTotals.output) statsParts.push({ label: "out", value: formatTokens(usageTotals.output) });
 		if (usageTotals.cacheRead) statsParts.push({ label: "rd", value: formatTokens(usageTotals.cacheRead) });

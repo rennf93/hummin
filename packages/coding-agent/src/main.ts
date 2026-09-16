@@ -68,6 +68,7 @@ import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, setThemeJsonValidator, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { validateThemeJson } from "./modes/interactive/theme/theme-json.ts";
 import { cleanupManagedInstall, handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
+import { readExtensionFlagsCache, writeExtensionFlagsCache } from "./utils/extension-flags-cache.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
@@ -607,6 +608,16 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	const parsed = parseArgs(args);
+
+	// Fast path: --help only needs extension CLI flags, which are cached from the
+	// last full extension load. Falls through to the full runtime when stale/absent.
+	if (parsed.help && (parsed.extensions?.length ?? 0) === 0) {
+		const cachedFlags = readExtensionFlagsCache(agentDir);
+		if (cachedFlags) {
+			printHelp(cachedFlags);
+			process.exit(0);
+		}
+	}
 	if (parsed.diagnostics.length > 0) {
 		for (const d of parsed.diagnostics) {
 			const color = d.type === "error" ? chalk.red : chalk.yellow;
@@ -861,6 +872,7 @@ export async function main(args: string[], options?: MainOptions) {
 		const extensionFlags = resourceLoader
 			.getExtensions()
 			.extensions.flatMap((extension) => Array.from(extension.flags.values()));
+		writeExtensionFlagsCache(agentDir, extensionFlags);
 		printHelp(extensionFlags);
 		process.exit(0);
 	}

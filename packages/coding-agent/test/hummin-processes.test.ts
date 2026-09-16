@@ -13,9 +13,12 @@ function fixture(source: string) {
 	directories.push(cwd);
 	const script = join(cwd, "child.mjs");
 	writeFileSync(script, source);
-	const manager = new ProcessManager(join(cwd, "logs"));
+	const manager = new ProcessManager(join(cwd, "logs"), "task");
 	managers.push(manager);
-	return { manager, options: { command: process.execPath, args: [script], cwd, label: "test", timeoutMs: 5000 } };
+	return {
+		manager,
+		options: { command: process.execPath, args: [script], cwd, kind: "task", label: "test", timeoutMs: 5000 },
+	};
 }
 afterEach(async () => {
 	await Promise.all(managers.splice(0).map((manager) => manager.close()));

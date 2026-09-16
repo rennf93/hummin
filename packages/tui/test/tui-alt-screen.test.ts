@@ -1906,3 +1906,103 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 });
+
+describe("scrollbar marker click-to-jump", () => {
+	it("clicking a marker dot jumps that message to the top of the viewport", async () => {
+		const terminal = new VirtualTerminal(30, 8);
+		const tui = new TuiAltScreen(terminal);
+		const lines = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`);
+		// Transcript: 20 content lines; marker on line 1 (content row 0) and line 20 (row 19)
+		const marked = new (class extends Text {
+			scrollbarMarkerKind = "user";
+		})("user message", 0, 0);
+		const endMarked = new (class extends Text {
+			scrollbarMarkerKind = "system";
+		})(lines[19], 0, 0);
+		const transcript = new ScrollView(
+			new VStack([
+				{ component: marked, basis: 1 as const, shrink: 0 },
+				...lines.slice(1, 19).map((text) => ({ component: new Text(text, 0, 0), basis: 1 as const, shrink: 0 })),
+				{ component: endMarked, basis: 1 as const, shrink: 0 },
+			]),
+			{
+				follow: "end",
+				primary: true,
+				scrollbar: "always",
+				scrollbarMarkerStyles: { user: (t) => t, system: (t) => t },
+			},
+		);
+		tui.setLayoutRoot(transcript);
+		tui.start();
+		await terminal.waitForRender();
+
+		// Content 20 lines, viewport 5 (8 rows minus editor/footer rows?) - markers proportional.
+		const markers = transcript.scrollbarPaintedMarkers;
+		assert.strictEqual(markers.length, 2);
+		const userMarker = markers.find((m) => m.kind === "user");
+		assert.ok(userMarker, "expected a user marker");
+
+		// Follow-end is on: view starts at the bottom. Click the user dot on the scrollbar column.
+		const column = 30;
+		const pressRow = userMarker.trackRow; // marker track rows are viewport-relative (trackTop = 0)
+		terminal.sendInput(`\x1b[<0;${column};${pressRow + 1}M`);
+		terminal.sendInput(`\x1b[<0;${column};${pressRow + 1}m`);
+		await terminal.waitForRender();
+
+		assert.strictEqual(transcript.scrollTop, userMarker.contentRow);
+		assert.strictEqual(transcript.isFollowingEnd, false);
+
+		// Clicking the system dot (content row 19, exact top-of-document mapping) jumps there
+		const systemMarker = markers.find((m) => m.kind === "system");
+		assert.ok(systemMarker, "expected a system marker");
+		const systemRow = systemMarker.trackRow;
+		terminal.sendInput(`\x1b[<0;${column};${systemRow + 1}M`);
+		terminal.sendInput(`\x1b[<0;${column};${systemRow + 1}m`);
+		await terminal.waitForRender();
+		// End-of-document messages clamp to maxScrollTop (20 - 8 = 12)
+		assert.strictEqual(transcript.scrollTop, Math.min(systemMarker.contentRow, 12));
+		tui.stop();
+	});
+});
+
+describe("scrollbar marker hover highlight", () => {
+	it("highlights the marker dot under the pointer and clears when it leaves", async () => {
+		const terminal = new VirtualTerminal(30, 8);
+		const tui = new TuiAltScreen(terminal);
+		const lines = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`);
+		const marked = new (class extends Text {
+			scrollbarMarkerKind = "user";
+		})("user message", 0, 0);
+		const transcript = new ScrollView(
+			new VStack([
+				{ component: marked, basis: 1 as const, shrink: 0 },
+				...lines.slice(1).map((text) => ({ component: new Text(text, 0, 0), basis: 1 as const, shrink: 0 })),
+			]),
+			{
+				primary: true,
+				scrollbar: "always",
+				scrollbarMarkerStyles: { user: (t: string) => t },
+			},
+		);
+		tui.setLayoutRoot(transcript);
+		tui.start();
+		await terminal.waitForRender();
+
+		const marker = transcript.scrollbarPaintedMarkers.find((m) => m.kind === "user");
+		assert.ok(marker, "expected a painted marker");
+		assert.strictEqual(transcript.scrollbarHoverTrackRow, undefined);
+
+		// Hover the marker dot on the scrollbar column: it should be painted as a full block.
+		const column = 30;
+		terminal.sendInput(`\x1b[<35;${column};${marker.trackRow + 1}M`);
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.scrollbarHoverTrackRow, marker.trackRow);
+		assert.ok(terminal.getViewport().some((line) => line.includes("█")));
+
+		// Moving the pointer off the scrollbar column clears the hover row.
+		terminal.sendInput(`\x1b[<35;${column - 5};${marker.trackRow + 1}M`);
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.scrollbarHoverTrackRow, undefined);
+		tui.stop();
+	});
+});

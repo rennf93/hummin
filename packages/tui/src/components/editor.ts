@@ -1,5 +1,5 @@
 import type { AutocompleteProvider, AutocompleteSuggestions } from "../autocomplete.ts";
-import { getKeybindings } from "../keybindings.ts";
+import { getKeybindings, type KeybindingsManager } from "../keybindings.ts";
 import { decodePrintableKey, matchesKey } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
 import {
@@ -240,6 +240,13 @@ export interface EditorTheme {
 export interface EditorOptions {
 	paddingX?: number;
 	autocompleteMaxVisible?: number;
+	/**
+	 * Optional syntax highlighter for input text. Called per rendered line with the raw
+	 * substring; returns the text with SGR styling. Must preserve visible width (ANSI only).
+	 */
+	highlighter?: (text: string) => string;
+	/** Automatically insert closing brackets/quotes and skip over them (default true). */
+	autoPairing?: boolean;
 }
 
 const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
@@ -333,6 +340,11 @@ export class Editor implements Component, Focusable {
 	private history: string[] = [];
 	private historyIndex: number = -1; // -1 = not browsing, 0 = most recent, 1 = older, etc.
 	private historyDraft: EditorState | null = null;
+	/** Incremental history search (ctrl+r): active flag, typed query, current match, saved pre-search state. */
+	private historySearchActive = false;
+	private historySearchQuery = "";
+	private historySearchCursor = -1;
+	private historySearchSaved: EditorState | null = null;
 
 	// Kill ring for Emacs-style kill/yank operations
 	private killRing = new KillRing();
@@ -353,6 +365,10 @@ export class Editor implements Component, Focusable {
 
 	// Undo support
 	private undoStack = new UndoStack<EditorSnapshot>();
+	/** Optional per-line input highlighter (see EditorOptions.highlighter). */
+	private highlighter?: (text: string) => string;
+	/** Bracket/quote auto-pairing and closer skip-over (see EditorOptions.autoPairing). */
+	private autoPairing: boolean;
 
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
@@ -362,6 +378,8 @@ export class Editor implements Component, Focusable {
 		this.tui = tui;
 		this.theme = theme;
 		this.borderColor = theme.borderColor;
+		this.highlighter = options.highlighter;
+		this.autoPairing = options.autoPairing ?? true;
 		const paddingX = options.paddingX ?? 0;
 		this.paddingX = Number.isFinite(paddingX) ? Math.max(0, Math.floor(paddingX)) : 0;
 		const maxVisible = options.autocompleteMaxVisible ?? 5;
@@ -490,6 +508,80 @@ export class Editor implements Component, Focusable {
 		this.historyDraft = null;
 	}
 
+	/** Enter incremental history search (ctrl+r). No-op without history. */
+	private startHistorySearch(): void {
+		if (this.history.length === 0) return;
+		this.historySearchActive = true;
+		this.historySearchQuery = "";
+		this.historySearchCursor = -1;
+		this.historySearchSaved = structuredClone(this.state);
+	}
+
+	/** Newest-to-oldest search for query starting at history index fromIndex. */
+	private findHistoryMatch(fromIndex: number): number {
+		const query = this.historySearchQuery.toLowerCase();
+		for (let i = fromIndex; i < this.history.length; i++) {
+			if (this.history[i]?.toLowerCase().includes(query)) return i;
+		}
+		return -1;
+	}
+
+	private applyHistorySearchMatch(matchIndex: number): void {
+		if (matchIndex === -1) return; // no match: keep the last good match on screen
+		this.historySearchCursor = matchIndex;
+		this.setTextInternal(this.history[matchIndex] ?? "", "end");
+	}
+
+	private handleHistorySearchInput(data: string, kb: KeybindingsManager): void {
+		// ctrl+r / up: next older match
+		if (kb.matches(data, "tui.editor.historySearch") || kb.matches(data, "tui.editor.cursorUp")) {
+			this.applyHistorySearchMatch(this.findHistoryMatch(this.historySearchCursor + 1));
+			return;
+		}
+		// escape: cancel and restore the pre-search draft
+		if (kb.matches(data, "tui.select.cancel")) {
+			this.exitHistorySearch(true);
+			return;
+		}
+		// enter: accept the current match (fall through to normal submit on next enter)
+		if (kb.matches(data, "tui.select.confirm")) {
+			this.exitHistorySearch(false);
+			return;
+		}
+		// backspace: shrink query; on empty query, exit like readline
+		if (kb.matches(data, "tui.editor.deleteCharBackward")) {
+			if (this.historySearchQuery.length === 0) {
+				this.exitHistorySearch(true);
+				return;
+			}
+			this.historySearchQuery = [...this.historySearchQuery].slice(0, -1).join("");
+			this.applyHistorySearchMatch(this.findHistoryMatch(0));
+			return;
+		}
+		// printable characters extend the query
+		const printable = decodePrintableKey(data) ?? (data.length === 1 && data.charCodeAt(0) >= 32 ? data : undefined);
+		if (printable !== undefined) {
+			this.historySearchQuery += printable;
+			this.applyHistorySearchMatch(this.findHistoryMatch(0));
+		}
+	}
+
+	private exitHistorySearch(restoreDraft: boolean): void {
+		if (!this.historySearchActive) return;
+		const saved = this.historySearchSaved;
+		this.historySearchActive = false;
+		this.historySearchQuery = "";
+		this.historySearchCursor = -1;
+		this.historySearchSaved = null;
+		if (restoreDraft && saved) {
+			this.state = saved;
+			this.preferredVisualCol = null;
+			this.snappedFromCursorCol = null;
+			this.scrollOffset = 0;
+			if (this.onChange) this.onChange(this.getText());
+		}
+	}
+
 	/** Internal setText that doesn't reset history state - used by navigateHistory */
 	private setTextInternal(text: string, cursorPlacement: "start" | "end" = "end"): void {
 		const lines = text.split("\n");
@@ -514,6 +606,9 @@ export class Editor implements Component, Focusable {
 	}
 
 	protected renderBottomBorder(width: number, hiddenLineCount: number): string {
+		if (this.historySearchActive) {
+			return this.borderColor(`─ bck-i-search: ${this.historySearchQuery}_`.slice(0, width));
+		}
 		const border = hiddenLineCount > 0 ? createScrollBorder("↓", hiddenLineCount, width) : "─".repeat(width);
 		return this.borderColor(border);
 	}
@@ -573,6 +668,7 @@ export class Editor implements Component, Focusable {
 			let displayText = layoutLine.text;
 			let lineVisibleWidth = visibleWidth(layoutLine.text);
 			let cursorInPadding = false;
+			const highlighter = this.highlighter;
 
 			// Add cursor if this line has it
 			if (layoutLine.hasCursor && layoutLine.cursorPos !== undefined) {
@@ -589,18 +685,35 @@ export class Editor implements Component, Focusable {
 					const firstGrapheme = afterGraphemes[0]?.segment || "";
 					const restAfter = after.slice(firstGrapheme.length);
 					const cursor = `\x1b[7m${firstGrapheme}\x1b[0m`;
-					displayText = before + marker + cursor + restAfter;
+					// Highlight the text around the cursor separately; state across the seam is
+					// best-effort (tokens spanning the caret may color differently on one line).
+					displayText =
+						(highlighter ? highlighter(before) : before) +
+						marker +
+						cursor +
+						(highlighter ? highlighter(restAfter) : restAfter);
 					// lineVisibleWidth stays the same - we're replacing, not adding
 				} else {
 					// Cursor is at the end - add highlighted space
 					const cursor = "\x1b[7m \x1b[0m";
-					displayText = before + marker + cursor;
+					displayText = (highlighter ? highlighter(displayText) : displayText) + marker + cursor;
 					lineVisibleWidth = lineVisibleWidth + 1;
 					// If cursor overflows content width into the padding, flag it
 					if (lineVisibleWidth > contentWidth && paddingX > 0) {
 						cursorInPadding = true;
 					}
+					// Ghost text: dim remainder of the selected autocomplete match, fish-style
+					const ghost = this.getAutocompleteGhostSuffix();
+					if (ghost) {
+						const available = contentWidth - lineVisibleWidth;
+						if (available > 0) {
+							displayText += `\x1b[2m${ghost.slice(0, available)}\x1b[0m`;
+							lineVisibleWidth += Math.min(ghost.length, available);
+						}
+					}
 				}
+			} else if (highlighter) {
+				displayText = highlighter(layoutLine.text);
 			}
 
 			// Calculate padding based on actual visible width
@@ -696,6 +809,12 @@ export class Editor implements Component, Focusable {
 	handleInput(data: string): void {
 		const kb = getKeybindings();
 
+		// Incremental history search mode (ctrl+r)
+		if (this.historySearchActive) {
+			this.handleHistorySearchInput(data, kb);
+			return;
+		}
+
 		// Handle character jump mode (awaiting next character to jump to)
 		if (this.jumpMode !== null) {
 			// Cancel if the hotkey is pressed again
@@ -751,6 +870,12 @@ export class Editor implements Component, Focusable {
 		// Undo
 		if (kb.matches(data, "tui.editor.undo")) {
 			this.undo();
+			return;
+		}
+
+		// Incremental history search
+		if (kb.matches(data, "tui.editor.historySearch")) {
+			this.startHistorySearch();
 			return;
 		}
 
@@ -985,14 +1110,58 @@ export class Editor implements Component, Focusable {
 
 		const printable = decodePrintableKey(data);
 		if (printable !== undefined) {
+			if (this.handleAutoPair(printable)) return;
 			this.insertCharacter(printable);
 			return;
 		}
 
 		// Regular characters
 		if (data.charCodeAt(0) >= 32) {
+			if (data.length === 1 && this.handleAutoPair(data)) return;
 			this.insertCharacter(data);
 		}
+	}
+
+	/** Bracket/quote pairing pairs: opener -> closer, including the three quote characters. */
+	private static readonly PAIRED_CLOSERS = "{}[]()\"'`";
+
+	/**
+	 * Auto-pairing: typing an opener inserts its closer after the cursor; typing a closer
+	 * whose matching character is already at the cursor skips over it instead of duplicating.
+	 * Returns true when the input was handled.
+	 */
+	private handleAutoPair(char: string): boolean {
+		if (!this.autoPairing) return false;
+		const line = this.state.lines[this.state.cursorLine] || "";
+		const col = this.state.cursorCol;
+		const after = line[col];
+
+		// Closer skip-over: typing a closer directly before its twin just moves past it.
+		if (after === char && Editor.PAIRED_CLOSERS.includes(char)) {
+			this.setCursorCol(col + 1);
+			this.tui.requestRender();
+			return true;
+		}
+
+		const openerIndex = "([{".indexOf(char);
+		const isQuote = char === '"' || char === "'" || char === "`";
+		if (openerIndex === -1 && !isQuote) return false;
+
+		// Never split words or duplicate escaped characters: only pair when the previous
+		// character is not a backslash or alphanumeric, and the next character is end of
+		// line, whitespace, or a closing/quote character.
+		const before = col > 0 ? line[col - 1] : undefined;
+		if (before === "\\") return false;
+		if (before !== undefined && /[a-zA-Z0-9]/.test(before)) return false;
+		if (after !== undefined && !/\s/.test(after) && !Editor.PAIRED_CLOSERS.includes(after)) return false;
+
+		const closer = openerIndex !== -1 ? ")]}"[openerIndex] : char;
+		this.pushUndoSnapshot();
+		this.lastAction = null;
+		this.state.lines[this.state.cursorLine] = line.slice(0, col) + char + closer + line.slice(col);
+		this.setCursorCol(col + 1);
+		if (this.onChange) this.onChange(this.getText());
+		return true;
 	}
 
 	private layoutText(contentWidth: number): LayoutLine[] {
@@ -2216,6 +2385,19 @@ export class Editor implements Component, Focusable {
 	 *
 	 * Matching is case-sensitive and checks item.value only.
 	 */
+	/**
+	 * Remainder of the selected autocomplete match that would be inserted by accepting it,
+	 * or empty when autocomplete is inactive or the match does not extend the prefix.
+	 */
+	private getAutocompleteGhostSuffix(): string {
+		if (!this.autocompleteState || !this.autocompleteList) return "";
+		const selected = this.autocompleteList.getSelectedItem();
+		if (!selected) return "";
+		const prefix = this.autocompletePrefix;
+		if (!prefix || !selected.value.startsWith(prefix)) return "";
+		return selected.value.slice(prefix.length);
+	}
+
 	private getBestAutocompleteMatchIndex(items: Array<{ value: string; label: string }>, prefix: string): number {
 		if (!prefix) return -1;
 

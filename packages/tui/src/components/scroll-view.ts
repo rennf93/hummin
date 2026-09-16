@@ -11,6 +11,8 @@ export interface ScrollViewOptions {
 	scrollbar?: ScrollViewScrollbar;
 	scrollbarTrackStyle?: (text: string) => string;
 	scrollbarThumbStyle?: (text: string) => string;
+	/** Per-kind styles for scrollbar index markers (see Component.scrollbarMarkerKind). */
+	scrollbarMarkerStyles?: Record<string, (text: string) => string>;
 	scrollbarHideDelayMs?: number;
 }
 
@@ -26,6 +28,11 @@ export class ScrollView extends Container {
 	readonly overscroll: "chain" | "contain";
 	readonly scrollbarTrackStyle: (text: string) => string;
 	readonly scrollbarThumbStyle: (text: string) => string;
+	readonly scrollbarMarkerStyles: Record<string, (text: string) => string>;
+	/** Marker dots painted during the last layout: track-relative row plus content row. */
+	scrollbarPaintedMarkers: Array<{ trackRow: number; contentRow: number; kind: string }> = [];
+	/** Track-relative row currently hovered by the pointer, if any (set by alt-screen hover logic). */
+	scrollbarHoverTrackRow: number | undefined;
 	private currentScrollbar: ScrollViewScrollbar;
 	private readonly scrollbarHideDelayMs: number;
 	private currentScrollTop = 0;
@@ -52,6 +59,7 @@ export class ScrollView extends Container {
 		this.currentScrollbar = options.scrollbar ?? "hidden";
 		this.scrollbarTrackStyle = options.scrollbarTrackStyle ?? ((text) => `\x1b[90m${text}\x1b[39m`);
 		this.scrollbarThumbStyle = options.scrollbarThumbStyle ?? ((text) => `\x1b[37m${text}\x1b[39m`);
+		this.scrollbarMarkerStyles = options.scrollbarMarkerStyles ?? {};
 		this.scrollbarHideDelayMs = Math.max(0, Math.floor(options.scrollbarHideDelayMs ?? 1000));
 	}
 
@@ -121,6 +129,13 @@ export class ScrollView extends Container {
 		if (active === this.scrollbarActive) return;
 		this.scrollbarActive = active;
 		this.markScrollbarActivity();
+		this.requestRenderCallback?.();
+	}
+
+	/** Track the pointer's track-relative row for marker-dot hover highlighting. */
+	setScrollbarHoverTrackRow(row: number | undefined): void {
+		if (row === this.scrollbarHoverTrackRow) return;
+		this.scrollbarHoverTrackRow = row;
 		this.requestRenderCallback?.();
 	}
 

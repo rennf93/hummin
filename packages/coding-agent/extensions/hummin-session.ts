@@ -27,8 +27,11 @@ export default function humminSession(pi: ExtensionAPI): void {
 		if (typeof event.input.path !== "string") return;
 		try {
 			const store = storeFor(ctx);
-			const path = store.path(resolveToCwd(event.input.path, ctx.cwd));
-			pending.set(event.toolCallId, { path, before: store.snapshot(path) });
+			const absolute = resolveToCwd(event.input.path, ctx.cwd);
+			// Outside-project and .git writes are legitimate but untracked; skip silently
+			// instead of warning on every temp-script write.
+			if (!store.isTrackable(absolute)) return;
+			pending.set(event.toolCallId, { path: store.path(absolute), before: store.snapshot(absolute) });
 		} catch (error) {
 			ctx.ui.notify(`Rewind will not cover this edit: ${String(error)}`, "warning");
 		}

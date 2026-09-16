@@ -5,6 +5,8 @@ import { join } from "node:path";
 
 export interface ProcessJob {
 	id: string;
+	/** What kind of background work this is ("task", "monitor", ...). */
+	kind: string;
 	label: string;
 	logFile: string;
 	startedAt: number;
@@ -20,6 +22,7 @@ export interface ProcessOptions {
 	command: string;
 	args: string[];
 	cwd: string;
+	kind: string;
 	label: string;
 	timeoutMs: number;
 	signal?: AbortSignal;
@@ -28,17 +31,66 @@ export interface ProcessOptions {
 	onComplete?: (job: ProcessJob) => void;
 }
 
+/** All process managers alive in this extension host, for /background and status counts. */
+const managers = new Set<ProcessManager>();
+
+/** Number of currently running background processes across all managers. */
+export function runningProcessCount(): number {
+	let count = 0;
+	for (const manager of managers) {
+		for (const job of manager.jobs.values()) {
+			if (job.state === "running") count++;
+		}
+	}
+	return count;
+}
+
+/** Footer status text, or undefined when nothing is running. */
+export function backgroundStatus(): string | undefined {
+	const count = runningProcessCount();
+	return count > 0 ? `${count} background` : undefined;
+}
+
+/** Set or clear the shared "bg" footer status from any extension context. */
+export function refreshBackgroundStatus(ui: { setStatus(key: string, text: string | undefined): void }): void {
+	ui.setStatus("bg", backgroundStatus());
+}
+
+/** Human-readable description of every job in every manager (the /background panel). */
+export function describeAllProcesses(): string {
+	const blocks: string[] = [];
+	for (const manager of managers) {
+		const jobs = [...manager.jobs.values()];
+		if (jobs.length === 0) continue;
+		blocks.push(jobs.map((job) => describeJob(job)).join("\n\n"));
+	}
+	return blocks.length > 0 ? blocks.join("\n\n") : "No background processes";
+}
+
+export function formatDuration(ms: number): string {
+	const seconds = Math.max(0, Math.round(ms / 1000));
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	const rem = seconds % 60;
+	if (minutes < 60) return rem > 0 ? `${minutes}m${rem}s` : `${minutes}m`;
+	const hours = Math.floor(minutes / 60);
+	return `${hours}h${minutes % 60}m`;
+}
+
 /** Owns only directly spawned children. Always drains both pipes, even after
  * the on-disk log reaches its cap. No PID searches or process-group signals.
  */
 export class ProcessManager {
 	readonly jobs = new Map<string, ProcessJob>();
+	readonly kind: string;
 	private readonly directory: string;
 	private closed = false;
 	private readonly active = new Set<string>();
 
-	constructor(directory: string) {
+	constructor(directory: string, kind: string) {
 		this.directory = directory;
+		this.kind = kind;
+		managers.add(this);
 	}
 
 	start(options: ProcessOptions): ProcessJob {
@@ -66,6 +118,7 @@ export class ProcessManager {
 		let resolveDone!: () => void;
 		const job: ProcessJob = {
 			id,
+			kind: options.kind,
 			label: options.label,
 			logFile,
 			startedAt: Date.now(),
@@ -158,5 +211,13 @@ export class ProcessManager {
 }
 
 export function describeJob(job: ProcessJob): string {
-	return `${job.id}: ${job.state}, exit ${job.exitCode ?? "none"}, ${Math.round((Date.now() - job.startedAt) / 1000)}s, ${job.label}\n${job.error ?? ""}\n${job.output}\nLog (first 1 MiB): ${job.logFile}`;
+	const elapsed = formatDuration(Date.now() - job.startedAt);
+	const state =
+		job.state === "running"
+			? `running ${elapsed}`
+			: `${job.state} (exit ${job.exitCode ?? "none"}, ${elapsed})`;
+	const parts = [`${job.kind} ${job.id} · ${job.label} · ${state}`, `log: ${job.logFile}`];
+	if (job.error) parts.push(`error: ${job.error}`);
+	if (job.output) parts.push(job.output);
+	return parts.join("\n");
 }

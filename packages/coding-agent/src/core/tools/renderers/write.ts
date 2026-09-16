@@ -7,6 +7,7 @@
  */
 
 import { Container, Text } from "@earendil-works/pi-tui";
+import type { DiffStat } from "../../../modes/interactive/components/diff.ts";
 import { keyHint } from "../../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
@@ -21,6 +22,7 @@ type WriteHighlightCache = {
 };
 class WriteCallRenderComponent extends Text {
 	cache?: WriteHighlightCache;
+	stat?: DiffStat;
 
 	constructor() {
 		super("", 0, 0);
@@ -99,11 +101,18 @@ function formatWriteCall(
 	theme: Theme,
 	cache: WriteHighlightCache | undefined,
 	cwd: string,
+	stat?: DiffStat,
 ): string {
 	const rawPath = str(args?.file_path ?? args?.path);
 	const fileContent = str(args?.content);
 	const pathDisplay = renderToolPath(rawPath, theme, cwd);
 	let text = `${theme.fg("toolTitle", theme.bold("write"))} ${pathDisplay}`;
+	if (stat && (stat.added > 0 || stat.removed > 0)) {
+		const parts: string[] = [];
+		if (stat.added > 0) parts.push(theme.fg("toolDiffAdded", `+${stat.added}`));
+		if (stat.removed > 0) parts.push(theme.fg("toolDiffRemoved", `-${stat.removed}`));
+		text += ` ${theme.fg("dim", "·")} ${parts.join(" ")}`;
+	}
 
 	if (fileContent === null) {
 		text += `\n\n${theme.fg("error", "[invalid content arg - expected string]")}`;
@@ -149,6 +158,7 @@ export const writeRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "rend
 		const fileContent = str(renderArgs?.content);
 		const component =
 			(context.lastComponent as WriteCallRenderComponent | undefined) ?? new WriteCallRenderComponent();
+		(context.state as { callComponent?: WriteCallRenderComponent }).callComponent = component;
 		if (fileContent !== null) {
 			component.cache = context.argsComplete
 				? rebuildWriteHighlightCacheFull(rawPath, fileContent)
@@ -163,6 +173,7 @@ export const writeRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "rend
 				theme,
 				component.cache,
 				context.cwd,
+				component.stat,
 			),
 		);
 		return component;
@@ -170,6 +181,27 @@ export const writeRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "rend
 	renderResult(result, _options, theme, context) {
 		const output = formatWriteResult({ ...result, isError: context.isError }, theme);
 		if (!output) {
+			// Record the settled diff stat on the persisted call header
+			const details = result.details as { added?: unknown; removed?: unknown } | undefined;
+			const callComponent = (context.state as { callComponent?: WriteCallRenderComponent }).callComponent;
+			if (callComponent) {
+				const added = typeof details?.added === "number" ? details.added : 0;
+				const removed = typeof details?.removed === "number" ? details.removed : 0;
+				if (added > 0 || removed > 0) {
+					callComponent.stat = { added, removed };
+					const renderArgs = context.args as { path?: string; file_path?: string; content?: string } | undefined;
+					callComponent.setText(
+						formatWriteCall(
+							renderArgs,
+							{ expanded: context.expanded, isPartial: context.isPartial },
+							theme,
+							callComponent.cache,
+							context.cwd,
+							callComponent.stat,
+						),
+					);
+				}
+			}
 			const component = (context.lastComponent as Container | undefined) ?? new Container();
 			component.clear();
 			return component;

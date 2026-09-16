@@ -26,6 +26,8 @@ export interface AppKeybindings {
 	"app.session.toggleNamedFilter": true;
 	"app.editor.external": true;
 	"app.message.copy": true;
+	"app.message.jumpToPreviousMarker": true;
+	"app.message.jumpToNextMarker": true;
 	"app.message.followUp": true;
 	"app.message.dequeue": true;
 	"app.clipboard.pasteImage": true;
@@ -130,6 +132,14 @@ export const KEYBINDINGS = {
 	"app.message.copy": {
 		defaultKeys: "ctrl+x",
 		description: "Copy message to clipboard",
+	},
+	"app.message.jumpToPreviousMarker": {
+		defaultKeys: "ctrl+alt+up",
+		description: "Jump to previous message marker",
+	},
+	"app.message.jumpToNextMarker": {
+		defaultKeys: "ctrl+alt+down",
+		description: "Jump to next message marker",
 	},
 	"app.message.followUp": {
 		defaultKeys: windowsKeybindings ? "ctrl+q" : "alt+enter",

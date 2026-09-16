@@ -58,6 +58,81 @@ function resolveBranchWithGitSync(repoDir: string): string | null {
 	return branch || null;
 }
 
+/** Working-tree and upstream tracking status for the footer. */
+export type GitStatusCounts = {
+	/** Files with staged changes */
+	staged: number;
+	/** Files with unstaged modifications */
+	modified: number;
+	/** Untracked files */
+	untracked: number;
+	/** Commits ahead of upstream, null when no upstream is configured */
+	ahead: number | null;
+	/** Commits behind upstream, null when no upstream is configured */
+	behind: number | null;
+};
+
+/**
+ * Parse `git status --porcelain=v1 -b` output.
+ * Header line carries ahead/behind; body lines are `XY path` pairs ("??" for untracked).
+ */
+export function parseGitStatusPorcelain(output: string): GitStatusCounts {
+	let staged = 0;
+	let modified = 0;
+	let untracked = 0;
+	let ahead: number | null = null;
+	let behind: number | null = null;
+
+	for (const line of output.split("\n")) {
+		if (line.startsWith("## ")) {
+			const aheadMatch = line.match(/\bahead (\d+)/);
+			const behindMatch = line.match(/\bbehind (\d+)/);
+			if (aheadMatch) ahead = Number(aheadMatch[1]);
+			if (behindMatch) behind = Number(behindMatch[1]);
+			continue;
+		}
+		if (line.length < 2) continue;
+		const x = line[0];
+		const y = line[1];
+		if (x === "?" && y === "?") {
+			untracked++;
+		} else {
+			if (x !== " " && x !== "?") staged++;
+			if (y !== " " && y !== "?") modified++;
+		}
+	}
+
+	return { staged, modified, untracked, ahead, behind };
+}
+
+function gitStatusEqual(a: GitStatusCounts | null | undefined, b: GitStatusCounts | null): boolean {
+	if (a === undefined || a === null || b === null) return (a ?? null) === b;
+	return (
+		a.staged === b.staged &&
+		a.modified === b.modified &&
+		a.untracked === b.untracked &&
+		a.ahead === b.ahead &&
+		a.behind === b.behind
+	);
+}
+
+/** Ask git for working-tree status. Returns null if git is unavailable or the directory is not a repo. */
+function resolveGitStatusAsync(repoDir: string): Promise<GitStatusCounts | null> {
+	return new Promise((resolvePromise) => {
+		execFile(
+			"git",
+			["--no-optional-locks", "status", "--porcelain=v1", "-b"],
+			{
+				cwd: repoDir,
+				encoding: "utf8",
+			},
+			(error: ExecFileException | null, stdout: string) => {
+				resolvePromise(error ? null : parseGitStatusPorcelain(stdout));
+			},
+		);
+	});
+}
+
 /** Ask git for the current branch asynchronously. Returns null on detached HEAD or if git is unavailable. */
 function resolveBranchWithGitAsync(repoDir: string): Promise<string | null> {
 	return new Promise((resolvePromise) => {
@@ -102,6 +177,7 @@ export class FooterDataProvider {
 
 	private extensionStatuses = new Map<string, string>();
 	private cachedBranch: string | null | undefined = undefined;
+	private cachedStatus: GitStatusCounts | null | undefined = undefined;
 	private gitPaths: GitPaths | null | undefined = undefined;
 	private headWatcher: FSWatcher | null = null;
 	private headWatchFilePath: string | null = null;
@@ -129,6 +205,20 @@ export class FooterDataProvider {
 			this.cachedBranch = this.resolveGitBranchSync();
 		}
 		return this.cachedBranch;
+	}
+
+	/** Working-tree status counts, null if not in repo. Refreshed async via scheduleGitStatusRefresh. */
+	getGitStatus(): GitStatusCounts | null {
+		if (this.cachedStatus === undefined) {
+			// No sync fallback: working-tree status is event-driven; starts empty until the first refresh.
+			this.cachedStatus = null;
+		}
+		return this.cachedStatus;
+	}
+
+	/** Schedule a debounced async refresh of git state (branch + working-tree status). */
+	scheduleGitStatusRefresh(): void {
+		this.scheduleRefresh();
 	}
 
 	/** Extension status texts set via ctx.ui.setStatus() */
@@ -178,9 +268,11 @@ export class FooterDataProvider {
 		}
 		this.clearGitWatchers();
 		this.cachedBranch = undefined;
+		this.cachedStatus = undefined;
 		this.gitPaths = findGitPaths(cwd);
 		this.setupGitWatcher();
 		this.notifyBranchChange();
+		this.scheduleRefresh();
 	}
 
 	/** Internal: cleanup */
@@ -221,12 +313,22 @@ export class FooterDataProvider {
 		try {
 			const nextBranch = await this.resolveGitBranchAsync();
 			if (this.disposed) return;
+			let changed = false;
 			if (this.cachedBranch !== undefined && this.cachedBranch !== nextBranch) {
-				this.cachedBranch = nextBranch;
-				this.notifyBranchChange();
-				return;
+				changed = true;
 			}
 			this.cachedBranch = nextBranch;
+
+			const nextStatus = this.gitPaths ? await resolveGitStatusAsync(this.gitPaths.repoDir) : null;
+			if (this.disposed) return;
+			if (!gitStatusEqual(this.cachedStatus, nextStatus)) {
+				changed = true;
+			}
+			this.cachedStatus = nextStatus;
+
+			if (changed) {
+				this.notifyBranchChange();
+			}
 		} finally {
 			this.refreshInFlight = false;
 			if (this.refreshPending && !this.disposed) {
@@ -384,5 +486,5 @@ export class FooterDataProvider {
 /** Read-only view for extensions - excludes setExtensionStatus, setAvailableProviderCount and dispose */
 export type ReadonlyFooterDataProvider = Pick<
 	FooterDataProvider,
-	"getGitBranch" | "getExtensionStatuses" | "getAvailableProviderCount" | "onBranchChange"
+	"getGitBranch" | "getGitStatus" | "getExtensionStatuses" | "getAvailableProviderCount" | "onBranchChange"
 >;
