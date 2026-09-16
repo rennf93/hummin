@@ -212,24 +212,31 @@ function instancePort(baseUrl: string): number {
 // Picker display names: id stays the stable identifier, the name says what
 // actually serves it (engine + format), because "[hummin]" is the provider
 // label for all of them and tells the user nothing about the model itself.
-export default async function humminLocalExtension(pi: ExtensionAPI): Promise<void> {
-	const configs = instanceConfigs();
-	const instances = configs.map((config) => config.baseUrl);
-	if (instances.length === 0) {
-		return;
-	}
+// Discovery results are cached in module scope briefly: /clear re-runs every
+// extension factory, and the fleet does not change in between. Without the
+// cache, each /clear re-fetches /v1/models and /props from every fleet
+// server, and each unreachable server eats its full fetch timeout (up to 5s).
+// The cache is per module instance, so /reload (which re-imports the module)
+// always forces fresh discovery.
+export const DISCOVERY_TTL_MS = 30_000;
 
+interface DiscoveredInstance {
+	modelId: string;
+	baseUrl: string;
+	host: string;
+	port: number;
+	engine: "colibri" | "llamacpp";
+	contextWindow: number;
+	offline: boolean;
+}
+
+let discoveryCache: { key: string; instances: DiscoveredInstance[]; expiresAt: number } | undefined;
+
+async function discoverInstances(configs: InstanceConfig[]): Promise<DiscoveredInstance[]> {
+	const instances = configs.map((config) => config.baseUrl);
 	// Per-instance model discovery: no cross-host dedupe - each host is a
 	// distinct, explicitly selectable endpoint (engine + host are visible).
-	const serving: Array<{
-		modelId: string;
-		baseUrl: string;
-		host: string;
-		port: number;
-		engine: "colibri" | "llamacpp";
-		contextWindow: number;
-		offline: boolean;
-	}> = [];
+	const serving: DiscoveredInstance[] = [];
 	const discovered = await Promise.allSettled(
 		instances.map(async (baseUrl) => {
 			const [ids, contextWindow] = await Promise.all([
@@ -279,6 +286,34 @@ export default async function humminLocalExtension(pi: ExtensionAPI): Promise<vo
 			});
 		}
 	}
+	return serving;
+}
+
+async function cachedDiscovery(configs: InstanceConfig[]): Promise<DiscoveredInstance[]> {
+	// Key covers everything discovery reads: the fleet config (order =
+	// priority, including per-server catalogs), the auth key, and the
+	// context-window env fallback. Any change invalidates the cache.
+	const key = JSON.stringify([
+		configs,
+		process.env.COLI_API_KEY ?? "",
+		process.env.HUMMIN_CTX ?? process.env.HUMMIN_COLIBRI_CTX ?? "",
+	]);
+	const now = Date.now();
+	const cached = discoveryCache;
+	if (cached && cached.key === key && cached.expiresAt > now) {
+		return cached.instances;
+	}
+	const instances = await discoverInstances(configs);
+	discoveryCache = { key, instances, expiresAt: now + DISCOVERY_TTL_MS };
+	return instances;
+}
+
+export default async function humminLocalExtension(pi: ExtensionAPI): Promise<void> {
+	const configs = instanceConfigs();
+	if (configs.length === 0) {
+		return;
+	}
+	const serving = await cachedDiscovery(configs);
 	if (serving.length === 0) {
 		return;
 	}

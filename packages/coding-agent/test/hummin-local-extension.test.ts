@@ -1,7 +1,7 @@
 import type * as PiAi from "@earendil-works/pi-ai";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import humminLocalExtension from "../extensions/hummin-local.ts";
+import humminLocalExtension, { DISCOVERY_TTL_MS } from "../extensions/hummin-local.ts";
 import type { ExtensionAPI } from "../src/core/extensions/types.ts";
 
 vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
@@ -91,5 +91,43 @@ describe("hummin local provider fleet discovery", () => {
 		const model = providers[0]?.getModels()[0];
 		expect(model?.name).toBe("explicit-model [Test] (offline - start from menubar)");
 		expect(model?.contextWindow).toBe(4096);
+	});
+
+	it("caches fleet discovery within the TTL so repeated factory runs skip the network", async () => {
+		vi.stubEnv("HUMMIN_INSTANCES", "http://127.0.0.1:19994");
+		const fetchMock = vi.fn((input: string | URL): Promise<Response> => {
+			const url = String(input);
+			if (url.endsWith("/v1/models")) return Promise.resolve(response({ data: [{ id: "cached-model" }] }));
+			return Promise.resolve(response({}, 404));
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const first: RegisteredProvider[] = [];
+		const second: RegisteredProvider[] = [];
+		await humminLocalExtension(fakeApi(first));
+		await humminLocalExtension(fakeApi(second));
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(first.map((provider) => provider.getModels()[0]?.id)).toEqual(["cached-model"]);
+		expect(second.map((provider) => provider.getModels()[0]?.id)).toEqual(["cached-model"]);
+	});
+
+	it("re-discovers after the TTL expires", async () => {
+		const nowSpy = vi.spyOn(Date, "now");
+		let now = 1_000_000;
+		nowSpy.mockImplementation(() => now);
+		vi.stubEnv("HUMMIN_INSTANCES", "http://127.0.0.1:19995");
+		const fetchMock = vi.fn((input: string | URL): Promise<Response> => {
+			const url = String(input);
+			if (url.endsWith("/v1/models")) return Promise.resolve(response({ data: [{ id: "ttl-model" }] }));
+			return Promise.resolve(response({}, 404));
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		await humminLocalExtension(fakeApi([]));
+		now += DISCOVERY_TTL_MS + 1;
+		await humminLocalExtension(fakeApi([]));
+
+		expect(fetchMock).toHaveBeenCalledTimes(4);
 	});
 });
