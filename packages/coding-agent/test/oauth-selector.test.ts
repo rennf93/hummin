@@ -49,6 +49,7 @@ describe("OAuthSelectorComponent", () => {
 					isUsingOAuth: () => false,
 				},
 			},
+			settingsManager: { getProvidersShowAll: () => true },
 		};
 
 		const apiKeyOptions = getLoginProviderOptions.call(fakeThis, "api_key");

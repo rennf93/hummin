@@ -315,7 +315,10 @@ export default async function humminLocalExtension(pi: ExtensionAPI): Promise<vo
 					input: ["text"],
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 					contextWindow: entry.contextWindow,
-					maxTokens: 4096,
+					// Local reasoning models can spend more than 4k tokens before emitting
+					// answer text. The simple-stream path clamps this against the prompt and
+					// keeps a context safety margin before sending max_tokens to the server.
+					maxTokens: entry.contextWindow,
 					compat: {
 						supportsStore: false,
 						supportsDeveloperRole: false,

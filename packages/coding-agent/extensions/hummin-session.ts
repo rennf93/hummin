@@ -8,6 +8,20 @@ export default function humminSession(pi: ExtensionAPI): void {
 	const pending = new Map<string, { path: string; before: FileSnapshot }>();
 	const storeFor = (ctx: ExtensionContext) =>
 		new CheckpointStore(ctx.cwd, join(getAgentDir(), "checkpoints", "blobs"));
+	pi.on("session_start", (_event, ctx) => {
+		const retain = new Set<string>();
+		for (const entry of ctx.sessionManager.getEntries()) {
+			if (entry.type !== "custom" || entry.customType !== ENTRY) continue;
+			const checkpoint = entry.data as FileCheckpoint | undefined;
+			if (checkpoint?.before?.hash) retain.add(checkpoint.before.hash);
+			if (checkpoint?.after?.hash) retain.add(checkpoint.after.hash);
+		}
+		try {
+			storeFor(ctx).prune(retain);
+		} catch (error) {
+			ctx.ui.notify(`Unable to prune old checkpoints: ${String(error)}`, "warning");
+		}
+	});
 	pi.on("tool_call", (event, ctx) => {
 		if (event.toolName !== "edit" && event.toolName !== "write") return;
 		if (typeof event.input.path !== "string") return;

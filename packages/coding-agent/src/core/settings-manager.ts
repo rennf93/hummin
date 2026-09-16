@@ -833,9 +833,21 @@ export class SettingsManager {
 		return this.settings.streamingSubmitMode ?? "steer";
 	}
 
+	setStreamingSubmitMode(mode: "steer" | "followUp"): void {
+		this.globalSettings.streamingSubmitMode = mode;
+		this.markModified("streamingSubmitMode");
+		this.save();
+	}
+
 	/** Whether user and extension messages show local timestamps. Default true. */
 	getMessageTimestamps(): boolean {
 		return this.settings.messageTimestamps ?? true;
+	}
+
+	setMessageTimestamps(enabled: boolean): void {
+		this.globalSettings.messageTimestamps = enabled;
+		this.markModified("messageTimestamps");
+		this.save();
 	}
 
 	setSteeringMode(mode: "all" | "one-at-a-time"): void {

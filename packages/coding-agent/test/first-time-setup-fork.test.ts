@@ -33,7 +33,9 @@ describe("shouldRunFirstTimeSetup in forked distributions", () => {
 		}
 	});
 
-	it("returns false for a forked package", () => {
-		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
+	it("treats the hummin identity as its own official distribution", () => {
+		// The fork ships its own first-run experience, so first-time setup
+		// applies under the hummin identity just like upstream pi.
+		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(true);
 	});
 });

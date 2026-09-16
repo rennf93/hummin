@@ -12,11 +12,24 @@ function createFakeTui(): TUI {
 
 /** Return the model id of the highlighted (→) row in the rendered selector. */
 function selectedModelId(rendered: string): string | undefined {
+	// Rows show the model name (fallback id) plus a context badge; map the
+	// label back to the model id.
+	const byLabel = new Map([
+		["alpha one", "alpha-1"],
+		["alpha two", "alpha-2"],
+		["alpha three", "alpha-3"],
+	]);
 	const line = rendered.split("\n").find((l) => l.startsWith("→ "));
 	if (!line) return undefined;
 	const rest = line.replace(/^→\s*/, "");
-	const id = rest.split(" [")[0]?.replace(/^✓\s*/, "");
-	return id?.trim() || undefined;
+	const label =
+		rest
+			.split(" [")[0]
+			?.replace(/^✓\s*/, "")
+			.replace(/\s+\d+(\.\d+)?[KM]?\s*·$/, "")
+			.trim() ?? "";
+	const mapped = byLabel.get(label.toLowerCase());
+	return mapped ?? (label || undefined);
 }
 
 describe("model selector filter resets selection to top", () => {
@@ -65,21 +78,27 @@ describe("model selector filter resets selection to top", () => {
 		// Current model (alpha-1) is sorted first, so selection starts on row 0.
 		expect(selectedModelId(stripAnsi(selector.render(120).join("\n")))).toBe("alpha-1");
 
-		// Move selection down two rows to alpha-3.
-		selector.handleInput("\x1b[B");
-		selector.handleInput("\x1b[B");
-		expect(selectedModelId(stripAnsi(selector.render(120).join("\n")))).toBe("alpha-3");
-
-		// Type a query that matches the three alpha models. The selection must
-		// move back to the top row (alpha-1), not stay clamped at index 2.
+		// The All tab also lists curated catalog models, so first narrow to
+		// the alpha models by query.
 		for (const char of "alpha") {
 			selector.handleInput(char);
 		}
 
+		// Move selection down two rows to Alpha Three within the filtered list.
+		selector.handleInput("\x1b[B");
+		selector.handleInput("\x1b[B");
+		expect(selectedModelId(stripAnsi(selector.render(120).join("\n")))).toBe("alpha-3");
+
+		// Refine the query to a single match. The selection must move back to
+		// the top row (Alpha Two), not stay clamped at the old index.
+		for (const char of " two") {
+			selector.handleInput(char);
+		}
+
 		const rendered = stripAnsi(selector.render(120).join("\n"));
-		expect(selectedModelId(rendered)).toBe("alpha-1");
+		expect(selectedModelId(rendered)).toBe("alpha-2");
 		// Sanity: the filter actually narrowed the list.
-		expect(rendered).not.toContain("beta-1");
+		expect(rendered).not.toContain("Alpha Three");
 	});
 
 	it("moves selection to the first row in the Scoped tab when typing a query", async () => {

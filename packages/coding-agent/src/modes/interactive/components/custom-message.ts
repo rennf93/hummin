@@ -65,6 +65,10 @@ export class CustomMessageComponent extends Container {
 		}
 	}
 
+	setShowTimestamp(enabled: boolean): void {
+		this.showTimestamp = enabled;
+	}
+
 	override invalidate(): void {
 		super.invalidate();
 		this.rebuild();

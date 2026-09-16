@@ -9,8 +9,10 @@ import {
 	mkdirSync,
 	openSync,
 	readFileSync,
+	readdirSync,
 	realpathSync,
 	unlinkSync,
+	utimesSync,
 	writeFileSync,
 	writeSync,
 } from "node:fs";
@@ -88,11 +90,44 @@ export class CheckpointStore {
 				writeFileSync(join(this.blobs, hash), data, { flag: "wx", mode: 0o600 });
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+				const now = new Date();
+				utimesSync(join(this.blobs, hash), now, now);
 			}
 			return { hash, mode: stat.mode & 0o777 };
 		} finally {
 			closeSync(fd);
 		}
+	}
+
+	/** Expire unused blobs after 30 days, preserving every checkpoint in the open session. */
+	prune(retain: ReadonlySet<string>, now = Date.now()): number {
+		let names: string[];
+		try {
+			names = readdirSync(this.blobs);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+			throw error;
+		}
+		let removed = 0;
+		for (const name of names) {
+			if (!/^[a-f0-9]{64}$/.test(name)) continue;
+			const file = join(this.blobs, name);
+			try {
+				const stat = lstatSync(file);
+				if (!stat.isFile()) continue;
+				if (retain.has(name)) {
+					// Refresh retained blobs so another session's sweep also preserves them.
+					utimesSync(file, new Date(now), new Date(now));
+					continue;
+				}
+				if (stat.mtimeMs >= now - 30 * 24 * 60 * 60 * 1000) continue;
+				unlinkSync(file);
+				removed++;
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			}
+		}
+		return removed;
 	}
 
 	private read(snapshot: FileSnapshot): Buffer {

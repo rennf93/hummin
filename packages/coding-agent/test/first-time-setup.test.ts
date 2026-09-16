@@ -37,10 +37,12 @@ describe("shouldRunFirstTimeSetup", () => {
 		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(true);
 	});
 
-	it("returns false when experimental features are disabled", () => {
+	it("runs regardless of the experimental flag", () => {
+		// The fork ships first-time setup as a standard feature; the
+		// experimental gate was removed with the hummin first-run experience.
 		delete process.env.PI_EXPERIMENTAL;
 
-		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
+		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(true);
 	});
 
 	it("returns false when a custom agent dir is set", () => {

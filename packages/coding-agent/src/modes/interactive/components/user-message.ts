@@ -29,6 +29,7 @@ export class UserMessageComponent extends Container {
 	private outputPad: number;
 	private markdownTransformers: readonly MarkdownTransformer[];
 	private timestamp?: number;
+	private showTimestamp = true;
 
 	constructor(
 		text: string,
@@ -49,6 +50,10 @@ export class UserMessageComponent extends Container {
 	setOutputPad(padding: number): void {
 		this.outputPad = padding;
 		this.rebuild();
+	}
+
+	setShowTimestamp(enabled: boolean): void {
+		this.showTimestamp = enabled;
 	}
 
 	private rebuild(): void {
@@ -79,7 +84,7 @@ export class UserMessageComponent extends Container {
 			return lines;
 		}
 
-		if (this.timestamp !== undefined) {
+		if (this.showTimestamp && this.timestamp !== undefined) {
 			const tag = theme.fg("dim", formatMessageTimestamp(this.timestamp));
 			const padWidth = Math.max(0, width - 1 - visibleWidth(tag));
 			const tagLine = " ".repeat(padWidth) + tag;

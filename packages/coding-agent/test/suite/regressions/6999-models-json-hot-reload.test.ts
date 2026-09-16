@@ -40,6 +40,7 @@ function modelsJson(provider: string, model: string): Record<string, unknown> {
 	};
 }
 
+// Regression coverage for #6999: reopening /model reloads custom providers.
 describe("issue #6999 models.json hot reload", () => {
 	let tempDir: string | undefined;
 
@@ -75,8 +76,13 @@ describe("issue #6999 models.json hot reload", () => {
 		);
 
 		await renderedAfterRefresh;
+		for (const char of "new-provider") selector.handleInput(char);
 		const rendered = stripAnsi(selector.render(120).join("\n"));
-		expect(rendered).toContain("new-model [new-provider]");
-		expect(rendered).not.toContain("old-model [old-provider]");
+		expect(modelRuntime.getModel("new-provider", "new-model")).toBeDefined();
+		expect(modelRuntime.getModel("old-provider", "old-model")).toBeUndefined();
+		expect(rendered).toContain("new-model");
+		expect(rendered).toContain("[new-provider]");
+		expect(rendered).not.toContain("old-model");
+		selector.dispose();
 	});
 });

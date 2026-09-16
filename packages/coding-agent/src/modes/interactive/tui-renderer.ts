@@ -44,7 +44,7 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 			},
 		});
 	}
-	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory);
+	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory, { mouse: true });
 }
 
 /** Stable reference for components while InteractiveMode replaces the active renderer. */

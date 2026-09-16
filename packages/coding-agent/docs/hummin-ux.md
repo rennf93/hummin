@@ -56,9 +56,14 @@ server is stopped, add an explicit `models` array to that server:
 ```
 
 Use IDs your server actually advertises. Live discovery takes precedence;
-context windows come from `/props`, with `HUMMIN_COLIBRI_CTX` as fallback.
+context windows come from `/props`, with `HUMMIN_CTX` as fallback
+(`HUMMIN_COLIBRI_CTX` is also accepted).
 Offline labels reflect discovery at extension load. After starting a server,
 reload extensions to discover its current models.
+
+Local response budgets use the available context window after accounting for
+the prompt and a safety margin. Thinking and answer text share that budget;
+reasoning models are no longer limited to 4,096 output tokens by the provider.
 
 ## Memory
 
@@ -138,8 +143,39 @@ reports which files were already restored. Avoid simultaneous external writes.
 
 Snapshots are stored under `<agentDir>/checkpoints/blobs` with references in
 session history. They survive restarts and use content hashes to share identical
-copies. There is currently no automatic pruning; keep snapshots while their
-sessions may need rewind. Moving/exporting a session alone does not copy its blobs.
+copies. Session startup removes blobs unused for 30 days, preserving and refreshing
+every blob referenced by the open session. Reusing a snapshot also refreshes its
+age. Older sessions can lose file-rewind coverage after that retention period;
+their conversation history remains available. Moving/exporting a session alone
+does not copy its blobs.
+
+## Queued messages and preferences
+
+`/queue` lists steering and follow-up messages, including messages waiting for
+compaction. Enter restores the selected message to the editor; the configured
+delete key removes it. Restored images appear as paths to private temporary files,
+the same representation used for clipboard images. A message already delivered
+while the picker was open cannot remove a different queued message.
+
+The footer shows `queue N` while messages are pending. `/settings` includes:
+
+- **Enter while streaming**: steer the current run or queue a follow-up.
+- **Message timestamps**: show or hide timestamps, including existing messages.
+
+Prompt and command history persists per project, with at most 500 distinct entries.
+New sessions remember the project's last available model without changing global
+model defaults.
+
+Mouse interaction works in regular terminal mode: click selector rows and completed
+tool blocks, place the editor cursor, or click the pending-message hint to open
+`/queue`. Hold Shift to use the terminal's native text selection and scrollback.
+
+## Offline benchmark checks
+
+The `Hummin offline bench` workflow runs on pushes and pull requests targeting
+`main` or `zcode`, nightly on the default branch, and on manual dispatch. It validates
+fixture sensitivity and tests runner/metric accounting without provider credentials
+or model calls.
 
 ## Remote control
 

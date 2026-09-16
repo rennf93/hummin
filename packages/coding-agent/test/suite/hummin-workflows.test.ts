@@ -2,12 +2,16 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { recallLessons } from "../../extensions/hummin-memory.ts";
 import sessionExtension from "../../extensions/hummin-session.ts";
 import { CheckpointStore, type FileCheckpoint } from "../../extensions/lib/checkpoints.ts";
 import type { ExtensionAPI, ExtensionCommandContext, RegisteredCommand } from "../../src/index.ts";
+import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
+import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
 import { createHarness, type Harness } from "./harness.ts";
+
+beforeAll(() => initTheme("dark"));
 
 const harnesses: Harness[] = [];
 const directories: string[] = [];
@@ -138,6 +142,30 @@ it("records actual write-tool changes and rewinds files through the command hand
 	const store = new CheckpointStore(harness.tempDir, join(agentDir, "checkpoints", "blobs"));
 	expect(store.snapshot("draft.txt").hash).toBe(records[0].before.hash);
 	const newSession = vi.fn(async () => ({ cancelled: false }));
-	await commands.get("clear")!.handler("", { ...ctx, newSession });
+	const clearStatusIndicator = vi.fn();
+	const addChild = vi.fn();
+	const requestRender = vi.fn();
+	const restoreRememberedModel = vi.fn(async () => {});
+	const clearCommand = (
+		InteractiveMode.prototype as unknown as {
+			handleClearCommand: (this: {
+				clearStatusIndicator: () => void;
+				runtimeHost: { newSession: () => Promise<{ cancelled: boolean }> };
+				chatContainer: { addChild: (child: unknown) => void };
+				session: { restoreRememberedModel: () => Promise<void> };
+				ui: { requestRender: () => void };
+			}) => Promise<void>;
+		}
+	).handleClearCommand;
+	await clearCommand.call({
+		clearStatusIndicator,
+		runtimeHost: { newSession },
+		chatContainer: { addChild },
+		session: { restoreRememberedModel },
+		ui: { requestRender },
+	});
 	expect(newSession).toHaveBeenCalledOnce();
+	expect(clearStatusIndicator).toHaveBeenCalledOnce();
+	expect(restoreRememberedModel).toHaveBeenCalledOnce();
+	expect(requestRender).toHaveBeenCalledOnce();
 });

@@ -14,7 +14,7 @@ vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
 
 interface RegisteredProvider {
 	id: string;
-	getModels(): readonly { id: string; contextWindow: number; name: string; baseUrl: string }[];
+	getModels(): readonly { id: string; contextWindow: number; maxTokens: number; name: string; baseUrl: string }[];
 }
 
 function fakeApi(providers: RegisteredProvider[]): ExtensionAPI {
@@ -59,6 +59,7 @@ describe("hummin local provider fleet discovery", () => {
 			"llamacpp-127.0.0.1-19992",
 		]);
 		expect(providers.map((provider) => provider.getModels()[0]?.contextWindow)).toEqual([16384, 16384]);
+		expect(providers.map((provider) => provider.getModels()[0]?.maxTokens)).toEqual([16384, 16384]);
 		expect(providers[0]?.getModels()[0]?.baseUrl).toBe("http://127.0.0.1:19991/v1");
 	});
 

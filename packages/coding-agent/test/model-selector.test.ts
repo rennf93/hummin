@@ -1,4 +1,4 @@
-import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
+import { setKeybindings, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { ModelSelectorComponent } from "../src/modes/interactive/components/model-selector.ts";
@@ -76,6 +76,44 @@ describe("model selector", () => {
 		expect(saveDefault).not.toHaveBeenCalled();
 		selector.handleInput("\x12");
 		expect(saveDefault).toHaveBeenCalledWith(currentModel);
+	});
+
+	it("selects a visible model by click", async () => {
+		harness = await createHarness({
+			models: [
+				{ id: "current-model", name: "Current Model", reasoning: true },
+				{ id: "browsed-model", name: "Browsed Model", reasoning: true },
+			],
+		});
+		const select = vi.fn();
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			harness.getModel("current-model"),
+			harness.session.modelRuntime,
+			[{ model: harness.getModel("current-model")! }, { model: harness.getModel("browsed-model")! }],
+			select,
+			() => {},
+		);
+		const rendered = selector.render(120);
+		const row = rendered.findIndex((line) => stripAnsi(line).includes("Browsed Model"));
+		expect(row).toBeGreaterThanOrEqual(0);
+		const event: TuiMouseEvent = {
+			type: "click",
+			button: "left",
+			x: 2,
+			y: row,
+			screenX: 2,
+			screenY: row,
+			width: 120,
+			height: rendered.length,
+			shift: false,
+			alt: false,
+			ctrl: false,
+			clickCount: 1,
+		};
+
+		expect(selector.handleMouse(event)?.handled).toBe(true);
+		expect(select).toHaveBeenCalledWith(harness.getModel("browsed-model"));
 	});
 
 	it("lists every catalog that failed to refresh", async () => {

@@ -5,6 +5,7 @@ import {
 	fuzzyFilter,
 	getKeybindings,
 	Input,
+	MouseRegion,
 	Spacer,
 	Text,
 	type TUI,
@@ -359,7 +360,26 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			const ctxBadge = ctxLabel ? theme.fg("muted", ` ${ctxLabel} ·`) : "";
 			const line = `${cursor}${currentMarker}${modelText}${ctxBadge} ${providerBadge}${defaultBadge}`;
 
-			this.listContainer.addChild(new Text(line, 0, 0));
+			this.listContainer.addChild(
+				new MouseRegion(new Text(line, 0, 0), (event) => {
+					if (this.closed) return undefined;
+					if (event.type === "wheel") {
+						this.selectedIndex = Math.max(
+							0,
+							Math.min(this.filteredModels.length - 1, this.selectedIndex + Math.sign(event.wheelDelta ?? 0)),
+						);
+						this.updateList();
+						return { handled: true };
+					}
+					if (event.button !== "left") return undefined;
+					if (event.type === "press") return { handled: true, render: false };
+					if (event.type !== "click") return undefined;
+					// Keep the pressed model's identity even if a catalog refresh reorders the rows.
+					const selected = this.filteredModels.find((candidate) => modelsAreEqual(candidate.model, item.model));
+					if (selected) this.handleSelect(selected.model);
+					return { handled: true };
+				}),
+			);
 		}
 
 		// Add scroll indicator if needed

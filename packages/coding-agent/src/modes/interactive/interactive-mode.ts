@@ -31,6 +31,7 @@ import {
 	getCapabilities,
 	hyperlink,
 	Markdown,
+	MouseRegion,
 	matchesKey,
 	Spacer,
 	setCapabilityOverrides,
@@ -160,6 +161,7 @@ import { UserMessageSelectorComponent } from "./components/user-message-selector
 import { editInExternalEditor } from "./external-editor.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
 import { getModelSearchText } from "./model-search.ts";
+import { queuedMessageToEditorText } from "./queue-attachments.ts";
 import { shareSession } from "./session-share.ts";
 import {
 	getAvailableThemes,
@@ -2011,6 +2013,7 @@ export class InteractiveMode {
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
 		this.applyRuntimeSettings();
+		this.loadPromptHistory();
 
 		if (options.renderBeforeBind) {
 			this.renderCurrentSessionState();
@@ -2045,6 +2048,7 @@ export class InteractiveMode {
 		this.chatContainer.clear();
 		this.pendingMessagesContainer.clear();
 		this.compactionQueuedMessages = [];
+		this.footer.setCompactionQueueCount(0);
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
 		this.pendingTools.clear();
@@ -3006,6 +3010,8 @@ export class InteractiveMode {
 		this.defaultEditor.onSubmit = async (text: string) => {
 			text = text.trim();
 			if (!text) return;
+			// Built-in commands return before normal prompt submission.
+			if (text.startsWith("/")) this.rememberPromptHistory(text);
 
 			// Handle commands
 			if (text === "/settings") {
@@ -3695,8 +3701,9 @@ export class InteractiveMode {
 								this.getMarkdownThemeWithSettings(),
 								this.outputPad,
 								this.getMarkdownTransformers(),
-								this.settingsManager.getMessageTimestamps() ? message.timestamp : undefined,
+								message.timestamp,
 							);
+							userComponent.setShowTimestamp(this.settingsManager.getMessageTimestamps());
 							this.chatContainer.addChild(userComponent);
 						}
 					} else {
@@ -3705,8 +3712,9 @@ export class InteractiveMode {
 							this.getMarkdownThemeWithSettings(),
 							this.outputPad,
 							this.getMarkdownTransformers(),
-							this.settingsManager.getMessageTimestamps() ? message.timestamp : undefined,
+							message.timestamp,
 						);
+						userComponent.setShowTimestamp(this.settingsManager.getMessageTimestamps());
 						this.chatContainer.addChild(userComponent);
 					}
 					if (options?.populateHistory) {
@@ -3951,7 +3959,7 @@ export class InteractiveMode {
 			new Text(
 				theme.fg(
 					"warning",
-					`This project is not trusted. Project ${CONFIG_DIR_NAME} resources and packages are ignored. Use /trust to save a trust decision, then restart pi.`,
+					`This project is not trusted. Project ${CONFIG_DIR_NAME} resources and packages are ignored. Use /trust to save a trust decision, then restart ${APP_NAME}.`,
 				),
 				1,
 				0,
@@ -4431,7 +4439,22 @@ export class InteractiveMode {
 	 * Clears both session queue and compaction queue.
 	 */
 	private clearAllQueues(): { steering: string[]; followUp: string[] } {
-		const { steering, followUp } = this.session.clearQueue();
+		// Materialize every attachment before mutating either queue. A failed write leaves messages pending.
+		const snapshots = (["steering", "followUp"] as const).flatMap((kind) =>
+			this.session.getQueuedUserMessages(kind).map((message, index) => ({
+				kind,
+				message,
+				index,
+				text: queuedMessageToEditorText(message),
+			})),
+		);
+		const steering: string[] = [];
+		const followUp: string[] = [];
+		for (const entry of snapshots) {
+			if (this.session.removeQueuedMessage(entry.kind, entry.index, entry.message) !== undefined) {
+				(entry.kind === "steering" ? steering : followUp).push(entry.text);
+			}
+		}
 		const compactionSteering = this.compactionQueuedMessages
 			.filter((msg) => msg.mode === "steer")
 			.map((msg) => msg.text);
@@ -4446,6 +4469,7 @@ export class InteractiveMode {
 	}
 
 	private updatePendingMessagesDisplay(): void {
+		this.footer.setCompactionQueueCount(this.compactionQueuedMessages.length);
 		this.pendingMessagesContainer.clear();
 		const { steering: steeringMessages, followUp: followUpMessages } = this.getAllQueuedMessages();
 		if (steeringMessages.length > 0 || followUpMessages.length > 0) {
@@ -4459,13 +4483,27 @@ export class InteractiveMode {
 				this.pendingMessagesContainer.addChild(new TruncatedText(text, 1, 0));
 			}
 			const dequeueHint = this.getAppKeyDisplay("app.message.dequeue");
-			const hintText = theme.fg("dim", `↳ ${dequeueHint} edits all · /queue manages individually`);
-			this.pendingMessagesContainer.addChild(new TruncatedText(hintText, 1, 0));
+			const hintText = theme.fg("dim", `↳ ${dequeueHint} edits all · click here or /queue to manage individually`);
+			this.pendingMessagesContainer.addChild(
+				new MouseRegion(new TruncatedText(hintText, 1, 0), (event) => {
+					if (event.button !== "left" || (event.type !== "press" && event.type !== "click")) return undefined;
+					if (event.type === "click") this.showQueueManager();
+					return { handled: true };
+				}),
+			);
 		}
 	}
 
 	private restoreQueuedMessagesToEditor(options?: { abort?: boolean; currentText?: string }): number {
-		const { steering, followUp } = this.clearAllQueues();
+		let queues: { steering: string[]; followUp: string[] };
+		try {
+			queues = this.clearAllQueues();
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+			if (options?.abort) this.agent.abort();
+			return 0;
+		}
+		const { steering, followUp } = queues;
 		const allQueued = [...steering, ...followUp];
 		if (allQueued.length === 0) {
 			this.updatePendingMessagesDisplay();
@@ -4650,6 +4688,8 @@ export class InteractiveMode {
 					enableSkillCommands: this.settingsManager.getEnableSkillCommands(),
 					steeringMode: this.session.steeringMode,
 					followUpMode: this.session.followUpMode,
+					streamingSubmitMode: this.settingsManager.getStreamingSubmitMode(),
+					messageTimestamps: this.settingsManager.getMessageTimestamps(),
 					transport: this.settingsManager.getTransport(),
 					httpIdleTimeoutMs: this.settingsManager.getHttpIdleTimeoutMs(),
 					thinkingLevel: this.settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL,
@@ -4715,6 +4755,18 @@ export class InteractiveMode {
 					},
 					onFollowUpModeChange: (mode) => {
 						this.session.setFollowUpMode(mode);
+					},
+					onStreamingSubmitModeChange: (mode) => {
+						this.settingsManager.setStreamingSubmitMode(mode);
+					},
+					onMessageTimestampsChange: (enabled) => {
+						this.settingsManager.setMessageTimestamps(enabled);
+						for (const child of this.chatContainer.children) {
+							if (child instanceof UserMessageComponent || child instanceof CustomMessageComponent) {
+								child.setShowTimestamp(enabled);
+							}
+						}
+						this.ui.requestRender();
 					},
 					onTransportChange: (transport) => {
 						this.settingsManager.setTransport(transport);
@@ -5238,12 +5290,13 @@ export class InteractiveMode {
 	}
 
 	private loadPromptHistory(): void {
+		this.defaultEditor.setHistory([]);
 		try {
 			const file = this.promptHistoryFile;
 			if (!fs.existsSync(file)) return;
 			const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
 			if (!Array.isArray(parsed)) return;
-			const entries = parsed.filter((entry): entry is string => typeof entry === "string");
+			const entries = parsed.filter((entry): entry is string => typeof entry === "string").slice(0, 500);
 			this.defaultEditor.setHistory(entries);
 		} catch {
 			// Corrupt or unreadable history is not worth reporting.
@@ -5259,8 +5312,13 @@ export class InteractiveMode {
 			fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
 			let entries: string[] = [];
 			if (fs.existsSync(file)) {
-				const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
-				if (Array.isArray(parsed)) entries = parsed.filter((entry): entry is string => typeof entry === "string");
+				try {
+					const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+					if (Array.isArray(parsed))
+						entries = parsed.filter((entry): entry is string => typeof entry === "string");
+				} catch {
+					// A corrupt history must not prevent subsequent prompts from being saved.
+				}
 			}
 			if (entries[0] === trimmed) return;
 			entries = [trimmed, ...entries.filter((entry) => entry !== trimmed)].slice(0, 500);
@@ -5271,35 +5329,69 @@ export class InteractiveMode {
 	}
 
 	private showQueueManager(): void {
-		const readEntries = (): QueuedMessageEntry[] => [
-			...this.session.getSteeringMessages().map((text, index) => ({ kind: "steering" as const, index, text })),
-			...this.session.getFollowUpMessages().map((text, index) => ({ kind: "followUp" as const, index, text })),
-		];
-		const entries = readEntries();
+		const entries: Array<QueuedMessageEntry & { restoreText: () => string; remove: () => boolean }> = [];
+		for (const kind of ["steering", "followUp"] as const) {
+			for (const [index, message] of this.session.getQueuedUserMessages(kind).entries()) {
+				const content =
+					typeof message.content === "string"
+						? [{ type: "text" as const, text: message.content }]
+						: message.content;
+				entries.push({
+					kind,
+					index,
+					text: content
+						.filter((part) => part.type === "text")
+						.map((part) => part.text)
+						.join(""),
+					imageCount: content.filter((part) => part.type === "image").length,
+					restoreText: () => queuedMessageToEditorText(message),
+					remove: () => this.session.removeQueuedMessage(kind, index, message) !== undefined,
+				});
+			}
+			for (const message of this.compactionQueuedMessages.filter(
+				(item) => item.mode === (kind === "steering" ? "steer" : "followUp"),
+			)) {
+				entries.push({
+					kind,
+					index: entries.length,
+					text: message.text,
+					restoreText: () => message.text,
+					remove: () => {
+						const index = this.compactionQueuedMessages.indexOf(message);
+						if (index < 0) return false;
+						this.compactionQueuedMessages.splice(index, 1);
+						return true;
+					},
+				});
+			}
+		}
 		if (entries.length === 0) {
 			this.showStatus("No queued messages");
 			return;
 		}
 
 		this.showSelector((done) => {
-			const refresh = () => {
-				done();
-				this.updatePendingMessagesDisplay();
-				this.ui.requestRender();
-				if (readEntries().length > 0) this.showQueueManager();
-			};
 			const component = new QueueManagerComponent(
 				entries,
 				(action, entry) => {
-					if (action === "delete") {
-						this.session.removeQueuedMessage(entry.kind, entry.index);
-						refresh();
-						return;
+					const selected = entries.find((item) => item === entry);
+					if (!selected) return;
+					try {
+						const text = action === "restore" ? selected.restoreText() : undefined;
+						if (selected.remove()) {
+							if (text !== undefined)
+								this.editor.setText([text, this.editor.getText()].filter((part) => part.trim()).join("\n\n"));
+						} else {
+							this.showStatus("That message has already left the queue");
+						}
+					} catch (error) {
+						this.showError(error instanceof Error ? error.message : String(error));
 					}
-					const text = this.session.removeQueuedMessage(entry.kind, entry.index);
-					const currentText = this.editor.getText();
-					this.editor.setText([text, currentText].filter((t) => t?.trim()).join("\n\n"));
-					refresh();
+					done();
+					this.updatePendingMessagesDisplay();
+					this.ui.requestRender();
+					if (action === "delete" && this.session.pendingMessageCount + this.compactionQueuedMessages.length > 0)
+						this.showQueueManager();
 				},
 				() => {
 					done();

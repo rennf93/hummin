@@ -1178,7 +1178,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		const output = renderAll(fakeThis.loadedResourcesContainer).replace(/\\/g, "/");
 		expect(output).toContain("[Context]");
-		expect(output).toContain("~/.pi/agent/AGENTS.md, AGENTS.md");
+		expect(output).toContain(`~/${CONFIG_DIR_NAME}/agent/AGENTS.md, AGENTS.md`);
 		expect(output).not.toContain(`${cwd.replace(/\\/g, "/")}/AGENTS.md`);
 	});
 
@@ -1198,7 +1198,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		const output = renderAll(fakeThis.loadedResourcesContainer).replace(/\\/g, "/");
 		expect(output).toContain("[Context]");
-		expect(output).toContain(".pi/SYSTEM.md, .pi/APPEND_SYSTEM.md, AGENTS.md");
+		expect(output).toContain(`${CONFIG_DIR_NAME}/SYSTEM.md, ${CONFIG_DIR_NAME}/APPEND_SYSTEM.md, AGENTS.md`);
 	});
 
 	test("shows full context paths when expanded", () => {
@@ -1220,9 +1220,9 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		const output = renderAll(fakeThis.loadedResourcesContainer).replace(/\\/g, "/");
 		expect(output).toContain("[Context]");
-		expect(output).toContain("~/.pi/agent/AGENTS.md");
+		expect(output).toContain(`~/${CONFIG_DIR_NAME}/agent/AGENTS.md`);
 		expect(output).toContain("~/Development/pi-mono/AGENTS.md");
-		expect(output).not.toContain("~/.pi/agent/AGENTS.md, AGENTS.md");
+		expect(output).not.toContain(`~/${CONFIG_DIR_NAME}/agent/AGENTS.md, AGENTS.md`);
 	});
 
 	test("does not show verbose listing on quiet startup during reload", () => {

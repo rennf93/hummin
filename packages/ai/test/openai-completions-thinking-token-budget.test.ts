@@ -42,6 +42,7 @@ vi.mock("openai", () => {
 });
 
 type CapturedParams = {
+	max_tokens?: number;
 	thinking_token_budget?: number;
 	thinking_budget?: number;
 	thinking_budget_tokens?: number;
@@ -101,6 +102,22 @@ describe("openai-completions thinking token budget", () => {
 	beforeEach(() => {
 		mockState.lastParams = undefined;
 	});
+
+	it.each([undefined, "high"] as const)(
+		"keeps Qwen thinking toggle %s independent of the output budget",
+		async (reasoning) => {
+			const model = vllmModel({ thinkingFormat: "qwen-chat-template", maxTokensField: "max_tokens" });
+			model.contextWindow = 32768;
+			model.maxTokens = model.contextWindow;
+			const params = await capture(model, { reasoning });
+			expect(params.chat_template_kwargs).toEqual({
+				enable_thinking: reasoning !== undefined,
+				preserve_thinking: true,
+			});
+			expect(params.max_tokens).toBeGreaterThan(4096);
+			expect(params.max_tokens).toBeLessThan(model.contextWindow - 4096);
+		},
+	);
 
 	it("sends the configured budget for the requested level", async () => {
 		const params = await capture(vllmModel(), { reasoning: "medium", thinkingBudgets: { medium: 4096 } });

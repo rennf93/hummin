@@ -57,6 +57,29 @@ describe("SettingsSelectorComponent", () => {
 		expect(onCopyOnSelectChange.mock.calls.flat()).toEqual([false, true]);
 	});
 
+	it("cycles streaming submission and timestamp settings", () => {
+		const onStreamingSubmitModeChange = vi.fn();
+		const onMessageTimestampsChange = vi.fn();
+		const config = {
+			streamingSubmitMode: "steer",
+			messageTimestamps: true,
+			availableDefaultModels: [],
+			modelThinkingLevels: {},
+		} as unknown as SettingsConfig;
+		const list = new SettingsSelectorComponent(config, {
+			onStreamingSubmitModeChange,
+			onMessageTimestampsChange,
+		} as unknown as SettingsCallbacks).getSettingsList();
+		list.selectItem("streaming-submit-mode");
+		list.handleInput("\r");
+		list.handleInput("\r");
+		expect(onStreamingSubmitModeChange.mock.calls.flat()).toEqual(["followUp", "steer"]);
+		list.selectItem("message-timestamps");
+		list.handleInput("\r");
+		list.handleInput("\r");
+		expect(onMessageTimestampsChange.mock.calls.flat()).toEqual([false, true]);
+	});
+
 	it("keeps the configured fixed theme marked while browsing", () => {
 		const config = {
 			defaultModel: "not set",

@@ -158,9 +158,13 @@ class PendingMessageQueue {
 	}
 
 	removeAt(index: number): AgentMessage | undefined {
-		if (index < 0 || index >= this.messages.length) return undefined;
+		if (!Number.isInteger(index) || index < 0 || index >= this.messages.length) return undefined;
 		const [removed] = this.messages.splice(index, 1);
 		return removed;
+	}
+
+	remove(message: AgentMessage): boolean {
+		return this.removeAt(this.messages.indexOf(message)) !== undefined;
 	}
 }
 
@@ -319,6 +323,11 @@ export class Agent {
 	/** Remove one queued follow-up message by position. */
 	removeFollowUpAt(index: number): AgentMessage | undefined {
 		return this.followUpQueue.removeAt(index);
+	}
+
+	/** Remove a specific message, even if other entries have since left the queue. */
+	removeQueuedMessage(kind: "steering" | "followUp", message: AgentMessage): boolean {
+		return (kind === "steering" ? this.steeringQueue : this.followUpQueue).remove(message);
 	}
 
 	/** Returns true when either queue still contains pending messages. */

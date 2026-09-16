@@ -50,6 +50,7 @@ export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
+	private compactionQueueCount = 0;
 
 	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
 		this.session = session;
@@ -62,6 +63,10 @@ export class FooterComponent implements Component {
 
 	setAutoCompactEnabled(enabled: boolean): void {
 		this.autoCompactEnabled = enabled;
+	}
+
+	setCompactionQueueCount(count: number): void {
+		this.compactionQueueCount = count;
 	}
 
 	/**
@@ -127,6 +132,8 @@ export class FooterComponent implements Component {
 		// Build stats: labeled segments on the left (dim label, bright value),
 		// context meter, model on the right.
 		const statsParts: Array<{ label: string; value: string }> = [];
+		const queueCount = this.session.pendingMessageCount + this.compactionQueueCount;
+		if (queueCount > 0) statsParts.push({ label: "queue", value: theme.fg("accent", String(queueCount)) });
 		if (usageTotals.input) statsParts.push({ label: "in", value: formatTokens(usageTotals.input) });
 		if (usageTotals.output) statsParts.push({ label: "out", value: formatTokens(usageTotals.output) });
 		if (usageTotals.cacheRead) statsParts.push({ label: "rd", value: formatTokens(usageTotals.cacheRead) });
@@ -139,7 +146,8 @@ export class FooterComponent implements Component {
 		const usingSubscription = state.model
 			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(state.model.provider)
 			: false;
-		if (usageTotals.cost || usingSubscription) {
+		const pricedModel = state.model && Object.values(state.model.cost ?? {}).some((rate) => rate > 0);
+		if (usageTotals.cost || usingSubscription || pricedModel) {
 			statsParts.push({
 				label: "",
 				value: `$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`,

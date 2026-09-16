@@ -71,7 +71,10 @@ async function refreshProvider(
 
 afterEach(() => vi.restoreAllMocks());
 
-describe("remote catalog provider", () => {
+// Skipped: the fork ships remoteCatalog: false (the generated static catalog
+// is the source of truth), so withRemoteCatalog intentionally no-ops and the
+// remote-overlay behaviors exercised here are unreachable in this distribution.
+describe.skip("remote catalog provider", () => {
 	it("parses keyed catalogs, sends version headers, observes the refresh TTL, and supports forced refreshes", async () => {
 		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
 			async () =>

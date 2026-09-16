@@ -1,0 +1,31 @@
+name: Hummin offline bench
+
+on:
+  push:
+    branches: [main, zcode]
+  pull_request:
+    branches: [main, zcode]
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hummin-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Validate benchmark fixtures
+        run: node bench/run.mjs --validate-fixtures
+      - name: Test runner and metric accounting
+        run: node --test bench/metrics.test.mjs bench/run.test.mjs

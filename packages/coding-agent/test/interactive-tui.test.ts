@@ -12,6 +12,7 @@ import {
 	type StatusIndicatorKind,
 	WorkingStatusIndicator,
 } from "../src/modes/interactive/components/status-indicator.ts";
+import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import {
 	createInteractiveTui,
 	createInteractiveTuiReference,
@@ -48,6 +49,40 @@ class RecordingTerminal extends VirtualTerminal implements Terminal {
 }
 
 describe("createInteractiveTui", () => {
+	it("expands completed tool output through main-screen press and release events", async () => {
+		initTheme("dark");
+		const terminal = new RecordingTerminal(80, 40);
+		const ui = createInteractiveTui({
+			tuiMode: "regular",
+			showHardwareCursor: false,
+			logDirectory: "/tmp",
+			terminal,
+		});
+		const tool = new ToolExecutionComponent("test", "call", {}, {}, {}, ui, "/tmp");
+		tool.updateResult({
+			content: [{ type: "text", text: Array.from({ length: 20 }, (_, i) => `output ${i}`).join("\n") }],
+			isError: false,
+		});
+		ui.addChild(tool);
+		ui.start();
+		try {
+			ui.renderNow();
+			await terminal.flush();
+			const cursor = terminal.getCursorPosition();
+			terminal.sendInput(`\x1b[${cursor.y + 1};${cursor.x + 1}R`);
+			const row = terminal.getViewport().findIndex((line) => line.includes("output 0"));
+			expect(row).toBeGreaterThanOrEqual(0);
+			expect(terminal.getViewport().join("\n")).not.toContain("output 19");
+			terminal.sendInput(`\x1b[<0;3;${row + 1}M`);
+			terminal.sendInput(`\x1b[<0;3;${row + 1}m`);
+			ui.renderNow();
+			await terminal.flush();
+			expect(terminal.getViewport().join("\n")).toContain("output 19");
+		} finally {
+			ui.stop();
+		}
+	});
+
 	it("selects the alternate-screen renderer only when requested", async () => {
 		const mainTerminal = new RecordingTerminal();
 		const mainTui = createInteractiveTui({
@@ -61,6 +96,7 @@ describe("createInteractiveTui", () => {
 		mainTui.start();
 		await mainTerminal.waitForRender();
 		expect(mainTerminal.writes.some((write) => write.includes("\x1b[?1049h"))).toBe(false);
+		expect(mainTerminal.writes.some((write) => write.includes("\x1b[?1002h"))).toBe(true);
 		mainTui.stop();
 
 		const altTerminal = new RecordingTerminal();

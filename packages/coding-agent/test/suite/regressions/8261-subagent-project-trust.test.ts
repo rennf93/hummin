@@ -3,12 +3,13 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import subagentExtension from "../../../examples/extensions/subagent/index.ts";
-import { CONFIG_DIR_NAME } from "../../../src/config.ts";
 import type { ExtensionUIContext } from "../../../src/core/extensions/index.ts";
 import { createHarness, getMessageText } from "../harness.ts";
 
+const configDirName = vi.hoisted(() => ".hummin");
+
 vi.mock("@earendil-works/pi-coding-agent", () => ({
-	CONFIG_DIR_NAME: CONFIG_DIR_NAME,
+	CONFIG_DIR_NAME: configDirName,
 	getAgentDir: () => "/missing-user-agent-dir",
 	getMarkdownTheme: () => ({}),
 	parseFrontmatter: (content: string) => ({
@@ -28,7 +29,7 @@ async function runProjectAgent(options: RunOptions): Promise<{ confirmCalls: num
 	const confirm = vi.fn(async () => options.confirmResult ?? false);
 
 	try {
-		const agentsDir = join(harness.tempDir, CONFIG_DIR_NAME, "agents");
+		const agentsDir = join(harness.tempDir, configDirName, "agents");
 		mkdirSync(agentsDir, { recursive: true });
 		writeFileSync(
 			join(agentsDir, "project-agent.md"),

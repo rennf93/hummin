@@ -27,14 +27,17 @@
  * child (HUMMIN_MEMORY=0) writing to <vault>/fold.log, so neither startup,
  * turns, nor shutdown ever block on the fold.
  *
- * Retrieval is v2 (relevance-floored injection at session start); lessons are
- * plain JSONL plus a human-readable markdown mirror.
+ * Retrieval: one relevance-floored injection on the session's first prompt
+ * (never per turn - the briefing must not duplicate into session history),
+ * plus a `vault` tool for on-demand search over lessons and vault entities.
+ * Lessons are plain JSONL plus a human-readable markdown mirror.
  */
 
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, appendFileSync, unlinkSync, writeFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { Type } from "typebox";
 import { getAgentDir, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { TextContent } from "@earendil-works/pi-ai";
 
@@ -299,7 +302,8 @@ function markProcessed(sessionFile: string): void {
 
 
 // =============================================================================
-// Retrieval (v2): inject project-relevant lessons at session start.
+// Retrieval: relevance-floored lesson injection, once per session (first
+// prompt), so the briefing is a single message in session history.
 // Relevance v3: project lessons always eligible (ranked by query overlap,
 // then recency); cross-project lessons surface only with >= 2 keyword
 // overlaps against the opening prompt. Below the floor nothing is injected -
@@ -333,7 +337,7 @@ function parentDir(cwd: string): string {
 	return parts.join("/");
 }
 
-export function recallLessons(cwd: string, query: string): string[] {
+export function recallLessons(cwd: string, query: string, limit = RETRIEVAL_MAX_LESSONS): string[] {
 	const file = join(memoryDir(), "lessons.jsonl");
 	if (!existsSync(file)) return [];
 	const queryTerms = tokenize(query);
@@ -360,7 +364,65 @@ export function recallLessons(cwd: string, query: string): string[] {
 		}
 	}
 	scored.sort((a, b) => b.score - a.score || b.index - a.index);
-	return scored.slice(0, RETRIEVAL_MAX_LESSONS).map((entry) => entry.lesson);
+	return scored.slice(0, limit).map((entry) => entry.lesson);
+}
+
+/**
+ * On-demand search for the `vault` tool: project lessons (cross-project
+ * included by the relevance floor) plus vault entity files, both scored by
+ * plain term overlap. Returns a short briefing string, capped.
+ */
+export function searchVault(query: string, cwd: string): string {
+	const sections: string[] = [];
+	const lessons = recallLessons(cwd, query, 5);
+	if (lessons.length > 0) {
+		sections.push(`Lessons (${lessons.length}):\n${lessons.join("\n\n")}`);
+	}
+	const entities = searchEntities(query, 3);
+	if (entities.length > 0) {
+		sections.push(`Vault entities:\n${entities.join("\n")}`);
+	}
+	if (sections.length === 0) return `vault: no lessons or entities match "${query}".`;
+	return sections.join("\n\n").slice(0, 4000);
+}
+
+function searchEntities(query: string, limit: number): string[] {
+	const dir = vaultDir(cachedSettings);
+	const entitiesDir = join(dir, "entities");
+	if (!existsSync(entitiesDir)) return [];
+	const queryTerms = [...tokenize(query)];
+	if (queryTerms.length === 0) return [];
+	const scored: { rel: string; score: number; hits: string[] }[] = [];
+	const walk = (d: string): void => {
+		for (const f of readdirSync(d)) {
+			const full = join(d, f);
+			try {
+				if (full.endsWith(".md")) {
+					const content = readFileSync(full, "utf8");
+					const terms = tokenize(content);
+					const score = queryTerms.filter((t) => terms.has(t)).length;
+					if (score === 0) continue;
+					const hits = content
+						.split("\n")
+						.filter((l) => {
+							const ll = l.toLowerCase();
+							return queryTerms.some((t) => ll.includes(t)) && l.trim().length > 0;
+						})
+						.slice(0, 2);
+					scored.push({ rel: full.slice(dir.length + 1), score, hits });
+				} else {
+					walk(full);
+				}
+			} catch {
+				// skip unreadable
+			}
+		}
+	};
+	walk(entitiesDir);
+	scored.sort((a, b) => b.score - a.score || a.rel.localeCompare(b.rel));
+	return scored
+		.slice(0, limit)
+		.map((e) => `- ${e.rel} (${e.score} term overlap)\n  ${e.hits.map((h) => h.trim()).join("\n  ")}`);
 }
 
 /** Write a user quick-capture note, choosing a suffix if the timestamp repeats. */
@@ -450,6 +512,22 @@ export default function humminMemory(pi: ExtensionAPI): void {
 	});
 	if (!settings.getMemoryEnabled()) return;
 
+	pi.registerTool({
+		name: "vault",
+		label: "Vault Search",
+		description:
+			"Search hummin's memory vault and all project lessons for prior work: decisions, gotchas, concepts, tool notes. Run this before starting work on any feature - new or old - to be up to date with the latest lessons and vault state.",
+		promptSnippet: "vault: search lessons and vault entities before starting work on a feature",
+		parameters: Type.Object({
+			query: Type.String({ description: "What to recall, e.g. the feature or area you are about to work on" }),
+		}),
+		async execute(_toolCallId, params) {
+			const query = params.query.trim();
+			if (!query) return { content: [{ type: "text" as const, text: "Error: empty query" }], details: {}, isError: true };
+			return { content: [{ type: "text" as const, text: searchVault(query, process.cwd()) }], details: {} };
+		},
+	});
+
 	pi.on("input", async (event, ctx) => {
 		if (!event.text.startsWith("# ")) return { action: "continue" as const };
 		if (!settings.getMemoryEnabled()) return { action: "continue" as const };
@@ -534,11 +612,14 @@ export default function humminMemory(pi: ExtensionAPI): void {
 		});
 	}
 
-	// Surface memory once per session so the user knows retrieval is active
-	// without a notice on every turn.
-	let memoryNotified = false;
+	// Inject at most once per session so the briefing is a single message in
+	// session history, not one per turn. If the first prompt has no matching
+	// lessons the flag stays false and a later turn can inject (e.g. a lesson
+	// distilled by another session meanwhile); on-demand recall is the `vault` tool.
+	let memoryInjected = false;
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		if (memoryInjected) return;
 		const lessons = recallLessons(process.cwd(), event?.prompt ?? "");
 		if (lessons.length === 0) return;
 		let briefing = "";
@@ -549,8 +630,8 @@ export default function humminMemory(pi: ExtensionAPI): void {
 			parts.push(lesson);
 		}
 		if (parts.length === 0) return;
-		if (!memoryNotified && ctx?.ui?.notify) {
-			memoryNotified = true;
+		memoryInjected = true;
+		if (ctx?.ui?.notify) {
 			ctx.ui.notify(`memory: ${parts.length} project lesson(s) applied to this session`, "info");
 		}
 		return {

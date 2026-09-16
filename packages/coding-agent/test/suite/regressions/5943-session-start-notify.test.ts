@@ -78,6 +78,7 @@ type LoadedResourcesContext = {
 type RebindContext = {
 	unsubscribe?: () => void;
 	applyRuntimeSettings: () => void;
+	loadPromptHistory: () => void;
 	renderCurrentSessionState: () => void;
 	bindCurrentSessionExtensions: () => Promise<void>;
 	subscribeToAgent: () => void;
@@ -288,6 +289,7 @@ describe("regression #5943: session_start transient UI", () => {
 		try {
 			const context: RebindContext = {
 				applyRuntimeSettings: () => events.push("apply"),
+				loadPromptHistory: () => events.push("history"),
 				renderCurrentSessionState: () => events.push("render"),
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
@@ -304,7 +306,7 @@ describe("regression #5943: session_start transient UI", () => {
 
 			await interactiveModePrototype.rebindCurrentSession.call(context, { renderBeforeBind: true });
 
-			expect(events).toEqual(["apply", "render", "subscribe", "bind", "notify:Hello Error"]);
+			expect(events).toEqual(["apply", "history", "render", "subscribe", "bind", "notify:Hello Error"]);
 		} finally {
 			harness.cleanup();
 		}
@@ -329,6 +331,7 @@ describe("regression #5943: session_start transient UI", () => {
 		try {
 			const context: RebindContext = {
 				applyRuntimeSettings: () => {},
+				loadPromptHistory: () => {},
 				renderCurrentSessionState: () => events.push("render"),
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
@@ -381,6 +384,7 @@ describe("regression #5943: session_start transient UI", () => {
 		try {
 			const context: RebindContext = {
 				applyRuntimeSettings: () => {},
+				loadPromptHistory: () => {},
 				renderCurrentSessionState: () => events.push("render"),
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");

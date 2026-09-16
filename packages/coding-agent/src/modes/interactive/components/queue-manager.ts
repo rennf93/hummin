@@ -17,6 +17,7 @@ export interface QueuedMessageEntry {
 	kind: QueueKind;
 	index: number;
 	text: string;
+	imageCount?: number;
 }
 
 export type QueueAction = "restore" | "delete";
@@ -30,7 +31,7 @@ function entryItem(entry: QueuedMessageEntry): SelectItem {
 	const preview = entry.text.length > 80 ? `${entry.text.slice(0, 77)}...` : entry.text;
 	return {
 		value: `${entry.kind}:${entry.index}`,
-		label: `${entry.kind === "steering" ? "steer" : "follow-up"}: ${preview}`,
+		label: `${entry.kind === "steering" ? "steer" : "follow-up"}: ${preview}${entry.imageCount ? ` [${entry.imageCount} image${entry.imageCount === 1 ? "" : "s"}]` : ""}`,
 	};
 }
 

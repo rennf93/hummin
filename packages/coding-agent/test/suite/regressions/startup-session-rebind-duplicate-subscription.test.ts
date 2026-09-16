@@ -5,6 +5,7 @@ type RebindContext = {
 	session: object;
 	unsubscribe?: () => void;
 	applyRuntimeSettings: () => void;
+	loadPromptHistory: () => void;
 	renderCurrentSessionState: () => void;
 	bindCurrentSessionExtensions: () => Promise<void>;
 	subscribeToAgent: () => void;
@@ -40,6 +41,7 @@ describe("overlapping startup and replacement session rebinds", () => {
 		const context: RebindContext = {
 			session: startupSession,
 			applyRuntimeSettings: () => {},
+			loadPromptHistory: () => {},
 			renderCurrentSessionState: () => {},
 			bindCurrentSessionExtensions: () => {
 				bindCount += 1;

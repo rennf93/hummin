@@ -1,12 +1,43 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { Terminal } from "./terminal.ts";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
-import { type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
+import {
+	type Component,
+	dispatchMouseEvent,
+	retargetMouseEvent,
+	type TUI,
+	TuiBase,
+	type TuiMouseButton,
+	type TuiMouseDispatchResult,
+	type TuiMouseDispatchTarget,
+	type TuiMouseEvent,
+	type TuiStopOptions,
+} from "./tui.ts";
 import { visibleWidth } from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
+const ENABLE_MOUSE = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+const DISABLE_MOUSE = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
+const CURSOR_POSITION_QUERY = "\x1b[6n";
+const DOUBLE_CLICK_INTERVAL_MS = 500;
+
+interface SgrMouseEvent {
+	button: number;
+	x: number;
+	y: number;
+	release: boolean;
+}
+
+export interface TuiMainScreenOptions {
+	/**
+	 * Capture clicks, drags, and wheel events for application components. Disabled by default.
+	 * Terminal-native selection and scrollback remain available through the terminal's Shift override.
+	 */
+	mouse?: boolean;
+}
 
 /**
  * Streams terminal output in 1 MiB chunks so a full render never forms one string large enough to exceed V8's limit.
@@ -131,6 +162,33 @@ export class TuiMainScreen extends TuiBase implements TUI {
 	private hardwareCursorRow = 0;
 	private maxLinesRendered = 0;
 	private previousViewportTop = 0;
+	private readonly mouseEnabled: boolean;
+	private mouseActive = false;
+	private contentScreenOriginRow?: number;
+	private mouseGeometryVersion = 0;
+	private pendingCursorPosition?: { geometryVersion: number; hardwareCursorRow: number };
+	private mouseCapture?: TuiMouseDispatchTarget;
+	private mousePressTarget?: TuiMouseDispatchTarget;
+	private mousePressPoint?: { x: number; y: number };
+	private mousePressMoved = false;
+	private lastComponentClick?: {
+		timestamp: number;
+		count: number;
+		component: Component;
+		x: number;
+		y: number;
+	};
+
+	constructor(
+		terminal: Terminal,
+		showHardwareCursor?: boolean,
+		logDirectory?: string,
+		options: TuiMainScreenOptions = {},
+	) {
+		super(terminal, showHardwareCursor, logDirectory);
+		this.mouseEnabled = options.mouse ?? false;
+		if (this.mouseEnabled) this.addInputListener((data) => this.handleMouseInput(data));
+	}
 
 	captureRenderState(): TuiMainScreenRenderState {
 		return {
@@ -153,6 +211,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		this.hardwareCursorRow = state.hardwareCursorRow;
 		this.maxLinesRendered = state.maxLinesRendered;
 		this.previousViewportTop = state.previousViewportTop;
+		this.invalidateMouseGeometry();
 	}
 
 	protected override resetRenderState(): void {
@@ -163,9 +222,21 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		this.hardwareCursorRow = 0;
 		this.maxLinesRendered = 0;
 		this.previousViewportTop = 0;
+		this.invalidateMouseGeometry();
+	}
+
+	protected override afterTerminalStart(): void {
+		if (!this.mouseEnabled) return;
+		this.invalidateMouseGeometry();
+		this.mouseActive = true;
+		this.terminal.write(ENABLE_MOUSE);
 	}
 
 	protected override beforeTerminalStop(options: TuiStopOptions): void {
+		if (this.mouseActive) this.terminal.write(DISABLE_MOUSE);
+		this.mouseActive = false;
+		this.pendingCursorPosition = undefined;
+		this.clearMouseGesture();
 		if (options.preserveScreen || this.previousLines.length === 0) return;
 		this.terminal.write(" ");
 		const targetRow = this.previousLines.length;
@@ -173,6 +244,203 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		if (lineDiff > 0) this.terminal.write(`\x1b[${lineDiff}B`);
 		else if (lineDiff < 0) this.terminal.write(`\x1b[${-lineDiff}A`);
 		this.terminal.write("\r\n");
+	}
+
+	private invalidateMouseGeometry(): void {
+		this.mouseGeometryVersion += 1;
+		this.contentScreenOriginRow = undefined;
+		this.clearMouseGesture();
+	}
+
+	private queryMouseGeometry(): void {
+		if (!this.mouseActive || this.pendingCursorPosition) return;
+		this.pendingCursorPosition = {
+			geometryVersion: this.mouseGeometryVersion,
+			hardwareCursorRow: this.hardwareCursorRow,
+		};
+		this.terminal.write(CURSOR_POSITION_QUERY);
+	}
+
+	private finishMouseRender(geometryChanged: boolean): void {
+		if (!this.mouseEnabled) return;
+		if (geometryChanged) this.invalidateMouseGeometry();
+		if (this.contentScreenOriginRow === undefined) this.queryMouseGeometry();
+	}
+
+	private handleCursorPositionReport(data: string): boolean {
+		const match = /^\x1b\[(\d+);(\d+)R$/.exec(data);
+		if (!match || !this.pendingCursorPosition) return false;
+		const reportRow = Number.parseInt(match[1], 10) - 1;
+		const pending = this.pendingCursorPosition;
+		this.pendingCursorPosition = undefined;
+		if (pending.geometryVersion === this.mouseGeometryVersion) {
+			this.contentScreenOriginRow = reportRow - pending.hardwareCursorRow;
+		} else {
+			this.queryMouseGeometry();
+		}
+		return true;
+	}
+
+	private decodeMouseButton(button: number): TuiMouseButton {
+		switch (button & 3) {
+			case 0:
+				return "left";
+			case 1:
+				return "middle";
+			case 2:
+				return "right";
+			default:
+				return "none";
+		}
+	}
+
+	private parseSgrMouseEvent(data: string): SgrMouseEvent | undefined {
+		const match = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(data);
+		if (!match) return undefined;
+		return {
+			button: Number.parseInt(match[1], 10),
+			x: Number.parseInt(match[2], 10) - 1,
+			y: Number.parseInt(match[3], 10) - 1,
+			release: match[4] === "m",
+		};
+	}
+
+	private createMouseEvent(
+		type: TuiMouseEvent["type"],
+		raw: SgrMouseEvent,
+		extra: Partial<Pick<TuiMouseEvent, "wheelDelta" | "clickCount">> = {},
+	): TuiMouseEvent {
+		const logicalY = raw.y - (this.contentScreenOriginRow ?? 0);
+		return {
+			type,
+			button: type === "wheel" ? "none" : this.decodeMouseButton(raw.button),
+			x: raw.x,
+			y: logicalY,
+			screenX: raw.x,
+			screenY: raw.y,
+			width: Math.max(1, this.terminal.columns),
+			height: this.previousLines.length,
+			shift: (raw.button & 4) !== 0,
+			alt: (raw.button & 8) !== 0,
+			ctrl: (raw.button & 16) !== 0,
+			...(extra.wheelDelta === undefined ? {} : { wheelDelta: extra.wheelDelta }),
+			...(extra.clickCount === undefined ? {} : { clickCount: extra.clickCount }),
+		};
+	}
+
+	private applyMouseDispatchResult(event: TuiMouseEvent, result: TuiMouseDispatchResult): boolean {
+		const focusTarget = this.resolveMouseFocusTarget(result.focusTarget ?? result.target.component);
+		const focusChanged = result.focus === true && this.getFocusedComponent() !== focusTarget;
+		if (result.focus) this.setFocus(focusTarget);
+		if (result.capture) this.mouseCapture = result.target;
+		return (
+			result.render ??
+			(focusChanged ||
+				event.type === "press" ||
+				event.type === "click" ||
+				event.type === "drag" ||
+				event.type === "wheel")
+		);
+	}
+
+	private dispatchMouseToTarget(
+		event: TuiMouseEvent,
+		target: TuiMouseDispatchTarget,
+	): TuiMouseDispatchResult | undefined {
+		return dispatchMouseEvent(target.component, retargetMouseEvent(event, target));
+	}
+
+	private getComponentClickCount(target: TuiMouseDispatchTarget, x: number, y: number): number {
+		const now = Date.now();
+		const previous = this.lastComponentClick;
+		const count =
+			previous &&
+			now - previous.timestamp <= DOUBLE_CLICK_INTERVAL_MS &&
+			previous.component === target.component &&
+			previous.x === x &&
+			previous.y === y
+				? (previous.count % 3) + 1
+				: 1;
+		this.lastComponentClick = { timestamp: now, count, component: target.component, x, y };
+		return count;
+	}
+
+	private clearMouseGesture(): void {
+		this.mouseCapture = undefined;
+		this.mousePressTarget = undefined;
+		this.mousePressPoint = undefined;
+		this.mousePressMoved = false;
+	}
+
+	private dispatchMouseEvent(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+		const overlay = this.dispatchMouseToOverlay(event);
+		if (overlay.hit) return overlay.result;
+		if (event.y < 0 || event.y >= this.previousLines.length) return undefined;
+		return dispatchMouseEvent(this, event);
+	}
+
+	private handleMouseEvent(raw: SgrMouseEvent): void {
+		if (this.contentScreenOriginRow === undefined) return;
+		if (raw.x < 0 || raw.x >= this.terminal.columns || raw.y < 0 || raw.y >= this.terminal.rows) return;
+		if ((raw.button & 64) !== 0) {
+			const direction = raw.button & 3;
+			if (direction !== 0 && direction !== 1) return;
+			const event = this.createMouseEvent("wheel", raw, { wheelDelta: direction === 0 ? -1 : 1 });
+			const result = this.dispatchMouseEvent(event);
+			if (result && this.applyMouseDispatchResult(event, result)) this.requestRender();
+			return;
+		}
+
+		const isMotion = (raw.button & 32) !== 0;
+		const type: TuiMouseEvent["type"] = raw.release
+			? "release"
+			: isMotion
+				? this.decodeMouseButton(raw.button) === "none"
+					? "move"
+					: "drag"
+				: "press";
+		const event = this.createMouseEvent(type, raw);
+
+		if (this.mouseCapture || this.mousePressTarget) {
+			const target = this.mouseCapture ?? this.mousePressTarget!;
+			if (this.mousePressPoint && (raw.x !== this.mousePressPoint.x || raw.y !== this.mousePressPoint.y)) {
+				this.mousePressMoved = true;
+				this.lastComponentClick = undefined;
+			}
+			let render = false;
+			const targetResult = this.dispatchMouseToTarget(event, target);
+			if (targetResult) render = this.applyMouseDispatchResult(event, targetResult);
+			if (raw.release) {
+				if (!this.mousePressMoved && this.mousePressPoint?.x === raw.x && this.mousePressPoint.y === raw.y) {
+					const clickEvent = this.createMouseEvent("click", raw, {
+						clickCount: this.getComponentClickCount(target, raw.x, raw.y),
+					});
+					const clickResult = this.dispatchMouseToTarget(clickEvent, target);
+					if (clickResult) render = this.applyMouseDispatchResult(clickEvent, clickResult) || render;
+				}
+				this.clearMouseGesture();
+			}
+			if (render) this.requestRender();
+			return;
+		}
+
+		const result = this.dispatchMouseEvent(event);
+		if (!result) return;
+		const render = this.applyMouseDispatchResult(event, result);
+		if (type === "press") {
+			this.mousePressTarget = result.target;
+			this.mousePressPoint = { x: raw.x, y: raw.y };
+			this.mousePressMoved = false;
+		}
+		if (render) this.requestRender();
+	}
+
+	private handleMouseInput(data: string): { consume?: boolean } | undefined {
+		if (this.handleCursorPositionReport(data)) return { consume: true };
+		const mouseEvent = this.parseSgrMouseEvent(data);
+		if (!mouseEvent) return undefined;
+		this.handleMouseEvent(mouseEvent);
+		return { consume: true };
 	}
 
 	private collectKittyImageIds(lines: string[]): Set<number> {
@@ -272,6 +540,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		const cursorPos = this.extractCursorPosition(newLines, height);
 
 		newLines = this.applyLineResets(newLines);
+		const mouseGeometryChanged = widthChanged || heightChanged || newLines.length !== this.previousLines.length;
 
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
@@ -316,6 +585,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 			this.previousWidth = width;
 			this.previousHeight = height;
+			this.finishMouseRender(clear || mouseGeometryChanged);
 		};
 
 		const redrawLogDirectory = process.env.PI_TUI_DEBUG_REDRAW === "1" ? this.logDirectory : undefined;
@@ -393,6 +663,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			this.positionHardwareCursor(cursorPos, newLines.length);
 			this.previousViewportTop = prevViewportTop;
 			this.previousHeight = height;
+			this.finishMouseRender(mouseGeometryChanged);
 			return;
 		}
 
@@ -443,6 +714,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			this.previousWidth = width;
 			this.previousHeight = height;
 			this.previousViewportTop = prevViewportTop;
+			this.finishMouseRender(mouseGeometryChanged);
 			return;
 		}
 
@@ -613,6 +885,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 		this.previousWidth = width;
 		this.previousHeight = height;
+		this.finishMouseRender(mouseGeometryChanged);
 	}
 
 	/**

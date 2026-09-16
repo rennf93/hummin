@@ -58,6 +58,8 @@ export interface SettingsConfig {
 	enableSkillCommands: boolean;
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";
+	streamingSubmitMode: "steer" | "followUp";
+	messageTimestamps: boolean;
 	transport: Transport;
 	httpIdleTimeoutMs: number;
 	thinkingLevel: ThinkingLevel;
@@ -97,6 +99,8 @@ export interface SettingsCallbacks {
 	onEnableSkillCommandsChange: (enabled: boolean) => void;
 	onSteeringModeChange: (mode: "all" | "one-at-a-time") => void;
 	onFollowUpModeChange: (mode: "all" | "one-at-a-time") => void;
+	onStreamingSubmitModeChange: (mode: "steer" | "followUp") => void;
+	onMessageTimestampsChange: (enabled: boolean) => void;
 	onTransportChange: (transport: Transport) => void;
 	onHttpIdleTimeoutMsChange: (timeoutMs: number) => void;
 	onModelThinkingLevelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
@@ -466,10 +470,24 @@ export class SettingsSelectorComponent extends Container {
 				values: ["true", "false"],
 			},
 			{
+				id: "streaming-submit-mode",
+				label: "Enter while streaming",
+				description: "Steer the current response, or queue a follow-up until the agent finishes.",
+				currentValue: config.streamingSubmitMode,
+				values: ["steer", "followUp"],
+			},
+			{
+				id: "message-timestamps",
+				label: "Message timestamps",
+				description: "Show local timestamps below user and extension messages.",
+				currentValue: config.messageTimestamps ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
 				id: "steering-mode",
 				label: "Steering mode",
 				description:
-					"Enter while streaming queues steering messages. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.",
+					"Steering delivery: 'one-at-a-time' delivers one and waits for a response; 'all' delivers all at once.",
 				currentValue: config.steeringMode,
 				values: ["one-at-a-time", "all"],
 			},
@@ -829,6 +847,12 @@ export class SettingsSelectorComponent extends Container {
 			getSettingsListTheme(),
 			(id, newValue) => {
 				switch (id) {
+					case "streaming-submit-mode":
+						callbacks.onStreamingSubmitModeChange(newValue as "steer" | "followUp");
+						break;
+					case "message-timestamps":
+						callbacks.onMessageTimestampsChange(newValue === "true");
+						break;
 					case "autocompact":
 						callbacks.onAutoCompactChange(newValue === "true");
 						break;
