@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.0.0] - 2026-09-16
+
+First hummin release. Hummin is a thin-overlay fork of pi: zero deletions from upstream, `@earendil-works/*` internal package names preserved for cheap merges, plus hummin-specific capabilities layered on top.
+
+### Added
+
+- Fleet management for local inference servers: settings-driven `fleet.servers` (ordered priority, per-server kind/target, optional model catalogs), launchd/docker control, offline-aware model resolution, and native zai/GLM provider support with correct thinking-format handling.
+- Persistent memory: session distillation into reusable lessons, plus a vault mode that folds lessons into a linked entity graph (projects, concepts, decisions, gotchas) with `[[wikilinks]]`, an Obsidian-compatible `graph.canvas`, and a `vault` search tool with relevance-floored session recall.
+- Background work: bounded child sessions (`task`), event-driven output `monitor`s with match/batch delivery, and a `/background` panel plus `bg` footer status for at-a-glance visibility.
+- Editor upgrades: bash-mode syntax highlighting, `ctrl+r` incremental history search, ghost-text autocomplete, bracket/quote auto-pairing, and keyboard navigation between conversation markers.
+- Transcript UI: scrollbar index markers for user/system messages with click-to-jump and hover highlight, git working-tree status in the footer (dirty marker, staged/modified/untracked, ahead/behind), cumulative session diff stats, and per-tool `+N -M` headers.
+- Checkpoints: `/rewind` file tracking with silent handling of outside-project writes.
+- Performance: `--help` resolves from cached extension flags (~1.7s -> ~0.6s), cached footer aggregation, throttled streaming tool renders, and a self-contained CLI bundle.
+
+### Changed
+
+- User messages use a neutral grey background in the hummin-dark theme.
+- `write` tool results carry diff line counts instead of full patches; `edit` results drop the redundant unified patch.
+
+### Fixed
+
+- Checkpoint warnings no longer fire for legitimate outside-project writes.
+- Git status in the footer refreshes after tool executions and branch changes.
+
 ## [Unreleased]
 
 ### Added
