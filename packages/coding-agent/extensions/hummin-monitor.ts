@@ -129,7 +129,7 @@ export default function humminMonitor(pi: ExtensionAPI): void {
 			}
 			refreshBackgroundStatus(ctx.ui);
 			// Spawn visibility: what is watching what, and where output lands
-			ctx.ui.notify(`Started background ${describeJob(job)}`, "info");
+			ctx.ui?.notify?.(`Started background ${describeJob(job)}`, "info");
 			return { content: [{ type: "text", text: describeJob(job) }], details: { monitorId: job.id } };
 		},
 	});

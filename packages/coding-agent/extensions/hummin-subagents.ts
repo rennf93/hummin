@@ -40,10 +40,10 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", async () => {
 		await manager.close();
 	});
-	pi.registerCommand("background", {
+	pi.registerCommand?.("background", {
 		description: "List running background tasks and monitors",
 		handler: async (_args, ctx) => {
-			ctx.ui.notify(describeAllProcesses(), "info");
+			ctx.ui?.notify?.(describeAllProcesses(), "info");
 		},
 	});
 	pi.registerTool({
@@ -79,7 +79,7 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 				signal,
 				onComplete: params.background
 					? (finished) => {
-							ctx.ui.notify(`Background ${describeJob(finished)}`, finished.state === "completed" ? "info" : "warning");
+							ctx.ui?.notify?.(`Background ${describeJob(finished)}`, finished.state === "completed" ? "info" : "warning");
 							pi.sendMessage(
 								{ customType: "hummin-task", content: describeJob(finished), display: true },
 								{ deliverAs: "followUp", triggerTurn: true },
@@ -89,7 +89,7 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 			});
 			refreshBackgroundStatus(ctx.ui);
 			// Make the spawn visible to the user immediately, with what it is and where it logs
-			ctx.ui.notify(`Started background ${describeJob(job)}`, "info");
+			ctx.ui?.notify?.(`Started background ${describeJob(job)}`, "info");
 			if (!params.background) await job.done;
 			refreshBackgroundStatus(ctx.ui);
 			return {

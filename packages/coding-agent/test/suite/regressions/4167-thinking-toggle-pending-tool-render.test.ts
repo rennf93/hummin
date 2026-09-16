@@ -35,6 +35,8 @@ type RenderSessionItems = (
 
 type RenderSessionContextThis = {
 	pendingTools: Map<string, ToolExecutionComponent>;
+	pendingPartialUpdates: Map<string, unknown>;
+	footerDataProvider: { scheduleGitStatusRefresh(): void };
 	chatContainer: Container;
 	footer: { invalidate(): void };
 	ui: TUI;
@@ -66,6 +68,8 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 	const chatContainer = new Container();
 	return {
 		pendingTools: new Map<string, ToolExecutionComponent>(),
+		pendingPartialUpdates: new Map(),
+		footerDataProvider: { scheduleGitStatusRefresh() {} },
 		chatContainer,
 		footer: { invalidate: vi.fn() },
 		ui: { requestRender: vi.fn() } as unknown as TUI,

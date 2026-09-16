@@ -52,7 +52,8 @@ export function backgroundStatus(): string | undefined {
 }
 
 /** Set or clear the shared "bg" footer status from any extension context. */
-export function refreshBackgroundStatus(ui: { setStatus(key: string, text: string | undefined): void }): void {
+export function refreshBackgroundStatus(ui: { setStatus(key: string, text: string | undefined): void } | undefined | null): void {
+	if (!ui?.setStatus) return;
 	ui.setStatus("bg", backgroundStatus());
 }
 
