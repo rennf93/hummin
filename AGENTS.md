@@ -128,6 +128,7 @@ For release preparation, publishing, verification, or recovery, load and follow 
 - `src/core/http-dispatcher.ts` replaces the global fetch with an undici `EnvHttpProxyAgent`. Local model servers need `httpIdleTimeoutMs: 0` in user settings (slow prefills otherwise look like dead connections); do not "fix" reported hangs by shortening default timeouts.
 - Runtime process title is `hummin`; a TUI session and spawned `-p` children look identical in `ps` - never kill by name pattern.
 - Extensions autoload from `~/.hummin/agent/extensions/` (runtime TS, synced from `packages/coding-agent/extensions/` after changes).
+- Memory: inspect the vault through the built-in `vault` tool, not raw `find`/`cat` over vault directories. The live vault dir is `HUMMIN_MEMORY_VAULT_DIR` (`~/hummin-vault`), which overrides the default `~/.hummin/agent/vault` and the settings value - working in the default dir when the env var is set creates duplicate graphs. Fold/curate guardrails live in the vault's AGENTS.md (machine-managed by `vaultContract()` in hummin-memory.ts).
 
 ## User Override
 

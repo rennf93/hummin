@@ -715,8 +715,12 @@ curator. Rules:
 - Facts inside entities are dated and attributed: (from [[lesson-slug]], YYYY-MM-DD).
 - Gotcha entities open with an Obsidian callout one line long:
   > [!warning] <one-sentence summary>
-- Before creating an entity, search entities/ for an existing one; extend it
-  instead of duplicating. Never invent facts that are not in an inbox lesson.
+- Before creating an entity, search all of entities/ (every type dir) for a
+  file covering the same topic; extend it instead of creating a parallel
+  entity, even if the existing one came from an earlier fold pass. Never
+  invent facts that are not in an inbox lesson.
+- After folding, list entities/ and verify every [[link]] you wrote resolves
+  to an existing file and that no two entities cover the same topic.
 - Each entity ends with a "## Links" section listing related [[entities]].
   Link notes inside the vault with [[wikilinks]]; keep [text](url) for
   external URLs only.
