@@ -37,6 +37,7 @@
 - For `packages/coding-agent/test/suite/`, use `test/suite/harness.ts` + the faux provider. No real provider APIs, keys, or paid tokens.
 - When regressions tests for fixing a github issue, add a comment with the github issue number next to the test.
 - For ad-hoc scripts, `write` them to a temp file (e.g. `/tmp`), run, edit if needed, remove when done. Don't embed multi-line scripts in `bash` commands.
+- Never wait on long-running work (builds, test runs, CI) with blocking `sleep`/poll loops in `bash`. Start a `monitor` for the process or status check and let it deliver output; keep bash calls for one-shot commands.
 - Never commit unless the user asks.
 
 ## Dependency and Install Security
