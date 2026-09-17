@@ -1,6 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [1.0.4] - 2026-09-18
+
+### Fixed
+
+- Fixed the published `hummin-cli` package crashing at startup with `ENOENT ... dist/modes/interactive/theme/dark.json`: the slim publish manifest shipped only `dist/bundle`, but the bundle reads the built-in themes, interactive assets, and export-html templates from disk at runtime. Staging now ships all three asset trees.
+- Fixed TypeScript extensions failing to load with `Cannot find module 'jiti'` in npm installs: the extension loader resolves `jiti`, `typebox`, and the `@earendil-works/*` API packages from the installed package, so the manifest now carries the full upstream dependency set (including `@silvia-odwyer/photon-node` for image pasting) with `@earendil-works/*` pinned to the upstream-published `^0.85.1` line.
+- Added `scripts/stage-hummin-cli.mjs` (`npm run stage:hummin-cli`) so the staging layout is reproducible instead of hand-assembled; staging self-checks the theme/export/bundle files before packing. 1.0.3 has been yanked.
 
 ## [1.0.3] - 2026-09-17
 
