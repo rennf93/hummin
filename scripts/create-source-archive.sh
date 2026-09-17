@@ -67,7 +67,11 @@ cd "$repo_root"
 
 commit="$(git rev-parse --verify --end-of-options "${source_ref}^{commit}")"
 
-package_version="$(git show "${commit}:packages/coding-agent/package.json" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')"
+# Fork releases carry their version in piConfig.version (independent of the
+# upstream-synced workspace version), falling back to the package version.
+package_version="$(git show "${commit}:packages/coding-agent/package.json" | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); p.piConfig?.version || p.version')"
+if [[ "$package_version" != "$version" ]]; then
+    echo "Version ${version} does not match package version ${package_version} at ${source_ref}" >&2
 if [[ "$package_version" != "$version" ]]; then
     echo "Version ${version} does not match package version ${package_version} at ${source_ref}" >&2
     exit 1

@@ -294,6 +294,10 @@ jobs:
           fi
 
   publish-npm:
+    # hummin publishes hummin-cli to npm manually (the npm-publish environment
+    # and @earendil-works trusted publishing belong to upstream pi). Flip the
+    # repo variable NPM_TRUSTED_PUBLISH to true to re-enable this job.
+    if: vars.NPM_TRUSTED_PUBLISH == 'true'
     runs-on: ubuntu-latest
     needs: stage-github-release
     environment: npm-publish
