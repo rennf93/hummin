@@ -426,7 +426,7 @@ describe("TuiAltScreen", () => {
 		assert.strictEqual(scrollView.isScrollbarActive, true);
 		assert.ok(terminal.getViewport().some((line) => /[│█]/.test(line)));
 
-		terminal.sendInput("\x1b[<35;9;3M");
+		terminal.sendInput("\x1b[<35;5;3M");
 		await new Promise((resolve) => setTimeout(resolve, 40));
 		await terminal.waitForRender();
 		assert.strictEqual(scrollView.isScrollbarVisible, false);

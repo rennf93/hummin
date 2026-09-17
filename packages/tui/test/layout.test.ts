@@ -369,14 +369,16 @@ describe("viewport layout", () => {
 
 class MarkedText extends Text {
 	scrollbarMarkerKind: string;
-	constructor(text: string, kind: string) {
+	scrollbarMarkerAnchor?: "top" | "bottom";
+	constructor(text: string, kind: string, anchor?: "top" | "bottom") {
 		super(text, 0, 0);
 		this.scrollbarMarkerKind = kind;
+		if (anchor) this.scrollbarMarkerAnchor = anchor;
 	}
 }
 
 describe("scrollbar index markers", () => {
-	it("paints proportional marker dots for marked components, under the thumb", () => {
+	it("paints marker dots in their own column, clear of the thumb", () => {
 		const userStyle = (text: string) => `\x1b[31m${text}\x1b[39m`;
 		const systemStyle = (text: string) => `\x1b[34m${text}\x1b[39m`;
 		const entries = Array.from({ length: 12 }, (_, i) => {
@@ -399,17 +401,47 @@ describe("scrollbar index markers", () => {
 		const visible = lines.map(stripTerminalSequences);
 
 		assert.deepStrictEqual(visible, [
-			"L2       ▌",
+			"L2      ▌│",
 			"L3       ┃",
 			"L4       ┃",
 			"L5       ┃",
 			"L6       │",
-			"L7       ▌",
+			"L7      ●│",
 		]);
 		// user marker (content row 0) lands on track row 0, system (content row 11) on row 5
 		assert.ok(lines[0].includes(userStyle("▌")), `expected user marker on row 0: ${lines[0]}`);
-		assert.ok(lines[5].includes(systemStyle("▌")), `expected system marker on row 5: ${lines[5]}`);
-		// thumb is not overdrawn by markers
-		assert.ok(lines[2].includes("┃") && !lines[2].includes(systemStyle("▌")) && !lines[2].includes(userStyle("▌")));
+		assert.ok(lines[5].includes(systemStyle("●")), `expected system marker on row 5: ${lines[5]}`);
+		// markers stay visible even where the thumb occupies the track column
+		assert.ok(lines[2].includes("┃"));
+	});
+
+	it("anchors bottom-anchored markers to the component's last row", () => {
+		const userStyle = (text: string) => `\x1b[31m${text}\x1b[39m`;
+		const turnStyle = (text: string) => `\x1b[33m${text}\x1b[39m`;
+		const entries = Array.from({ length: 12 }, (_, i) => {
+			const text = `L${i}`;
+			if (i === 0) return { component: new MarkedText(text, "user") as Component, basis: 1 as const, shrink: 0 };
+			if (i === 3)
+				return {
+					component: new MarkedText("L3a\nL3b\nL3c", "turnEnd", "bottom") as Component,
+					basis: 3 as const,
+					shrink: 0,
+				};
+			return { component: new Text(text, 0, 0) as Component, basis: 1 as const, shrink: 0 };
+		});
+		const scrollView = new ScrollView(new VStack(entries), {
+			scrollbar: "always",
+			scrollbarMarkerStyles: { user: userStyle, turnEnd: turnStyle },
+		});
+
+		renderLayoutFrame(scrollView, 10, 6, () => {});
+		const lines = renderLayoutFrame(scrollView, 10, 6, () => {}).lines;
+		const visible = lines.map(stripTerminalSequences);
+
+		// Content (14 rows) maps proportionally onto the 6-row track: content row 0
+		// -> track row 0; the turnEnd component's last content row (5) -> track row 2.
+		assert.ok(visible[0].includes("▌"), `user marker on track row 0: ${visible[0]}`);
+		assert.ok(visible[2].includes("●"), `turnEnd marker on track row 2: ${visible[2]}`);
+		assert.ok(!visible[1].includes("●"), "no turnEnd marker one row early");
 	});
 });

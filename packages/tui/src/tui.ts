@@ -122,6 +122,9 @@ export interface Component {
 	/** Optional marker kind rendered as an index dot on the transcript scrollbar. */
 	scrollbarMarkerKind?: string;
 
+	/** Which end of the component the marker dot anchors to. Default: top. */
+	scrollbarMarkerAnchor?: "top" | "bottom";
+
 	/** Optional normalized mouse handler. */
 	handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
 

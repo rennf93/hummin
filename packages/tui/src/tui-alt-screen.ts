@@ -1028,7 +1028,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			const geometry = box ? getScrollbarGeometry(box, includeHiddenAuto) : undefined;
 			if (
 				geometry &&
-				x === geometry.column &&
+				(x === geometry.column || x === geometry.markerColumn) &&
 				y >= geometry.trackTop &&
 				y < geometry.trackTop + geometry.trackHeight
 			) {
@@ -1106,11 +1106,17 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.pressedUrl = undefined;
 		this.selectionDragged = false;
 		this.setScrollbarHover(target.scrollView);
-		// Click on a marker dot: jump exactly to the marked message (top of viewport)
+		// Click on a marker dot (marker column): jump to the marked row. User and
+		// system markers align their message to the viewport top; turn-end markers
+		// align to the viewport bottom so the end of the turn is on screen.
 		const pressRow = event.y - target.geometry.trackTop;
 		const marker = target.scrollView.scrollbarPaintedMarkers.find((m) => m.trackRow === pressRow);
-		if (marker) {
-			target.scrollView.scrollTo(marker.contentRow, { disableFollow: true });
+		if (marker && event.x === target.geometry.markerColumn) {
+			const alignBottom = marker.kind === "turnEnd";
+			const top = alignBottom
+				? Math.max(0, marker.contentRow - target.scrollView.viewportHeight + 1)
+				: marker.contentRow;
+			target.scrollView.scrollTo(top, { disableFollow: true });
 			this.requestRender();
 			return true;
 		}

@@ -43,6 +43,8 @@ export interface LayoutFrame {
 
 export interface ScrollbarGeometry {
 	column: number;
+	/** Column left of the track where index marker dots are painted. */
+	markerColumn: number;
 	trackTop: number;
 	trackHeight: number;
 	thumbTop: number;
@@ -298,6 +300,7 @@ export function getScrollbarGeometry(box: LayoutBox, includeHiddenAuto = false):
 
 	return {
 		column,
+		markerColumn: column - 1,
 		trackTop: box.rect.y,
 		trackHeight,
 		thumbTop: box.rect.y + thumbOffset,
@@ -315,7 +318,9 @@ function collectScrollbarMarkers(box: LayoutBox, contentTopScreenRow: number): A
 	const visit = (node: LayoutBox): void => {
 		const kind = node.component?.scrollbarMarkerKind;
 		if (typeof kind === "string") {
-			markers.push({ kind, row: node.rect.y - contentTopScreenRow });
+			const anchoredBottom = node.component?.scrollbarMarkerAnchor === "bottom";
+			const row = anchoredBottom ? node.rect.y + node.rect.height - 1 : node.rect.y;
+			markers.push({ kind, row: row - contentTopScreenRow });
 		}
 		for (const child of node.children) visit(child);
 	};
@@ -368,14 +373,15 @@ function paintScrollbar(box: LayoutBox, screen: string[], totalWidth: number): v
 		) {
 			continue;
 		}
-		// The thumb stays visible on top of marker dots
-		if (trackRow >= geometry.thumbTop && trackRow < geometry.thumbTop + geometry.thumbHeight) continue;
+		if (geometry.markerColumn < box.clip.x || geometry.markerColumn >= box.clip.x + box.clip.width) continue;
 		const hovered = trackOffset === box.scrollView.scrollbarHoverTrackRow;
+		// Markers get their own column next to the track so the thumb never hides them.
+		const glyph = marker.kind === "user" ? "▌" : "●";
 		screen[trackRow] = replaceScrollbarCell(
 			screen[trackRow] ?? "",
-			geometry.column,
+			geometry.markerColumn,
 			totalWidth,
-			style(hovered ? "█" : "▌"),
+			style(hovered ? "█" : glyph),
 			box.scrollView.scrollbar !== "always",
 		);
 	}

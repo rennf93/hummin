@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Scrollbar index markers now paint in their own column next to the track, so the thumb never hides them; components can anchor their marker to the component's last row via `scrollbarMarkerAnchor: "bottom"`, and clicking a marker in the marker column jumps with bottom alignment for bottom-anchored markers.
+
 ## [0.85.1] - 2026-09-05
 
 ### Added
