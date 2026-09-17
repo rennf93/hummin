@@ -24,6 +24,12 @@ First hummin release. Hummin is a thin-overlay fork of pi: zero deletions from u
 - Checkpoint warnings no longer fire for legitimate outside-project writes.
 - Git status in the footer refreshes after tool executions and branch changes.
 
+## [1.0.1] - 2026-09-17
+
+### Fixed
+
+- Published `hummin-cli` package now ships hummin branding via `piConfig`: `--help` titles and `--version` report hummin/1.0.1 instead of pi/1.0.0.
+
 ## [Unreleased]
 
 ### Added
