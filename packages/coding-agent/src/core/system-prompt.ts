@@ -22,6 +22,8 @@ export interface BuildSystemPromptOptions {
 	contextFiles?: Array<{ path: string; content: string }>;
 	/** Pre-loaded skills. */
 	skills?: Skill[];
+	/** Compact mode: shrink the hummin docs guidance block to two lines (fixed token overhead reduction). */
+	compact?: boolean;
 }
 
 /** Build the system prompt with tools, guidelines, and context */
@@ -35,6 +37,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		cwd,
 		contextFiles: providedContextFiles,
 		skills: providedSkills,
+		compact,
 	} = options;
 	const promptCwd = cwd.replace(/\\/g, "/");
 
@@ -134,7 +137,11 @@ In addition to the tools above, you may have access to other custom tools depend
 Guidelines:
 ${guidelines}
 
-hummin documentation (read only when the user asks about hummin itself, its SDK, extensions, themes, skills, or TUI):
+`;
+
+	prompt += compact
+		? `hummin docs (only if the user asks about hummin itself): README ${readmePath}, docs ${docsPath}, examples ${examplesPath}. Read .md files fully and follow their cross-references.`
+		: `hummin documentation (read only when the user asks about hummin itself, its SDK, extensions, themes, skills, or TUI):
 - Main documentation: ${readmePath}
 - Additional docs: ${docsPath}
 - Examples: ${examplesPath} (extensions, custom tools, SDK)

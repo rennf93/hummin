@@ -60,6 +60,7 @@ export interface SettingsConfig {
 	followUpMode: "all" | "one-at-a-time";
 	streamingSubmitMode: "steer" | "followUp";
 	messageTimestamps: boolean;
+	compactPrompt: boolean;
 	transport: Transport;
 	httpIdleTimeoutMs: number;
 	thinkingLevel: ThinkingLevel;
@@ -101,6 +102,7 @@ export interface SettingsCallbacks {
 	onFollowUpModeChange: (mode: "all" | "one-at-a-time") => void;
 	onStreamingSubmitModeChange: (mode: "steer" | "followUp") => void;
 	onMessageTimestampsChange: (enabled: boolean) => void;
+	onCompactPromptChange: (enabled: boolean) => void;
 	onTransportChange: (transport: Transport) => void;
 	onHttpIdleTimeoutMsChange: (timeoutMs: number) => void;
 	onModelThinkingLevelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
@@ -484,6 +486,14 @@ export class SettingsSelectorComponent extends Container {
 				values: ["true", "false"],
 			},
 			{
+				id: "compact-prompt",
+				label: "Compact prompt",
+				description:
+					"Condense tool descriptions and guidance to cut fixed prompt overhead (best for slow local models). Takes effect next turn.",
+				currentValue: config.compactPrompt ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
 				id: "steering-mode",
 				label: "Steering mode",
 				description:
@@ -852,6 +862,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "message-timestamps":
 						callbacks.onMessageTimestampsChange(newValue === "true");
+						break;
+					case "compact-prompt":
+						callbacks.onCompactPromptChange(newValue === "true");
 						break;
 					case "autocompact":
 						callbacks.onAutoCompactChange(newValue === "true");

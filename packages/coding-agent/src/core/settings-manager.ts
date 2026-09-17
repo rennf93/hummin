@@ -169,6 +169,8 @@ export interface Settings {
 	streamingSubmitMode?: "steer" | "followUp";
 	/** Show local timestamps under user and extension messages. */
 	messageTimestamps?: boolean;
+	/** Compact prompt mode: condense tool descriptions and system-prompt guidance to cut fixed prompt overhead (useful for slow-prefill local models). */
+	compactPrompt?: boolean;
 	theme?: string;
 	compaction?: CompactionSettings;
 	branchSummary?: BranchSummarySettings;
@@ -846,6 +848,17 @@ export class SettingsManager {
 	/** Whether user and extension messages show local timestamps. Default true. */
 	getMessageTimestamps(): boolean {
 		return this.settings.messageTimestamps ?? true;
+	}
+
+	/** Whether compact prompt mode condenses tool descriptions and system-prompt guidance. Default false. */
+	getCompactPrompt(): boolean {
+		return this.settings.compactPrompt ?? false;
+	}
+
+	setCompactPrompt(enabled: boolean): void {
+		this.globalSettings.compactPrompt = enabled;
+		this.markModified("compactPrompt");
+		this.save();
 	}
 
 	setMessageTimestamps(enabled: boolean): void {

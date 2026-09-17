@@ -55,6 +55,7 @@ import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
+import { compactToolDescription, stripSchemaDescriptions } from "./compact-prompt.ts";
 import {
 	type CompactionPreparation,
 	type CompactionResult,
@@ -962,10 +963,11 @@ export class AgentSession {
 	setActiveToolsByName(toolNames: string[]): void {
 		const tools: AgentTool[] = [];
 		const validToolNames: string[] = [];
+		const compact = this.settingsManager.getCompactPrompt();
 		for (const name of toolNames) {
 			const tool = this._toolRegistry.get(name);
 			if (tool) {
-				tools.push(tool);
+				tools.push(compact ? this._compactTool(tool) : tool);
 				validToolNames.push(name);
 			}
 		}
@@ -1054,6 +1056,19 @@ export class AgentSession {
 		return Array.from(unique);
 	}
 
+	/**
+	 * Compact variant of a tool for compactPrompt mode: first-paragraph
+	 * description and a schema without description prose. Execute/label and all
+	 * other behavior are shared with the original tool.
+	 */
+	private _compactTool(tool: AgentTool): AgentTool {
+		return {
+			...tool,
+			description: compactToolDescription(tool.description),
+			parameters: stripSchemaDescriptions(tool.parameters),
+		};
+	}
+
 	private _rebuildSystemPrompt(toolNames: string[]): string {
 		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
 		const toolSnippets: Record<string, string> = {};
@@ -1086,6 +1101,7 @@ export class AgentSession {
 			selectedTools: validToolNames,
 			toolSnippets,
 			promptGuidelines,
+			compact: this.settingsManager.getCompactPrompt(),
 		};
 		return buildSystemPrompt(this._baseSystemPromptOptions);
 	}
