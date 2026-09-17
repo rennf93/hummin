@@ -7,15 +7,12 @@
  */
 
 import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { keyHint } from "../../../modes/interactive/components/keybinding-hints.ts";
-import { truncateToVisualLines } from "../../../modes/interactive/components/visual-truncate.ts";
 import { theme } from "../../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
 import type { BashToolDetails } from "../bash.ts";
-import { getTextOutput, invalidArgText, str } from "../render-utils.ts";
+import { formatToolLabel, getTextOutput, invalidArgText, str } from "../render-utils.ts";
 import { DEFAULT_MAX_BYTES, formatSize } from "../truncate.ts";
 
-const BASH_PREVIEW_LINES = 5;
 export const BASH_UPDATE_THROTTLE_MS = 100;
 type BashResultRenderState = {
 	cachedWidth: number | undefined;
@@ -32,12 +29,60 @@ class BashResultRenderComponent extends Container {
 function formatDuration(ms: number): string {
 	return `${(ms / 1000).toFixed(1)}s`;
 }
-function formatShellCall(args: { command?: string; timeout?: number } | undefined, prompt: string): string {
+/** Dim `· duration` suffix for the call row; live while the command runs. */
+function formatShellStatusSuffix(
+	state: { startedAt?: number; endedAt?: number } | undefined,
+	isError: boolean,
+): string {
+	if (!state || state.startedAt === undefined) return "";
+	const end = state.endedAt ?? Date.now();
+	let suffix = `  ${theme.fg("muted", `· ${formatDuration(end - state.startedAt)}`)}`;
+	if (isError) suffix += ` ${theme.fg("error", "(failed)")}`;
+	return suffix;
+}
+function formatShellCall(
+	args: { command?: string; timeout?: number } | undefined,
+	toolName: string,
+	state: { startedAt?: number; endedAt?: number } | undefined,
+	isError: boolean,
+): string {
 	const command = str(args?.command);
 	const timeout = args?.timeout as number | undefined;
 	const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
 	const commandDisplay = command === null ? invalidArgText(theme) : command ? command : theme.fg("toolOutput", "...");
-	return theme.fg("toolTitle", theme.bold(`${prompt} ${commandDisplay}`)) + timeoutSuffix;
+	return (
+		theme.fg("toolTitle", theme.bold(formatToolLabel(toolName))) +
+		commandDisplay +
+		timeoutSuffix +
+		formatShellStatusSuffix(state, isError)
+	);
+}
+function lastNonEmptyLine(text: string): string | undefined {
+	const lines = text.split("\n");
+	for (let i = lines.length - 1; i >= 0; i--) {
+		if (lines[i].trim().length > 0) return lines[i];
+	}
+	return undefined;
+}
+function shellTruncationWarnings(
+	truncation: BashToolDetails["truncation"],
+	fullOutputPath: string | undefined,
+): string | undefined {
+	if (!truncation?.truncated && !fullOutputPath) return undefined;
+	const warnings: string[] = [];
+	if (fullOutputPath) {
+		warnings.push(`Full output: ${fullOutputPath}`);
+	}
+	if (truncation?.truncated) {
+		if (truncation.truncatedBy === "lines") {
+			warnings.push(`Truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines`);
+		} else {
+			warnings.push(
+				`Truncated: ${truncation.outputLines} lines shown (${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit)`,
+			);
+		}
+	}
+	return theme.fg("warning", `[${warnings.join(". ")}]`);
 }
 function rebuildBashResultRenderComponent(
 	component: BashResultRenderComponent,
@@ -47,10 +92,8 @@ function rebuildBashResultRenderComponent(
 	},
 	options: ToolRenderResultOptions,
 	showImages: boolean,
-	startedAt: number | undefined,
-	endedAt: number | undefined,
+	isError: boolean,
 ): void {
-	const state = component.state;
 	component.clear();
 
 	let output = getTextOutput(result as any, showImages).trim();
@@ -63,79 +106,64 @@ function rebuildBashResultRenderComponent(
 		}
 	}
 
+	// While running: a single dim tail line so progress is visible without a wall of output.
+	if (options.isPartial) {
+		const tail = lastNonEmptyLine(output);
+		if (tail) {
+			component.addChild({
+				render: (width: number) => [truncateToWidth(theme.fg("muted", `│ ${tail}`), width, "…")],
+				invalidate: () => {},
+			});
+		}
+		return;
+	}
+
+	// Collapsed and successful: the call row carries the summary; only surface truncation.
+	if (!options.expanded && !isError) {
+		const warning = shellTruncationWarnings(truncation, fullOutputPath);
+		if (warning) component.addChild(new Text(`\n${warning}`, 0, 0));
+		return;
+	}
+
+	// Expanded or failed: full output plus truncation warnings.
 	if (output) {
 		const styledOutput = output
 			.split("\n")
 			.map((line) => theme.fg("toolOutput", line))
 			.join("\n");
-
-		if (options.expanded) {
-			component.addChild(new Text(`\n${styledOutput}`, 0, 0));
-		} else {
-			component.addChild({
-				render: (width: number) => {
-					if (state.cachedLines === undefined || state.cachedWidth !== width) {
-						const preview = truncateToVisualLines(styledOutput, BASH_PREVIEW_LINES, width);
-						state.cachedLines = preview.visualLines;
-						state.cachedSkipped = preview.skippedCount;
-						state.cachedWidth = width;
-					}
-					if (state.cachedSkipped && state.cachedSkipped > 0) {
-						const hint =
-							theme.fg("muted", `... (${state.cachedSkipped} earlier lines,`) +
-							` ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
-						return ["", truncateToWidth(hint, width, "..."), ...(state.cachedLines ?? [])];
-					}
-					return ["", ...(state.cachedLines ?? [])];
-				},
-				invalidate: () => {
-					state.cachedWidth = undefined;
-					state.cachedLines = undefined;
-					state.cachedSkipped = undefined;
-				},
-			});
-		}
+		component.addChild(new Text(`\n${styledOutput}`, 0, 0));
 	}
-
-	if (truncation?.truncated || fullOutputPath) {
-		const warnings: string[] = [];
-		if (fullOutputPath) {
-			warnings.push(`Full output: ${fullOutputPath}`);
-		}
-		if (truncation?.truncated) {
-			if (truncation.truncatedBy === "lines") {
-				warnings.push(`Truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines`);
-			} else {
-				warnings.push(
-					`Truncated: ${truncation.outputLines} lines shown (${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit)`,
-				);
-			}
-		}
-		component.addChild(new Text(`\n${theme.fg("warning", `[${warnings.join(". ")}]`)}`, 0, 0));
-	}
-
-	if (startedAt !== undefined) {
-		const label = options.isPartial ? "Elapsed" : "Took";
-		const endTime = endedAt ?? Date.now();
-		component.addChild(new Text(`\n${theme.fg("muted", `${label} ${formatDuration(endTime - startedAt)}`)}`, 0, 0));
-	}
+	const warning = shellTruncationWarnings(truncation, fullOutputPath);
+	if (warning) component.addChild(new Text(`\n${warning}`, 0, 0));
 }
 
-/** Shell renderers are shared by bash and powershell, which differ only in the prompt they display. */
-export function createShellRenderers(prompt: string): Pick<ToolDefinition<any, any>, "renderCall" | "renderResult"> {
+/** Shell renderers are shared by shell tools, which differ only in the tool name they display. */
+export function createShellRenderers(toolName: string): Pick<ToolDefinition<any, any>, "renderCall" | "renderResult"> {
+	interface ShellRenderState {
+		startedAt?: number;
+		endedAt?: number;
+		interval?: ReturnType<typeof setInterval>;
+	}
 	return {
 		renderCall(args, _theme, context) {
-			const state = context.state;
+			const state = context.state as ShellRenderState;
 			if (context.executionStarted && state.startedAt === undefined) {
 				state.startedAt = Date.now();
 				state.endedAt = undefined;
 			}
 			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatShellCall(args as { command?: string; timeout?: number } | undefined, prompt));
+			text.setText(
+				formatShellCall(
+					args as { command?: string; timeout?: number } | undefined,
+					toolName,
+					state,
+					context.isError,
+				),
+			);
 			return text;
 		},
 		renderResult(result, options, _theme, context) {
-			const state = context.state;
+			const state = context.state as ShellRenderState;
 			if (state.startedAt !== undefined && options.isPartial && !state.interval) {
 				state.interval = setInterval(() => context.invalidate(), 1000);
 			}
@@ -148,14 +176,7 @@ export function createShellRenderers(prompt: string): Pick<ToolDefinition<any, a
 			}
 			const component =
 				(context.lastComponent as BashResultRenderComponent | undefined) ?? new BashResultRenderComponent();
-			rebuildBashResultRenderComponent(
-				component,
-				result as any,
-				options,
-				context.showImages,
-				state.startedAt,
-				state.endedAt,
-			);
+			rebuildBashResultRenderComponent(component, result as any, options, context.showImages, context.isError);
 			component.invalidate();
 			return component;
 		},

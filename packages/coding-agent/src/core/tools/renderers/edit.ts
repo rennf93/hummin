@@ -12,7 +12,7 @@ import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition } from "../../extensions/types.ts";
 import type { EditToolDetails } from "../edit.ts";
 import { computeEditsDiff, type Edit, type EditDiffError, type EditDiffResult } from "../edit-diff.ts";
-import { renderToolPath, str } from "../render-utils.ts";
+import { formatToolLabel, renderToolPath, str } from "../render-utils.ts";
 
 type EditPreview = EditDiffResult | EditDiffError;
 export type EditRenderState = {
@@ -82,7 +82,7 @@ function getRenderablePreviewInput(args: RenderableEditArgs | undefined): { path
 }
 function formatEditCall(args: RenderableEditArgs | undefined, theme: Theme, cwd: string, stat?: DiffStat): string {
 	const pathDisplay = renderToolPath(str(args?.file_path ?? args?.path), theme, cwd);
-	let text = `${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`;
+	let text = `${theme.fg("toolTitle", theme.bold(formatToolLabel("edit")))} ${pathDisplay}`;
 	if (stat && (stat.added > 0 || stat.removed > 0)) {
 		const parts: string[] = [];
 		if (stat.added > 0) parts.push(theme.fg("toolDiffAdded", `+${stat.added}`));
@@ -97,6 +97,7 @@ function formatEditResult(
 	result: EditToolResultLike,
 	theme: Theme,
 	isError: boolean,
+	expanded: boolean,
 ): string | undefined {
 	const rawPath = str(args?.file_path ?? args?.path);
 	const previewDiff = preview && !("error" in preview) ? preview.diff : undefined;
@@ -110,6 +111,11 @@ function formatEditResult(
 			return undefined;
 		}
 		return theme.fg("error", errorText);
+	}
+
+	// Collapsed rows stay one line.
+	if (!expanded) {
+		return undefined;
 	}
 
 	const resultDiff = result.details?.diff;
@@ -140,6 +146,7 @@ function buildEditCallComponent(
 	args: RenderableEditArgs | undefined,
 	theme: Theme,
 	cwd: string,
+	expanded: boolean,
 ): EditCallRenderComponent {
 	component.setBgFn(getEditHeaderBg(component.preview, component.settledError, theme));
 	component.clear();
@@ -147,7 +154,8 @@ function buildEditCallComponent(
 		component.preview && !("error" in component.preview) ? countDiffStat(component.preview.diff) : undefined;
 	component.addChild(new Text(formatEditCall(args, theme, cwd, stat), 0, 0));
 
-	if (!component.preview) {
+	// Collapsed rows stay one line; the diff is opt-in via expand.
+	if (!component.preview || !expanded) {
 		return component;
 	}
 
@@ -201,9 +209,15 @@ export const editRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "rende
 			});
 		}
 
-		return buildEditCallComponent(component, args as RenderableEditArgs | undefined, theme, context.cwd);
+		return buildEditCallComponent(
+			component,
+			args as RenderableEditArgs | undefined,
+			theme,
+			context.cwd,
+			context.expanded,
+		);
 	},
-	renderResult(result, _options, theme, context) {
+	renderResult(result, options, theme, context) {
 		const callComponent = context.state.callComponent;
 		const previewInput = getRenderablePreviewInput(context.args as RenderableEditArgs | undefined);
 		const argsKey = previewInput ? JSON.stringify({ path: previewInput.path, edits: previewInput.edits }) : undefined;
@@ -224,7 +238,13 @@ export const editRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "rende
 				changed = true;
 			}
 			if (changed) {
-				buildEditCallComponent(callComponent, context.args as RenderableEditArgs | undefined, theme, context.cwd);
+				buildEditCallComponent(
+					callComponent,
+					context.args as RenderableEditArgs | undefined,
+					theme,
+					context.cwd,
+					options.expanded,
+				);
 			}
 		}
 
@@ -234,6 +254,7 @@ export const editRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "rende
 			typedResult,
 			theme,
 			context.isError,
+			options.expanded,
 		);
 		const component = (context.lastComponent as Container | undefined) ?? new Container();
 		component.clear();

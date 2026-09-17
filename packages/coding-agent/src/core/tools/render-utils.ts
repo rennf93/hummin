@@ -7,6 +7,51 @@ import { stripAnsi } from "../../utils/ansi.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import { sanitizeBinaryOutput } from "../../utils/shell.ts";
 
+/**
+ * Fixed width of the tool-label column in collapsed transcript rows. Labels are
+ * padded to this width so the details of consecutive tool rows align.
+ */
+export const TOOL_LABEL_COLUMN_WIDTH = 12;
+
+/**
+ * Human-readable tool labels for transcript rows. Each tool keeps its own
+ * distinct label; anything not listed here is auto-title-cased from its
+ * snake_case name (e.g. `task_status` -> `Task Status`).
+ */
+const TOOL_LABEL_OVERRIDES: Record<string, string> = {
+	bash: "Bash",
+	powershell: "PowerShell",
+	read: "Read",
+	edit: "Edit",
+	write: "Write",
+	grep: "Grep",
+	find: "Find",
+	ls: "List",
+	todo: "Plan",
+	task: "Task",
+	task_status: "Task Status",
+	task_cancel: "Task Cancel",
+	vault: "Vault Search",
+	monitor: "Monitor",
+	web_fetch: "Fetch",
+	web_search: "Search",
+};
+
+/** Title-case a single tool-name word (used by the auto fallback). */
+function titleCaseWord(word: string): string {
+	return word.length > 0 ? word[0].toUpperCase() + word.slice(1) : word;
+}
+
+/**
+ * Format a tool name for display in a transcript row: one distinct label per
+ * tool, Title Case, padded to the shared label-column width.
+ */
+export function formatToolLabel(toolName: string): string {
+	const override = TOOL_LABEL_OVERRIDES[toolName.toLowerCase()];
+	const label = override ?? toolName.split(/[_-]/).map(titleCaseWord).join(" ");
+	return label.padEnd(TOOL_LABEL_COLUMN_WIDTH);
+}
+
 export function shortenPath(path: unknown): string {
 	if (typeof path !== "string") return "";
 	const home = os.homedir();

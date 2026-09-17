@@ -32,12 +32,9 @@ export interface ToolRenderers {
 	) => Component;
 }
 
-import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
+import { formatToolLabel, getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
 import { convertToPng } from "../../../utils/image-convert.ts";
 import { theme } from "../theme/theme.ts";
-import { keyHint } from "./keybinding-hints.ts";
-
-const FALLBACK_PREVIEW_LINES = 10;
 
 export interface ToolExecutionOptions {
 	showImages?: boolean;
@@ -150,22 +147,21 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private createCallFallback(): Component {
-		return new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0);
+		return new Text(theme.fg("toolTitle", theme.bold(formatToolLabel(this.toolName))), 0, 0);
 	}
 
 	private createResultFallback(): Component | undefined {
+		// Collapsed rows stay one line; output is opt-in via expand (errors auto-expand).
+		if (!this.expanded) {
+			return undefined;
+		}
 		const output = this.getTextOutput();
 		if (!output) {
 			return undefined;
 		}
 
 		const lines = output.split("\n");
-		const displayLines = this.expanded ? lines : lines.slice(0, FALLBACK_PREVIEW_LINES);
-		const remaining = lines.length - displayLines.length;
-		let text = displayLines.map((line) => theme.fg("toolOutput", line)).join("\n");
-		if (remaining > 0) {
-			text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
-		}
+		const text = lines.map((line) => theme.fg("toolOutput", line)).join("\n");
 		return new Text(text, 0, 0);
 	}
 
@@ -206,6 +202,10 @@ export class ToolExecutionComponent extends Container {
 	): void {
 		this.result = result;
 		this.isPartial = isPartial;
+		// Errors auto-expand once so failures are loud while successes stay one line.
+		if (!isPartial && result.isError && !this.expanded) {
+			this.expanded = true;
+		}
 		this.updateDisplay();
 		this.maybeConvertImagesForKitty();
 	}
@@ -409,7 +409,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private formatToolExecution(): string {
-		let text = theme.fg("toolTitle", theme.bold(this.toolName));
+		let text = theme.fg("toolTitle", theme.bold(formatToolLabel(this.toolName)));
 		const content = JSON.stringify(this.args, null, 2);
 		if (content) {
 			text += `\n\n${content}`;

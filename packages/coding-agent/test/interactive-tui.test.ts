@@ -70,13 +70,16 @@ describe("createInteractiveTui", () => {
 			await terminal.flush();
 			const cursor = terminal.getCursorPosition();
 			terminal.sendInput(`\x1b[${cursor.y + 1};${cursor.x + 1}R`);
-			const row = terminal.getViewport().findIndex((line) => line.includes("output 0"));
-			expect(row).toBeGreaterThanOrEqual(0);
+			// Collapsed: only the label row renders; output is hidden until expanded.
+			expect(terminal.getViewport().join("\n")).not.toContain("output 0");
 			expect(terminal.getViewport().join("\n")).not.toContain("output 19");
+			const row = terminal.getViewport().findIndex((line) => line.includes("Test"));
+			expect(row).toBeGreaterThanOrEqual(0);
 			terminal.sendInput(`\x1b[<0;3;${row + 1}M`);
 			terminal.sendInput(`\x1b[<0;3;${row + 1}m`);
 			ui.renderNow();
 			await terminal.flush();
+			expect(terminal.getViewport().join("\n")).toContain("output 0");
 			expect(terminal.getViewport().join("\n")).toContain("output 19");
 		} finally {
 			ui.stop();

@@ -16,7 +16,7 @@ import { formatPathRelativeToCwdOrAbsolute } from "../../../utils/paths.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
 import { resolveToCwd } from "../path-utils.ts";
 import type { ReadToolDetails } from "../read.ts";
-import { getTextOutput, renderToolPath, replaceTabs, str } from "../render-utils.ts";
+import { formatToolLabel, getTextOutput, renderToolPath, replaceTabs, str } from "../render-utils.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "../truncate.ts";
 
 interface CompactReadClassification {
@@ -33,7 +33,7 @@ function formatReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): st
 }
 function formatReadCall(args: ReadRenderArgs | undefined, theme: Theme, cwd: string): string {
 	const pathDisplay = renderToolPath(str(args?.file_path ?? args?.path), theme, cwd);
-	return `${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}${formatReadLineRange(args, theme)}`;
+	return `${theme.fg("toolTitle", theme.bold(formatToolLabel("read")))} ${pathDisplay}${formatReadLineRange(args, theme)}`;
 }
 function trimTrailingEmptyLines(lines: string[]): string[] {
 	let end = lines.length;
@@ -93,16 +93,15 @@ function formatCompactReadCall(
 	const expandHint = theme.fg("dim", ` (${keyText("app.tools.expand")} to expand)`);
 	if (classification.kind === "skill") {
 		return (
-			theme.fg("customMessageLabel", `\x1b[1m[skill]\x1b[22m `) +
-			theme.fg("customMessageText", classification.label) +
+			theme.fg("toolTitle", theme.bold(formatToolLabel("skill"))) +
+			theme.fg("accent", classification.label) +
 			formatReadLineRange(args, theme) +
 			expandHint
 		);
 	}
 
 	return (
-		theme.fg("toolTitle", theme.bold(`read ${classification.kind}`)) +
-		" " +
+		theme.fg("toolTitle", theme.bold(formatToolLabel("read"))) +
 		theme.fg("accent", classification.label) +
 		formatReadLineRange(args, theme) +
 		expandHint

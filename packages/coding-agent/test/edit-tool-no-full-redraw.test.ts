@@ -114,6 +114,9 @@ describe("edit tool TUI rendering", () => {
 		tui.start();
 		await waitForRender();
 
+		// The diff preview is expanded-only now; these tests target redraw
+		// mechanics, so start from the expanded state.
+		component.setExpanded(true);
 		component.setArgsComplete();
 		tui.requestRender();
 		await waitForRender();
@@ -182,6 +185,7 @@ describe("edit tool TUI rendering", () => {
 		tui.start();
 		await waitForRender();
 
+		component.setExpanded(true);
 		component.updateResult(
 			{
 				content: [{ type: "text", text: `Successfully replaced ${edits.length} block(s) in ${filePath}.` }],
@@ -219,6 +223,7 @@ describe("edit tool TUI rendering", () => {
 		tui.start();
 		await waitForRender();
 
+		component.setExpanded(true);
 		component.setArgsComplete();
 		tui.requestRender();
 		await waitForRender();

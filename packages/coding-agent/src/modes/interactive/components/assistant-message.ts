@@ -12,6 +12,10 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
  * Component that renders a complete assistant message
  */
 export class AssistantMessageComponent extends Container {
+	/** Scrollbar index marker: this component's last row marks the end of a turn. */
+	readonly scrollbarMarkerKind = "turnEnd";
+	readonly scrollbarMarkerAnchor = "bottom" as const;
+
 	private contentContainer: Container;
 	private hideThinkingBlock: boolean;
 	private markdownTheme: MarkdownTheme;

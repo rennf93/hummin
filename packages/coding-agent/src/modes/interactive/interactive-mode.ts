@@ -192,7 +192,7 @@ export interface TranscriptMarker {
 export type MarkerJumpDirection = "previous" | "next";
 
 /**
- * Find the content row to scroll to when jumping to the previous/next marker.
+ * Find the marker to scroll to when jumping to the previous/next marker.
  * "previous" = largest contentRow strictly below scrollTop + 1; "next" = smallest
  * contentRow strictly above scrollTop. Returns undefined when no target exists.
  */
@@ -200,13 +200,16 @@ export function findMarkerJumpTarget(
 	markers: ReadonlyArray<TranscriptMarker>,
 	scrollTop: number,
 	direction: MarkerJumpDirection,
-): number | undefined {
-	let best: number | undefined;
+): TranscriptMarker | undefined {
+	let best: TranscriptMarker | undefined;
 	for (const marker of markers) {
-		if (direction === "previous" ? marker.contentRow < scrollTop + 1 : marker.contentRow > scrollTop) {
-			if (best === undefined || (direction === "previous" ? marker.contentRow > best : marker.contentRow < best)) {
-				best = marker.contentRow;
-			}
+		const candidate = direction === "previous" ? marker.contentRow < scrollTop + 1 : marker.contentRow > scrollTop;
+		if (!candidate) continue;
+		if (
+			best === undefined ||
+			(direction === "previous" ? marker.contentRow > best.contentRow : marker.contentRow < best.contentRow)
+		) {
+			best = marker;
 		}
 	}
 	return best;
@@ -940,6 +943,7 @@ export class InteractiveMode {
 			scrollbarMarkerStyles: {
 				user: (text) => theme.fg("accent", text),
 				system: (text) => theme.fg("muted", text),
+				turnEnd: (text) => theme.fg("dim", text),
 			},
 		});
 		this.transcriptScrollView = viewport.transcript;
@@ -4350,7 +4354,11 @@ export class InteractiveMode {
 		if (target === undefined) {
 			return;
 		}
-		transcript.scrollTo(target, { disableFollow: true });
+		// Turn-end markers align to the viewport bottom so the end of the turn is visible;
+		// user/system markers align their message to the top.
+		const top =
+			target.kind === "turnEnd" ? Math.max(0, target.contentRow - transcript.viewportHeight + 1) : target.contentRow;
+		transcript.scrollTo(top, { disableFollow: true });
 	}
 
 	private cycleThinkingLevel(): void {
@@ -4807,6 +4815,7 @@ export class InteractiveMode {
 					followUpMode: this.session.followUpMode,
 					streamingSubmitMode: this.settingsManager.getStreamingSubmitMode(),
 					messageTimestamps: this.settingsManager.getMessageTimestamps(),
+					compactPrompt: this.settingsManager.getCompactPrompt(),
 					transport: this.settingsManager.getTransport(),
 					httpIdleTimeoutMs: this.settingsManager.getHttpIdleTimeoutMs(),
 					thinkingLevel: this.settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL,
@@ -4884,6 +4893,12 @@ export class InteractiveMode {
 							}
 						}
 						this.ui.requestRender();
+					},
+					onCompactPromptChange: (enabled) => {
+						this.settingsManager.setCompactPrompt(enabled);
+						// Reapply to the active tool set so the change takes effect next turn.
+						this.session.setActiveToolsByName(this.session.getActiveToolNames());
+						this.showStatus(enabled ? "Compact prompt: on (next turn)" : "Compact prompt: off (next turn)");
 					},
 					onTransportChange: (transport) => {
 						this.settingsManager.setTransport(transport);

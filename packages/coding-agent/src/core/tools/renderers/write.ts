@@ -8,10 +8,9 @@
 
 import { Container, Text } from "@earendil-works/pi-tui";
 import type { DiffStat } from "../../../modes/interactive/components/diff.ts";
-import { keyHint } from "../../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
-import { normalizeDisplayText, renderToolPath, replaceTabs, str } from "../render-utils.ts";
+import { formatToolLabel, normalizeDisplayText, renderToolPath, replaceTabs, str } from "../render-utils.ts";
 
 type WriteHighlightCache = {
 	rawPath: string | null;
@@ -106,7 +105,7 @@ function formatWriteCall(
 	const rawPath = str(args?.file_path ?? args?.path);
 	const fileContent = str(args?.content);
 	const pathDisplay = renderToolPath(rawPath, theme, cwd);
-	let text = `${theme.fg("toolTitle", theme.bold("write"))} ${pathDisplay}`;
+	let text = `${theme.fg("toolTitle", theme.bold(formatToolLabel("write")))} ${pathDisplay}`;
 	if (stat && (stat.added > 0 || stat.removed > 0)) {
 		const parts: string[] = [];
 		if (stat.added > 0) parts.push(theme.fg("toolDiffAdded", `+${stat.added}`));
@@ -116,20 +115,16 @@ function formatWriteCall(
 
 	if (fileContent === null) {
 		text += `\n\n${theme.fg("error", "[invalid content arg - expected string]")}`;
-	} else if (fileContent) {
+	} else if (fileContent && options.expanded) {
 		const lang = rawPath ? getLanguageFromPath(rawPath) : undefined;
 		const renderedLines = lang
 			? (cache?.highlightedLines ?? highlightCode(replaceTabs(normalizeDisplayText(fileContent)), lang))
 			: normalizeDisplayText(fileContent).split("\n");
 		const lines = trimTrailingEmptyLines(renderedLines);
-		const totalLines = lines.length;
-		const maxLines = options.expanded ? lines.length : 10;
+		const _totalLines = lines.length;
+		const maxLines = lines.length;
 		const displayLines = lines.slice(0, maxLines);
-		const remaining = lines.length - maxLines;
 		text += `\n\n${displayLines.map((line) => (lang ? line : theme.fg("toolOutput", replaceTabs(line)))).join("\n")}`;
-		if (remaining > 0) {
-			text += `${theme.fg("muted", `\n... (${remaining} more lines, ${totalLines} total,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
-		}
 	}
 
 	return text;
