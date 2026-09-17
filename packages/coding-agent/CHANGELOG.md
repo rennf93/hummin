@@ -34,16 +34,25 @@ First hummin release. Hummin is a thin-overlay fork of pi: zero deletions from u
 
 ### Added
 
+- Compact prompt mode (`compactPrompt` setting, "Compact prompt" in /settings): condenses tool descriptions and parameter schemas to first-paragraph prose and shrinks the hummin docs guidance block, cutting ~0.8K tokens of fixed prompt overhead for the core tool set alone (extension tools compact through the same path). Designed for slow-prefill local models; off by default.
+- Content-addressed transform cache for runtime-TS extensions (`<agentDir>/cache/jiti/`): jiti/babel transforms are cached by SHA-256 over toolchain version, transform options, and source bytes, with sidecar validation, atomic writes, a background GC sweep, and `HUMMIN_JITI_CACHE=0` to disable. Warm launches skip re-transforming unchanged extensions entirely (~60% of transform work).
+- Uniform collapsed transcript rows for every tool: one line per operation with a Title Case label column (`Read`, `Edit`, `Bash`, `Plan`, `Task Status`, ...), the key detail (path, command, pattern), and a dim status suffix (duration, `+N -M` stats, `(failed)`). Errors auto-expand once; `edit`/`write`/`grep`/`find`/`ls` previews and fallback tool output are now expanded-only; running bash commands show a single live output tail line.
 - Added `ctx.modelRegistry.stream()` and `streamSimple()` for extension model calls through configured providers with resolved authentication ([#8964](https://github.com/earendil-works/pi/issues/8964)).
 - Added per-model `reserveTokens` and `keepRecentTokens` settings through `compaction.modelOverrides`, with ordinary compaction settings as fallback ([#8133](https://github.com/earendil-works/pi-mono/issues/8133)).
 
 ### Changed
 
+- Two-row footer: row 1 shows `dir | repo | branch` on the left and `(provider) + model` right-aligned; row 2 shows `diff | git | token/cost stats` (queue count first when messages are pending) with the context meter pinned right. Adds `FooterDataProvider.getGitRepoName()` (repo root basename, verbatim); the left block truncates first on narrow terminals.
+- The guardrails tool-call budget (cumulative warn/halt at 100/300 calls) is disabled by default; opt back in with `HUMMIN_BUDGET_TOOL_CALL_HALT_AT` (and optionally `HUMMIN_BUDGET_TOOL_CALL_WARN_AT`). Loop and circuit breakers are unchanged.
+- Memory: `/vault-fold` now runs through the background fold worker with the shared fold lock (previously inline `spawnSync`), returning immediately with a status message; fold results land in `<vault>/fold.log`.
+- Memory recall scoring adds an exact-phrase bonus for contiguous multi-word queries and a mild recency bias (capped so it reorders ties without beating term overlap); tokenizer floor documented as `MIN_TOKEN_LENGTH = 3`.
+- Scrollbar turn index: assistant messages anchor a dim `turnEnd` marker to their last row, user prompts keep an accent marker, and jumps align turn ends to the viewport bottom (click and `ctrl+up`/`ctrl+down`).
 - Moved compaction, branch summarization, and retry spinners into the editor border alongside the working indicator. Custom editors use the same embedding opt-in for all status spinners.
 - Enabled strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `powershell`, `edit`, and `write` tools, without requiring `PI_EXPERIMENTAL`. Extensions can re-register tool definitions with `constrainedSampling: false`.
 
 ### Fixed
 
+- Fixed a second jiti instance being constructed during extension loading; the transform-cache miss path reuses jiti's own bundled babel transform, preserving the single-instance invariant from the Node SEA virtual-modules fix (#8237).
 - Capped agent-level retry backoff at `retry.maxAgentDelayMs` (60s by default) so long retry runs stay responsive during prolonged transient outages ([#8826](https://github.com/earendil-works/pi/issues/8826)).
 - Fixed direct RPC `steer` and `follow_up` commands bypassing extension `input` handlers ([#8718](https://github.com/earendil-works/pi/issues/8718)).
 - Fixed premature missing-model errors after login by waiting for catalog discovery. Radius now defaults to `balanced`, falling back to the first available Radius model when needed.

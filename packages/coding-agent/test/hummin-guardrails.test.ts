@@ -10,25 +10,30 @@ function fixedClock(start = 1_000_000) {
 }
 
 describe("defaultPolicy", () => {
-	it("uses documented defaults", () => {
+	it("disables the tool-call budget by default", () => {
 		const policy = defaultPolicy({});
-		expect(policy.toolCallWarnAt).toBe(100);
-		expect(policy.toolCallHaltAt).toBe(300);
+		expect(policy.toolCallWarnAt).toBe(0);
+		expect(policy.toolCallHaltAt).toBe(0);
 		expect(policy.loopThreshold).toBe(3);
 		expect(policy.loopWindow).toBe(10);
 		expect(policy.exemptVerbs).toContain("read");
 	});
 
 	it("honors env overrides", () => {
-		const policy = defaultPolicy({ HUMMIN_BUDGET_TOOL_CALL_HALT_AT: "12", HUMMIN_BUDGET_LOOP_THRESHOLD: "2" });
+		const policy = defaultPolicy({
+			HUMMIN_BUDGET_TOOL_CALL_HALT_AT: "12",
+			HUMMIN_BUDGET_TOOL_CALL_WARN_AT: "6",
+			HUMMIN_BUDGET_LOOP_THRESHOLD: "2",
+		});
 		expect(policy.toolCallHaltAt).toBe(12);
+		expect(policy.toolCallWarnAt).toBe(6);
 		expect(policy.loopThreshold).toBe(2);
 	});
 
 	it("ignores invalid overrides", () => {
 		const policy = defaultPolicy({ HUMMIN_BUDGET_TOOL_CALL_HALT_AT: "nope", HUMMIN_BUDGET_TOOL_CALL_WARN_AT: "-5" });
-		expect(policy.toolCallHaltAt).toBe(300);
-		expect(policy.toolCallWarnAt).toBe(100);
+		expect(policy.toolCallHaltAt).toBe(0);
+		expect(policy.toolCallWarnAt).toBe(0);
 	});
 });
 
@@ -43,6 +48,15 @@ describe("hashToolCall", () => {
 });
 
 describe("GuardrailsState budget", () => {
+	it("never warns or halts with the default (disabled) policy", () => {
+		const state = new GuardrailsState(defaultPolicy({}), fixedClock());
+		for (let i = 0; i < 400; i++) {
+			expect(state.observeCall("bash", { command: `cmd-${i}` }).allowed).toBe(true);
+			expect(state.observeResult("bash", false)).toBeUndefined();
+		}
+		expect(state.halted).toBe(false);
+	});
+
 	it("warns in-band once the warning threshold is crossed", () => {
 		const state = new GuardrailsState({ ...defaultPolicy({}), toolCallWarnAt: 2, toolCallHaltAt: 4 }, fixedClock());
 		state.observeCall("bash", { command: "a" });

@@ -5,14 +5,17 @@
  * Three mechanisms, all session-local and fail-open:
  * - Budget: cumulative tool-call counter with an in-band warning threshold and
  *   a hard halt. Reminders are appended to tool results so the model sees them
- *   next turn (in-band beats silent kills).
+ *   next turn (in-band beats silent kills). DISABLED BY DEFAULT: a fixed cap
+ *   punishes long legitimate sessions; opt in with
+ *   HUMMIN_BUDGET_TOOL_CALL_HALT_AT (and optionally _WARN_AT) set to a
+ *   positive call count.
  * - Loop: a rolling window of sha256(tool+args) hashes; the 3rd identical call
  *   inside the window is denied with remediation text.
  * - Circuit: per-tool rejection windows plus a session-absolute cap, so a tool
  *   failing every few minutes ("slow drip") still trips a breaker.
  *
  * Configure via environment (all optional):
- *   HUMMIN_BUDGET_TOOL_CALL_WARN_AT (100), HUMMIN_BUDGET_TOOL_CALL_HALT_AT (300),
+ *   HUMMIN_BUDGET_TOOL_CALL_WARN_AT (0 = off), HUMMIN_BUDGET_TOOL_CALL_HALT_AT (0 = off),
  *   HUMMIN_BUDGET_LOOP_THRESHOLD (3), HUMMIN_BUDGET_LOOP_WINDOW (10),
  *   HUMMIN_BUDGET_PER_TOOL_WINDOW_MS (60000), HUMMIN_BUDGET_PER_TOOL_RETRY_LIMIT (8),
  *   HUMMIN_BUDGET_ABSOLUTE_RETRY_MULTIPLIER (3), HUMMIN_BUDGET_EXEMPT_VERBS (read,grep,find,ls)
@@ -45,8 +48,8 @@ export function defaultPolicy(env: NodeJS.ProcessEnv = process.env): BudgetPolic
 		return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 	};
 	return {
-		toolCallWarnAt: num("HUMMIN_BUDGET_TOOL_CALL_WARN_AT", 100),
-		toolCallHaltAt: num("HUMMIN_BUDGET_TOOL_CALL_HALT_AT", 300),
+		toolCallWarnAt: num("HUMMIN_BUDGET_TOOL_CALL_WARN_AT", 0),
+		toolCallHaltAt: num("HUMMIN_BUDGET_TOOL_CALL_HALT_AT", 0),
 		loopThreshold: num("HUMMIN_BUDGET_LOOP_THRESHOLD", 3),
 		loopWindow: num("HUMMIN_BUDGET_LOOP_WINDOW", 10),
 		perToolRetryWindowMs: num("HUMMIN_BUDGET_PER_TOOL_WINDOW_MS", 60000),
@@ -103,7 +106,7 @@ export class GuardrailsState {
 		}
 		this.totalToolCalls += 1;
 		this.perTool.set(toolName, (this.perTool.get(toolName) ?? 0) + 1);
-		if (this.totalToolCalls > this.policy.toolCallHaltAt) {
+		if (this.policy.toolCallHaltAt > 0 && this.totalToolCalls > this.policy.toolCallHaltAt) {
 			this.halted = true;
 			return {
 				allowed: false,
@@ -150,7 +153,7 @@ export class GuardrailsState {
 			this.rejections.set(toolName, stamps);
 			return undefined;
 		}
-		if (this.totalToolCalls >= this.policy.toolCallWarnAt && !this.halted) {
+		if (this.policy.toolCallWarnAt > 0 && this.totalToolCalls >= this.policy.toolCallWarnAt && !this.halted) {
 			return `[Budget] ${this.totalToolCalls}/${this.policy.toolCallHaltAt} tool calls used. Plan your remaining work carefully.`;
 		}
 		return undefined;
