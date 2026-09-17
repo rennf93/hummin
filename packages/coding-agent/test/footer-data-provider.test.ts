@@ -248,6 +248,9 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
 			await waitFor(() => provider.getGitBranch() === "foo");
+			// The change notification fires after the full refresh (branch + status) completes;
+			// under load the branch cache can update before the callback runs.
+			await waitFor(() => onBranchChange.mock.calls.length === 1);
 
 			// One refresh = one branch call + one status call
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(2);

@@ -615,16 +615,20 @@ describe("experimental durable server composition", () => {
 		);
 
 		expect(result).toMatchObject({ kind: "prompted", text: "deterministic remote answer" });
-		expect(eventTypes).toEqual(
-			expect.arrayContaining([
-				"run_start",
-				"message_start",
-				"message_update",
-				"message_end",
-				"entry_added",
-				"run_end",
-			]),
-		);
+		// The prompted result can resolve before the last streamed events cross the connection;
+		// wait for the full set rather than asserting synchronously.
+		await vi.waitFor(() => {
+			expect(eventTypes).toEqual(
+				expect.arrayContaining([
+					"run_start",
+					"message_start",
+					"message_update",
+					"message_end",
+					"entry_added",
+					"run_end",
+				]),
+			);
+		});
 	});
 
 	test("replicates terminal operation state after consecutive prompts", async ({ onTestFinished }) => {
