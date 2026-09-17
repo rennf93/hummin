@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import monitorExtension from "../extensions/hummin-monitor.ts";
 import planExtension from "../extensions/hummin-plan.ts";
 import subagentExtension from "../extensions/hummin-subagents.ts";
+import { ENV_AGENT_DIR } from "../src/config.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../src/index.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -18,7 +19,7 @@ afterEach(async () => {
 function load(extension: (pi: ExtensionAPI) => void) {
 	const cwd = mkdtempSync(join(tmpdir(), "hummin-background-"));
 	directories.push(cwd);
-	vi.stubEnv("HUMMIN_CODING_AGENT_DIR", cwd);
+	vi.stubEnv(ENV_AGENT_DIR, cwd);
 	const tools = new Map<string, ToolDefinition>();
 	const sendMessage = vi.fn();
 	let shutdown = async () => {};

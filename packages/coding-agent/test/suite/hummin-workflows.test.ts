@@ -6,6 +6,7 @@ import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { recallLessons } from "../../extensions/hummin-memory.ts";
 import sessionExtension from "../../extensions/hummin-session.ts";
 import { CheckpointStore, type FileCheckpoint } from "../../extensions/lib/checkpoints.ts";
+import { ENV_AGENT_DIR } from "../../src/config.ts";
 import type { ExtensionAPI, ExtensionCommandContext, RegisteredCommand } from "../../src/index.ts";
 import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
@@ -91,7 +92,7 @@ it("delivers relevant memory without unrelated cross-project notes and keeps rel
 it("records actual write-tool changes and rewinds files through the command handler", async () => {
 	const agentDir = mkdtempSync(join(tmpdir(), "hummin-checkpoint-agent-"));
 	directories.push(agentDir);
-	vi.stubEnv("HUMMIN_CODING_AGENT_DIR", agentDir);
+	vi.stubEnv(ENV_AGENT_DIR, agentDir);
 	const commands = new Map<string, Omit<RegisteredCommand, "name" | "sourceInfo">>();
 	const harness = await createHarness({
 		extensionFactories: [

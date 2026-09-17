@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { type Api, createAssistantMessageEventStream, fauxAssistantMessage, type Model } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { serializedLocalStream } from "../extensions/hummin-local.ts";
+import { ENV_AGENT_DIR } from "../src/config.ts";
 
 const model = {
 	id: "test",
@@ -15,12 +16,12 @@ let directory: string;
 let original: string | undefined;
 beforeEach(() => {
 	directory = mkdtempSync(join(tmpdir(), "hummin-stream-"));
-	original = process.env.HUMMIN_CODING_AGENT_DIR;
-	process.env.HUMMIN_CODING_AGENT_DIR = directory;
+	original = process.env[ENV_AGENT_DIR];
+	process.env[ENV_AGENT_DIR] = directory;
 });
 afterEach(() => {
-	if (original === undefined) delete process.env.HUMMIN_CODING_AGENT_DIR;
-	else process.env.HUMMIN_CODING_AGENT_DIR = original;
+	if (original === undefined) delete process.env[ENV_AGENT_DIR];
+	else process.env[ENV_AGENT_DIR] = original;
 	rmSync(directory, { recursive: true, force: true });
 });
 
