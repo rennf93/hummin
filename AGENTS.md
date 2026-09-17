@@ -14,9 +14,8 @@
 
 ## No Things Left Behind
 
-- Finish the tail work of a task without asking: cleanup of temp files and test artifacts, changelog and progress-doc entries, smoke re-verification, and CI failures caused by your own changes.
-- Before closing a task, sweep for leftovers: temp files and backups, stale installed links or shims, dangling "next steps". Each leftover is either resolved, or recorded with an owner in the progress docs.
-- Only ask for confirmation when an action is destructive to user data, requires user-held credentials or account access, changes direction, or removes intentional functionality.
+- Finish tail work without asking: temp-file cleanup, changelog and progress-doc entries, smoke re-verification, and CI failures from your own changes.
+- Only ask when an action is destructive, needs user-held credentials, changes direction, or removes intentional functionality. Anything unresolved at close is recorded in the progress docs.
 
 ## Code Quality
 
