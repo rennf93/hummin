@@ -351,6 +351,9 @@ jobs:
         run: node scripts/publish.mjs
 
   announce-pi-dev-release:
+    # hummin does not publish the @earendil-works packages to npm, so there is
+    # nothing for pi.dev to verify. Keep the job for cheap upstream merges.
+    if: false
     runs-on: ubuntu-latest
     needs: publish-npm
     environment: pi-model-upload
@@ -393,10 +396,10 @@ jobs:
 
   publish-github-release:
     runs-on: ubuntu-latest
+    # Fork: hummin-cli publishes to npm manually after the tag, so the GitHub
+    # Release publishes as soon as the staged binaries are verified.
     needs:
       - stage-github-release
-      - publish-npm
-      - announce-pi-dev-release
     permissions:
       contents: write
     env:
@@ -426,10 +429,8 @@ jobs:
     needs:
       - build
       - stage-github-release
-      - publish-npm
-      - announce-pi-dev-release
       - publish-github-release
-    if: ${{ always() && needs.stage-github-release.result != 'skipped' && (needs.stage-github-release.result != 'success' || needs.publish-npm.result != 'success' || needs.announce-pi-dev-release.result != 'success' || needs.publish-github-release.result != 'success') }}
+    if: ${{ always() && needs.stage-github-release.result != 'skipped' && (needs.stage-github-release.result != 'success' || needs.publish-github-release.result != 'success') }}
     permissions:
       contents: write
     env:
