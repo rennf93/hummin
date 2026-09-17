@@ -41,6 +41,7 @@ import {
 	type TUI,
 	TuiAltScreen,
 	TuiMainScreen,
+	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import chalk from "chalk";
@@ -119,6 +120,7 @@ import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
+import { CollapsibleSection } from "./components/collapsible-section.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
@@ -825,11 +827,20 @@ export class InteractiveMode {
 			const condensedText = `Updated to v${latestVersion}. Use ${theme.bold("/changelog")} to view full changelog.`;
 			this.chatContainer.addChild(new Text(condensedText, 1, 0));
 		} else {
-			this.chatContainer.addChild(new Text(theme.bold(theme.fg("accent", "What's New")), 1, 0));
-			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(
-				new Markdown(this.changelogMarkdown.trim(), 1, 0, this.getMarkdownThemeWithSettings()),
+			const versionMatch = this.changelogMarkdown.match(/##\s+\[?(\d+\.\d+\.\d+)\]?/);
+			const latestVersion = versionMatch ? versionMatch[1] : this.version;
+			const body = new Markdown(this.changelogMarkdown.trim(), 1, 0, this.getMarkdownThemeWithSettings());
+			const whatsNew = new CollapsibleSection(
+				(expanded, width) => {
+					const glyph = expanded ? "▾" : "▸";
+					const hint = expanded ? "click to collapse" : "click to expand";
+					const header = `${glyph} ${theme.bold(theme.fg("accent", "What's New"))} ${theme.fg("dim", `· v${latestVersion} · ${hint}`)}`;
+					return truncateToWidth(header, width);
+				},
+				body,
+				() => this.ui.requestRender(),
 			);
+			this.chatContainer.addChild(whatsNew);
 			this.chatContainer.addChild(new Spacer(1));
 		}
 		this.chatContainer.addChild(new DynamicBorder());
