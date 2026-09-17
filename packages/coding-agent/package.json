@@ -6,7 +6,7 @@
 	"piConfig": {
 		"name": "hummin",
 		"configDir": ".hummin",
-		"version": "1.0.2",
+		"version": "1.0.0",
 		"displayName": "hummin",
 		"checkNewVersion": false,
 		"remoteCatalog": false

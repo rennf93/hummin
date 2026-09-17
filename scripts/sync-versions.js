@@ -38,6 +38,17 @@ if (versions.size > 1) {
 
 console.log("\nAll non-private packages are at the same version (lockstep).");
 
+// Fork branding: the coding-agent package carries piConfig.version (reported by
+// --version and used by release archive naming). Keep it in lockstep too.
+const lockstepVersion = versions.values().next().value;
+const codingAgentPackage = workspacePackages.find((pkg) => pkg.data.name === "@earendil-works/pi-coding-agent");
+if (codingAgentPackage?.data.piConfig && codingAgentPackage.data.piConfig.version !== lockstepVersion) {
+	console.log(`\n${codingAgentPackage.data.name}:`);
+	console.log(`  piConfig.version: ${codingAgentPackage.data.piConfig.version} → ${lockstepVersion}`);
+	codingAgentPackage.data.piConfig.version = lockstepVersion;
+	writeFileSync(codingAgentPackage.path, `${JSON.stringify(codingAgentPackage.data, null, "\t")}\n`);
+}
+
 let totalUpdates = 0;
 const updatedPackages = new Set();
 for (const pkg of workspacePackages) {
