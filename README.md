@@ -17,7 +17,11 @@ Early and moving fast. The working spec lives in Renn's local clone (not part of
 
 ## Install
 
-From a clone:
+```bash
+npm install -g hummin-cli
+```
+
+Or from a clone:
 
 ```bash
 npm install

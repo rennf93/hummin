@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.5] - 2026-09-18
+
+### Changed
+
+- The footer's two status rows now have a blank spacer row between them instead of sitting flush against each other.
+
+### Fixed
+
+- The npm package README is now the hummin project README instead of upstream pi's; `npm install -g hummin-cli` is the documented install path.
+
 ## [1.0.4] - 2026-09-18
 
 ### Fixed

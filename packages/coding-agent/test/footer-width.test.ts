@@ -128,19 +128,19 @@ describe("FooterComponent width handling", () => {
 		const session = createSession({ sessionName: "", queueCount: 2 });
 		const footer = new FooterComponent(session, createFooterData(1));
 		footer.setCompactionQueueCount(1);
-		expect(stripAnsi(footer.render(48)[1])).toMatch(/^queue 3/);
+		expect(stripAnsi(footer.render(48)[2])).toMatch(/^queue 3/);
 		footer.setCompactionQueueCount(0);
-		expect(stripAnsi(footer.render(48)[1])).toMatch(/^queue 2/);
+		expect(stripAnsi(footer.render(48)[2])).toMatch(/^queue 2/);
 		expect(
-			stripAnsi(new FooterComponent(createSession({ sessionName: "" }), createFooterData(1)).render(120)[1]),
+			stripAnsi(new FooterComponent(createSession({ sessionName: "" }), createFooterData(1)).render(120)[2]),
 		).not.toContain("queue");
 	});
 
 	it("shows zero spend for priced models and hides it for free models", () => {
 		const paid = new FooterComponent(createSession({ sessionName: "", priced: true }), createFooterData(1));
 		const free = new FooterComponent(createSession({ sessionName: "" }), createFooterData(1));
-		expect(stripAnsi(paid.render(120)[1])).toContain("$0.000");
-		expect(stripAnsi(free.render(120)[1])).not.toContain("$");
+		expect(stripAnsi(paid.render(120)[2])).toContain("$0.000");
+		expect(stripAnsi(free.render(120)[2])).not.toContain("$");
 	});
 
 	it("keeps all lines within width for wide session names", () => {
@@ -212,7 +212,7 @@ describe("FooterComponent width handling", () => {
 		});
 		const footer = new FooterComponent(session, createFooterData(1));
 
-		const statsLine = stripAnsi(footer.render(120)[1]);
+		const statsLine = stripAnsi(footer.render(120)[2]);
 		expect(statsLine).toContain("$1.250");
 	});
 
@@ -229,7 +229,7 @@ describe("FooterComponent width handling", () => {
 		});
 		const footer = new FooterComponent(session, createFooterData(1));
 
-		const statsLine = stripAnsi(footer.render(120)[1]);
+		const statsLine = stripAnsi(footer.render(120)[2]);
 		expect(statsLine).toContain("hit 25.0%");
 	});
 
@@ -247,14 +247,14 @@ describe("FooterComponent width handling", () => {
 		});
 		const footer = new FooterComponent(session, createFooterData(1));
 
-		expect(stripAnsi(footer.render(120)[1])).toContain("$1.234 (sub)");
+		expect(stripAnsi(footer.render(120)[2])).toContain("$1.234 (sub)");
 	});
 
 	it("marks explicitly identified subscription auth", () => {
 		const session = createSession({ sessionName: "", provider: "anthropic", usingSubscription: true });
 		const footer = new FooterComponent(session, createFooterData(1));
 
-		expect(stripAnsi(footer.render(120)[1])).toContain("$0.000 (sub)");
+		expect(stripAnsi(footer.render(120)[2])).toContain("$0.000 (sub)");
 	});
 
 	it("does not mark generic OAuth sign-in as a subscription", () => {
@@ -270,7 +270,7 @@ describe("FooterComponent width handling", () => {
 			},
 		});
 		const footer = new FooterComponent(session, createFooterData(1));
-		const stats = stripAnsi(footer.render(120)[1]);
+		const stats = stripAnsi(footer.render(120)[2]);
 
 		expect(stats).toContain("$1.234");
 		expect(stats).not.toContain("(sub)");

@@ -108,10 +108,13 @@ for (const [staged, source] of assetTrees) {
 	cpSync(source, join(stageDir, staged), { recursive: true });
 }
 
-for (const fileName of ["README.md", "CHANGELOG.md"]) {
+for (const fileName of ["CHANGELOG.md"]) {
 	const source = join(codingAgentDir, fileName);
 	if (existsSync(source)) copyFileSync(source, join(stageDir, fileName));
 }
+// The npm README is the hummin project README from the repo root; the
+// coding-agent README is upstream pi's and must not leak onto npm.
+copyFileSync(join(repoRoot, "README.md"), join(stageDir, "README.md"));
 copyFileSync(join(repoRoot, "LICENSE"), join(stageDir, "LICENSE"));
 
 writeFileSync(join(stageDir, "package.json"), `${JSON.stringify(manifest, null, "\t")}\n`);

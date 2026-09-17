@@ -303,7 +303,12 @@ export class FooterComponent implements Component {
 				: `${theme.fg(meterColor, bar)} ${theme.fg("dim", `${contextPercent}%${autoTag}`)}`;
 		const contextLine = `${theme.fg("dim", "|")} ${theme.fg("dim", "ctx")} ${contextValue}`;
 
-		const lines = [this.alignLeftRight(idLine, modelLine, width), this.alignLeftRight(statsLine, contextLine, width)];
+		// Blank spacer row keeps the two status rows from visually gluing together.
+		const lines = [
+			this.alignLeftRight(idLine, modelLine, width),
+			"",
+			this.alignLeftRight(statsLine, contextLine, width),
+		];
 
 		// Add extension statuses on a single line, sorted by key alphabetically
 		const extensionStatuses = this.footerData.getExtensionStatuses();
