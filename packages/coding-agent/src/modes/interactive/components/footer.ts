@@ -186,6 +186,23 @@ export class FooterComponent implements Component {
 		return { usageTotals, sessionDiff, latestCacheHitRate };
 	}
 
+	/** One left-aligned footer row: groups joined by dim separators. */
+	private joinGroups(groups: string[]): string {
+		return groups.filter((group) => group.length > 0).join(theme.fg("dim", " | "));
+	}
+
+	/** Fit a left and right block on one width, right block pinned to the edge; left truncates first. */
+	private alignLeftRight(left: string, right: string, width: number): string {
+		const rightWidth = visibleWidth(right);
+		if (visibleWidth(left) + rightWidth <= width) {
+			return left + " ".repeat(width - visibleWidth(left) - rightWidth) + right;
+		}
+		if (rightWidth >= width) return truncateToWidth(right, width, "...");
+		const truncatedLeft = truncateToWidth(left, width - rightWidth, "...");
+		const padding = " ".repeat(Math.max(0, width - visibleWidth(truncatedLeft) - rightWidth));
+		return truncatedLeft + padding + right;
+	}
+
 	render(width: number): string[] {
 		const state = this.session.state;
 
@@ -199,29 +216,40 @@ export class FooterComponent implements Component {
 		const contextPercentValue = contextUsage?.percent ?? 0;
 		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
 
-		// Replace home directory with ~
-		let pwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
-
-		// Add git branch if available, with a dirty marker when the working tree has changes
+		const cwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
 		const gitStatus = this.footerData.getGitStatus();
 		const branch = this.footerData.getGitBranch();
+		const repoName = this.footerData.getGitRepoName();
+
+		// Row 1: dir | repo | branch   |   (provider) + model
+		const idParts: string[] = [theme.fg("dim", cwd)];
+		if (repoName) idParts.push(repoName);
 		if (branch) {
 			const dirty =
 				gitStatus && (gitStatus.staged > 0 || gitStatus.modified > 0 || gitStatus.untracked > 0) ? "*" : "";
-			pwd = `${pwd} (${branch}${dirty})`;
+			idParts.push(theme.fg("accent", `${branch}${dirty}`));
 		}
-
-		// Add session name if set
 		const sessionName = this.session.sessionManager.getSessionName();
-		if (sessionName) {
-			pwd = `${pwd} • ${sessionName}`;
-		}
+		if (sessionName) idParts.push(sessionName);
+		const idLine = this.joinGroups(idParts);
 
-		// Build stats: labeled segments on the left (dim label, bright value),
-		// context meter, model on the right.
-		const statsParts: Array<{ label: string; value: string }> = [];
+		const modelName = state.model?.id || "no-model";
+		const providerName = state.model
+			? (this.session.modelRuntime.getProvider(state.model.provider)?.name ?? state.model.provider)
+			: undefined;
+		const modelParts: string[] = [];
+		if (providerName) modelParts.push(theme.fg("dim", `(${providerName})`));
+		modelParts.push(theme.fg("accent", modelName));
+		if (state.model?.reasoning) {
+			const thinkingLevel = state.thinkingLevel || "off";
+			modelParts.push(theme.fg("dim", thinkingLevel === "off" ? "no thinking" : thinkingLevel));
+		}
+		const modelLine = `${theme.fg("dim", "|")} ${modelParts.join(theme.fg("dim", " + "))}`;
+
+		// Row 2: diff | git | tokens   |   ctx bar
+		const statGroups: string[] = [];
 		const queueCount = this.session.pendingMessageCount + this.compactionQueueCount;
-		if (queueCount > 0) statsParts.push({ label: "queue", value: theme.fg("accent", String(queueCount)) });
+		if (queueCount > 0) statGroups.push(`${theme.fg("dim", "queue")} ${theme.fg("accent", String(queueCount))}`);
 
 		// Cumulative diff made by the agent this session (from edit/write tool patches)
 		if (sessionDiff.added > 0 || sessionDiff.removed > 0) {
@@ -229,7 +257,7 @@ export class FooterComponent implements Component {
 			if (sessionDiff.added > 0) diffParts.push(theme.fg("toolDiffAdded", `+${formatTokens(sessionDiff.added)}`));
 			if (sessionDiff.removed > 0)
 				diffParts.push(theme.fg("toolDiffRemoved", `-${formatTokens(sessionDiff.removed)}`));
-			statsParts.push({ label: "diff", value: diffParts.join(" ") });
+			statGroups.push(`${theme.fg("dim", "diff")} ${diffParts.join(" ")}`);
 		}
 
 		// Git working-tree state (includes changes made outside the agent)
@@ -240,15 +268,16 @@ export class FooterComponent implements Component {
 			if (gitStatus.untracked > 0) gitParts.push(theme.fg("dim", `?${gitStatus.untracked}`));
 			if (gitStatus.ahead) gitParts.push(theme.fg("accent", `↑${gitStatus.ahead}`));
 			if (gitStatus.behind) gitParts.push(theme.fg("accent", `↓${gitStatus.behind}`));
-			if (gitParts.length > 0) statsParts.push({ label: "git", value: gitParts.join(" ") });
+			if (gitParts.length > 0) statGroups.push(`${theme.fg("dim", "git")} ${gitParts.join(" ")}`);
 		}
 
-		if (usageTotals.input) statsParts.push({ label: "in", value: formatTokens(usageTotals.input) });
-		if (usageTotals.output) statsParts.push({ label: "out", value: formatTokens(usageTotals.output) });
-		if (usageTotals.cacheRead) statsParts.push({ label: "rd", value: formatTokens(usageTotals.cacheRead) });
-		if (usageTotals.cacheWrite) statsParts.push({ label: "wr", value: formatTokens(usageTotals.cacheWrite) });
+		const tokenParts: string[] = [];
+		if (usageTotals.input) tokenParts.push(`${theme.fg("dim", "in")} ${formatTokens(usageTotals.input)}`);
+		if (usageTotals.output) tokenParts.push(`${theme.fg("dim", "out")} ${formatTokens(usageTotals.output)}`);
+		if (usageTotals.cacheRead) tokenParts.push(`${theme.fg("dim", "rd")} ${formatTokens(usageTotals.cacheRead)}`);
+		if (usageTotals.cacheWrite) tokenParts.push(`${theme.fg("dim", "wr")} ${formatTokens(usageTotals.cacheWrite)}`);
 		if ((usageTotals.cacheRead > 0 || usageTotals.cacheWrite > 0) && latestCacheHitRate !== undefined) {
-			statsParts.push({ label: "hit", value: `${latestCacheHitRate.toFixed(1)}%` });
+			tokenParts.push(`${theme.fg("dim", "hit")} ${latestCacheHitRate.toFixed(1)}%`);
 		}
 
 		// Kimi Coding is subscription-backed despite using API-key authentication.
@@ -257,13 +286,12 @@ export class FooterComponent implements Component {
 			: false;
 		const pricedModel = state.model && Object.values(state.model.cost ?? {}).some((rate) => rate > 0);
 		if (usageTotals.cost || usingSubscription || pricedModel) {
-			statsParts.push({
-				label: "",
-				value: `$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`,
-			});
+			tokenParts.push(`$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`);
 		}
+		if (tokenParts.length > 0) statGroups.push(tokenParts.join(theme.fg("dim", " · ")));
+		const statsLine = this.joinGroups(statGroups);
 
-		// Context meter: ctx [████░░░░░░] 3.2%
+		// Context meter: ctx [████░░░░░░] 3.2% — unchanged size, pinned to the right edge.
 		const autoTag = this.autoCompactEnabled ? " auto" : "";
 		const barCells = 10;
 		const filled = Math.max(0, Math.min(barCells, Math.round((contextPercentValue / 100) * barCells)));
@@ -273,48 +301,9 @@ export class FooterComponent implements Component {
 			contextPercent === "?"
 				? `${theme.fg("dim", "?")}/${formatTokens(contextWindow)}`
 				: `${theme.fg(meterColor, bar)} ${theme.fg("dim", `${contextPercent}%${autoTag}`)}`;
-		statsParts.push({ label: "ctx", value: contextValue });
+		const contextLine = `${theme.fg("dim", "|")} ${theme.fg("dim", "ctx")} ${contextValue}`;
 
-		const renderedSegments = statsParts.map(({ label, value }) =>
-			label ? `${theme.fg("dim", label)} ${value}`.trim() : value,
-		);
-		const meterBlock = renderedSegments.join(theme.fg("dim", " · "));
-
-		// Right side: provider (when ambiguous), model, thinking level
-		const modelName = state.model?.id || "no-model";
-		const rightParts: string[] = [];
-		if (this.footerData.getAvailableProviderCount() > 1 && state.model) {
-			// Provider display name (engine - host) when registered; id fallback.
-			const providerName = this.session.modelRuntime.getProvider(state.model.provider)?.name ?? state.model.provider;
-			rightParts.push(theme.fg("dim", `(${providerName})`));
-		}
-		rightParts.push(theme.fg("accent", modelName));
-		if (state.model?.reasoning) {
-			const thinkingLevel = state.thinkingLevel || "off";
-			rightParts.push(theme.fg("dim", thinkingLevel === "off" ? "no thinking" : thinkingLevel));
-		}
-		const rightSide = rightParts.join(theme.fg("dim", " · "));
-
-		const minPadding = 2;
-		const leftWidth = visibleWidth(meterBlock);
-		const rightWidth = visibleWidth(rightSide);
-
-		let statsLine: string;
-		if (leftWidth + minPadding + rightWidth <= width) {
-			statsLine = meterBlock + " ".repeat(width - leftWidth - rightWidth) + rightSide;
-		} else {
-			const availableForRight = width - leftWidth - minPadding;
-			const truncatedRight = availableForRight > 0 ? truncateToWidth(rightSide, availableForRight, "") : "";
-			const truncatedRightWidth = visibleWidth(truncatedRight);
-			const padding = " ".repeat(Math.max(0, width - leftWidth - truncatedRightWidth));
-			statsLine = meterBlock + padding + truncatedRight;
-			if (leftWidth > width) {
-				statsLine = truncateToWidth(meterBlock, width, "...");
-			}
-		}
-
-		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-		const lines = [pwdLine, statsLine];
+		const lines = [this.alignLeftRight(idLine, modelLine, width), this.alignLeftRight(statsLine, contextLine, width)];
 
 		// Add extension statuses on a single line, sorted by key alphabetically
 		const extensionStatuses = this.footerData.getExtensionStatuses();

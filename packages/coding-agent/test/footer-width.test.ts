@@ -95,6 +95,7 @@ function createSession(options: {
 function createFooterData(providerCount: number): ReadonlyFooterDataProvider {
 	const provider = {
 		getGitBranch: () => "main",
+		getGitRepoName: () => "hummin",
 		getGitStatus: () => null,
 		getExtensionStatuses: () => new Map<string, string>(),
 		getAvailableProviderCount: () => providerCount,
@@ -127,9 +128,9 @@ describe("FooterComponent width handling", () => {
 		const session = createSession({ sessionName: "", queueCount: 2 });
 		const footer = new FooterComponent(session, createFooterData(1));
 		footer.setCompactionQueueCount(1);
-		expect(stripAnsi(footer.render(24)[1])).toMatch(/^queue 3/);
+		expect(stripAnsi(footer.render(48)[1])).toMatch(/^queue 3/);
 		footer.setCompactionQueueCount(0);
-		expect(stripAnsi(footer.render(24)[1])).toMatch(/^queue 2/);
+		expect(stripAnsi(footer.render(48)[1])).toMatch(/^queue 2/);
 		expect(
 			stripAnsi(new FooterComponent(createSession({ sessionName: "" }), createFooterData(1)).render(120)[1]),
 		).not.toContain("queue");

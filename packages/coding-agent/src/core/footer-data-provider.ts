@@ -216,6 +216,17 @@ export class FooterDataProvider {
 		return this.cachedStatus;
 	}
 
+	/** Git repository display name: the repo root's basename, verbatim. Null if not in a repo. */
+	getGitRepoName(): string | null {
+		if (this.gitPaths === undefined) {
+			this.gitPaths = findGitPaths(this.cwd);
+		}
+		if (!this.gitPaths) return null;
+		const root = this.gitPaths.repoDir;
+		const idx = root.lastIndexOf("/");
+		return idx === -1 ? root : root.slice(idx + 1);
+	}
+
 	/** Schedule a debounced async refresh of git state (branch + working-tree status). */
 	scheduleGitStatusRefresh(): void {
 		this.scheduleRefresh();
@@ -486,5 +497,10 @@ export class FooterDataProvider {
 /** Read-only view for extensions - excludes setExtensionStatus, setAvailableProviderCount and dispose */
 export type ReadonlyFooterDataProvider = Pick<
 	FooterDataProvider,
-	"getGitBranch" | "getGitStatus" | "getExtensionStatuses" | "getAvailableProviderCount" | "onBranchChange"
+	| "getGitBranch"
+	| "getGitRepoName"
+	| "getGitStatus"
+	| "getExtensionStatuses"
+	| "getAvailableProviderCount"
+	| "onBranchChange"
 >;
