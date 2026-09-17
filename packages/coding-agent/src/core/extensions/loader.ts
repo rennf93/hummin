@@ -14,6 +14,7 @@ import * as _bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
 import * as _bundledPiAiProviders from "@earendil-works/pi-ai/providers/all";
 import type { KeyId } from "@earendil-works/pi-tui";
 import * as _bundledPiTui from "@earendil-works/pi-tui";
+import type { JitiOptions } from "jiti";
 import { createJiti } from "jiti/static";
 // Static imports of packages that extensions may use.
 // These MUST be static so Bun bundles them into the compiled binary.
@@ -32,6 +33,7 @@ import { execCommand } from "../exec.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { time } from "../timings.ts";
+import { createTransformCache, isTransformCacheDisabled, scheduleTransformCacheGc } from "./transform-cache.ts";
 import type {
 	EntryRenderer,
 	Extension,
@@ -548,7 +550,7 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 		}
 	}
 
-	const jiti = createJiti(import.meta.url, {
+	const baseOptions: JitiOptions = {
 		moduleCache: false,
 		// Compiled binaries and the bundled Node distribution use embedded modules.
 		// Source TypeScript reuses host modules and root tsconfig paths. Unbundled
@@ -558,7 +560,25 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 			: isTypeScriptSourceRuntime
 				? { virtualModules: VIRTUAL_MODULES, tsconfigPaths: true }
 				: { alias: getAliases() }),
-	});
+	};
+
+	// Content-addressed transform cache: wrap jiti's default transform so a hit
+	// skips babel entirely. The miss path calls jiti's own bundled babel module
+	// (the same function jiti uses by default), so output is byte-identical to
+	// uncached behavior; only ONE jiti instance is created on the normal path.
+	// See transform-cache.ts; HUMMIN_JITI_CACHE=0 disables.
+	let jitiOptions = baseOptions;
+	if (!isTransformCacheDisabled()) {
+		const agentDir = getAgentDir();
+		const cached = createTransformCache(agentDir, {
+			jitiOptions: baseOptions as unknown as Record<string, unknown>,
+			createBaseJiti: (opts) => createJiti(import.meta.url, opts as JitiOptions),
+		});
+		jitiOptions = { ...baseOptions, transform: cached.transform };
+		scheduleTransformCacheGc(agentDir);
+	}
+
+	const jiti = createJiti(import.meta.url, jitiOptions);
 
 	const module = await jiti.import(extensionPath, { default: true });
 	const factory = module as ExtensionFactory;
