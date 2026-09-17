@@ -1,5 +1,7 @@
 # Changelog
 
+## [Unreleased]
+
 ## [1.0.0] - 2026-09-16
 
 First hummin release. Hummin is a thin-overlay fork of pi: zero deletions from upstream, `@earendil-works/*` internal package names preserved for cheap merges, plus hummin-specific capabilities layered on top.
