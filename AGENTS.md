@@ -12,6 +12,12 @@
 - When the user asks a question, answer it first before making edits or running implementation commands.
 - When responding to user feedback or an analysis, explicitly say whether you agree or disagree before saying what you changed.
 
+## No Things Left Behind
+
+- Finish the tail work of a task without asking: cleanup of temp files and test artifacts, changelog and progress-doc entries, smoke re-verification, and CI failures caused by your own changes.
+- Before closing a task, sweep for leftovers: temp files and backups, stale installed links or shims, dangling "next steps". Each leftover is either resolved, or recorded with an owner in the progress docs.
+- Only ask for confirmation when an action is destructive to user data, requires user-held credentials or account access, changes direction, or removes intentional functionality.
+
 ## Code Quality
 
 - Read files in full before wide-ranging changes, before editing files you have not fully inspected, and when asked to investigate or audit. Do not rely on search snippets for broad changes.
