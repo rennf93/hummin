@@ -45,6 +45,7 @@ import { Type } from "typebox";
 import type { Model } from "@earendil-works/pi-ai";
 import { getAgentDir, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { TextContent } from "@earendil-works/pi-ai";
+import { MEMORY_WORKER_SOURCE, type MemoryFoldJob } from "./lib/memory-workers.ts";
 
 const LESSON_MAX_WORDS = 120;
 
@@ -105,124 +106,26 @@ function readTranscriptTail(path: string, maxChars: number): string {
 }
 
 /**
- * The distill worker is a self-contained script (node builtins only) so it
- * can run detached: shutdown only enqueues a pending job and returns, while
- * the worker makes the model call and appends the lesson. Machine-managed -
- * rewritten when its source changes, like the vault AGENTS.md contract.
+ * Shortest token kept by the recall tokenizer. 3 is the floor: going lower
+ * floods queries with stopword-adjacent noise ("of", "to", "is"); 3 keeps
+ * real technical terms like "zfs", "api", "git" matchable.
  */
-const DISTILL_WORKER_SOURCE = `#!/usr/bin/env node
-// Machine-managed by hummin-memory. Do not edit.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
-import { dirname, join } from "node:path";
+const MIN_TOKEN_LENGTH = 3;
 
-const LESSON_MAX_WORDS = 120;
-
-const pendingPath = process.argv[2];
-if (!pendingPath) process.exit(0);
-let job;
-try {
-	job = JSON.parse(readFileSync(pendingPath, "utf8"));
-} catch {
-	process.exit(0);
-}
-const { memoryDir, sessionFile, cwd, tail, provider, modelId, project, session, vaultMode, vaultDir } = job;
-
-const statePath = join(memoryDir, "state.json");
-let state = {};
-try {
-	state = JSON.parse(readFileSync(statePath, "utf8"));
-} catch {}
-if (state.processed?.[sessionFile]) {
-	unlinkSync(pendingPath);
-	process.exit(0);
-}
-
-const prompt = [
-	"You are distilling a coding-agent session into exactly one reusable lesson.",
-	"",
-	"Rules:",
-	"- Reply with ONLY the lesson in this exact shape:",
-	"Problem: <what the session was trying to do>",
-	"Approach: <what actually worked>",
-	"Gotcha: <the non-obvious thing a future session would need>",
-	"- Max " + LESSON_MAX_WORDS + " words total.",
-	"- If there is no real lesson worth keeping, reply with exactly: NONE",
-	"",
-	"Working directory: " + cwd,
-	"",
-	"Session transcript (tail):",
-	tail,
-].join("\n");
-
-const res = spawnSync("hummin", ["-p", prompt, "--provider", provider, "--model", modelId, "--thinking", "low"], {
-	encoding: "utf8",
-	timeout: 300_000,
-	// The distillation call is itself a hummin session: disable memory inside
-	// it or its shutdown handler distills again, recursing without bound.
-	env: { ...process.env, HUMMIN_MEMORY: "0" },
-});
-const out = \`\${res.stdout ?? ""}\`.trim();
-if (res.status !== 0 || !out) process.exit(1); // leave the pending job for a retry
-if (/^NONE$/i.test(out.split("\n").at(-1)?.trim() ?? "")) {
-	unlinkSync(pendingPath);
-	process.exit(0);
-}
-const lesson = out;
-
-state.processed = state.processed ?? {};
-state.processed[sessionFile] = new Date().toISOString();
-try {
-	writeFileSync(statePath + ".tmp", JSON.stringify(state, null, 1));
-	renameSync(statePath + ".tmp", statePath);
-} catch {}
-
-mkdirSync(memoryDir, { recursive: true });
-const record = {
-	timestamp: new Date().toISOString(),
-	cwd,
-	project,
-	session,
-	lesson,
-};
-appendFileSync(join(memoryDir, "lessons.jsonl"), JSON.stringify(record) + "\n");
-
-const mdPath = join(memoryDir, project + ".lessons.md");
-if (!existsSync(mdPath)) {
-	writeFileSync(mdPath, "# Lessons - " + cwd + "\n\n");
-}
-appendFileSync(mdPath, "## " + record.timestamp + "\n\n" + lesson + "\n\n");
-
-if (vaultMode) {
-	mkdirSync(join(vaultDir, "inbox"), { recursive: true });
-	const slug = "lesson-" + new Date().toISOString().replace(/[:.]/g, "-");
-	const body = [
-		"---",
-		"type: lesson",
-		"date: " + new Date().toISOString().slice(0, 10),
-		"project: " + cwd,
-		"session: " + (session ?? "unknown"),
-		"---",
-		"",
-		lesson,
-		"",
-	].join("\n");
-	writeFileSync(join(vaultDir, "inbox", slug + ".md"), body);
-}
-
-unlinkSync(pendingPath);
-`;
-
-function ensureDistillWorker(): string {
+function ensureMemoryWorker(): string {
 	mkdirSync(memoryDir(), { recursive: true, mode: 0o700 });
-	const file = join(memoryDir(), "distill-worker.mjs");
+	const file = join(memoryDir(), "memory-worker.mjs");
 	try {
-		if (readFileSync(file, "utf8") === DISTILL_WORKER_SOURCE) return file;
+		if (readFileSync(file, "utf8") === MEMORY_WORKER_SOURCE) return file;
 	} catch {
 		// first write
 	}
-	writeFileSync(file, DISTILL_WORKER_SOURCE, { mode: 0o700 });
+	writeFileSync(file, MEMORY_WORKER_SOURCE, { mode: 0o700 });
 	return file;
+}
+
+function ensureDistillWorker(): string {
+	return ensureMemoryWorker();
 }
 
 /** Queue distillation for this session and run it in a detached worker. */
@@ -317,6 +220,11 @@ function markProcessed(sessionFile: string): void {
 const RETRIEVAL_MAX_LESSONS = 3;
 const RETRIEVAL_MAX_CHARS = 2000;
 const CROSS_PROJECT_MIN_OVERLAP = 2;
+/** Bonus when the full multi-word query appears contiguously in a lesson. */
+const PHRASE_BONUS = 2;
+/** Max bonus for newer lessons (linearly decaying over the past year). */
+const RECENCY_BONUS_MAX = 1;
+const RECENCY_WINDOW_DAYS = 365;
 const BRIEFING_CHECKED = "hummin-memory-briefing-checked";
 
 const STOPWORDS = new Set([
@@ -333,8 +241,19 @@ function tokenize(text: string): Set<string> {
 		text
 			.toLowerCase()
 			.split(/[^a-z0-9_./-]+/)
-			.filter((word) => word.length >= 3 && !STOPWORDS.has(word)),
+			.filter((word) => word.length >= MIN_TOKEN_LENGTH && !STOPWORDS.has(word)),
 	);
+}
+
+/** Mild, monotonic recency bias: 1 for a fresh lesson, decaying linearly
+ * to 0 over the past year. Missing or malformed timestamps score 0. Kept
+ * small so it can reorder ties but never drown term relevance. */
+function recencyBonus(record: { timestamp?: unknown }, now = Date.now()): number {
+	if (typeof record.timestamp !== "string") return 0;
+	const then = Date.parse(record.timestamp);
+	if (!Number.isFinite(then)) return 0;
+	const ageDays = Math.max(0, (now - then) / 86_400_000);
+	return Math.max(0, RECENCY_BONUS_MAX * (1 - ageDays / RECENCY_WINDOW_DAYS));
 }
 
 export function recallLessons(
@@ -356,10 +275,14 @@ export function recallLessons(
 		try {
 			const record = JSON.parse(line);
 			if (typeof record.lesson !== "string" || typeof record.cwd !== "string") continue;
-			const overlap = [...tokenize(record.lesson)].filter((term) => queryTerms.has(term)).length;
+			const terms = tokenize(record.lesson);
+			const overlap = [...terms].filter((term) => queryTerms.has(term)).length;
 			const sameProject = resolve(record.cwd) === project;
 			if (sameProject ? overlap === 0 : scope !== "all" || overlap < CROSS_PROJECT_MIN_OVERLAP) continue;
-			scored.push({ lesson: record.lesson, score: overlap, sameProject, index });
+			const lowerLesson = record.lesson.toLowerCase();
+			const lowerQuery = query.trim().toLowerCase();
+			const phrase = lowerQuery.includes(" ") && lowerLesson.includes(lowerQuery) ? PHRASE_BONUS : 0;
+			scored.push({ lesson: record.lesson, score: overlap + phrase + recencyBonus(record), sameProject, index });
 		} catch {
 			// skip malformed
 		}
@@ -599,7 +522,13 @@ export default function humminMemory(pi: ExtensionAPI): void {
 		pi.registerCommand("vault-fold", {
 			description: "Fold inbox lessons into the vault entity graph",
 			category: "Memory/Vault",
-			handler: async () => vaultFold("command"),
+			handler: async (_args, ctx) => {
+				try {
+					ctx.ui.notify(await vaultFold("command"), "info");
+				} catch (error) {
+					ctx.ui.notify(`vault: fold failed (${error instanceof Error ? error.message : String(error)})`, "error");
+				}
+			},
 		});
 
 		// Automatic folds: pending lessons fold in the background once they
@@ -727,7 +656,34 @@ export default function humminMemory(pi: ExtensionAPI): void {
 // commits. The git repo is the source of truth (vexa-bridge pattern).
 // =============================================================================
 
-const FOLD_TIMEOUT_SEC = 900;
+/**
+ * Enqueue a fold job and run it as a detached memory worker (shared "fold"
+ * mode: atomic lock in the vault, output appended to <vault>/fold.log). The
+ * caller returns immediately; neither the command handler nor a turn blocks
+ * on the model call. HUMMIN_MEMORY=0 in the child env or its shutdown
+ * handler distills again, recursing without bound.
+ */
+function enqueueFold(dir: string, label: string): void {
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	const jobPath = join(dir, ".fold-job.json");
+	const { provider, modelId } = memoryModel();
+	const job: MemoryFoldJob = { mode: "fold", vaultDir: dir, provider, modelId, threshold: 1, force: true, label, pendingPath: jobPath };
+	writeFileSync(jobPath, JSON.stringify(job, null, 1), { mode: 0o600 });
+	const child = spawn(process.execPath, [ensureMemoryWorker(), "fold", jobPath], {
+		detached: true,
+		stdio: "ignore",
+		env: { ...process.env, HUMMIN_MEMORY: "0" },
+	});
+	child.unref();
+}
+
+async function vaultFold(label: string): Promise<string> {
+	const dir = ensureVault();
+	const inboxCount = inboxLessonCount(dir);
+	if (inboxCount === 0) return "vault: inbox is empty, nothing to fold";
+	enqueueFold(dir, label);
+	return `vault: folding ${inboxCount} lesson(s) in background (${label}); progress in ${join(dir, "fold.log")}`;
+}
 
 function vaultDir(settings: SettingsManager | undefined): string {
 	if (settings) return settings.getMemoryVaultDir();
@@ -899,31 +855,3 @@ function triggerAutoFold(dir: string, label: string): boolean {
 	return true;
 }
 
-function vaultFold(label: string): void {
-	const dir = ensureVault();
-	const inboxCount = inboxLessonCount(dir);
-	if (inboxCount === 0) {
-		console.log("vault: inbox is empty, nothing to fold");
-		return;
-	}
-	console.log(`vault: folding ${inboxCount} lesson(s) from ${dir}`);
-	const { provider, modelId } = memoryModel();
-	const res = spawnSync("hummin", [
-		"-p", `Fold the inbox lessons into the entity graph now, following AGENTS.md exactly. Inbox has ${inboxCount} lesson(s).`,
-		"--provider", provider, "--model", modelId, "--thinking", "low",
-	], {
-		cwd: dir,
-		encoding: "utf8",
-		timeout: FOLD_TIMEOUT_SEC * 1000,
-		env: { ...process.env, HUMMIN_MEMORY: "0" },
-	});
-	const out = `${res.stdout ?? ""}${res.stderr ?? ""}`.trim();
-	console.log(out.split("\n").slice(-6).join("\n"));
-	if (res.status !== 0) {
-		console.log(`vault: fold exited ${res.status}`);
-		process.exitCode = 1;
-	} else {
-		console.log(`vault: fold complete (${label})`);
-		writeCanvas(dir);
-	}
-}

@@ -31,6 +31,8 @@ export interface MemoryFoldJob {
 	threshold?: number;
 	force?: boolean;
 	label?: string;
+	/** Job file the parent wrote; removed once the fold has run. */
+	pendingPath?: string;
 }
 
 export interface MemoryPruneJob {
@@ -330,6 +332,7 @@ function fold() {
 		return result.error || result.status !== 0 ? 1 : 0;
 	} finally {
 		releaseLock(lockPath);
+		removePending();
 	}
 }
 
