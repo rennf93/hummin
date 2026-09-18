@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.6] - 2026-09-18
+
+### Changed
+
+- The hummin logo (pixel hummingbird mark) now heads the README on GitHub and npm.
+
 ## [1.0.5] - 2026-09-18
 
 ### Changed
