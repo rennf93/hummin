@@ -74,10 +74,13 @@ test("project lessons rank above cross-project ones, recency breaks ties", () =>
 		{ cwd: PROJ, lesson: "Gotcha: docker compose needs --force-recreate after mem_limit changes to apply" },
 	]);
 	const lessons = recallLessons(PROJ, "docker compose quotas", 5, "all");
-	// same overlap count: project lessons first, newest project lesson first
-	expect(lessons[0]).toBe("Gotcha: docker compose needs --force-recreate after mem_limit changes to apply");
-	expect(lessons[1]).toBe("Gotcha: docker dataset volume writes stall when quotas are hit");
-	expect(lessons[2]).toBe("Gotcha: docker compose needs --force-recreate after mem_limit changes");
+	// BM25 (slice 9): the corpus-rare term "quotas" outranks common-term matches,
+	// so the quotas lesson ranks first despite matching one fewer term overall.
+	// Between the two force-recreate lessons, BM25 length normalization gives the
+	// shorter document the edge (same matched terms, fewer total tokens).
+	expect(lessons[0]).toBe("Gotcha: docker dataset volume writes stall when quotas are hit");
+	expect(lessons[1]).toBe("Gotcha: docker compose needs --force-recreate after mem_limit changes");
+	expect(lessons[2]).toBe("Gotcha: docker compose needs --force-recreate after mem_limit changes to apply");
 });
 
 test("empty query returns nothing", () => {

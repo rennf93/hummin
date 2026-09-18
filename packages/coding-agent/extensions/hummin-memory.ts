@@ -214,8 +214,70 @@ function markProcessed(sessionFile: string): void {
 // prompt), so the briefing is a single message in session history.
 // Automatic briefings use matching lessons from this project only. Explicit
 // vault searches may also retrieve other projects with >= 2 keyword overlaps.
-// Rank by overlap, then project identity, then recency. No directory bonuses.
+// Rank by BM25, then project identity, then recency. No directory bonuses.
 // =============================================================================
+//
+// Scoring (BM25, spec Slice 9): the core relevance score is BM25 (k1=1.5,
+// b=0.75) over the lesson+entity corpus gathered in the same retrieval pass.
+// The document frequency map is rebuilt per retrieval call: corpora are small
+// (hundreds of short docs), and folds run as detached child processes, so
+// there is no in-process fold-completion hookpoint to invalidate a cached
+// index against - per-call rebuild is the safe default and cheap at this size.
+// The exact-phrase bonus and recency bonus remain ADDITIVE boosts on top of
+// the BM25 score, so they reorder ties but never drown term relevance.
+
+/** BM25 term-frequency saturation. */
+export const BM25_K1 = 1.5;
+/** BM25 document-length normalization strength. */
+export const BM25_B = 0.75;
+
+/** One indexed document: raw term counts plus its token length. */
+export interface Bm25Doc {
+	termCounts: Map<string, number>;
+	length: number;
+}
+
+export function bm25Doc(tokens: string[]): Bm25Doc {
+	const termCounts = new Map<string, number>();
+	for (const token of tokens) termCounts.set(token, (termCounts.get(token) ?? 0) + 1);
+	return { termCounts, length: tokens.length };
+}
+
+/** Document frequency per term over the corpus (number of docs containing it). */
+export function buildDf(docs: Bm25Doc[]): Map<string, number> {
+	const df = new Map<string, number>();
+	for (const doc of docs) {
+		for (const term of doc.termCounts.keys()) df.set(term, (df.get(term) ?? 0) + 1);
+	}
+	return df;
+}
+
+/** Standard BM25 idf (Lucene variant): always positive, even when the term
+ * appears in every document (df == docCount gives a small positive floor). */
+export function bm25Idf(df: number, docCount: number): number {
+	return Math.log(1 + (docCount - df + 0.5) / (df + 0.5));
+}
+
+/** Pure BM25 score of one document against the query terms. */
+export function bm25Score(
+	queryTerms: Iterable<string>,
+	doc: Bm25Doc,
+	df: Map<string, number>,
+	avgLen: number,
+	docCount: number,
+	k1: number = BM25_K1,
+	b: number = BM25_B,
+): number {
+	if (docCount === 0 || avgLen <= 0 || doc.length === 0) return 0;
+	let score = 0;
+	for (const term of queryTerms) {
+		const tf = doc.termCounts.get(term) ?? 0;
+		if (tf === 0) continue;
+		const idf = bm25Idf(df.get(term) ?? 0, docCount);
+		score += (idf * tf * (k1 + 1)) / (tf + k1 * (1 - b + (b * doc.length) / avgLen));
+	}
+	return score;
+}
 
 const RETRIEVAL_MAX_LESSONS = 3;
 const RETRIEVAL_MAX_CHARS = 2000;
@@ -236,13 +298,15 @@ const STOPWORDS = new Set([
 	"problem", "approach", "gotcha", "please", "help", "need", "want", "the", "and", "for", "are", "was",
 ]);
 
-function tokenize(text: string): Set<string> {
-	return new Set(
-		text
-			.toLowerCase()
-			.split(/[^a-z0-9_./-]+/)
-			.filter((word) => word.length >= MIN_TOKEN_LENGTH && !STOPWORDS.has(word)),
-	);
+export function tokenizeList(text: string): string[] {
+	return text
+		.toLowerCase()
+		.split(/[^a-z0-9_./-]+/)
+		.filter((word) => word.length >= MIN_TOKEN_LENGTH && !STOPWORDS.has(word));
+}
+
+export function tokenize(text: string): Set<string> {
+	return new Set(tokenizeList(text));
 }
 
 /** Mild, monotonic recency bias: 1 for a fresh lesson, decaying linearly
@@ -267,7 +331,8 @@ export function recallLessons(
 	const queryTerms = tokenize(query);
 	if (queryTerms.size === 0) return [];
 	const project = resolve(cwd);
-	const scored: { lesson: string; score: number; sameProject: boolean; index: number }[] = [];
+	// Pass 1: parse and index every lesson into the BM25 corpus.
+	const records: { lesson: string; doc: Bm25Doc; sameProject: boolean; timestamp?: unknown; index: number }[] = [];
 	let index = 0;
 	for (const line of readFileSync(file, "utf8").split("\n")) {
 		if (!line.trim()) continue;
@@ -275,17 +340,32 @@ export function recallLessons(
 		try {
 			const record = JSON.parse(line);
 			if (typeof record.lesson !== "string" || typeof record.cwd !== "string") continue;
-			const terms = tokenize(record.lesson);
-			const overlap = [...terms].filter((term) => queryTerms.has(term)).length;
-			const sameProject = resolve(record.cwd) === project;
-			if (sameProject ? overlap === 0 : scope !== "all" || overlap < CROSS_PROJECT_MIN_OVERLAP) continue;
-			const lowerLesson = record.lesson.toLowerCase();
-			const lowerQuery = query.trim().toLowerCase();
-			const phrase = lowerQuery.includes(" ") && lowerLesson.includes(lowerQuery) ? PHRASE_BONUS : 0;
-			scored.push({ lesson: record.lesson, score: overlap + phrase + recencyBonus(record), sameProject, index });
+			records.push({
+				lesson: record.lesson,
+				doc: bm25Doc(tokenizeList(record.lesson)),
+				sameProject: resolve(record.cwd) === project,
+				timestamp: record.timestamp,
+				index,
+			});
 		} catch {
 			// skip malformed
 		}
+	}
+	if (records.length === 0) return [];
+	// Pass 2: BM25 relevance over the corpus, with phrase/recency as additive boosts.
+	const df = buildDf(records.map((r) => r.doc));
+	const avgLen = records.reduce((sum, r) => sum + r.doc.length, 0) / records.length;
+	const lowerQuery = query.trim().toLowerCase();
+	const scored: { lesson: string; score: number; sameProject: boolean; index: number }[] = [];
+	for (const record of records) {
+		// Relevance floor: project lessons need at least one query term;
+		// cross-project lessons need CROSS_PROJECT_MIN_OVERLAP distinct terms.
+		const matched = [...queryTerms].filter((term) => record.doc.termCounts.has(term)).length;
+		if (record.sameProject ? matched === 0 : scope !== "all" || matched < CROSS_PROJECT_MIN_OVERLAP) continue;
+		const lowerLesson = record.lesson.toLowerCase();
+		const phrase = lowerQuery.includes(" ") && lowerLesson.includes(lowerQuery) ? PHRASE_BONUS : 0;
+		const score = bm25Score(queryTerms, record.doc, df, avgLen, records.length) + phrase + recencyBonus({ timestamp: record.timestamp });
+		scored.push({ lesson: record.lesson, score, sameProject: record.sameProject, index: record.index });
 	}
 	scored.sort((a, b) => b.score - a.score || Number(b.sameProject) - Number(a.sameProject) || b.index - a.index);
 	return scored.slice(0, limit).map((entry) => entry.lesson);
@@ -349,26 +429,24 @@ function searchEntities(query: string, limit: number): string[] {
 	const dir = vaultDir(cachedSettings);
 	const entitiesDir = join(dir, "entities");
 	if (!existsSync(entitiesDir)) return [];
-	const queryTerms = [...tokenize(query)];
-	if (queryTerms.length === 0) return [];
-	const scored: { rel: string; score: number; hits: string[] }[] = [];
+	const queryTerms = tokenize(query);
+	if (queryTerms.size === 0) return [];
+	const scored: { rel: string; score: number; matched: number; hits: string[] }[] = [];
+	const docs: { rel: string; doc: Bm25Doc; hits: string[] }[] = [];
 	const walk = (d: string): void => {
 		for (const f of readdirSync(d)) {
 			const full = join(d, f);
 			try {
 				if (full.endsWith(".md")) {
 					const content = readFileSync(full, "utf8");
-					const terms = tokenize(content);
-					const score = queryTerms.filter((t) => terms.has(t)).length;
-					if (score === 0) continue;
 					const hits = content
 						.split("\n")
 						.filter((l) => {
 							const ll = l.toLowerCase();
-							return queryTerms.some((t) => ll.includes(t)) && l.trim().length > 0;
+							return [...queryTerms].some((t) => ll.includes(t)) && l.trim().length > 0;
 						})
 						.slice(0, 2);
-					scored.push({ rel: full.slice(dir.length + 1), score, hits });
+					docs.push({ rel: full.slice(dir.length + 1), doc: bm25Doc(tokenizeList(content)), hits });
 				} else {
 					walk(full);
 				}
@@ -378,10 +456,19 @@ function searchEntities(query: string, limit: number): string[] {
 		}
 	};
 	walk(entitiesDir);
+	if (docs.length === 0) return [];
+	const df = buildDf(docs.map((d) => d.doc));
+	const avgLen = docs.reduce((sum, d) => sum + d.doc.length, 0) / docs.length;
+	for (const entry of docs) {
+		const score = bm25Score(queryTerms, entry.doc, df, avgLen, docs.length);
+		if (score === 0) continue;
+		const matched = [...queryTerms].filter((t) => entry.doc.termCounts.has(t)).length;
+		scored.push({ rel: entry.rel, score, matched, hits: entry.hits });
+	}
 	scored.sort((a, b) => b.score - a.score || a.rel.localeCompare(b.rel));
 	return scored
 		.slice(0, limit)
-		.map((e) => `- ${e.rel} (${e.score} term overlap)\n  ${e.hits.map((h) => h.trim()).join("\n  ")}`);
+		.map((e) => `- ${e.rel} (${e.matched} term overlap)\n  ${e.hits.map((h) => h.trim()).join("\n  ")}`);
 }
 
 /** Write a user quick-capture note, choosing a suffix if the timestamp repeats. */
