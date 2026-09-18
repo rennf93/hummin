@@ -2160,6 +2160,11 @@ export class Editor implements Component, Focusable {
 		return this.vimEnabled ? `-- ${this.vimState} --` : undefined;
 	}
 
+	/** True when vim mode is on and the editor is in INSERT state (hummin: escape switches modes). */
+	isVimInsert(): boolean {
+		return this.vimEnabled && this.vimState === "INSERT";
+	}
+
 	/**
 	 * Vim modal key handling. Returns true when the key was consumed by the
 	 * vim layer; false falls through to default editor handling.
@@ -2178,10 +2183,13 @@ export class Editor implements Component, Focusable {
 		} else if (kb.matches(data, "tui.editor.cursorRight")) {
 			key = "right";
 		} else {
-			const printable =
-				decodePrintableKey(data) ?? (data.length === 1 && data.charCodeAt(0) >= 32 ? data : undefined);
-			if (printable === undefined) return false;
-			key = printable;
+			if (data === "\x1b") key = "escape";
+			else {
+				const printable =
+					decodePrintableKey(data) ?? (data.length === 1 && data.charCodeAt(0) >= 32 ? data : undefined);
+				if (printable === undefined) return false;
+				key = printable;
+			}
 		}
 
 		const res = vimTransition(
@@ -2207,6 +2215,10 @@ export class Editor implements Component, Focusable {
 		if (textEdited || res.yanked !== undefined) {
 			this.pushUndoSnapshot();
 			this.state.lines = res.lines;
+			this.state.cursorLine = res.cursorLine;
+			this.setCursorCol(res.cursorCol);
+		} else if (res.cursorLine !== this.state.cursorLine || res.cursorCol !== this.state.cursorCol) {
+			// Cursor-only transitions (motions, INSERT->NORMAL clamp) still move.
 			this.state.cursorLine = res.cursorLine;
 			this.setCursorCol(res.cursorCol);
 		}

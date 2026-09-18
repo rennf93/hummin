@@ -99,6 +99,18 @@ export class CustomEditor extends Editor {
 
 		// Check app keybindings first
 
+		// Vim INSERT mode: escape switches to NORMAL instead of interrupting.
+		// (NORMAL-mode escape keeps the interrupt behavior below.)
+		if (
+			this.isVimMode() &&
+			this.isVimInsert() &&
+			this.keybindings.matches(data, "app.interrupt") &&
+			!this.isShowingAutocomplete()
+		) {
+			super.handleInput(data);
+			return;
+		}
+
 		// Escape/interrupt - only if autocomplete is NOT active
 		if (this.keybindings.matches(data, "app.interrupt")) {
 			if (!this.isShowingAutocomplete()) {
