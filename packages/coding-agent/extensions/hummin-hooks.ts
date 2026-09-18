@@ -246,7 +246,7 @@ interface EventPayload {
 }
 
 export default function humminHooks(pi: ExtensionAPI): void {
-	const manager = new ProcessManager(join(getAgentDir(), "hooks"), "hook");
+	const manager = new ProcessManager(join(getAgentDir(), "hook-runs"), "hook");
 	let entries: HookEntry[] = [];
 	let inHook = false;
 	let closed = false;

@@ -223,7 +223,7 @@ function runProbe(argv: string[]): Promise<boolean> {
 }
 
 async function probeSeatbelt(profilePath: string): Promise<boolean> {
-	return runProbe(["/usr/bin/sandbox-exec", "-f", profilePath, "/bin/true"]);
+	return runProbe(["/usr/bin/sandbox-exec", "-f", profilePath, "/usr/bin/true"]);
 }
 
 async function probeBwrap(): Promise<boolean> {
