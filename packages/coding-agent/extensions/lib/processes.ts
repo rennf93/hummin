@@ -205,6 +205,9 @@ export class ProcessManager {
 		let killTimer: NodeJS.Timeout | undefined;
 		let timeout: NodeJS.Timeout | undefined;
 		let drainTimer: NodeJS.Timeout | undefined;
+		// Once-guard: exactly one completion callback per job. Both the "close"
+		// event and the post-exit drain timer funnel into finish(); whichever wins
+		// emits onComplete, the loser returns here.
 		let settled = false;
 		let resolveDone!: () => void;
 		const job: ProcessJob = {

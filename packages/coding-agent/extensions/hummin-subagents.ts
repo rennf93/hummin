@@ -203,7 +203,11 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 				signal,
 				onComplete: params.background
 					? (finished) => {
-							ctx.ui?.notify?.(`Background ${describeJob(finished)}`, finished.state === "completed" ? "info" : "warning");
+							// Delivery dedupe: the followUp message renders the summary, so a
+							// notify() of the same describeJob() text here would deliver it twice.
+							// Exactly-once holds without a delivery-id: ProcessManager.finish is
+							// once-guarded (settled flag) and this callback fires synchronously
+							// from it, so sendMessage runs at most once per job.
 							pi.sendMessage(
 								{ customType: "hummin-task", content: describeJob(finished), display: true },
 								{ deliverAs: "followUp", triggerTurn: true },
