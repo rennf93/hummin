@@ -198,3 +198,31 @@ running session uses that URL; restarting remote control creates a new token.
 The browser strips the token from its address bar after loading. Keep the original
 URL for reloads. Requests require the token, enforce same-origin checks, limit
 body sizes, and deduplicate recent prompt retries. No public relay is configured.
+
+## Agent teamwork
+
+Sessions on the same machine (any terminals, any projects) can message each other. A broker socket at `<agentDir>/agents/broker.sock` coordinates presence; the first session to start serves the rest.
+
+- `agent_send` / `agent_inbox` tools: send text to a session by name (offline targets queue in `<agentDir>/agents/inbox/`, replayed FIFO on next start, capped). Incoming messages are data, never executed.
+- `/agents` shows online sessions (name, project, uptime) and this session's name; `/agent-name <name>` renames this session persistently.
+- `/team` is a shared task board (`<agentDir>/agents/team-board.json`): add/claim/release/done/delete tasks, visible to every session; the `task_board` tool drives it.
+- Sessions register only in trusted projects. `HUMMIN_AGENTS=0` disables; `agents.name` in settings sets a stable name.
+
+## Parity and safety features
+
+- `/mcp` connects Model Context Protocol servers configured under `mcpServers` in settings (stdio transport; project servers require trust). Tools register as `mcp_<server>_<tool>`; crashed servers unregister with a notice and can restart from `/mcp`.
+- `/sandbox` toggles sandboxed bash: macOS seatbelt profile or Linux bubblewrap, writes limited to the working directory and `$TMPDIR`, secrets unreadable, optional network deny (`sandbox.network: "deny"`). Probes real capability; blocks with an actionable `[Sandbox]` message when workspace mode is on but no mechanism exists. `sandbox.mode: "workspace"` enables; spawned task children inherit the mode.
+- `/bashguard` advises on risky commands before they run (destructive `rm -rf`, force-push to main/master, out-of-cwd `sed -i`, write redirections), via in-band `[BashGuard]` notices. Blocking and a read-only deny mode are opt-in (`bashguard.block`, `bashguard.readOnly`).
+- `hooks.json` (global `<agentDir>/hooks.json`, project `.hummin/hooks.json` with trust) runs shell commands on `tool_call`, `tool_result`, `agent_start`, `agent_end`. A `tool_call` hook's JSON output `{block: true, reason}` blocks the call. `/hooks` lists and reloads.
+- `/background` (or `ctrl+b`) opens the panel of running background tasks and monitors with view-tail/cancel actions; the footer shows counts by kind.
+- `# <text>` captures a note to the vault inbox without starting a turn (memory enabled).
+
+## Usage visibility and questions
+
+- `/context` breaks down the current prompt: system prompt and tools (estimated), conversation tokens (exact), cache-hit ratio, remaining window, and the compaction trigger line.
+- `/cost` totals the session by model with a served-locally ($0) vs cloud split.
+- `ask_user` asks structured multiple-choice questions through the TUI; non-interactive sessions default to the first choice.
+- `/lsp` runs a TypeScript language server when available (`typescript-language-server` on PATH): `lsp_diagnostics`, `lsp_definition`, `lsp_references`, `lsp_hover` tools with 1-based coordinates. Requires a `tsconfig.json` or `jsconfig.json` in the project.
+- `/cron` schedules wake-ups: `cron_create` with a daily `HH:MM` or `every:<minutes>` schedule runs `hummin -p <prompt>` detached in the entry's project directory. `HUMMIN_CRON=0` disables.
+- `/fleet` lists configured inference servers with Start/Stop/Restart; selecting an offline fleet model in `/model` offers to start its server first (`fleet.autoStart: true` skips the prompt).
+- Memory recall ranks lessons with BM25 (rare-term discrimination) plus phrase and recency bonuses; the retrieval briefing stays capped at 3 lessons / 2000 chars.
