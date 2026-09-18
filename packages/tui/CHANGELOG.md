@@ -2,7 +2,9 @@
 
 ## [Unreleased]
 
-## [1.0.3] - 2026-09-17
+### Changed
+
+- Reduced fuzzy search latency for long texts by using native substring search instead of scanning each character in JavaScript ([#9267](https://github.com/earendil-works/pi/issues/9267)).
 
 ### Fixed
 
