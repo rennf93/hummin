@@ -7,7 +7,11 @@ export {
 	type AutocompleteProvider,
 	type AutocompleteSuggestions,
 	CombinedAutocompleteProvider,
+	commandGroupHeader,
+	type GroupableCommand,
+	groupOrderedCommands,
 	type SlashCommand,
+	UNGROUPED_COMMAND_CATEGORY,
 } from "./autocomplete.ts";
 // Components
 export { Box } from "./components/box.ts";

@@ -5,7 +5,51 @@ import { basename, dirname, join } from "path";
 import { fuzzyFilter } from "./fuzzy.ts";
 
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
-const COMMAND_CATEGORY_ORDER = ["Session", "Models", "Fleet", "Memory/Vault", "Settings", "Tools"];
+/** Header shown for commands without a category. */
+export const UNGROUPED_COMMAND_CATEGORY = "Commands";
+
+/**
+ * Resolve the display header for a command group. Ungrouped commands render
+ * under the "Commands" header.
+ */
+export function commandGroupHeader(category: string | undefined): string {
+	return category && category.trim() !== "" ? category : UNGROUPED_COMMAND_CATEGORY;
+}
+
+export interface GroupableCommand {
+	name: string;
+	category?: string;
+}
+
+/**
+ * Group commands by category for the slash-command palette.
+ *
+ * Order: the exact prefix match's group first, then remaining groups
+ * alphabetically by header, with the ungrouped "Commands" group last.
+ * Items keep their relative order inside each group (stable).
+ */
+export function groupOrderedCommands<T extends GroupableCommand>(items: readonly T[], prefix: string): T[] {
+	const groupOf = (item: T) => commandGroupHeader(item.category);
+
+	const seen: string[] = [];
+	for (const item of items) {
+		const group = groupOf(item);
+		if (!seen.includes(group)) seen.push(group);
+	}
+
+	const exactMatch = prefix ? items.find((item) => item.name === prefix) : undefined;
+	const exactGroup = exactMatch ? groupOf(exactMatch) : undefined;
+
+	const remaining = seen.filter((group) => group !== exactGroup);
+	const named = remaining.filter((group) => group !== UNGROUPED_COMMAND_CATEGORY).sort((a, b) => a.localeCompare(b));
+	const groupOrder: string[] = [];
+	if (exactGroup) groupOrder.push(exactGroup);
+	groupOrder.push(...named);
+	if (remaining.includes(UNGROUPED_COMMAND_CATEGORY)) groupOrder.push(UNGROUPED_COMMAND_CATEGORY);
+
+	const groupIndex = new Map(groupOrder.map((group, index) => [group, index]));
+	return [...items].sort((a, b) => (groupIndex.get(groupOf(a)) ?? 0) - (groupIndex.get(groupOf(b)) ?? 0));
+}
 
 function toDisplayPath(value: string): string {
 	return value.replace(/\\/g, "/");
@@ -331,20 +375,12 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 					};
 				});
 
-				const ordered = prefix
-					? commandItems
-					: [...commandItems].sort((a, b) => {
-							const categoryAIndex = a.category ? COMMAND_CATEGORY_ORDER.indexOf(a.category) : -1;
-							const categoryBIndex = b.category ? COMMAND_CATEGORY_ORDER.indexOf(b.category) : -1;
-							const categoryA = categoryAIndex < 0 ? COMMAND_CATEGORY_ORDER.length : categoryAIndex;
-							const categoryB = categoryBIndex < 0 ? COMMAND_CATEGORY_ORDER.length : categoryBIndex;
-							return categoryA - categoryB;
-						});
+				const ordered = groupOrderedCommands(commandItems, prefix);
 				const filtered = fuzzyFilter(ordered, prefix, (item) => item.name).map((item) => ({
 					value: item.name,
 					label: item.label,
 					...(item.description && { description: item.description }),
-					...(item.category && { category: item.category }),
+					category: commandGroupHeader(item.category),
 				}));
 
 				if (filtered.length === 0) return null;
