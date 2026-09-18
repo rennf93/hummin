@@ -244,10 +244,32 @@ function killExact(child: ChildProcess): void {
 	}, KILL_GRACE_MS).unref();
 }
 
-function sandboxOperations(ops: {
+export function sandboxOperations(ops: {
 	activeConfig: () => Promise<{ networkDeny: boolean; argv: (shellPath: string, command: string) => string[] } | undefined>;
 	shellPath: () => string;
+	fallback: () => "block" | "allow";
+	mode: () => "off" | "workspace";
+	onFallbackNotice?: () => void;
 }): BashOperations {
+	const plainExec = async (command: string, cwd: string, io: { onData: (data: Buffer) => void; signal?: AbortSignal; env?: Record<string, string | undefined> }) => {
+		const child = spawn(ops.shellPath(), ["-c", command], {
+			cwd,
+			env: { ...(io.env ?? process.env), HUMMIN_MEMORY: "0" },
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		child.stdout?.on("data", (d) => io.onData(d));
+		child.stderr?.on("data", (d) => io.onData(d));
+		if (io.signal) {
+			if (io.signal.aborted) killExact(child);
+			else io.signal.addEventListener("abort", () => killExact(child), { once: true });
+		}
+		const code = await new Promise<number | null>((resolve, reject) => {
+			child.on("error", reject);
+			child.on("exit", (c) => resolve(c ?? (child.signalCode ? 128 : 1)));
+		});
+		if (io.signal?.aborted) throw new Error("aborted");
+		return { exitCode: code === null ? 1 : code };
+	};
 	return {
 		exec: async (command, cwd, { onData, signal, env }) => {
 			if (signal?.aborted) throw new Error("aborted");
@@ -257,7 +279,18 @@ function sandboxOperations(ops: {
 				throw new Error(`Working directory does not exist: ${cwd}\nCannot execute sandboxed commands.`);
 			}
 			const plan = await ops.activeConfig();
-			if (!plan) throw new Error("[Sandbox] sandbox unavailable for this platform");
+			if (!plan) {
+				if (ops.mode() !== "workspace") {
+					return plainExec(command, cwd, { onData, signal, env });
+				}
+				if (ops.fallback() === "allow") {
+					ops.onFallbackNotice?.();
+					return plainExec(command, cwd, { onData, signal, env });
+				}
+				throw new Error(
+					'[Sandbox] workspace mode is on but no sandbox mechanism is available. Set sandbox.fallback to "allow" or sandbox.mode to "off" (/sandbox).',
+				);
+			}
 			const argv = plan.argv(ops.shellPath(), command);
 			const child = spawn(argv[0], argv.slice(1), {
 				cwd,
@@ -360,8 +393,16 @@ export default function humminSandbox(pi: ExtensionAPI): void {
 		return undefined;
 	};
 
+	let notifiedFallback = false;
 	const ops = sandboxOperations({
 		shellPath: () => getShellConfig(settings.getShellPath()).shell,
+		fallback: () => configNow().fallback,
+		mode: () => activeMode(),
+		onFallbackNotice: () => {
+			if (!notifiedFallback) {
+				notifiedFallback = true;
+			}
+		},
 		activeConfig: async () => {
 			if (activeMode() !== "workspace") return undefined;
 			const support = await sandboxSupport();

@@ -9,6 +9,7 @@ import {
 	formatSandboxTable,
 	parseSandboxNamespace,
 	resolveSandboxConfig,
+	sandboxOperations,
 	secretReadDenySubpaths,
 } from "../extensions/hummin-sandbox.ts";
 
@@ -152,5 +153,44 @@ describe("formatSandboxTable", () => {
 			["mechanism", "seatbelt"],
 		]);
 		expect(text).toBe("mode       workspace\nmechanism  seatbelt");
+	});
+});
+
+describe("sandboxOperations exec gating", () => {
+	const base = (over: Partial<Parameters<typeof sandboxOperations>[0]> = {}) =>
+		sandboxOperations({
+			activeConfig: async () => undefined,
+			shellPath: () => "/bin/echo",
+			fallback: () => "block",
+			mode: () => "off",
+			...over,
+		});
+	const noop = (): void => undefined;
+
+	it("runs plain when mode is off even though no sandbox plan exists", async () => {
+		const ops = base();
+		const result = await ops.exec("hello", process.cwd(), { onData: noop, signal: undefined, env: {} });
+		expect(result.exitCode).toBe(0);
+	});
+
+	it("blocks with actionable message in workspace mode without support and fallback block", async () => {
+		const ops = base({ mode: () => "workspace", fallback: () => "block" });
+		await expect(ops.exec("hello", process.cwd(), { onData: noop, signal: undefined, env: {} })).rejects.toThrow(
+			/\[Sandbox\]/,
+		);
+	});
+
+	it("falls back to plain in workspace mode with fallback allow", async () => {
+		let notices = 0;
+		const ops = base({
+			mode: () => "workspace",
+			fallback: () => "allow",
+			onFallbackNotice: () => {
+				notices += 1;
+			},
+		});
+		const result = await ops.exec("hello", process.cwd(), { onData: noop, signal: undefined, env: {} });
+		expect(result.exitCode).toBe(0);
+		expect(notices).toBe(1);
 	});
 });
