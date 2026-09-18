@@ -203,7 +203,7 @@ export default function humminAgents(pi: ExtensionAPI): void {
 		if (client?.connected) return Promise.resolve();
 		connecting ??= (async () => {
 			try {
-				for (let attempt = 0; attempt < 2; attempt++) {
+				for (let attempt = 0; attempt < 3; attempt++) {
 					try {
 						const next = await BrokerClient.connect(dir, {
 							sessionId: "",
@@ -221,9 +221,19 @@ export default function humminAgents(pi: ExtensionAPI): void {
 					} catch {
 						// No live broker: try to become it (stale socket files are rebound).
 						server ??= new BrokerServer(dir);
-						await server.start();
+						try {
+							await server.start();
+						} catch {
+							// Another session won the bind race: drop our server
+							// attempt and retry as a client of the live holder.
+							server = undefined;
+							continue;
+						}
 					}
 				}
+			} catch {
+				// Broker unreachable: stay unregistered. Tools report the
+				// degraded state; a later ensureConnected retries.
 			} finally {
 				connecting = undefined;
 			}
