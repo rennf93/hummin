@@ -158,3 +158,4 @@ export {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "./utils.ts";
+export { type VimMode, type VimTextState, type VimTransitionResult, vimTransition } from "./vim.ts";

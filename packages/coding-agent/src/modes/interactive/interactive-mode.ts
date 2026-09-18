@@ -618,6 +618,7 @@ export class InteractiveMode {
 			autocompleteMaxVisible,
 			embedWorkingStatus: true,
 			highlighter: (text) => this.highlightEditorLine(text),
+			vimMode: this.settingsManager.getEditorMode() === "vim",
 		});
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
