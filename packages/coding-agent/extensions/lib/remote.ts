@@ -6,6 +6,33 @@ export interface RemoteActions {
 	state: () => unknown;
 	prompt: (text: string) => void;
 	abort: () => void;
+	/** Pending tool-approval bridge. When present, pending approvals are
+	 * surfaced in /state and resolvable via POST /approve. */
+	approvals?: RemoteApprovals;
+}
+
+export interface PendingApproval {
+	/** Stable id; /approve echoes it back. */
+	id: string;
+	/** Tool display name. */
+	tool: string;
+	/** Truncated tool input summary. */
+	input: string;
+}
+
+export type ApprovalResolution = "resolved" | "observed" | "unknown";
+
+export interface RemoteApprovals {
+	/** Currently pending approval, if any. */
+	pending: () => PendingApproval | undefined;
+	/** First resolution for an id wins ("resolved"); later calls observe
+	 * ("observed"); an id that is not or no longer pending is "unknown".
+	 * Terminal parity: whichever surface answers first (browser or terminal
+	 * dialog) wins, the other observes. */
+	resolve: (id: string, allowed: boolean) => ApprovalResolution;
+	/** False when the terminal dialog cannot be auto-resolved remotely;
+	 * the page then shows the banner with buttons disabled. */
+	answerable: boolean;
 }
 
 async function readBody(request: IncomingMessage): Promise<unknown> {
@@ -61,10 +88,19 @@ export async function startRemoteControl(actions: RemoteActions, port = 0) {
 		}
 		try {
 			if (request.method === "GET" && request.url === "/state") {
-				reply(200, actions.state());
+				const base = actions.state();
+				if (!actions.approvals || typeof base !== "object" || base === null) {
+					reply(200, base);
+					return;
+				}
+				const pending = actions.approvals.pending();
+				reply(200, {
+					...base,
+					approval: pending ? { ...pending, answerable: actions.approvals.answerable } : null,
+				});
 				return;
 			}
-			if (request.method !== "POST" || !["/prompt", "/abort"].includes(request.url ?? "")) {
+			if (request.method !== "POST" || !["/prompt", "/abort", "/approve"].includes(request.url ?? "")) {
 				reply(404, { error: "Unknown endpoint" });
 				return;
 			}
@@ -87,6 +123,27 @@ export async function startRemoteControl(actions: RemoteActions, port = 0) {
 			const previous = accepted.get(body.id);
 			if (previous) {
 				reply(previous === signature ? 200 : 409, { accepted: previous === signature });
+				return;
+			}
+			if (request.url === "/approve") {
+				if (!actions.approvals) {
+					reply(501, { error: "Approvals not available" });
+					return;
+				}
+				if (!("allow" in body) || typeof body.allow !== "boolean") {
+					reply(400, { error: "allow must be a boolean" });
+					return;
+				}
+				const resolution = actions.approvals.resolve(body.id, body.allow);
+				if (resolution === "unknown") {
+					reply(404, { error: "No pending approval with that id" });
+					return;
+				}
+				// First answer wins; replays are idempotent, conflicting bodies are
+				// rejected by the signature check below before resolve() is called.
+				accepted.set(body.id, signature);
+				if (accepted.size > 256) accepted.delete(accepted.keys().next().value!);
+				reply(202, { accepted: true, resolved: resolution === "resolved" });
 				return;
 			}
 			if (request.url === "/prompt") {

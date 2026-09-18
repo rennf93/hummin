@@ -62,6 +62,13 @@ export default function humminRemote(pi: ExtensionAPI): void {
 				starting = true;
 				try {
 					remote = await startRemoteControl({
+						approvals: {
+							// Terminal dialogs cannot be auto-resolved remotely: the
+							// browser banner is visibility-only (buttons disabled).
+							pending: () => (waiting ? { id: "terminal", tool: waiting, input: "" } : undefined),
+							resolve: () => "observed",
+							answerable: false,
+						},
 						state: () => {
 							const current = context!;
 							const messages = current.sessionManager
