@@ -11,6 +11,7 @@ import {
 	type TUI,
 } from "@earendil-works/pi-tui";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
+import { SettingsManager } from "../../../core/settings-manager.ts";
 import { refreshModelCatalogs } from "../model-catalog-refresh.ts";
 import { getModelSelectorSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
@@ -39,6 +40,41 @@ interface DefaultModelReference {
 }
 
 type ModelScope = "all" | "scoped";
+
+/** Result contract for starting an offline fleet server from the picker.
+ * Implemented by the hummin-fleet extension (shared fleet-actions lib). */
+export interface OfflineFleetStartResult {
+	ok: boolean;
+	detail: string;
+	cancelled?: boolean;
+}
+
+export type OfflineFleetStarter = (serverId: string, signal: AbortSignal) => Promise<OfflineFleetStartResult>;
+
+/** Core cannot import extension code (build rootDir), so the hummin-fleet
+ * extension hands the picker its start action through this well-known key. */
+const OFFLINE_FLEET_STARTER_KEY = "__humminOfflineFleetStarter";
+
+function getOfflineFleetStarter(): OfflineFleetStarter | undefined {
+	const value = (globalThis as Record<string, unknown>)[OFFLINE_FLEET_STARTER_KEY];
+	return typeof value === "function" ? (value as OfflineFleetStarter) : undefined;
+}
+
+/** Resolve the fleet server behind an offline hummin-local model by matching
+ * the model endpoint's host/port against the configured fleet.servers. */
+function findFleetServerForModel(model: Model<any> & HumminModelMetadata): { id: string; label: string } | undefined {
+	if (!model.baseUrl) return undefined;
+	try {
+		const url = new URL(model.baseUrl);
+		const port = Number(url.port);
+		if (!port) return undefined;
+		const servers = SettingsManager.create(process.cwd()).getFleetServers();
+		const match = servers.find((server) => server.hostIp === url.hostname && server.port === port);
+		return match ? { id: match.id, label: match.label ?? match.id } : undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 /**
  * Component that renders a model selector with search
@@ -78,6 +114,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private readonly refreshAbortController = new AbortController();
 	private refreshTimeout?: ReturnType<typeof setTimeout>;
 	private closed = false;
+	private startingOfflineServer = false;
+	private startAbort?: AbortController;
 
 	constructor(
 		tui: TUI,
@@ -126,7 +164,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.searchInput.onSubmit = () => {
 			// Enter on search input selects the first filtered item
 			if (this.filteredModels[this.selectedIndex]) {
-				this.handleSelect(this.filteredModels[this.selectedIndex].model);
+				this.selectModel(this.filteredModels[this.selectedIndex].model);
 			}
 		};
 		this.addChild(this.searchInput);
@@ -232,6 +270,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.closed = true;
 		if (this.refreshTimeout) clearTimeout(this.refreshTimeout);
 		this.refreshAbortController.abort();
+		this.startAbort?.abort();
 	}
 
 	private sortModels(models: ModelItem[]): ModelItem[] {
@@ -376,7 +415,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 					if (event.type !== "click") return undefined;
 					// Keep the pressed model's identity even if a catalog refresh reorders the rows.
 					const selected = this.filteredModels.find((candidate) => modelsAreEqual(candidate.model, item.model));
-					if (selected) this.handleSelect(selected.model);
+					if (selected) this.selectModel(selected.model);
 					return { handled: true };
 				}),
 			);
@@ -427,6 +466,14 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
+		if (this.startingOfflineServer) {
+			// A fleet server start is in flight; only cancel gets through.
+			if (kb.matches(keyData, "tui.select.cancel")) {
+				this.dispose();
+				this.onCancelCallback();
+			}
+			return;
+		}
 		if (kb.matches(keyData, "tui.input.tab")) {
 			if (this.scopedModelItems.length > 0) {
 				const nextScope: ModelScope = this.scope === "all" ? "scoped" : "all";
@@ -453,7 +500,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		else if (kb.matches(keyData, "tui.select.confirm")) {
 			const selectedModel = this.filteredModels[this.selectedIndex];
 			if (selectedModel) {
-				this.handleSelect(selectedModel.model);
+				this.selectModel(selectedModel.model);
 			}
 		}
 		// Escape or Ctrl+C
@@ -474,6 +521,45 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.searchInput.handleInput(keyData);
 			this.filterModels(this.searchInput.getValue());
 		}
+	}
+
+	/** Entry point for all selection paths. Offline hummin-local models get a
+	 * fleet-server start flow before the selection goes through. */
+	private selectModel(model: Model<any>): void {
+		const meta = model as Model<any> & HumminModelMetadata;
+		if (meta.humminOffline === true) {
+			void this.selectOfflineModel(meta);
+			return;
+		}
+		this.handleSelect(model);
+	}
+
+	private async selectOfflineModel(model: Model<any> & HumminModelMetadata): Promise<void> {
+		const starter = getOfflineFleetStarter();
+		const server = findFleetServerForModel(model);
+		if (!starter || !server) {
+			// No fleet mapping or no start action registered: plain selection.
+			this.handleSelect(model);
+			return;
+		}
+		this.startingOfflineServer = true;
+		const controller = new AbortController();
+		this.startAbort = controller;
+		this.refreshStatusMessage = `Starting ${server.label}…`;
+		this.updateList();
+		this.tui.requestRender();
+		const result = await starter(server.id, controller.signal);
+		this.startingOfflineServer = false;
+		this.startAbort = undefined;
+		if (this.closed) return;
+		if (!result.ok) {
+			// The starter already notified; abort the selection.
+			this.dispose();
+			this.onCancelCallback();
+			return;
+		}
+		this.refreshStatusMessage = "";
+		this.handleSelect(model);
 	}
 
 	private handleSelect(model: Model<any>): void {

@@ -1,133 +1,43 @@
 /** Fleet health and controls for hummin's local inference servers. */
-import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { SettingsManager, type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, type KeybindingsManager, type TUI } from "@earendil-works/pi-tui";
+import {
+	fleetControls,
+	fleetSettingsToServers,
+	performFleetAction,
+	type FleetAction,
+	type FleetServer,
+	probeFleet as probeFleetServers,
+	probeServer as probeFleetServer,
+} from "./lib/fleet-actions.ts";
 
-export type FleetAction = "start" | "stop" | "restart";
-export interface FleetServer {
-	id: string;
-	label: string;
-	hostLabel: string;
-	hostIp: string;
-	port: number;
-	kind: "launchd" | "docker";
-	target: string;
-}
+export type { FleetAction, FleetServer };
+export { fleetSettingsToServers };
 /** Fleet is private configuration. An empty list is a valid unconfigured state. */
 export const DEFAULT_FLEET: readonly FleetServer[] = [];
-const PROBE_TIMEOUT_MS = 8000;
-const ACTION_TIMEOUT_MS = 30000;
-const q = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 const settingsFor = (ctx: ExtensionContext) => SettingsManager.create(ctx.cwd);
-function runZsh(command: string, timeoutMs: number): Promise<{ ok: boolean; output: string }> {
-	return new Promise((resolve) => {
-		const child = spawn("/bin/zsh", ["-lc", command], { env: { ...process.env, HUMMIN_MEMORY: "0" } });
-		let output = "";
-		let settled = false;
-		const timer = setTimeout(() => {
-			if (settled) return;
-			settled = true;
-			child.kill("SIGKILL");
-			resolve({ ok: false, output: "timeout" });
-		}, timeoutMs);
-		const finish = (ok: boolean, text: string): void => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timer);
-			resolve({ ok, output: text.trim() });
-		};
-		child.stdout?.on("data", (chunk: Buffer) => (output += chunk.toString()));
-		child.stderr?.on("data", (chunk: Buffer) => (output += chunk.toString()));
-		child.once("error", (error: Error) => finish(false, error.message));
-		child.once("close", (code: number | null) => finish(code === 0, output || `exit ${code}`));
-	});
-}
 export function serversFor(ctx: ExtensionContext): FleetServer[] {
 	const configured = settingsFor(ctx).getFleetServers();
 	if (configured.length === 0) return DEFAULT_FLEET.map((server) => ({ ...server }));
 	return fleetSettingsToServers(configured);
 }
-export function fleetSettingsToServers(configured: readonly { id: string; label?: string; host?: string; hostIp: string; port: number; kind: "launchd" | "docker"; target: string }[]): FleetServer[] {
-	return configured.map((server) => ({
-		id: server.id,
-		label: server.label ?? server.id,
-		hostLabel: server.host ?? server.hostIp,
-		hostIp: server.hostIp,
-		port: server.port,
-		kind: server.kind,
-		target: server.target,
-	}));
-}
-function controls(ctx: ExtensionContext): { domain: string; plistDir: string; sshHost: string; composeDir: string } {
-	const settings = settingsFor(ctx);
-	const launchd = settings.getFleetLaunchd();
-	const docker = settings.getFleetDocker();
-	return {
-		domain: launchd.domain,
-		plistDir: launchd.plistDir,
-		sshHost: docker.sshHost,
-		composeDir: docker.composeDir,
-	};
-}
 export async function probeServer(server: FleetServer, ctx: ExtensionContext): Promise<boolean> {
-	const config = controls(ctx);
-	if (server.kind === "launchd")
-		return (
-			await runZsh(
-				`launchctl print ${q(`${config.domain}/${server.target}`)} 2>/dev/null | grep -q 'state = running'`,
-				PROBE_TIMEOUT_MS,
-			)
-		).ok;
-	if (!config.sshHost || !config.composeDir) return false;
-	const remote = `sudo -n docker ps --format '{{.Names}}' --filter status=running | grep -Fxq ${q(server.target)}`;
-	return (await runZsh(`ssh -o ConnectTimeout=5 ${q(config.sshHost)} ${q(remote)}`, PROBE_TIMEOUT_MS)).ok;
+	return probeFleetServer(server, fleetControls(settingsFor(ctx)));
 }
 export async function probeFleet(
 	servers: readonly FleetServer[],
 	ctx: ExtensionContext,
 ): Promise<Map<string, boolean>> {
-	const results = await Promise.all(
-		servers.map(async (server) => [server.id, await probeServer(server, ctx)] as const),
-	);
-	return new Map(results);
+	return probeFleetServers(servers, fleetControls(settingsFor(ctx)));
 }
-async function performAction(
+function performAction(
 	server: FleetServer,
 	action: FleetAction,
 	ctx: ExtensionContext,
 ): Promise<{ ok: boolean; up: boolean; detail: string }> {
-	const config = controls(ctx);
-	let command: string;
-	if (server.kind === "launchd") {
-		const plist = q(join(config.plistDir, `${server.target}.plist`));
-		const label = q(server.target);
-		command =
-			action === "start"
-				? `launchctl load ${plist} 2>/dev/null; launchctl start ${label}`
-				: action === "stop"
-					? `launchctl stop ${label}; launchctl unload ${plist}`
-					: `launchctl stop ${label}; launchctl load ${plist} 2>/dev/null; launchctl start ${label}`;
-	} else {
-		if (!config.sshHost || !config.composeDir)
-			return { ok: false, up: false, detail: "docker endpoint is not configured" };
-		command = `ssh -o ConnectTimeout=5 ${q(config.sshHost)} ${q(`cd ${q(config.composeDir)} && sudo docker compose ${action} ${q(server.target)}`)}`;
-	}
-	const result = await runZsh(command, ACTION_TIMEOUT_MS);
-	let up = await probeServer(server, ctx);
-	const expected = action !== "stop";
-	for (let attempt = 0; result.ok && up !== expected && attempt < 10; attempt++) {
-		await new Promise((resolve) => setTimeout(resolve, 500));
-		up = await probeServer(server, ctx);
-	}
-	return {
-		ok: result.ok && up === expected,
-		up,
-		detail: result.ok
-			? `${action}: ${up === expected ? (expected ? "up" : "stopped") : expected ? "failed to become ready" : "still running"}`
-			: `${action} failed: ${result.output.slice(0, 120)}`,
-	};
+	return performFleetAction(server, action, fleetControls(settingsFor(ctx)));
 }
 
 function countEntityFiles(directory: string): number {
@@ -251,10 +161,43 @@ function statusText(ctx: ExtensionContext, servers: readonly FleetServer[], stat
 		),
 	].join("\n");
 }
+
+/** Result contract for the /model picker's offline-server start flow. Kept
+ * structural so the picker (core) and this extension stay decoupled. */
+interface PickerStartResult {
+	ok: boolean;
+	detail: string;
+	cancelled?: boolean;
+}
+
+function readAutoStart(fleet: unknown): boolean | undefined {
+	if (!fleet || typeof fleet !== "object") return undefined;
+	const value = (fleet as { autoStart?: unknown }).autoStart;
+	return typeof value === "boolean" ? value : undefined;
+}
+
+/** hummin: fleet.autoStart skips the "Start <server>?" confirm (env > project > global). */
+function fleetAutoStart(settings: SettingsManager): boolean {
+	if (process.env.HUMMIN_FLEET_AUTOSTART === "1") return true;
+	if (process.env.HUMMIN_FLEET_AUTOSTART === "0") return false;
+	return readAutoStart(settings.getProjectSettings().fleet) ?? readAutoStart(settings.getGlobalSettings().fleet) ?? false;
+}
+
+/** Register the global bridge the /model picker uses to start an offline
+ * fleet server (same action path as /fleet). The picker lives in core and
+ * cannot import extension code, so the handoff is a well-known globalThis key. */
+const OFFLINE_FLEET_STARTER_KEY = "__humminOfflineFleetStarter";
+
 export default function (pi: ExtensionAPI): void {
+	let pickerUi: ExtensionContext["ui"] | undefined;
+	const captureUi = (ctx: ExtensionContext): void => {
+		if (ctx.mode === "tui") pickerUi = ctx.ui;
+	};
+	pi.on?.("session_start", (_event, ctx) => captureUi(ctx));
 	pi.registerCommand("fleet", {
 		description: "Show and control the local inference fleet",
 		handler: async (_args, ctx) => {
+			captureUi(ctx);
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify("/fleet requires interactive mode", "error");
 				return;
@@ -285,4 +228,24 @@ export default function (pi: ExtensionAPI): void {
 			ctx.ui.notify(statusText(ctx, servers, states), "info");
 		},
 	});
+
+	const startForPicker = async (serverId: string, signal: AbortSignal): Promise<PickerStartResult> => {
+		const settings = SettingsManager.create(process.cwd());
+		const server = fleetSettingsToServers(settings.getFleetServers()).find((entry) => entry.id === serverId);
+		if (!server) return { ok: false, detail: `fleet server ${serverId} is not configured` };
+		if (!pickerUi && !fleetAutoStart(settings))
+			return { ok: false, detail: "fleet ui unavailable", cancelled: true };
+		if (!fleetAutoStart(settings)) {
+			const confirmed = await pickerUi!.confirm("Fleet", `Start ${server.label}? (fleet)`);
+			if (!confirmed) return { ok: false, detail: "cancelled", cancelled: true };
+		}
+		pickerUi?.notify(`Starting ${server.label}…`, "info");
+		const result = await performFleetAction(server, "start", fleetControls(settings), { signal });
+		pickerUi?.notify(
+			`${server.id}: ${result.detail}`,
+			result.ok && result.up ? "info" : "warning",
+		);
+		return result;
+	};
+	(globalThis as Record<string, unknown>)[OFFLINE_FLEET_STARTER_KEY] = startForPicker;
 }
