@@ -45,10 +45,45 @@ export function runningProcessCount(): number {
 	return count;
 }
 
+/** Running count per kind, ascending kind order, zero kinds omitted. */
+export function runningCountByKind(allJobs: Iterable<Pick<ProcessJob, "kind" | "state">>): Array<{ kind: string; count: number }> {
+	const counts = new Map<string, number>();
+	for (const job of allJobs) {
+		if (job.state !== "running") continue;
+		counts.set(job.kind, (counts.get(job.kind) ?? 0) + 1);
+	}
+	return [...counts.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([kind, count]) => ({ kind, count }));
+}
+
+/** "2 tasks, 1 monitor" style status text, or undefined when idle. */
+export function formatBackgroundStatus(counts: ReadonlyArray<{ kind: string; count: number }>): string | undefined {
+	if (counts.length === 0) return undefined;
+	return counts.map(({ kind, count }) => `${count} ${kind}${count === 1 ? "" : "s"}`).join(", ");
+}
+
 /** Footer status text, or undefined when nothing is running. */
 export function backgroundStatus(): string | undefined {
-	const count = runningProcessCount();
-	return count > 0 ? `${count} background` : undefined;
+	return formatBackgroundStatus(runningCountByKind(allJobs()));
+}
+
+function allJobs(): ProcessJob[] {
+	const jobs: ProcessJob[] = [];
+	for (const manager of managers) jobs.push(...manager.jobs.values());
+	return jobs;
+}
+
+/** Every job in every manager (the /background overlay list). */
+export function allProcessJobs(): ProcessJob[] {
+	return allJobs();
+}
+
+/** Find one job across all managers by id. */
+export function findProcessJob(id: string): ProcessJob | undefined {
+	for (const manager of managers) {
+		const job = manager.jobs.get(id);
+		if (job) return job;
+	}
+	return undefined;
 }
 
 /** Set or clear the shared "bg" footer status from any extension context. */
@@ -66,6 +101,61 @@ export function describeAllProcesses(): string {
 		blocks.push(jobs.map((job) => describeJob(job)).join("\n\n"));
 	}
 	return blocks.length > 0 ? blocks.join("\n\n") : "No background processes";
+}
+
+/** State glyph used by the /background panel list. */
+export function stateGlyph(state: ProcessJob["state"]): string {
+	switch (state) {
+		case "running":
+			return "●";
+		case "completed":
+			return "✓";
+		case "failed":
+		case "timed_out":
+			return "✗";
+		case "cancelled":
+			return "○";
+	}
+}
+
+/** One row of the /background panel list. */
+export interface BackgroundJobRow {
+	id: string;
+	state: ProcessJob["state"];
+	glyph: string;
+	kind: string;
+	label: string;
+	duration: string;
+	logFile: string;
+	error?: string;
+}
+
+/** Shape jobs into panel rows, running first then newest first. */
+export function jobRows(jobs: Iterable<ProcessJob>, now: number = Date.now()): BackgroundJobRow[] {
+	const rows: BackgroundJobRow[] = [];
+	for (const job of jobs) {
+		rows.push({
+			id: job.id,
+			state: job.state,
+			glyph: stateGlyph(job.state),
+			kind: job.kind,
+			label: job.label,
+			duration: formatDuration(now - job.startedAt),
+			logFile: job.logFile,
+			...(job.error ? { error: job.error } : {}),
+		});
+	}
+	rows.sort((a, b) => {
+		if ((a.state === "running") !== (b.state === "running")) return a.state === "running" ? -1 : 1;
+		return a.label < b.label ? -1 : a.label > b.label ? 1 : 0;
+	});
+	return rows;
+}
+
+/** Last `lines` lines of captured job output (panel "view tail"). */
+export function outputTail(output: string, lines = 30): string {
+	const all = output.split("\n");
+	return all.slice(Math.max(0, all.length - lines)).join("\n");
 }
 
 export function formatDuration(ms: number): string {

@@ -1,12 +1,24 @@
 /** Bounded child sessions with fleet-aware models and captured output. */
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
+import {
+	type ExtensionAPI,
+	type ExtensionContext,
+	getAgentDir,
+} from "@earendil-works/pi-coding-agent";
+import type { KeybindingsManager, TUI } from "@earendil-works/pi-tui";
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
+	allProcessJobs,
+	type BackgroundJobRow,
 	describeAllProcesses,
 	describeJob,
+	findProcessJob,
+	jobRows,
+	outputTail,
 	ProcessManager,
 	refreshBackgroundStatus,
 } from "./lib/processes.ts";
@@ -35,6 +47,88 @@ export function resolveTaskModel(
 	return model;
 }
 
+/** Last 30 lines of a job's output, preferring the on-disk log. */
+function tailText(job: { logFile: string; output: string }): string {
+	let text = job.output;
+	try {
+		text = readFileSync(job.logFile, "utf8");
+	} catch {
+		// Log may not exist yet; fall back to captured output.
+	}
+	return outputTail(text) || "(no output)";
+}
+
+/** Live list of background jobs; refreshes on a 2s interval while open. */
+class BackgroundPanelComponent {
+	private selected = 0;
+	private timer: NodeJS.Timeout;
+	private rows: BackgroundJobRow[] = [];
+	private refreshing = false;
+	private disposed = false;
+	private readonly tui: TUI;
+	private readonly theme: Theme;
+	private readonly kb: KeybindingsManager;
+	private readonly done: (row?: BackgroundJobRow) => void;
+
+	constructor(tui: TUI, theme: Theme, kb: KeybindingsManager, done: (row?: BackgroundJobRow) => void) {
+		this.tui = tui;
+		this.theme = theme;
+		this.kb = kb;
+		this.done = done;
+		this.timer = setInterval(() => void this.refresh(), 2000);
+		void this.refresh();
+	}
+
+	dispose(): void {
+		this.disposed = true;
+		clearInterval(this.timer);
+	}
+
+	invalidate(): void {}
+
+	private async refresh(): Promise<void> {
+		if (this.refreshing || this.disposed) return;
+		this.refreshing = true;
+		this.rows = jobRows(allProcessJobs());
+		this.refreshing = false;
+		if (this.disposed) return;
+		if (this.selected >= this.rows.length) this.selected = Math.max(0, this.rows.length - 1);
+		this.tui.requestRender();
+	}
+
+	handleInput(data: string): void {
+		if (this.kb.matches(data, "tui.select.cancel")) {
+			this.done();
+			return;
+		}
+		if (this.kb.matches(data, "tui.select.up"))
+			this.selected = (this.selected + this.rows.length - 1) % Math.max(1, this.rows.length);
+		else if (this.kb.matches(data, "tui.select.down"))
+			this.selected = (this.selected + 1) % Math.max(1, this.rows.length);
+		else if (this.kb.matches(data, "tui.select.confirm")) {
+			if (this.rows[this.selected]) this.done(this.rows[this.selected]);
+			return;
+		}
+		this.tui.requestRender();
+	}
+
+	render(width: number): string[] {
+		const running = this.rows.filter((row) => row.state === "running").length;
+		const title = `Background · ${running} running, ${this.rows.length} total`;
+		const lines = [`  ${this.theme.fg("accent", this.theme.bold(title))}`, ""];
+		if (this.rows.length === 0) lines.push(`  ${this.theme.fg("dim", "No background processes")}`);
+		for (const [index, row] of this.rows.entries()) {
+			const color =
+				row.state === "running" ? "accent" : row.state === "completed" ? "success" : "error";
+			const glyph = this.theme.fg(color, row.glyph);
+			const line = `  ${index === this.selected ? this.theme.fg("accent", "▸") : " "}${glyph} ${row.kind.padEnd(8)} ${row.duration}  ${row.label}  ·  ${row.logFile}`;
+			lines.push(truncateToWidth(line, width));
+		}
+		lines.push("", `  ${this.theme.fg("dim", "↑/↓ select · Enter actions · Escape close · auto-refreshes")}`);
+		return lines;
+	}
+}
+
 export default function humminSubagents(pi: ExtensionAPI): void {
 	const manager = new ProcessManager(join(getAgentDir(), "subagents"), "task");
 	pi.on("session_shutdown", async () => {
@@ -43,7 +137,37 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 	pi.registerCommand?.("background", {
 		description: "List running background tasks and monitors",
 		handler: async (_args, ctx) => {
-			ctx.ui?.notify?.(describeAllProcesses(), "info");
+			if (ctx.mode !== "tui") {
+				ctx.ui?.notify?.(describeAllProcesses(), "info");
+				return;
+			}
+			let action: string | undefined = undefined;
+			while (action !== "Close") {
+				const selected = await ctx.ui?.custom<BackgroundJobRow | undefined>(
+					(tui, theme, kb, done) => new BackgroundPanelComponent(tui, theme, kb, done),
+				);
+				if (!selected) return;
+				action = await ctx.ui?.select(`Background ${selected.kind}: ${selected.label}`, [
+					"View tail",
+					"Cancel",
+					"Close",
+				]);
+				if (!action) return;
+				const job = findProcessJob(selected.id);
+				if (action === "View tail") {
+					ctx.ui?.notify?.(job ? tailText(job) : "Job no longer exists", "info");
+				} else if (action === "Cancel") {
+					if (!job || job.state !== "running") {
+						ctx.ui?.notify?.("Job is not running", "warning");
+						continue;
+					}
+					if (!(await ctx.ui?.confirm?.("Cancel background job", `${selected.kind}: ${selected.label}`))) continue;
+					job.stop();
+					await job.done;
+					refreshBackgroundStatus(ctx.ui);
+					ctx.ui?.notify?.(`Cancelled ${selected.kind}: ${selected.label}`, "info");
+				}
+			}
 		},
 	});
 	pi.registerTool({

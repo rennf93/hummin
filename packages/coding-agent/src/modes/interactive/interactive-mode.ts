@@ -3018,6 +3018,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.session.tree", () => this.showTreeSelector());
 		this.defaultEditor.onAction("app.session.fork", () => this.showUserMessageSelector());
 		this.defaultEditor.onAction("app.session.resume", () => this.showSessionSelector());
+		this.defaultEditor.onAction("app.background.show", () => void this.showBackgroundPanel());
 
 		this.defaultEditor.onChange = (text: string) => {
 			const wasBashMode = this.isBashMode;
@@ -4299,6 +4300,15 @@ export class InteractiveMode {
 			process.removeListener("SIGINT", ignoreSigint);
 			throw error;
 		}
+	}
+
+	/** Open the background panel by running the /background extension command. */
+	private async showBackgroundPanel(): Promise<void> {
+		if (!this.isExtensionCommand("/background")) {
+			this.showStatus("No background command registered (hummin-subagents extension missing)");
+			return;
+		}
+		await this.session.prompt("/background");
 	}
 
 	private async handleFollowUp(): Promise<void> {
