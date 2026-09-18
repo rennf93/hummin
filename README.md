@@ -1,3 +1,7 @@
+<p align="center">
+  <img alt="hummin logo" src="https://raw.githubusercontent.com/rennf93/hummin/main/.github/assets/logo-mark.png" width="320">
+</p>
+
 # hummin
 
 A GLM-native terminal coding agent: the [pi agent harness](https://github.com/earendil-works/pi) (MIT, by Mario Zechner / earendil-works) retuned for Z.ai's GLM models and [colibri](https://github.com/JustVugg/colibri) local inference.
