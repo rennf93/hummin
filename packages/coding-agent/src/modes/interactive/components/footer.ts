@@ -392,7 +392,7 @@ export class FooterComponent implements Component {
 		const todoSummary = this.footerData.getTodoSummary();
 		if (todoSummary) {
 			const [counts, ...rest] = sanitizeStatusText(todoSummary).split(" · ");
-			const detail = rest.length > 0 ? ` ${theme.fg("dim", "· " + rest.join(" · "))}` : "";
+			const detail = rest.length > 0 ? ` ${theme.fg("dim", `· ${rest.join(" · ")}`)}` : "";
 			sortedStatuses.unshift(`${theme.fg("dim", "TODOs")} ${theme.fg("accent", counts)}${detail}`);
 		}
 		if (sortedStatuses.length > 0) {
