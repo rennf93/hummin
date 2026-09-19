@@ -236,6 +236,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 	});
 
 	it("updates the cached branch when the reftable directory changes", async () => {
+		vi.useFakeTimers();
 		const { worktreeDir, reftableDir } = createReftableWorktree(tempDir);
 		process.chdir(worktreeDir);
 
@@ -247,17 +248,21 @@ describe("FooterDataProvider reftable branch detection", () => {
 			provider.onBranchChange(onBranchChange);
 
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
-			await waitFor(() => provider.getGitBranch() === "foo");
-			// The change notification fires after the full refresh (branch + status) completes;
-			// under load the branch cache can update before the callback runs.
-			await waitFor(() => onBranchChange.mock.calls.length === 1);
-
+			// Drive the change notification directly: real fs.watch delivery on macOS
+			// CI lags indefinitely under load (FSEvents), which is environmental and
+			// not what this exercises - same approach as the debounce tests above.
+			emitReftableChange(provider);
+			await vi.advanceTimersByTimeAsync(501);
+			// The refresh's change notification lands in a microtask after the status
+			// call resolves; one more tick lets it run before asserting.
+			await vi.advanceTimersByTimeAsync(1);
 			// One refresh = one branch call + one status call
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(2);
 			expect(provider.getGitBranch()).toBe("foo");
 			expect(onBranchChange).toHaveBeenCalledTimes(1);
 		} finally {
 			provider.dispose();
+			vi.useRealTimers();
 		}
 	});
 

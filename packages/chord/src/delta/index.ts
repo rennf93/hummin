@@ -156,12 +156,26 @@ const MUTATORS = new Set(["push", "pop", "shift", "unshift", "splice", "sort", "
 const MISSING = Symbol("missing");
 type MaybeJson = JsonValue | typeof MISSING;
 
+// Array.prototype.splice with a large item list, without building a large
+// argument list. Node on macOS CI and Bun's JavaScriptCore both raise
+// "Maximum call stack size exceeded" once an apply/spread call carries more
+// than a few thousand arguments — the limit is stack-dependent, so no chunk
+// size is reliably safe. copyWithin and indexed writes never touch the machine
+// stack, and one tail move is also cheaper than re-moving the tail per chunk.
 const spliceItems = (target: unknown[], index: number, remove: number, items: JsonValue[]): JsonValue[] => {
-	const removed = Reflect.apply(Array.prototype.splice, target, [index, remove]) as JsonValue[];
-	const chunkSize = 10_000;
-	for (let offset = 0; offset < items.length; offset += chunkSize) {
-		Reflect.apply(Array.prototype.splice, target, [index + offset, 0, ...items.slice(offset, offset + chunkSize)]);
+	const length = target.length;
+	const start = index < 0 ? Math.max(length + index, 0) : Math.min(index, length);
+	const count = remove < 0 ? 0 : Math.min(remove, length - start);
+	const removed = target.slice(start, start + count) as JsonValue[];
+	const growth = items.length - count;
+	if (growth > 0) {
+		target.length = length + growth;
+		target.copyWithin(start + items.length, start + count, length);
+	} else if (growth < 0) {
+		target.copyWithin(start + items.length, start + count, length);
+		target.length = length + growth;
 	}
+	for (let offset = 0; offset < items.length; offset++) target[start + offset] = items[offset]!;
 	return removed;
 };
 
