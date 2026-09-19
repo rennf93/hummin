@@ -1,6 +1,4 @@
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ackText, agentsConfig, defaultName, formatMessage } from "../extensions/hummin-agents.ts";
 import {
@@ -19,7 +17,9 @@ import {
 } from "../extensions/lib/agents-broker.ts";
 
 function tempDir(): string {
-	return mkdtempSync(join(tmpdir(), "hummin-agents-test-"));
+	// Unix socket paths are limited to ~104 chars on macOS: keep the broker dir
+	// short instead of nesting under the (deep) OS temp dir.
+	return mkdtempSync("/tmp/hummin-agents-test-");
 }
 
 function helloInfo(name: string, project = "/tmp/proj"): HelloInfo {

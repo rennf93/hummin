@@ -12,13 +12,14 @@ import {
 	sandboxOperations,
 	secretReadDenySubpaths,
 } from "../extensions/hummin-sandbox.ts";
+import { CONFIG_DIR_NAME } from "../src/config.ts";
 
 describe("secretReadDenySubpaths", () => {
 	it("excludes ~/.ssh, ~/.gnupg and ~/.hummin/agent", () => {
 		expect(secretReadDenySubpaths("/home/u")).toEqual([
 			join("/home/u", ".ssh"),
 			join("/home/u", ".gnupg"),
-			join("/home/u", ".hummin", "agent"),
+			join("/home/u", CONFIG_DIR_NAME, "agent"),
 		]);
 	});
 });
@@ -45,7 +46,7 @@ describe("buildSeatbeltProfile", () => {
 	it("denies secret paths", () => {
 		expect(profile).toContain(`(subpath "${join(homedir(), ".ssh")}")`);
 		expect(profile).toContain(`(subpath "${join(homedir(), ".gnupg")}")`);
-		expect(profile).toContain(`(subpath "${join(homedir(), ".hummin", "agent")}")`);
+		expect(profile).toContain(`(subpath "${join(homedir(), CONFIG_DIR_NAME, "agent")}")`);
 	});
 
 	it("denies *.env outside the project", () => {
