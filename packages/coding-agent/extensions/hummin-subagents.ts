@@ -392,7 +392,11 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 			const model = args?.model?.trim() || "fast";
 			const label = toolTheme.fg("toolTitle", toolTheme.bold("Task".padEnd(12)));
 			const detail = taskCallDetail(args?.prompt ?? "", model);
-			const suffix = context.executionStarted ? `  ${toolTheme.fg("accent", "· running")}` : "";
+			// No "running" suffix here: renderCall components are not rebuilt when
+			// the call settles, so a cached suffix would claim "running" forever.
+			// Live state lives in /background, the footer segment, and the
+			// collapsible completion message.
+			const suffix = "";
 			const expandedText = new Text(`${label} ${args?.prompt ?? ""}`, 0, 0);
 			const expanded = context.expanded;
 			return {
