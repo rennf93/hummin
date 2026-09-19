@@ -194,11 +194,13 @@ const localAuth = (): ApiKeyAuth => ({
 	},
 });
 
-// qwen-family chat templates take enable_thinking via chat_template_kwargs
-// (llama.cpp applies it per request); other model families register without
-// thinking controls rather than sending them kwargs of unknown meaning.
-function isQwenFamily(modelId: string): boolean {
-	return /^qwen/i.test(modelId);
+// Chat templates that take enable_thinking via chat_template_kwargs
+// (llama.cpp applies it per request): qwen3.8 and nemotron 3.5 both honor the
+// same kwarg (probed live 2026-09-19 - nemotron returns direct content with
+// zero reasoning tokens). Other model families register without thinking
+// controls rather than sending them kwargs of unknown meaning.
+function takesEnableThinking(modelId: string): boolean {
+	return /^(qwen|nemotron)/i.test(modelId);
 }
 
 // Per-engine, per-host providers: the footer and picker badges must say
@@ -346,7 +348,7 @@ export default async function humminLocalExtension(pi: ExtensionAPI): Promise<vo
 					api: "openai-completions",
 					provider: providerId,
 					baseUrl: `${entry.baseUrl}/v1`,
-					reasoning: isQwenFamily(entry.modelId),
+					reasoning: takesEnableThinking(entry.modelId),
 					input: ["text"],
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 					contextWindow: entry.contextWindow,
@@ -359,7 +361,7 @@ export default async function humminLocalExtension(pi: ExtensionAPI): Promise<vo
 						supportsDeveloperRole: false,
 						supportsReasoningEffort: false,
 						maxTokensField: "max_tokens",
-						...(isQwenFamily(entry.modelId) ? { thinkingFormat: "qwen-chat-template" as const } : {}),
+						...(takesEnableThinking(entry.modelId) ? { thinkingFormat: "qwen-chat-template" as const } : {}),
 					},
 					// The picker uses these optional fields for styling. They survive the
 					// provider/model runtime because models are passed by reference.
