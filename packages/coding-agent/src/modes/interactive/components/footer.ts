@@ -367,7 +367,13 @@ export class FooterComponent implements Component {
 						return theme.fg("dim", token);
 				}
 			};
-			const resolveSide = (tokens: string[] | undefined): string => this.joinGroups((tokens ?? []).map(segmentText));
+			// Custom sides join with the subtle dim middot (like the stats row):
+			// with many segments on one line, " | " reads as pipe soup.
+			const resolveSide = (tokens: string[] | undefined): string =>
+				(tokens ?? [])
+					.map(segmentText)
+					.filter((part) => part.length > 0)
+					.join(theme.fg("dim", " · "));
 			lines = [this.alignLeftRight(resolveSide(statusline.left), resolveSide(statusline.right), width), ""];
 		} else {
 			lines = [
