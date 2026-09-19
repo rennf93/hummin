@@ -253,7 +253,7 @@ export class FooterComponent implements Component {
 			const thinkingLevel = state.thinkingLevel || "off";
 			modelParts.push(theme.fg("dim", thinkingLevel === "off" ? "no thinking" : thinkingLevel));
 		}
-		const modelLine = modelParts.join(theme.fg("dim", " + "));
+		const modelLine = `${theme.fg("dim", "·")} ${modelParts.join(theme.fg("dim", " + "))}`;
 
 		// Row 2: diff | git | tokens   |   ctx bar
 		const statGroups: string[] = [];
@@ -318,7 +318,7 @@ export class FooterComponent implements Component {
 			contextPercent === "?"
 				? `${theme.fg("dim", "?")}/${formatTokens(contextWindow)}`
 				: `${theme.fg(meterColor, bar)} ${theme.fg("dim", `${contextPercent}%${autoTag}`)}`;
-		const contextLine = `${theme.fg("dim", "ctx")} ${contextValue}`;
+		const contextLine = `${theme.fg("dim", "·")} ${theme.fg("dim", "ctx")} ${contextValue}`;
 
 		let lines: string[];
 		if (customStatusline && statusline) {
@@ -392,7 +392,7 @@ export class FooterComponent implements Component {
 		const todoSummary = this.footerData.getTodoSummary();
 		if (todoSummary) {
 			const [counts, ...rest] = sanitizeStatusText(todoSummary).split(" · ");
-			const detail = rest.length > 0 ? ` ${theme.fg("dim", `· ${rest.join(" · ")}`)}` : "";
+			const detail = rest.length > 0 ? ` ${theme.fg("dim", "· " + rest.join(" · "))}` : "";
 			sortedStatuses.unshift(`${theme.fg("dim", "TODOs")} ${theme.fg("accent", counts)}${detail}`);
 		}
 		if (sortedStatuses.length > 0) {

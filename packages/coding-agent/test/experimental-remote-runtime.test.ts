@@ -27,11 +27,6 @@ import {
 } from "./experimental-session-support.ts";
 import { KeyedProbe } from "./fixtures/keyed-service.ts";
 
-// vi.waitFor defaults to a 1s timeout, which under loaded CI runners flakes on
-// the durable-server startup paths. 15s keeps the assertion, drops the flake.
-const waitForWithLoad = (fn: () => void | Promise<void>): Promise<void> =>
-	vi.waitFor(fn, { timeout: 15_000, interval: 50 });
-
 const servers = new Set<RunningServer>();
 const clients = new Set<Client>();
 const directories = new Set<string>();
@@ -325,7 +320,7 @@ describe("experimental durable server composition", () => {
 		expect(firstDirectory.state.value?.sessions.map(({ sessionId }) => sessionId)).toEqual(["demo-1", "demo-2"]);
 		expect(secondDirectory.state.value).toEqual(firstDirectory.state.value);
 		await firstManagement.create({ id: "demo-3" }, BACKGROUND_CONTEXT);
-		await waitForWithLoad(() => {
+		await vi.waitFor(() => {
 			expect(firstDirectory.state.value?.sessions.map(({ sessionId }) => sessionId)).toContain("demo-3");
 			expect(secondDirectory.state.value).toEqual(firstDirectory.state.value);
 		});
@@ -337,7 +332,7 @@ describe("experimental durable server composition", () => {
 		expect(firstClient.attachment?.sessionId).toBe("demo-1");
 		expect(secondClient.attachment?.sessionId).toBe("demo-1");
 		await firstManagement.remove("demo-1", BACKGROUND_CONTEXT);
-		await waitForWithLoad(() => {
+		await vi.waitFor(() => {
 			expect(firstClient.attachment).toBeUndefined();
 			expect(secondClient.attachment).toBeUndefined();
 			expect(firstDirectory.state.value?.sessions.map(({ sessionId }) => sessionId)).not.toContain("demo-1");
@@ -378,7 +373,7 @@ describe("experimental durable server composition", () => {
 		expect(secondModels.state.value).toEqual(firstModels.state.value);
 		const previousThinking = firstModels.state.value!.configuration.thinkingLevel;
 		await firstModels.cycleThinking(BACKGROUND_CONTEXT);
-		await waitForWithLoad(() => {
+		await vi.waitFor(() => {
 			expect(firstModels.state.value!.configuration.thinkingLevel).not.toBe(previousThinking);
 			expect(secondModels.state.value).toEqual(firstModels.state.value);
 		});
@@ -574,11 +569,11 @@ describe("experimental durable server composition", () => {
 		const facetHost = await createFacetHost({ facets: [consumer], serviceSources: [services] });
 
 		expect(services.attachment.value).toEqual({ status: "attached", sessionId: "demo-1" });
-		await waitForWithLoad(() => expect(observed).toHaveLength(1));
+		await vi.waitFor(() => expect(observed).toHaveLength(1));
 		expect(observed[0]!.value).toBe("first");
 		const staleReplace = observed[0]!.service.replace;
 		await expect(staleReplace("second", BACKGROUND_CONTEXT)).resolves.toBeUndefined();
-		await waitForWithLoad(() => expect(observed).toHaveLength(2));
+		await vi.waitFor(() => expect(observed).toHaveLength(2));
 		expect(observed[1]!.value).toBe("second");
 		expect(() => staleReplace("late", BACKGROUND_CONTEXT)).toThrow("observation is closed");
 
@@ -622,7 +617,7 @@ describe("experimental durable server composition", () => {
 		expect(result).toMatchObject({ kind: "prompted", text: "deterministic remote answer" });
 		// The prompted result can resolve before the last streamed events cross the connection;
 		// wait for the full set rather than asserting synchronously.
-		await waitForWithLoad(() => {
+		await vi.waitFor(() => {
 			expect(eventTypes).toEqual(
 				expect.arrayContaining([
 					"run_start",
@@ -658,7 +653,7 @@ describe("experimental durable server composition", () => {
 			for (const message of ["first question", "second question"]) {
 				const response = await controller.prompt({ message, images: null }, BACKGROUND_CONTEXT);
 				expect(response).toMatchObject({ accepted: true, operationId: expect.any(String) });
-				await waitForWithLoad(() => {
+				await vi.waitFor(() => {
 					expect(transcript.state.value?.snapshot).toMatchObject({
 						operation: null,
 						lastResult: { operationId: response.operationId },
