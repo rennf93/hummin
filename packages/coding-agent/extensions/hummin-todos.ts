@@ -12,13 +12,13 @@
  */
 
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 type TodoStatus = "pending" | "in_progress" | "completed";
 
-interface Todo {
+export interface Todo {
 	text: string;
 	status: TodoStatus;
 }
@@ -38,9 +38,24 @@ const TodoParams = Type.Object({
 	),
 });
 
+const TODO_STATUS_KEY = "todo";
+
+/** Footer segment text: `TODOs 4/5 · <current item>` or `TODOs 0/3` when nothing in progress. */
+export function formatTodoStatus(todos: Todo[]): string | undefined {
+	if (todos.length === 0) return undefined;
+	const done = todos.filter((t) => t.status === "completed").length;
+	const current = todos.find((t) => t.status === "in_progress");
+	let segment = `TODOs ${done}/${todos.length}`;
+	if (current) {
+		const text = current.text.trim();
+		segment += text.length > 0 ? ` · ${text.length > 60 ? `${text.slice(0, 59)}…` : text}` : "";
+	}
+	return segment;
+}
+
 function renderChecklist(todos: Todo[], theme: Theme, expanded: boolean): string {
 	const done = todos.filter((t) => t.status === "completed").length;
-	let out = theme.fg("muted", `plan ${done}/${todos.length} done`);
+	let out = theme.fg("muted", `TODOs ${done}/${todos.length} done`);
 	const visible = expanded ? todos : todos.slice(0, 6);
 	for (const todo of visible) {
 		if (todo.status === "completed") {
@@ -58,6 +73,7 @@ function renderChecklist(todos: Todo[], theme: Theme, expanded: boolean): string
 }
 
 class TodoListComponent {
+	invalidate(): void {}
 	private todos: Todo[];
 	private theme: Theme;
 	private onClose: () => void;
@@ -95,6 +111,10 @@ class TodoListComponent {
 export default function (pi: ExtensionAPI) {
 	let todos: Todo[] = [];
 
+	const updateStatus = (ui: ExtensionUIContext): void => {
+		ui.setStatus(TODO_STATUS_KEY, formatTodoStatus(todos));
+	};
+
 	const reconstructState = (ctx: ExtensionContext): void => {
 		todos = [];
 		for (const entry of ctx.sessionManager.getBranch()) {
@@ -104,6 +124,7 @@ export default function (pi: ExtensionAPI) {
 			const details = msg.details as TodoDetails | undefined;
 			if (details?.todos) todos = details.todos;
 		}
+		updateStatus(ctx.ui);
 	};
 
 	pi.on("session_start", async (_event, ctx) => reconstructState(ctx));
@@ -122,12 +143,13 @@ export default function (pi: ExtensionAPI) {
 		],
 		parameters: TodoParams,
 
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			todos = params.todos.map((t) => ({ text: t.text, status: t.status }));
+			updateStatus(ctx.ui);
 			const inProgress = todos.find((t) => t.status === "in_progress");
 			const summary = inProgress
-				? `plan: ${inProgress.text}`
-				: `plan: ${todos.filter((t) => t.status === "completed").length}/${todos.length} done`;
+				? `TODOs: ${inProgress.text}`
+				: `TODOs: ${todos.filter((t) => t.status === "completed").length}/${todos.length} done`;
 			return {
 				content: [{ type: "text", text: summary }],
 				details: { todos } as TodoDetails,
@@ -136,7 +158,7 @@ export default function (pi: ExtensionAPI) {
 
 		renderCall(args, theme, _context) {
 			const count = Array.isArray(args.todos) ? args.todos.length : 0;
-			return new Text(theme.fg("toolTitle", theme.bold("todo ")) + theme.fg("muted", `${count} step(s)`), 0, 0);
+			return new Text(theme.fg("toolTitle", theme.bold("TODOs ")) + theme.fg("muted", `${count} step(s)`), 0, 0);
 		},
 
 		renderResult(result, { expanded }, theme, _context) {
