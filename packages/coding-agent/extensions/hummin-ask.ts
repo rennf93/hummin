@@ -1,5 +1,12 @@
 /** ask_user: structured multi-choice question rendered as a TUI selector. */
-import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
+import {
+	truncateToWidth,
+	visibleWidth,
+	type Component,
+	type KeybindingsManager,
+	type TUI,
+} from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 export const QUESTION_MAX = 500;
@@ -7,6 +14,8 @@ export const CHOICE_MAX = 80;
 export const CHOICES_MIN = 2;
 export const CHOICES_MAX = 6;
 export const FREE_TEXT_LABEL = "Other...";
+export const QUESTION_HINT = "↑/↓ navigate · enter select · escape cancel · tab free-text";
+export const QUESTION_HINT_PLAIN = "↑/↓ navigate · enter select · escape cancel";
 
 export interface AskUserResult {
 	choice: string;
@@ -60,17 +69,143 @@ function toolResult(out: AskUserResult): { content: { type: "text"; text: string
 	return { content: [{ type: "text", text }], details: out };
 }
 
-async function askInteractive(
+/**
+ * Bordered question selector in the fleet-panel visual language.
+ * One instance per ask; `done` fires exactly once; dispose removes the abort listener.
+ */
+export class QuestionComponent implements Component {
+	private selected = 0;
+	private disposed = false;
+	private readonly options: readonly string[];
+	private readonly onAbort: () => void;
+	private readonly question: string;
+	private readonly allowFreeText: boolean;
+	private readonly done: (picked: string | undefined) => void;
+	private readonly tui: TUI;
+	private readonly theme: Theme;
+	private readonly kb: KeybindingsManager;
+	private readonly signal: AbortSignal | undefined;
+
+	constructor(
+		tui: TUI,
+		theme: Theme,
+		kb: KeybindingsManager,
+		question: string,
+		options: readonly string[],
+		allowFreeText: boolean,
+		done: (picked: string | undefined) => void,
+		signal: AbortSignal | undefined,
+	) {
+		this.tui = tui;
+		this.theme = theme;
+		this.kb = kb;
+		this.question = question;
+		this.options = options;
+		this.allowFreeText = allowFreeText;
+		this.done = done;
+		this.signal = signal;
+		this.onAbort = () => this.finish(undefined);
+		signal?.addEventListener("abort", this.onAbort, { once: true });
+	}
+
+	/** Resolve exactly once; safe against double done/abort races. */
+	private finish(picked: string | undefined): void {
+		if (this.disposed) return;
+		this.disposed = true;
+		this.signal?.removeEventListener("abort", this.onAbort);
+		this.done(picked);
+		this.tui.requestRender();
+	}
+
+	handleInput(data: string): void {
+		if (this.disposed) return;
+		if (this.kb.matches(data, "tui.select.cancel")) {
+			this.finish(undefined);
+			return;
+		}
+		if (this.kb.matches(data, "tui.select.up"))
+			this.selected = (this.selected + this.options.length - 1) % this.options.length;
+		else if (this.kb.matches(data, "tui.select.down")) this.selected = (this.selected + 1) % this.options.length;
+		else if (this.kb.matches(data, "tui.select.confirm")) {
+			this.finish(this.options[this.selected]);
+			return;
+		}
+		this.tui.requestRender();
+	}
+
+	dispose(): void {
+		this.disposed = true;
+		this.signal?.removeEventListener("abort", this.onAbort);
+	}
+
+	invalidate(): void {}
+
+	private padLine(content: string, width: number): string {
+		const inner = truncateToWidth(` ${content} `, Math.max(1, width - 2));
+		const pad = Math.max(0, width - 2 - visibleWidth(inner));
+		return `│${inner}${" ".repeat(pad)}│`;
+	}
+
+	render(width: number): string[] {
+		const top = `╭${"─".repeat(Math.max(0, width - 2))}╮`;
+		const bottom = `╰${"─".repeat(Math.max(0, width - 2))}╯`;
+		const lines: string[] = [
+			top,
+			this.padLine(this.theme.fg("accent", this.theme.bold(this.question)), width),
+			this.padLine("", width),
+		];
+		for (const [index, option] of this.options.entries()) {
+			const marker = index === this.selected ? this.theme.fg("accent", "▸") : " ";
+			const number = this.theme.fg("dim", `${index + 1}.`);
+			lines.push(this.padLine(`${marker} ${number} ${option}`, width));
+		}
+		lines.push(
+			this.padLine("", width),
+			this.padLine(this.theme.fg("dim", this.allowFreeText ? QUESTION_HINT : QUESTION_HINT_PLAIN), width),
+			bottom,
+		);
+		return lines;
+	}
+}
+
+/** Race a host UI promise against abort so the tool can never outlive its signal. */
+async function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T | undefined> {
+	if (!signal) return await promise;
+	if (signal.aborted) return undefined;
+	return await new Promise<T | undefined>((resolve, reject) => {
+		let settled = false;
+		const onAbort = () => settle(() => resolve(undefined));
+		const settle = (fn: () => void) => {
+			if (settled) return;
+			settled = true;
+			signal.removeEventListener("abort", onAbort);
+			fn();
+		};
+		signal.addEventListener("abort", onAbort, { once: true });
+		promise.then(
+			(value) => settle(() => resolve(value)),
+			(err) => settle(() => reject(err)),
+		);
+	});
+}
+
+export async function askInteractive(
 	question: string,
 	choices: readonly string[],
 	allowFreeText: boolean,
 	ctx: ExtensionContext,
 	signal: AbortSignal | undefined,
 ): Promise<AskUserResult> {
-	const picked = await ctx.ui.select(question, buildOptions(choices, allowFreeText), { signal });
+	const options = buildOptions(choices, allowFreeText);
+	const picked = await withAbort(
+		ctx.ui.custom<string | undefined>(
+			(tui, theme, kb, done) => new QuestionComponent(tui, theme, kb, question, options, allowFreeText, done, signal),
+		),
+		signal,
+	);
 	if (signal?.aborted || picked === undefined) return result("", true);
 	if (picked !== FREE_TEXT_LABEL) return result(picked, false);
-	const text = await ctx.ui.input(question, "Type your answer", { signal });
+	const text = await withAbort(ctx.ui.input(question, "Type your answer", { signal }), signal);
 	const trimmed = (text ?? "").trim();
 	if (signal?.aborted || !trimmed) return result("", true);
 	return result(trimmed, false);
