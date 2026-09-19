@@ -7,9 +7,9 @@ import {
 	type ExtensionContext,
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import type { KeybindingsManager, TUI } from "@earendil-works/pi-tui";
+import type { Component, KeybindingsManager, TUI } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	allProcessJobs,
@@ -18,9 +18,12 @@ import {
 	describeJob,
 	findProcessJob,
 	jobRows,
+	type ProcessJob,
+	formatDuration,
 	outputTail,
 	ProcessManager,
 	refreshBackgroundStatus,
+	stateGlyph,
 } from "./lib/processes.ts";
 
 export function resolveTaskModel(
@@ -45,6 +48,156 @@ export function resolveTaskModel(
 	if ("humminOffline" in model && model.humminOffline)
 		throw new Error("Selected model is offline. Start its server first.");
 	return model;
+}
+
+// ============================================================================
+// Row shaping helpers (pure; unit-tested in test/hummin-subagents-render.test.ts)
+// ============================================================================
+
+/** Collapse a prompt to the single-line label shown on task rows. */
+export function promptLabel(prompt: string, max = 72): string {
+	const summary = prompt.replace(/\s+/g, " ").trim();
+	if (!summary) return "(empty prompt)";
+	return summary.length > max ? `${summary.slice(0, max)}…` : summary;
+}
+
+/** Detail section of a task row: quoted prompt label plus model id. */
+export function taskCallDetail(prompt: string, model: string): string {
+	return `"${promptLabel(prompt)}" · ${model}`;
+}
+
+/**
+ * Collapsed one-line row: padded label + detail trimmed to the remaining
+ * width, with a suffix that is always kept visible (bash renderer pattern).
+ */
+export function buildCollapsedRow(width: number, label: string, detail: string, suffix: string): string {
+	const prefixWidth = visibleWidth(label) + 1;
+	const budget = Math.max(0, width - prefixWidth - visibleWidth(suffix));
+	return `${label} ${truncateToWidth(detail, budget, "…")}${suffix}`;
+}
+
+/** Structured info carried by hummin-task completion messages. */
+export interface TaskCompletionInfo {
+	label: string;
+	model: string;
+	state: string;
+	exitCode: number | null;
+	durationMs: number | null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+/** Parse "2m14s"/"45s"/"1h3m5s" durations from describeJob fallback text. */
+export function parseDuration(text: string): number | null {
+	const match = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(text.trim());
+	if (!match) return null;
+	const [, h, m, s] = match;
+	if (h === null && m === null && s === null) return null;
+	return Number(h ?? 0) * 3_600_000 + Number(m ?? 0) * 60_000 + Number(s ?? 0) * 1000;
+}
+
+/**
+ * Build completion info from the message details object, falling back to
+ * parsing the describeJob() text so older messages still render structured
+ * info. Text form: `task <id> · <label> · <state> (exit N, <duration>)`.
+ */
+export function parseTaskCompletion(content: string, details?: unknown): TaskCompletionInfo {
+	if (isRecord(details) && typeof details.label === "string" && typeof details.model === "string") {
+		return {
+			label: details.label,
+			model: details.model,
+			state: typeof details.state === "string" ? details.state : "completed",
+			exitCode: typeof details.exitCode === "number" ? details.exitCode : null,
+			durationMs: typeof details.durationMs === "number" ? details.durationMs : null,
+		};
+	}
+	const firstLine = content.split("\n")[0] ?? "";
+	const label = /· (.*?) · (?:running|completed|failed|cancelled|timed_out)/.exec(firstLine)?.[1] ?? firstLine;
+	const state = /· (running|completed|failed|cancelled|timed_out)/.exec(firstLine)?.[1] ?? "completed";
+	const paren = /\((.*)\)$/.exec(firstLine)?.[1] ?? "";
+	const exit = /exit (-?\d+|none)/.exec(paren)?.[1];
+	const duration = /,\s*(\S+)$/.exec(paren)?.[1];
+	return {
+		label,
+		model: "",
+		state,
+		exitCode: exit === undefined || exit === "none" ? null : Number(exit),
+		durationMs: duration ? parseDuration(duration) : null,
+	};
+}
+
+/** Structured info parsed from hummin-monitor notification text. */
+export interface MonitorNoticeInfo {
+	id: string;
+	kind: "output" | "lifecycle";
+	lines: number | null;
+	state: string | null;
+	exitCode: number | null;
+	/** Short detail for the collapsed row: command match/summary or state. */
+	detail: string;
+}
+
+/**
+ * Parse monitor messages. Text forms: `Monitor <id> output (untrusted
+ * command data):\n<lines>` and `Monitor <id>: <state> (exit N) ...`.
+ */
+export function parseMonitorNotice(content: string): MonitorNoticeInfo {
+	const output = /^Monitor (\S+) output \(untrusted command data\):\n?/.exec(content);
+	if (output) {
+		const rest = content.slice(output[0].length);
+		const lines = rest ? rest.split("\n").length : 0;
+		return { id: output[1], kind: "output", lines, state: null, exitCode: null, detail: output[1] };
+	}
+	const lifecycle = /^Monitor (\S+): (running|completed|failed|cancelled|timed_out)(?: \(exit (-?\d+|none)\))?/.exec(
+		content,
+	);
+	if (lifecycle) {
+		return {
+			id: lifecycle[1],
+			kind: "lifecycle",
+			lines: null,
+			state: lifecycle[2],
+			exitCode: lifecycle[3] === undefined || lifecycle[3] === "none" ? null : Number(lifecycle[3]),
+			detail: `${lifecycle[2]} (exit ${lifecycle[3] ?? "none"})`,
+		};
+	}
+	return { id: "?", kind: "lifecycle", lines: null, state: null, exitCode: null, detail: content.split("\n")[0] ?? "" };
+}
+
+/**
+ * Collapsible notice component for custom messages. Custom message renderers
+ * are rebuilt with `options.expanded` whenever the transcript toggles output
+ * expansion, so they CAN participate in expand/collapse; default is collapsed
+ * to a single shaped row and the full report is shown when expanded.
+ */
+class NoticeComponent implements Component {
+	expanded = false;
+	private readonly collapsedLine: (width: number) => string;
+	private readonly body: Text | undefined;
+
+	constructor(collapsedLine: (width: number) => string, bodyText: string | undefined) {
+		this.collapsedLine = collapsedLine;
+		this.body = bodyText ? new Text(bodyText, 0, 0) : undefined;
+	}
+
+	render(width: number): string[] {
+		if (this.expanded && this.body) return this.body.render(width);
+		return [this.collapsedLine(width)];
+	}
+
+	invalidate(): void {
+		this.body?.invalidate();
+	}
+}
+
+function messageText(message: { content: string | Array<{ type: string; text?: string }> }): string {
+	if (typeof message.content === "string") return message.content;
+	return message.content
+		.filter((block) => block.type === "text")
+		.map((block) => block.text ?? "")
+		.join("\n");
 }
 
 /** Last 30 lines of a job's output, preferring the on-disk log. */
@@ -131,6 +284,38 @@ class BackgroundPanelComponent {
 
 export default function humminSubagents(pi: ExtensionAPI): void {
 	const manager = new ProcessManager(join(getAgentDir(), "subagents"), "task");
+	// Collapsible completion rows for background task reports. Collapsed by
+	// default: glyph, label, exit, duration. Expanded shows the full report.
+	// extension load. Optional call: headless fakes in tests omit it.
+	pi.registerMessageRenderer?.("hummin-task", (message, options, theme) => {
+		const text = messageText(message);
+		const info = parseTaskCompletion(text, message.details);
+		const color = info.state === "completed" ? "success" : info.state === "running" ? "accent" : "error";
+		const label = theme.fg("toolTitle", theme.bold("Task completed".padEnd(12)));
+		const glyph = theme.fg(color, stateGlyph(info.state as ProcessJob["state"]));
+		const detail = info.model ? `${info.label} · ${info.model}` : info.label;
+		const suffix = `  ${theme.fg("muted", `· exit ${info.exitCode ?? "none"}${info.durationMs === null ? "" : ` · ${formatDuration(info.durationMs)}`}`)}`;
+		const component = new NoticeComponent(
+			(width: number) => buildCollapsedRow(width, `${glyph} ${label}`, detail, suffix),
+			text,
+		);
+		component.expanded = options.expanded;
+		return component;
+	});
+	// Collapsible one-line rows for monitor notifications (delivered by the
+	// monitor extension, which sends no details object - the renderer parses
+	// the known text shape). Collapsed: `Monitor · <id> · N lines` or the
+	// lifecycle state; expanded shows the captured output.
+	pi.registerMessageRenderer?.("hummin-monitor", (message, options, theme) => {
+		const text = messageText(message);
+		const info = parseMonitorNotice(text);
+		const label = theme.fg("toolTitle", theme.bold("Monitor".padEnd(12)));
+		const detail = info.kind === "output" ? `${info.detail} · ${info.lines ?? 0} lines` : info.detail;
+		const suffix = info.state ? `  ${theme.fg("muted", `· ${info.state}`)}` : "";
+		const component = new NoticeComponent((width: number) => buildCollapsedRow(width, label, detail, suffix), text);
+		component.expanded = options.expanded;
+		return component;
+	});
 	pi.on("session_shutdown", async () => {
 		await manager.close();
 	});
@@ -187,6 +372,25 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 			timeout_sec: Type.Optional(Type.Number({ minimum: 1, maximum: 86400 })),
 			background: Type.Optional(Type.Boolean()),
 		}),
+		// Collapsed call row mirrors the shell renderers: padded label, prompt
+		// label + model trimmed to the viewport, and a state suffix.
+		renderCall(args, toolTheme, context) {
+			const model = args?.model?.trim() || "fast";
+			const label = toolTheme.fg("toolTitle", toolTheme.bold("Task".padEnd(12)));
+			const detail = taskCallDetail(args?.prompt ?? "", model);
+			const suffix = context.executionStarted ? `  ${toolTheme.fg("accent", "· running")}` : "";
+			const expandedText = new Text(`${label} ${args?.prompt ?? ""}`, 0, 0);
+			const expanded = context.expanded;
+			return {
+				render(width: number): string[] {
+					if (expanded) return expandedText.render(width);
+					return [buildCollapsedRow(width, label, detail, suffix)];
+				},
+				invalidate(): void {
+					expandedText.invalidate();
+				},
+			};
+		},
 		async execute(_id, params, signal, _update, ctx) {
 			const model = resolveTaskModel(params.model, ctx);
 			const cwd = resolve(ctx.cwd, params.cwd ?? ".");
@@ -212,8 +416,20 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 							// Exactly-once holds without a delivery-id: ProcessManager.finish is
 							// once-guarded (settled flag) and this callback fires synchronously
 							// from it, so sendMessage runs at most once per job.
+							const duration = Date.now() - finished.startedAt;
 							pi.sendMessage(
-								{ customType: "hummin-task", content: describeJob(finished), display: true },
+								{
+									customType: "hummin-task",
+									content: describeJob(finished),
+									display: true,
+									details: {
+										label: `"${what}"`,
+										model: `${model.provider}/${model.id}`,
+										state: finished.state,
+										exitCode: finished.exitCode,
+										durationMs: duration,
+									},
+								},
 								{ deliverAs: "followUp", triggerTurn: true },
 							);
 						}
