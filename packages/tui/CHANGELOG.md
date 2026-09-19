@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- Vim modal editing for the input editor (`editorMode: "vim"`): motions, `x`/`dw`/`dd`/`cw`, yank/put via the kill ring, undo, and a dim `-- INSERT --` / `-- NORMAL --` border indicator. Default editing behavior is unchanged.
+- Slash-command autocomplete groups commands under dim category headers, with an exact-match group promoted first.
+- Scrollbar index markers (user/turn glyphs) now render in regular mode, not only fullscreen.
+
 ### Changed
 
 - Reduced fuzzy search latency for long texts by using native substring search instead of scanning each character in JavaScript ([#9267](https://github.com/earendil-works/pi/issues/9267)).

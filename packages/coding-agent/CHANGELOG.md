@@ -2,9 +2,35 @@
 
 ## [Unreleased]
 
+### Added
+
+- Agent teamwork: inter-agent messaging across terminals and projects - UDS broker with offline inbox and replay (`agent_send`, `agent_inbox`, `/agents`, `/agent-name`), and a shared cross-session task board (`task_board`, `/team`).
+- Cron scheduler: schedule detached `hummin -p` wake-ups per project (`cron_create`/`cron_list`/`cron_delete`, `/cron`); single-scheduler lock, one queued wake per entry.
+- MCP client: stdio JSON-RPC transport for `mcpServers` in settings (project entries trust-gated); tools register as `mcp_<server>_<tool>`; `/mcp` status panel with restart.
+- LSP client for TypeScript via `typescript-language-server`: `lsp_diagnostics`, `lsp_definition`, `lsp_references`, `lsp_hover` (1-based coordinates); auto-activates on tsconfig/jsconfig projects; `/lsp` status panel.
+- `ask_user` tool: structured multiple-choice questions through the TUI with optional free text; sequential asks no longer hang; fleet-style bordered question panel.
+- Bash sandboxing: macOS seatbelt / Linux bubblewrap workspace mode (writes limited to the working directory and temp, secrets unreadable, optional network deny) with real capability probing; `/sandbox` toggle; spawned task children inherit the mode.
+- Declarative hooks: `hooks.json` (global and trust-gated project) runs shell commands on `tool_call`, `tool_result`, `agent_start`, and `agent_end`; `tool_call` hooks can block with a reason; `/hooks` table and reload.
+- BashGuard advisory matrix: in-band warnings for destructive commands, out-of-tree `sed -i`, and outside-cwd writes; opt-in blocking and read-only deny mode (`/bashguard`).
+- Usage visibility: `/context` (system prompt, tools, conversation, cache-hit ratio, compaction trigger; est vs exact labeled) and `/cost` (per-model totals, served-locally vs cloud split).
+- Footer navigator: `alt+down` (or `down` on an empty editor) opens a selectable list of Background tasks, TODOs, Agents, and Fleet, each opening its panel; native styled TODOs footer segment (`TODOs x/y · current item`).
+- Background panel: `ctrl+b` or `/background` opens a live panel with view-tail/cancel actions, and `ctrl+x` stops the selected running task/monitor or clears a finished one; the footer status reports counts by kind ("2 tasks, 1 monitor").
+- Fleet: selecting an offline fleet model in `/model` offers to start its server first (`fleet.autoStart` skips the prompt), with readiness-gated selection via the shared fleet-actions library.
+
+### Changed
+
+- Background tasks and monitors survive agent interrupts: the turn's abort signal is no longer forwarded to background jobs (foreground tasks remain abortable).
+- Task rows show what is running (`Task  "<prompt>" · model`); background task completions and monitor notices render as collapsible one-line rows instead of always-expanded blocks.
+- The plan checklist is labeled "TODOs" everywhere and an always-current footer segment shows progress and the current item.
+- Custom `statusline.left`/`statusline.right` segments and the default footer right side use dim middot separators; vim modal editing is available via `editorMode: "vim"` (`HUMMIN_VIM=1`).
+
 ### Fixed
 
 - Collapsed bash tool rows are a single line again: the command is collapsed to one line and truncated to the terminal width, with the duration/status suffix preserved; the full multi-line command and output remain available expanded.
+- Fixed the sandbox extension hard-blocking bash in the default (`off`) mode; plain execution is used unless workspace mode is active, with an actionable `[Sandbox]` message when a mechanism is unavailable.
+- Fixed the agents broker crashing extension startup when two sessions raced for the broker socket; the loser now connects as a client.
+- Fixed the seatbelt capability probe using `/bin/true`, which does not exist on macOS.
+- Fixed background task completion notices being delivered twice.
 
 ## [1.0.6] - 2026-09-18
 
