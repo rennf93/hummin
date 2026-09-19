@@ -253,7 +253,7 @@ export class FooterComponent implements Component {
 			const thinkingLevel = state.thinkingLevel || "off";
 			modelParts.push(theme.fg("dim", thinkingLevel === "off" ? "no thinking" : thinkingLevel));
 		}
-		const modelLine = `${theme.fg("dim", "·")} ${modelParts.join(theme.fg("dim", " + "))}`;
+		const modelLine = modelParts.join(theme.fg("dim", " + "));
 
 		// Row 2: diff | git | tokens   |   ctx bar
 		const statGroups: string[] = [];
@@ -318,7 +318,7 @@ export class FooterComponent implements Component {
 			contextPercent === "?"
 				? `${theme.fg("dim", "?")}/${formatTokens(contextWindow)}`
 				: `${theme.fg(meterColor, bar)} ${theme.fg("dim", `${contextPercent}%${autoTag}`)}`;
-		const contextLine = `${theme.fg("dim", "·")} ${theme.fg("dim", "ctx")} ${contextValue}`;
+		const contextLine = `${theme.fg("dim", "ctx")} ${contextValue}`;
 
 		let lines: string[];
 		if (customStatusline && statusline) {
