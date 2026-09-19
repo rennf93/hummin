@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Collapsed bash tool rows are a single line again: the command is collapsed to one line and truncated to the terminal width, with the duration/status suffix preserved; the full multi-line command and output remain available expanded.
+
 ## [1.0.6] - 2026-09-18
 
 ### Changed

@@ -100,3 +100,42 @@ it("delivers a background completion once, via followUp only (no duplicate notif
 	expect(sendMessage.mock.calls[0][1]).toMatchObject({ deliverAs: "followUp", triggerTurn: true });
 	expect(notify).not.toHaveBeenCalledWith(expect.stringContaining("child output"), expect.anything());
 });
+
+it("background task survives turn-signal abort (signal not forwarded)", async () => {
+	const dir = newDirectory("hummin-detached-");
+	vi.stubEnv(ENV_AGENT_DIR, dir);
+	const tools = new Map<string, ToolDefinition>();
+	const sendMessage = vi.fn();
+	const notify = vi.fn();
+	subagentExtension({
+		registerTool: (tool: ToolDefinition) => tools.set(tool.name, tool),
+		sendMessage,
+		on: () => {},
+	} as unknown as ExtensionAPI);
+	const ctx = {
+		cwd: dir,
+		ui: { notify, setStatus: () => {} },
+		modelRegistry: { getAvailable: () => [{ provider: "fleet-host", id: "Org/Model" }] },
+	} as unknown as ExtensionContext;
+	const binary = join(dir, "hummin");
+	// Child runs long enough for the abort to land mid-run.
+	writeFileSync(binary, `#!${process.execPath}\nsetTimeout(() => { console.log("child output"); }, 300);\n`);
+	chmodSync(binary, 0o755);
+	vi.stubEnv("PATH", `${dir}:${process.env.PATH}`);
+	const controller = new AbortController();
+	const execution = tools
+		.get("task")!
+		.execute(
+			"child",
+			{ prompt: "test", model: "fleet-host/Org/Model", background: true },
+			controller.signal,
+			undefined,
+			ctx,
+		);
+	setTimeout(() => controller.abort(), 50);
+	await expect.poll(() => sendMessage.mock.calls.length, { timeout: 5000 }).toBe(1);
+	// The followUp must report completion, not cancellation: interrupting the
+	// agent must not cancel background work.
+	expect(String(sendMessage.mock.calls[0][0].content)).toContain("completed");
+	await execution;
+});

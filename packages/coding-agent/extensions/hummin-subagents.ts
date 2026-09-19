@@ -200,7 +200,11 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 				kind: "task",
 				label: `"${what}" · ${model.provider}/${model.id}`,
 				timeoutMs: (params.timeout_sec ?? 600) * 1000,
-				signal,
+				// Background tasks outlive the turn: they must NOT inherit the
+				// tool-call AbortSignal, or interrupting the agent (escape) would
+				// cancel every job spawned during the run. Only foreground tasks
+				// are abortable via the turn signal.
+				signal: params.background ? undefined : signal,
 				onComplete: params.background
 					? (finished) => {
 							// Delivery dedupe: the followUp message renders the summary, so a

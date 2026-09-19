@@ -102,7 +102,10 @@ export default function humminMonitor(pi: ExtensionAPI): void {
 				cwd: ctx.cwd,
 				kind: "monitor",
 				label: params.command,
-				signal,
+				// Monitors are background by definition: interrupting the agent
+				// must not cancel them. Lifecycle = timeout, explicit stop, or
+				// session shutdown.
+				signal: undefined,
 				timeoutMs: (params.timeout_sec ?? 3600) * 1000,
 				onOutput: (text) => buffer.push(text),
 				onComplete: (finished) => {
