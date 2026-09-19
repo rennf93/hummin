@@ -101,6 +101,7 @@ function createFooterData(): ReadonlyFooterDataProvider {
 		getGitRepoName: () => "hummin",
 		getGitStatus: () => null,
 		getExtensionStatuses: () => new Map<string, string>([["bg", "1 background"]]),
+		getTodoSummary: () => undefined,
 		getAvailableProviderCount: () => 1,
 		onBranchChange: () => () => {},
 	};

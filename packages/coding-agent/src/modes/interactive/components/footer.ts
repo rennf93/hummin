@@ -383,11 +383,19 @@ export class FooterComponent implements Component {
 			];
 		}
 
-		// Add extension statuses on a single line, sorted by key alphabetically
-		if (extensionStatuses.size > 0) {
-			const sortedStatuses = Array.from(extensionStatuses.entries())
-				.sort(([a], [b]) => a.localeCompare(b))
-				.map(([, text]) => sanitizeStatusText(text));
+		// Add extension statuses on a single line, sorted by key alphabetically.
+		// The "todo" key is excluded: it renders natively as a styled segment below.
+		const sortedStatuses = Array.from(extensionStatuses.entries())
+			.sort(([a], [b]) => a.localeCompare(b))
+			.filter(([key]) => key !== "todo")
+			.map(([, text]) => sanitizeStatusText(text));
+		const todoSummary = this.footerData.getTodoSummary();
+		if (todoSummary) {
+			const [counts, ...rest] = sanitizeStatusText(todoSummary).split(" · ");
+			const detail = rest.length > 0 ? ` ${theme.fg("dim", "· " + rest.join(" · "))}` : "";
+			sortedStatuses.unshift(`${theme.fg("dim", "TODOs")} ${theme.fg("accent", counts)}${detail}`);
+		}
+		if (sortedStatuses.length > 0) {
 			const statusLine = sortedStatuses.join(" ");
 			// Truncate to terminal width with dim ellipsis for consistency with footer style
 			lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));

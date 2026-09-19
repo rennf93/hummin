@@ -1,5 +1,13 @@
-import { Editor, type EditorOptions, type EditorTheme, type TUI, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	Editor,
+	type EditorOptions,
+	type EditorTheme,
+	matchesKey,
+	type TUI,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
+import { matchesFooterNavigatorFastPath } from "../../../core/keybindings.ts";
 import type { StatusIndicator } from "./status-indicator.ts";
 
 export type CustomEditorOptions = EditorOptions & {
@@ -146,9 +154,27 @@ export class CustomEditor extends Editor {
 			return;
 		}
 
-		// Check all other app actions
+		// Footer navigator fast path: with an empty editor, the plain down arrow
+		// (when "down" resolves as part of app.footer.navigate) opens the navigator.
+		if (
+			this.getText().length === 0 &&
+			!this.isShowingAutocomplete() &&
+			matchesFooterNavigatorFastPath(this.keybindings, data)
+		) {
+			const handler = this.actionHandlers.get("app.footer.navigate");
+			if (handler) {
+				handler();
+				return;
+			}
+		}
+
+		// Check all other app actions. With text in the editor, the plain down arrow
+		// (an app.footer.navigate default) falls through to cursor movement instead.
 		for (const [action, handler] of this.actionHandlers) {
 			if (action !== "app.interrupt" && action !== "app.exit" && this.keybindings.matches(data, action)) {
+				if (action === "app.footer.navigate" && this.getText().length > 0 && matchesKey(data, "down")) {
+					continue;
+				}
 				handler();
 				return;
 			}

@@ -27,12 +27,16 @@ import {
 	CombinedAutocompleteProvider,
 	type Component,
 	Container,
+	type Focusable,
 	fuzzyFilter,
 	getCapabilities,
+	getKeybindings,
 	hyperlink,
 	Markdown,
 	MouseRegion,
 	matchesKey,
+	type SelectItem,
+	SelectList,
 	Spacer,
 	setCapabilityOverrides,
 	setKeybindings,
@@ -85,7 +89,12 @@ import type {
 	UserBashEventResult,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
-import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
+import {
+	buildFooterNavigatorRows,
+	FooterDataProvider,
+	type FooterNavItem,
+	type ReadonlyFooterDataProvider,
+} from "../../core/footer-data-provider.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { createCompactionSummaryMessage } from "../../core/messages.ts";
@@ -172,6 +181,7 @@ import {
 	getAvailableThemesWithPaths,
 	getEditorTheme,
 	getMarkdownTheme,
+	getSelectListTheme,
 	getThemeByName,
 	highlightCode,
 	onThemeChange,
@@ -260,6 +270,70 @@ class ExpandableText extends Text implements Expandable {
 
 	setExpanded(expanded: boolean): void {
 		this.setText(expanded ? this.getExpandedText() : this.getCollapsedText());
+	}
+}
+
+/**
+ * Popup listing actionable footer elements (background tasks, TODOs, agents, fleet).
+ * Enter routes to the panel's slash command; Escape cancels.
+ */
+class FooterNavigatorComponent extends Container implements Focusable {
+	private selectList: SelectList;
+	private onSelect: (item: FooterNavItem) => void;
+	private onCancel: () => void;
+	private rows: Array<{ item: FooterNavItem; select: SelectItem }>;
+	private _focused = false;
+
+	constructor(items: FooterNavItem[], onSelect: (item: FooterNavItem) => void, onCancel: () => void) {
+		super();
+		this.onSelect = onSelect;
+		this.onCancel = onCancel;
+		this.rows = items.map((item) => ({ item, select: { value: item.id, label: item.label } }));
+
+		this.addChild(new Text(theme.fg("accent", "Footer"), 0, 0));
+		this.addChild(
+			new Text(
+				theme.fg(
+					"dim",
+					`${keyDisplayText("tui.select.confirm")} open · ${keyDisplayText("tui.select.cancel")} close`,
+				),
+				0,
+				0,
+			),
+		);
+		this.addChild(new Spacer(1));
+		this.selectList = new SelectList(
+			this.rows.map((row) => row.select),
+			Math.max(1, Math.min(this.rows.length, 10)),
+			getSelectListTheme(),
+		);
+		this.selectList.onSelect = (selected) => {
+			const row = this.rows.find((candidate) => candidate.select.value === selected.value);
+			if (row) this.onSelect(row.item);
+		};
+		this.selectList.onCancel = () => this.onCancel();
+		this.addChild(this.selectList);
+	}
+
+	get focused(): boolean {
+		return this._focused;
+	}
+
+	set focused(value: boolean) {
+		this._focused = value;
+	}
+
+	handleInput(data: string): void {
+		if (getKeybindings().matches(data, "tui.select.cancel")) {
+			this.onCancel();
+			return;
+		}
+		this.selectList.handleInput(data);
+	}
+
+	invalidate(): void {
+		super.invalidate();
+		this.selectList.invalidate?.();
 	}
 }
 
@@ -2204,6 +2278,10 @@ export class InteractiveMode {
 	 * Set extension status text in the footer.
 	 */
 	private setExtensionStatus(key: string, text: string | undefined): void {
+		if (key === "todo") {
+			// Mirrored to the provider so the footer can render the TODOs segment natively styled
+			this.footerDataProvider.setTodoSummary(text);
+		}
 		this.footerDataProvider.setExtensionStatus(key, text);
 		this.ui.requestRender();
 	}
@@ -3020,6 +3098,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.session.fork", () => this.showUserMessageSelector());
 		this.defaultEditor.onAction("app.session.resume", () => this.showSessionSelector());
 		this.defaultEditor.onAction("app.background.show", () => void this.showBackgroundPanel());
+		this.defaultEditor.onAction("app.footer.navigate", () => this.showFooterNavigator());
 
 		this.defaultEditor.onChange = (text: string) => {
 			const wasBashMode = this.isBashMode;
@@ -4310,6 +4389,35 @@ export class InteractiveMode {
 			return;
 		}
 		await this.session.prompt("/background");
+	}
+
+	/** Open the footer navigator popup listing actionable footer segments. */
+	private showFooterNavigator(): void {
+		const items = buildFooterNavigatorRows({
+			backgroundStatus: this.footerDataProvider.getExtensionStatuses().get("bg"),
+			todoSummary: this.footerDataProvider.getTodoSummary(),
+			agentsAvailable: this.isExtensionCommand("/agents"),
+			fleetAvailable: this.isExtensionCommand("/fleet"),
+		});
+
+		this.showSelector((done) => {
+			const navigator = new FooterNavigatorComponent(
+				items,
+				(item) => {
+					done();
+					if (this.isExtensionCommand(item.command)) {
+						void this.session.prompt(item.command);
+					} else {
+						this.showStatus(`${item.command} is not available`);
+					}
+				},
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+			);
+			return { component: navigator, focus: navigator };
+		});
 	}
 
 	private async handleFollowUp(): Promise<void> {

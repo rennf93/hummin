@@ -176,6 +176,7 @@ export class FooterDataProvider {
 	private static readonly WATCH_DEBOUNCE_MS = 500;
 
 	private extensionStatuses = new Map<string, string>();
+	private todoSummary: string | undefined = undefined;
 	private cachedBranch: string | null | undefined = undefined;
 	private cachedStatus: GitStatusCounts | null | undefined = undefined;
 	private gitPaths: GitPaths | null | undefined = undefined;
@@ -235,6 +236,16 @@ export class FooterDataProvider {
 	/** Extension status texts set via ctx.ui.setStatus() */
 	getExtensionStatuses(): ReadonlyMap<string, string> {
 		return this.extensionStatuses;
+	}
+
+	/** Todo summary segment pushed by the todo extension, e.g. "4/5 · current item" */
+	getTodoSummary(): string | undefined {
+		return this.todoSummary;
+	}
+
+	/** Internal: set the todo summary segment (undefined clears it) */
+	setTodoSummary(text: string | undefined): void {
+		this.todoSummary = text;
 	}
 
 	/** Subscribe to git branch changes. Returns unsubscribe function. */
@@ -501,6 +512,91 @@ export type ReadonlyFooterDataProvider = Pick<
 	| "getGitRepoName"
 	| "getGitStatus"
 	| "getExtensionStatuses"
+	| "getTodoSummary"
 	| "getAvailableProviderCount"
 	| "onBranchChange"
 >;
+
+/** A selectable entry in the footer navigator popup. */
+export interface FooterNavItem {
+	id: "background" | "todos" | "monitors" | "agents" | "fleet";
+	/** Slash command that opens the corresponding panel. */
+	command: string;
+	/** Display label including the live count, e.g. "Background tasks (2 running)". */
+	label: string;
+}
+
+/** Running background process counts parsed from the "bg" extension status text. */
+export interface BackgroundStatusCounts {
+	/** Total running processes (tasks + monitors + any other kind). */
+	running: number;
+	/** Running processes of kind "monitor". */
+	monitors: number;
+}
+
+/**
+ * Parse the background status text ("2 tasks, 1 monitor" style, produced by
+ * formatBackgroundStatus in extensions/lib/processes.ts) into counts.
+ */
+export function parseBackgroundStatusText(text: string | undefined): BackgroundStatusCounts {
+	if (!text) return { running: 0, monitors: 0 };
+	let running = 0;
+	let monitors = 0;
+	for (const match of text.matchAll(/(\d+) (\w+)/g)) {
+		const count = Number(match[1]);
+		running += count;
+		if (match[2].replace(/s$/, "") === "monitor") monitors += count;
+	}
+	return { running, monitors };
+}
+
+/** Extract "x/y" progress from a todo summary like "4/5 · current item". */
+function todoProgress(todoSummary: string | undefined): string | null {
+	if (!todoSummary) return null;
+	const match = /^(\d+\/\d+)/.exec(todoSummary.trim());
+	return match ? match[1] : null;
+}
+
+/**
+ * Build the footer navigator rows from live footer data. Rows with nothing to
+ * show are omitted, except TODOs and Background tasks which always show.
+ */
+export function buildFooterNavigatorRows(options: {
+	backgroundStatus: string | undefined;
+	todoSummary: string | undefined;
+	agentsAvailable: boolean;
+	fleetAvailable: boolean;
+}): FooterNavItem[] {
+	const rows: FooterNavItem[] = [];
+
+	const bg = parseBackgroundStatusText(options.backgroundStatus);
+	rows.push({
+		id: "background",
+		command: "/background",
+		label: `Background tasks (${bg.running} running)`,
+	});
+
+	if (bg.monitors > 0) {
+		rows.push({
+			id: "monitors",
+			command: "/background",
+			label: `Monitors (${bg.monitors} watching)`,
+		});
+	}
+
+	const progress = todoProgress(options.todoSummary);
+	rows.push({
+		id: "todos",
+		command: "/todos",
+		label: progress ? `TODOs (${progress})` : "TODOs (none)",
+	});
+
+	if (options.agentsAvailable) {
+		rows.push({ id: "agents", command: "/agents", label: "Agents" });
+	}
+	if (options.fleetAvailable) {
+		rows.push({ id: "fleet", command: "/fleet", label: "Fleet" });
+	}
+
+	return rows;
+}

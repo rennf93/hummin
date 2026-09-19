@@ -40,12 +40,12 @@ const TodoParams = Type.Object({
 
 const TODO_STATUS_KEY = "todo";
 
-/** Footer segment text: `TODOs 4/5 · <current item>` or `TODOs 0/3` when nothing in progress. */
+/** Footer segment counts: `4/5 · <current item>` (the footer renders the styled "TODOs" label). */
 export function formatTodoStatus(todos: Todo[]): string | undefined {
 	if (todos.length === 0) return undefined;
 	const done = todos.filter((t) => t.status === "completed").length;
 	const current = todos.find((t) => t.status === "in_progress");
-	let segment = `TODOs ${done}/${todos.length}`;
+	let segment = `${done}/${todos.length}`;
 	if (current) {
 		const text = current.text.trim();
 		segment += text.length > 0 ? ` · ${text.length > 60 ? `${text.slice(0, 59)}…` : text}` : "";
