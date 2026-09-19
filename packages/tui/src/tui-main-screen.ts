@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { replaceScrollbarCell } from "./layout.ts";
 import type { Terminal } from "./terminal.ts";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
 import {
@@ -37,6 +38,13 @@ export interface TuiMainScreenOptions {
 	 * Terminal-native selection and scrollback remain available through the terminal's Shift override.
 	 */
 	mouse?: boolean;
+	/**
+	 * Per-kind styles for transcript scrollbar markers (see Component.scrollbarMarkerKind).
+	 * When set, marked rows visible in the viewport get a marker glyph painted in the last column.
+	 * Regular mode streams into terminal scrollback, so markers are paint-only: no track, thumb,
+	 * or click-to-jump (the app cannot scroll the terminal's scrollback).
+	 */
+	scrollbarMarkerStyles?: Record<string, (text: string) => string>;
 }
 
 /**
@@ -163,6 +171,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 	private maxLinesRendered = 0;
 	private previousViewportTop = 0;
 	private readonly mouseEnabled: boolean;
+	private readonly scrollbarMarkerStyles: Record<string, (text: string) => string>;
 	private mouseActive = false;
 	private contentScreenOriginRow?: number;
 	private mouseGeometryVersion = 0;
@@ -187,6 +196,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 	) {
 		super(terminal, showHardwareCursor, logDirectory);
 		this.mouseEnabled = options.mouse ?? false;
+		this.scrollbarMarkerStyles = options.scrollbarMarkerStyles ?? {};
 		if (this.mouseEnabled) this.addInputListener((data) => this.handleMouseInput(data));
 	}
 
@@ -535,6 +545,8 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		if (this.hasOverlayEntries) {
 			newLines = this.compositeOverlays(newLines, width, height);
 		}
+
+		this.paintScrollbarMarkers(newLines, width, height);
 
 		// Extract cursor position before applying line resets (marker must be found first)
 		const cursorPos = this.extractCursorPosition(newLines, height);
@@ -886,6 +898,24 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		this.previousWidth = width;
 		this.previousHeight = height;
 		this.finishMouseRender(mouseGeometryChanged);
+	}
+
+	/**
+	 * Paint marker glyphs for marked components (user messages, turn ends) onto the rendered lines.
+	 * Markers are painted only when their content row is inside the visible viewport; rows that
+	 * already scrolled into terminal scrollback keep the glyph they were painted with.
+	 */
+	private paintScrollbarMarkers(lines: string[], width: number, height: number): void {
+		const markerColumn = width - 1;
+		if (markerColumn < 0 || Object.keys(this.scrollbarMarkerStyles).length === 0) return;
+		const viewportTop = Math.max(0, lines.length - height);
+		for (const marker of this.renderMarkers) {
+			const style = this.scrollbarMarkerStyles[marker.kind];
+			if (!style) continue;
+			if (marker.row < viewportTop || marker.row >= lines.length) continue;
+			const glyph = marker.kind === "user" ? "▌" : "●";
+			lines[marker.row] = replaceScrollbarCell(lines[marker.row] ?? "", markerColumn, width, style(glyph), true);
+		}
 	}
 
 	/**

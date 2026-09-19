@@ -44,7 +44,14 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 			},
 		});
 	}
-	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory, { mouse: true });
+	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory, {
+		mouse: true,
+		scrollbarMarkerStyles: {
+			user: (text) => theme.fg("accent", text),
+			system: (text) => theme.fg("muted", text),
+			turnEnd: (text) => theme.fg("dim", text),
+		},
+	});
 }
 
 /** Stable reference for components while InteractiveMode replaces the active renderer. */
