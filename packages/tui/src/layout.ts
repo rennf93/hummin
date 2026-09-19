@@ -248,7 +248,7 @@ function layoutComponent(
 	return box;
 }
 
-function replaceScrollbarCell(
+export function replaceScrollbarCell(
 	line: string,
 	column: number,
 	totalWidth: number,

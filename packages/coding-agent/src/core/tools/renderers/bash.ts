@@ -6,7 +6,7 @@
  * tool definition, so the tool's public shape is unchanged.
  */
 
-import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { type Component, Container, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { theme } from "../../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
 import type { BashToolDetails } from "../bash.ts";
@@ -27,35 +27,98 @@ class BashResultRenderComponent extends Container {
 	};
 }
 function formatDuration(ms: number): string {
-	return `${(ms / 1000).toFixed(1)}s`;
+	const seconds = ms / 1000;
+	if (seconds < 60) return `${seconds.toFixed(1)}s`;
+
+	const totalSeconds = Math.floor(seconds);
+	const minutes = Math.floor(totalSeconds / 60);
+	const remainder = totalSeconds % 60;
+	if (minutes < 60) return `${minutes}m ${remainder}s`;
+
+	return `${Math.floor(minutes / 60)}h ${minutes % 60}m ${remainder}s`;
 }
 /** Dim `· duration` suffix for the call row; live while the command runs. */
 function formatShellStatusSuffix(
 	state: { startedAt?: number; endedAt?: number } | undefined,
 	isError: boolean,
+	isPartial: boolean,
 ): string {
 	if (!state || state.startedAt === undefined) return "";
-	const end = state.endedAt ?? Date.now();
-	let suffix = `  ${theme.fg("muted", `· ${formatDuration(end - state.startedAt)}`)}`;
+	const end = isPartial ? Date.now() : (state.endedAt ?? Date.now());
+	// Upstream wording (elapsed while running, took once settled) on the hummin dim dot suffix.
+	const phase = isPartial ? "Elapsed" : "Took";
+	let suffix = `  ${theme.fg("muted", `· ${phase} ${formatDuration(end - state.startedAt)}`)}`;
 	if (isError) suffix += ` ${theme.fg("error", "(failed)")}`;
 	return suffix;
 }
-function formatShellCall(
+/** Collapse a command to the single-line form shown on the collapsed row. */
+function collapseCommandToSingleLine(command: string): string {
+	return command.replace(/\s+/g, " ").trim();
+}
+/**
+ * Call-row component for shell tools. The collapsed row is always ONE line: the
+ * padded label, a single separator, and the command truncated to the viewport
+ * width so multi-line commands never spill onto extra lines. Expanded, the full
+ * multi-line command is shown.
+ */
+class ShellCallRenderComponent implements Component {
+	expanded = false;
+	private expandedText: Text;
+	buildCollapsedLine: (width: number) => string;
+	constructor() {
+		this.expandedText = new Text("", 0, 0);
+		this.buildCollapsedLine = () => "";
+	}
+	setExpandedText(text: string): void {
+		this.expandedText.setText(text);
+	}
+	render(width: number): string[] {
+		if (this.expanded) return this.expandedText.render(width);
+		return [this.buildCollapsedLine(width)];
+	}
+	invalidate(): void {
+		this.expandedText.invalidate();
+	}
+}
+function buildShellCallComponent(
+	component: ShellCallRenderComponent | undefined,
 	args: { command?: string; timeout?: number } | undefined,
 	toolName: string,
 	state: { startedAt?: number; endedAt?: number } | undefined,
 	isError: boolean,
-): string {
+	expanded: boolean,
+	isPartial: boolean,
+): ShellCallRenderComponent {
+	const shellComponent = component ?? new ShellCallRenderComponent();
+	const label = theme.fg("toolTitle", theme.bold(formatToolLabel(toolName)));
 	const command = str(args?.command);
 	const timeout = args?.timeout as number | undefined;
 	const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
-	const commandDisplay = command === null ? invalidArgText(theme) : command ? command : theme.fg("toolOutput", "...");
-	return (
-		theme.fg("toolTitle", theme.bold(formatToolLabel(toolName))) +
-		commandDisplay +
-		timeoutSuffix +
-		formatShellStatusSuffix(state, isError)
-	);
+	const suffix = timeoutSuffix + formatShellStatusSuffix(state, isError, isPartial);
+	if (command === null) {
+		const invalid = invalidArgText(theme);
+		shellComponent.setExpandedText(`${label} ${invalid}${timeoutSuffix}`);
+		shellComponent.buildCollapsedLine = () => `${label} ${invalid}${suffix}`;
+		return shellComponent;
+	}
+	if (!command) {
+		const placeholder = theme.fg("toolOutput", "...");
+		shellComponent.setExpandedText(`${label} ${placeholder}${timeoutSuffix}`);
+		shellComponent.buildCollapsedLine = () => `${label} ${placeholder}${suffix}`;
+		return shellComponent;
+	}
+	// Expanded: the full multi-line command (wrapped by Text).
+	shellComponent.setExpandedText(`${label} ${command}${timeoutSuffix}`);
+	// Collapsed: one line - label, single separator, command trimmed to width.
+	const singleLine = collapseCommandToSingleLine(command);
+	shellComponent.buildCollapsedLine = (width: number) => {
+		const prefixWidth = visibleWidth(label) + 1;
+		const budget = Math.max(0, width - prefixWidth - visibleWidth(suffix));
+		const commandDisplay = truncateToWidth(singleLine, budget, "…");
+		return `${label} ${commandDisplay}${suffix}`;
+	};
+	shellComponent.expanded = expanded;
+	return shellComponent;
 }
 function lastNonEmptyLine(text: string): string | undefined {
 	const lines = text.split("\n");
@@ -151,16 +214,18 @@ export function createShellRenderers(toolName: string): Pick<ToolDefinition<any,
 				state.startedAt = Date.now();
 				state.endedAt = undefined;
 			}
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(
-				formatShellCall(
-					args as { command?: string; timeout?: number } | undefined,
-					toolName,
-					state,
-					context.isError,
-				),
+			const component =
+				(context.lastComponent as ShellCallRenderComponent | undefined) ?? new ShellCallRenderComponent();
+			buildShellCallComponent(
+				component,
+				args as { command?: string; timeout?: number } | undefined,
+				toolName,
+				state,
+				context.isError,
+				context.expanded,
+				context.isPartial,
 			);
-			return text;
+			return component;
 		},
 		renderResult(result, options, _theme, context) {
 			const state = context.state as ShellRenderState;

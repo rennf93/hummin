@@ -98,6 +98,7 @@ function createFooterData(providerCount: number): ReadonlyFooterDataProvider {
 		getGitRepoName: () => "hummin",
 		getGitStatus: () => null,
 		getExtensionStatuses: () => new Map<string, string>(),
+		getTodoSummary: () => undefined,
 		getAvailableProviderCount: () => providerCount,
 		onBranchChange: (callback: () => void) => {
 			void callback;

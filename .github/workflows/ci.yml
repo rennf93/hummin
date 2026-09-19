@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
     branches: [main]
 
@@ -12,7 +12,11 @@ concurrency:
 
 jobs:
   build-check-test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -23,11 +27,15 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install system dependencies
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
           sudo ln -s $(which fdfind) /usr/local/bin/fd
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install fd ripgrep
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -40,3 +48,6 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Extension load smoke
+        run: node scripts/check-extensions-load.mjs

@@ -1,4 +1,4 @@
-# Using Pi
+# Using hummin
 
 This page collects day-to-day usage details that do not fit on the quickstart page.
 
@@ -58,7 +58,29 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/reload` | Reload keybindings, extensions, skills, prompts, themes, and context files |
 | `/hotkeys` | Show all keyboard shortcuts |
 | `/changelog` | Display version history |
-| `/quit` | Quit pi |
+| `/quit` | Quit hummin |
+
+hummin extensions also register these commands (details in the hummin product docs):
+
+| Command | Description |
+|---------|-------------|
+| `/context` | Show what is in the current context window |
+| `/cost` | Show token and cost totals for the session |
+| `/agents` | Inter-session messaging status and registration name |
+| `/team` | Shared team task board across sessions |
+| `/cron` | Scheduled hummin runs |
+| `/mcp` | MCP server status and tools |
+| `/hooks` | Hook status and activity |
+| `/sandbox` | Sandboxed bash status and mode toggle |
+| `/bashguard` | Bash command guard status and toggles |
+| `/fleet` | Local inference fleet status, start/stop/restart |
+| `/status` | Model, context window, fleet health, memory, todo progress |
+| `/memory` | Project memory lessons and vault status |
+| `/plan` | Plan mode |
+| `/todos` | Session todo list |
+| `/background` | Running background jobs |
+| `/rewind` | Rewind the session to an earlier point |
+| `/remote-control` | Remote control session pairing |
 
 ## Message Queue
 
@@ -69,21 +91,22 @@ You can submit messages while the agent is still working:
 - **Escape** aborts and restores queued messages to the editor.
 - **Alt+Up** retrieves queued messages back to the editor.
 
-On Windows Terminal, Alt+Enter is fullscreen by default. Remap it as described in [Terminal setup](terminal-setup.md) if you want pi to receive the shortcut.
+On Windows Terminal, Alt+Enter is fullscreen by default. Remap it as described in [Terminal setup](terminal-setup.md) if you want hummin to receive the shortcut.
 
 Configure delivery in [Settings](settings.md) with `steeringMode` and `followUpMode`.
 
 ## Sessions
 
-Sessions are saved automatically to `~/.pi/agent/sessions/`, organized by working directory.
+Sessions are saved automatically to `~/.hummin/agent/sessions/`, organized by working directory.
 
 ```bash
-pi -c                  # Continue most recent session
-pi -r                  # Browse and select a session
-pi --no-session        # Ephemeral mode; do not save
-pi --name "my task"    # Set session display name at startup
-pi --session <path|id> # Use a specific session file or session ID
-pi --fork <path|id>    # Fork a session into a new session file
+hummin -c                  # Continue most recent session
+hummin -r                  # Browse and select a session
+hummin --no-session        # Ephemeral mode; do not save
+hummin --name "my task"    # Set session display name at startup
+hummin --session <path|id> # Use a specific session file or session ID
+hummin --session-id <id>   # Use an exact project session ID, creating it if missing
+hummin --fork <path|id>    # Fork a session into a new session file
 ```
 
 Useful session commands:
@@ -98,13 +121,13 @@ See [Sessions](sessions.md) and [Compaction](compaction.md) for details.
 
 ## Context Files
 
-Pi loads `AGENTS.md` or `CLAUDE.md` at startup from:
+hummin loads `AGENTS.md` or `CLAUDE.md` at startup from:
 
-- `~/.pi/agent/AGENTS.md` for global instructions
+- `~/.hummin/agent/AGENTS.md` for global instructions
 - parent directories, walking up from the current working directory
 - the current directory
 
-If a directory contains `AGENTS.override.md`, Pi loads it instead of `AGENTS.md` or `CLAUDE.md` from that directory. Context files from other directories still layer normally.
+If a directory contains `AGENTS.override.md`, hummin loads it instead of `AGENTS.md` or `CLAUDE.md` from that directory. Context files from other directories still layer normally.
 
 Use context files for project conventions, commands, safety rules, and preferences. Disable loading with `--no-context-files` or `-nc`.
 
@@ -113,23 +136,23 @@ Use context files for project conventions, commands, safety rules, and preferenc
 Replace the default system prompt with:
 
 - `.pi/SYSTEM.md` for a project
-- `~/.pi/agent/SYSTEM.md` globally
+- `~/.hummin/agent/SYSTEM.md` globally
 
 Append to the default prompt without replacing it with `APPEND_SYSTEM.md` in either location.
 
 ### Project Trust
 
-On interactive startup, pi asks before trusting a project folder that contains project-local settings, resources, or project `.agents/skills` and has no saved decision for the folder or a parent folder in `~/.pi/agent/trust.json`. Trusting a project allows pi to load `.pi/settings.json` and `.pi` resources, install missing project packages, and execute project extensions.
+On interactive startup, hummin asks before trusting a project folder that contains project-local settings, resources, or project `.agents/skills` and has no saved decision for the folder or a parent folder in `~/.hummin/agent/trust.json`. Trusting a project allows hummin to load `.pi/settings.json` and `.pi` resources, install missing project packages, and execute project extensions.
 
-Before the trust decision, pi loads only context files, user/global extensions, and CLI `-e` extensions so they can handle the `project_trust` event. Project-local extensions, project package-managed extensions, and project settings are loaded only after the project is trusted. This split also applies when switching to a session from a different cwd whose trust has not been resolved in the current process.
+Before the trust decision, hummin loads only context files, user/global extensions, and CLI `-e` extensions so they can handle the `project_trust` event. Project-local extensions, project package-managed extensions, and project settings are loaded only after the project is trusted. This split also applies when switching to a session from a different cwd whose trust has not been resolved in the current process.
 
 Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trust prompt. Without an applicable saved trust decision, they use `defaultProjectTrust` from global settings: `ask` (default) and `never` ignore those project resources, while `always` trusts them. Pass `--approve`/`-a` or `--no-approve`/`-na` to override project trust for one run.
 
-If no extension or saved decision applies, `defaultProjectTrust` controls the fallback behavior. Set it to `"ask"`, `"always"`, or `"never"` in `~/.pi/agent/settings.json`, or change it with `/settings`.
+If no extension or saved decision applies, `defaultProjectTrust` controls the fallback behavior. Set it to `"ask"`, `"always"`, or `"never"` in `~/.hummin/agent/settings.json`, or change it with `/settings`.
 
-`pi config` and package commands use the same project trust flow, except `pi update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
+`hummin config` and package commands use the same project trust flow, except `hummin update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
 
-Use `/trust` in interactive mode to save a project trust decision for future sessions, including trust for the immediate parent folder. It writes `~/.pi/agent/trust.json` only; the current session is not reloaded, so restart pi for changes to take effect.
+Use `/trust` in interactive mode to save a project trust decision for future sessions, including trust for the immediate parent folder. It writes `~/.hummin/agent/trust.json` only; the current session is not reloaded, so restart hummin for changes to take effect.
 
 
 ## Exporting and Sharing Sessions
@@ -138,33 +161,44 @@ Use `/export [file]` to write a session to HTML.
 
 Use `/share` to upload a private GitHub gist with a shareable HTML link.
 
-If you use pi for open source work and want to publish sessions for model, prompt, tool, and evaluation research, see [`badlogic/pi-share-hf`](https://github.com/badlogic/pi-share-hf). It publishes sessions to Hugging Face datasets.
+If you use hummin for open source work and want to publish sessions for model, prompt, tool, and evaluation research, see [`badlogic/pi-share-hf`](https://github.com/badlogic/pi-share-hf). It publishes sessions to Hugging Face datasets.
 
 ## CLI Reference
 
 ```bash
-pi [options] [--] [@files...] [messages...]
+hummin [options] [--] [@files...] [messages...]
 ```
+
+### Setup Commands
+
+```bash
+hummin init [--project] [--yes] [--memory] [--vault-dir <dir>] [--instances <urls>]
+hummin auth <command>       # Print credentials or check provider readiness
+```
+
+`hummin init` is an interactive setup that writes real settings (global by default, per-project with `--project`) so hummin works without shell exports: default provider/model, memory, vault directory, and local instances. Environment variables still override stored settings when present.
+
+`hummin auth` prints credentials or checks provider readiness, for example `hummin auth check --provider openai` or `hummin auth print-api-key --provider openai`. Pass `--json` for machine-readable output.
 
 ### Package Commands
 
 ```bash
-pi install <source> [-l]     # Install package, -l for project-local
-pi remove <source> [-l]      # Remove package
-pi uninstall <source> [-l]   # Alias for remove
-pi update [source|self|pi]   # Update pi only, or one package source
-pi update --all              # Update pi and packages; reconcile pinned git refs
-pi update --extensions       # Update packages only; reconcile pinned git refs
-pi update --models           # Refresh model catalogs only
-pi update --self             # Update pi only
-pi update --extension <src>  # Update one package
-pi list                      # List installed packages
-pi config                    # Enable/disable package resources
+hummin install <source> [-l]   # Install package, -l for project-local
+hummin remove <source> [-l]    # Remove package
+hummin uninstall <source> [-l] # Alias for remove
+hummin update [source|self|pi] # Update packages; self-update requires HUMMIN_ALLOW_UPSTREAM_UPDATE=1
+hummin update --all            # Update packages; reconcile pinned git refs
+hummin update --extensions     # Update packages only; reconcile pinned git refs
+hummin update --models         # Refresh model catalogs only
+hummin update --self           # Update the CLI installation (blocked by default on this fork)
+hummin update --extension <src> # Update one package
+hummin list                    # List installed packages
+hummin config                  # Enable/disable package resources
 ```
 
-These commands manage pi packages and `pi update` can update the pi CLI installation. To uninstall pi itself, see [Quickstart](quickstart.md#uninstall). `pi config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `pi update` never prompts for project trust.
+These commands manage packages and `hummin update` can update the CLI installation; self-update is blocked by default because it would replace this fork with upstream pi (`HUMMIN_ALLOW_UPSTREAM_UPDATE=1` forces it; update with `git pull` in your clone instead). To uninstall hummin itself, see [Quickstart](quickstart.md#uninstall). `hummin config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `hummin update` never prompts for project trust.
 
-See [Pi Packages](packages.md) for package sources and security notes.
+See [Packages](packages.md) for package sources and security notes.
 
 ### Modes
 
@@ -176,10 +210,10 @@ See [Pi Packages](packages.md) for package sources and security notes.
 | `--mode rpc` | RPC mode over stdin/stdout; see [RPC mode](rpc.md) |
 | `--export <in> [out]` | Export a session to HTML |
 
-In print mode, pi also reads piped stdin and merges it into the initial prompt:
+In print mode, hummin also reads piped stdin and merges it into the initial prompt:
 
 ```bash
-cat README.md | pi -p "Summarize this text"
+cat README.md | hummin -p "Summarize this text"
 ```
 
 ### Model Options
@@ -200,6 +234,7 @@ cat README.md | pi -p "Summarize this text"
 | `-c`, `--continue` | Continue the most recent session |
 | `-r`, `--resume` | Browse and select a session |
 | `--session <path\|id>` | Use a specific session file or partial UUID |
+| `--session-id <id>` | Use an exact project session ID, creating it if missing |
 | `--fork <path\|id>` | Fork a session file or partial UUID into a new session |
 | `--session-dir <dir>` | Custom session storage directory |
 | `--no-session` | Ephemeral mode; do not save |
@@ -233,7 +268,7 @@ Built-in tools: `read`, `bash`, `powershell` (Windows), `edit`, `write`, `grep`,
 Combine `--no-*` with explicit flags to load exactly what you need, ignoring settings. Example:
 
 ```bash
-pi --no-extensions -e ./my-extension.ts
+hummin --no-extensions -e ./my-extension.ts
 ```
 
 ### Other Options
@@ -251,7 +286,7 @@ pi --no-extensions -e ./my-extension.ts
 | `-h`, `--help` | Show help |
 | `-v`, `--version` | Show version |
 
-In `fullscreen` mode, the transcript scrolls inside the terminal viewport while queued messages, working status, extension widgets, editor, and footer remain fixed at the bottom. Mouse/trackpad input scrolls the region under the pointer; keyboard viewport actions always remain available. Inline images work in terminals that support the Kitty graphics protocol, including Kitty and Ghostty. In iTerm2 they render as text placeholders because its inline-image protocol cannot delete or crop placements during application-owned scrolling. In `regular` mode, pi uses the main screen and terminal-owned scrollback, and iTerm2 inline images continue to render normally. See [Terminal setup](terminal-setup.md) for terminal-specific settings and workarounds.
+In `fullscreen` mode, the transcript scrolls inside the terminal viewport while queued messages, working status, extension widgets, editor, and footer remain fixed at the bottom. Mouse/trackpad input scrolls the region under the pointer; keyboard viewport actions always remain available. Inline images work in terminals that support the Kitty graphics protocol, including Kitty and Ghostty. In iTerm2 they render as text placeholders because its inline-image protocol cannot delete or crop placements during application-owned scrolling. In `regular` mode, hummin uses the main screen and terminal-owned scrollback, and iTerm2 inline images continue to render normally. See [Terminal setup](terminal-setup.md) for terminal-specific settings and workarounds.
 
 Set **TUI mode** in `/settings` to switch between `regular` and `fullscreen` immediately and choose the default for future sessions. **Fullscreen exit output** controls whether exiting fullscreen prints the final transcript or restores the previous screen and prints only the session resume hint.
 
@@ -260,52 +295,52 @@ Set **TUI mode** in `/settings` to switch between `regular` and `fullscreen` imm
 Prefix files with `@` to include them in the message:
 
 ```bash
-pi @prompt.md "Answer this"
-pi -p @screenshot.png "What's in this image?"
-pi @code.ts @test.ts "Review these files"
+hummin @prompt.md "Answer this"
+hummin -p @screenshot.png "What's in this image?"
+hummin @code.ts @test.ts "Review these files"
 ```
 
 ### Examples
 
 ```bash
 # Interactive with initial prompt
-pi "List all .ts files in src/"
+hummin "List all .ts files in src/"
 
 # Non-interactive
-pi -p "Summarize this codebase"
+hummin -p "Summarize this codebase"
 
 # Prompt beginning with a dash
-pi -p -- "- Summarize these points"
+hummin -p -- "- Summarize these points"
 
 # Non-interactive with piped stdin
-cat README.md | pi -p "Summarize this text"
+cat README.md | hummin -p "Summarize this text"
 
 # Named one-shot session
-pi --name "release audit" -p "Audit this repository"
+hummin --name "release audit" -p "Audit this repository"
 
 # Different model
-pi --provider openai --model gpt-4o "Help me refactor"
+hummin --provider openai --model gpt-4o "Help me refactor"
 
 # Model with provider prefix
-pi --model openai/gpt-4o "Help me refactor"
+hummin --model openai/gpt-4o "Help me refactor"
 
 # Model with thinking level shorthand
-pi --model sonnet:high "Solve this complex problem"
+hummin --model sonnet:high "Solve this complex problem"
 
 # Limit model cycling
-pi --models "claude-*,gpt-4o"
+hummin --models "claude-*,gpt-4o"
 
 # Read-only mode
-pi --tools read,grep,find,ls -p "Review the code"
+hummin --tools read,grep,find,ls -p "Review the code"
 
 # Disable one extension or built-in tool while keeping the rest available
-pi --exclude-tools ask_question
+hummin --exclude-tools ask_question
 ```
 
 ## Design Principles
 
-Pi keeps the core small and pushes workflow-specific behavior into extensions, skills, prompt templates, and packages.
+hummin keeps the core small and pushes workflow-specific behavior into extensions, skills, prompt templates, and packages.
 
-It intentionally does not include built-in MCP, sub-agents, permission popups, plan mode, to-dos, or background bash. You can build or install those workflows as extensions or packages, or use external tools such as containers and tmux.
+It intentionally does not include permission popups; MCP, sub-agents, plan mode, to-dos, background bash, and related workflows ship as bundled hummin extensions or can be built and installed as extensions or packages. External tools such as containers and tmux remain first-class citizens.
 
 For the full rationale, read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/).

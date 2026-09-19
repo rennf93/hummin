@@ -1024,7 +1024,11 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (model.api === "anthropic-messages" && isAnthropicTemperatureUnsupportedModel(model.id)) {
 		mergeAnthropicMessagesCompat(model, { supportsTemperature: false });
 	}
-	if (model.api === "openai-completions" && model.id.includes("deepseek-v4")) {
+	if (
+		model.api === "openai-completions" &&
+		model.id.includes("deepseek-v4") &&
+		model.thinkingLevelMap === undefined
+	) {
 		mergeThinkingLevelMap(
 			model,
 			model.provider === "openrouter"
@@ -2181,10 +2185,12 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					}
 				}
 
-				const thinkingLevelMap =
-					api === "google-generative-ai"
-						? getGoogleThinkingLevelMap(modelId, m.reasoning_options ?? [])
-						: undefined;
+				let thinkingLevelMap: NonNullable<Model<Api>["thinkingLevelMap"]> | undefined;
+				if (api === "google-generative-ai") {
+					thinkingLevelMap = getGoogleThinkingLevelMap(modelId, m.reasoning_options ?? []);
+				} else if (variant.provider === "opencode-go" && modelId === "deepseek-v4.1-flash") {
+					thinkingLevelMap = getEffortThinkingLevelMap(m.reasoning_options ?? []);
+				}
 				models.push({
 					id: modelId,
 					name: m.name || modelId,
@@ -2298,8 +2304,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		}
 
 		// Process Kimi For Coding models
-		if (data["kimi-for-coding"]?.models) {
-			const kimiModels = data["kimi-for-coding"].models as Record<string, ModelsDevModel>;
+		if (data["kimi-code-plan-global"]?.models) {
+			const kimiModels = data["kimi-code-plan-global"].models as Record<string, ModelsDevModel>;
 			const hasCanonicalModel = Object.prototype.hasOwnProperty.call(kimiModels, "kimi-for-coding");
 
 			const kimiAliases = new Set(["k2p5", "k2p6", "k2p7"]);

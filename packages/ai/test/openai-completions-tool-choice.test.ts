@@ -334,31 +334,21 @@ describe("openai-completions tool_choice", () => {
 			});
 		}
 
-		for (const modelId of ["glm-5.3", "glm-5.3-flash", "glm-5.3-highspeed"] as const) {
-			const model = getModel("zai-coding-cn", modelId)!;
-			expect(model.compat?.supportsReasoningEffort).toBe(true);
-			expect(model.thinkingLevelMap).toEqual({
-				off: null,
-				minimal: null,
-				low: "low",
-				medium: null,
-				high: "high",
-				xhigh: null,
-				max: "max",
-			});
+		for (const provider of ["zai", "zai-coding-cn"] as const) {
+			for (const modelId of ["glm-5.3", "glm-5.3-flash", "glm-5.3-highspeed"] as const) {
+				const model = getModel(provider, modelId)!;
+				expect(model.compat?.supportsReasoningEffort).toBe(true);
+				expect(model.thinkingLevelMap).toEqual({
+					off: null,
+					minimal: null,
+					low: "low",
+					medium: null,
+					high: "high",
+					xhigh: null,
+					max: "max",
+				});
+			}
 		}
-
-		const glm53 = getModel("zai", "glm-5.3")!;
-		expect(glm53.compat?.supportsReasoningEffort).toBe(true);
-		expect(glm53.thinkingLevelMap).toEqual({
-			off: null,
-			minimal: null,
-			low: "low",
-			medium: null,
-			high: "high",
-			xhigh: null,
-			max: "max",
-		});
 	});
 
 	it("maps z.ai GLM-5.2 thinking levels to reasoning_effort", async () => {

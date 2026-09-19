@@ -3,6 +3,7 @@ import type { Usage } from "@earendil-works/pi-ai/compat";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
+import type { StatuslineSettings } from "../../../core/settings-manager.ts";
 import { addUsageToTotals, createUsageTotals, type UsageTotals } from "../../../core/usage-totals.ts";
 import { theme } from "../theme/theme.ts";
 import { countDiffStat, type DiffStat } from "./diff.ts";
@@ -221,6 +222,14 @@ export class FooterComponent implements Component {
 		const branch = this.footerData.getGitBranch();
 		const repoName = this.footerData.getGitRepoName();
 
+		const extensionStatuses = this.footerData.getExtensionStatuses();
+
+		// hummin: custom statusline layout. When `statusline` has at least one non-empty
+		// side, the fixed two-row content is replaced by the user-ordered segments.
+		const statusline: StatuslineSettings | undefined = this.session.settingsManager?.getStatusline?.();
+		const customStatusline =
+			statusline !== undefined && ((statusline.left?.length ?? 0) > 0 || (statusline.right?.length ?? 0) > 0);
+
 		// Row 1: dir | repo | branch   |   (provider) + model
 		const idParts: string[] = [theme.fg("dim", cwd)];
 		if (repoName) idParts.push(repoName);
@@ -244,7 +253,7 @@ export class FooterComponent implements Component {
 			const thinkingLevel = state.thinkingLevel || "off";
 			modelParts.push(theme.fg("dim", thinkingLevel === "off" ? "no thinking" : thinkingLevel));
 		}
-		const modelLine = `${theme.fg("dim", "|")} ${modelParts.join(theme.fg("dim", " + "))}`;
+		const modelLine = modelParts.join(theme.fg("dim", " + "));
 
 		// Row 2: diff | git | tokens   |   ctx bar
 		const statGroups: string[] = [];
@@ -252,15 +261,18 @@ export class FooterComponent implements Component {
 		if (queueCount > 0) statGroups.push(`${theme.fg("dim", "queue")} ${theme.fg("accent", String(queueCount))}`);
 
 		// Cumulative diff made by the agent this session (from edit/write tool patches)
+		let diffText = "";
 		if (sessionDiff.added > 0 || sessionDiff.removed > 0) {
 			const diffParts: string[] = [];
 			if (sessionDiff.added > 0) diffParts.push(theme.fg("toolDiffAdded", `+${formatTokens(sessionDiff.added)}`));
 			if (sessionDiff.removed > 0)
 				diffParts.push(theme.fg("toolDiffRemoved", `-${formatTokens(sessionDiff.removed)}`));
-			statGroups.push(`${theme.fg("dim", "diff")} ${diffParts.join(" ")}`);
+			diffText = diffParts.join(" ");
+			statGroups.push(`${theme.fg("dim", "diff")} ${diffText}`);
 		}
 
 		// Git working-tree state (includes changes made outside the agent)
+		let gitText = "";
 		if (gitStatus) {
 			const gitParts: string[] = [];
 			if (gitStatus.staged > 0) gitParts.push(theme.fg("toolDiffAdded", `+${gitStatus.staged}`));
@@ -268,7 +280,10 @@ export class FooterComponent implements Component {
 			if (gitStatus.untracked > 0) gitParts.push(theme.fg("dim", `?${gitStatus.untracked}`));
 			if (gitStatus.ahead) gitParts.push(theme.fg("accent", `↑${gitStatus.ahead}`));
 			if (gitStatus.behind) gitParts.push(theme.fg("accent", `↓${gitStatus.behind}`));
-			if (gitParts.length > 0) statGroups.push(`${theme.fg("dim", "git")} ${gitParts.join(" ")}`);
+			if (gitParts.length > 0) {
+				gitText = gitParts.join(" ");
+				statGroups.push(`${theme.fg("dim", "git")} ${gitText}`);
+			}
 		}
 
 		const tokenParts: string[] = [];
@@ -285,8 +300,10 @@ export class FooterComponent implements Component {
 			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(state.model.provider)
 			: false;
 		const pricedModel = state.model && Object.values(state.model.cost ?? {}).some((rate) => rate > 0);
+		let costText = "";
 		if (usageTotals.cost || usingSubscription || pricedModel) {
-			tokenParts.push(`$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`);
+			costText = `$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
+			tokenParts.push(costText);
 		}
 		if (tokenParts.length > 0) statGroups.push(tokenParts.join(theme.fg("dim", " · ")));
 		const statsLine = this.joinGroups(statGroups);
@@ -301,21 +318,84 @@ export class FooterComponent implements Component {
 			contextPercent === "?"
 				? `${theme.fg("dim", "?")}/${formatTokens(contextWindow)}`
 				: `${theme.fg(meterColor, bar)} ${theme.fg("dim", `${contextPercent}%${autoTag}`)}`;
-		const contextLine = `${theme.fg("dim", "|")} ${theme.fg("dim", "ctx")} ${contextValue}`;
+		const contextLine = `${theme.fg("dim", "ctx")} ${contextValue}`;
 
-		// Blank spacer row keeps the two status rows from visually gluing together.
-		const lines = [
-			this.alignLeftRight(idLine, modelLine, width),
-			"",
-			this.alignLeftRight(statsLine, contextLine, width),
-		];
+		let lines: string[];
+		if (customStatusline && statusline) {
+			// Custom layout: one row of user-ordered segments. Known tokens resolve from
+			// the same data as the fixed rows; unknown tokens render dim as-is.
+			const segmentText = (token: string): string => {
+				switch (token) {
+					case "dir":
+						return theme.fg("dim", cwd);
+					case "repo":
+						return repoName ?? "";
+					case "branch": {
+						if (!branch) return "";
+						const dirty =
+							gitStatus && (gitStatus.staged > 0 || gitStatus.modified > 0 || gitStatus.untracked > 0)
+								? "*"
+								: "";
+						return theme.fg("accent", `${branch}${dirty}`);
+					}
+					case "model":
+						return theme.fg("accent", modelName);
+					case "provider":
+						return providerName ? theme.fg("dim", `(${providerName})`) : "";
+					case "ctx":
+						return `${theme.fg(meterColor, `${contextPercent}%`)}${
+							contextWindow ? theme.fg("dim", `/${formatTokens(contextWindow)}`) : ""
+						}`;
+					case "tokens":
+						return tokenParts.join(theme.fg("dim", " · "));
+					case "cost":
+						return costText;
+					case "queue":
+						return queueCount > 0 ? `${theme.fg("dim", "queue")} ${theme.fg("accent", String(queueCount))}` : "";
+					case "background":
+						return sanitizeStatusText(extensionStatuses.get("bg") ?? "");
+					case "sandbox":
+						return sanitizeStatusText(extensionStatuses.get("sandbox") ?? "");
+					case "mcp":
+						return sanitizeStatusText(extensionStatuses.get("mcp") ?? "");
+					case "git":
+						return gitText ? `${theme.fg("dim", "git")} ${gitText}` : "";
+					case "diff":
+						return diffText ? `${theme.fg("dim", "diff")} ${diffText}` : "";
+					default:
+						// Unknown token: render dim as-is (documented tolerant behavior)
+						return theme.fg("dim", token);
+				}
+			};
+			// Custom sides join with the subtle dim middot (like the stats row):
+			// with many segments on one line, " | " reads as pipe soup.
+			const resolveSide = (tokens: string[] | undefined): string =>
+				(tokens ?? [])
+					.map(segmentText)
+					.filter((part) => part.length > 0)
+					.join(theme.fg("dim", " · "));
+			lines = [this.alignLeftRight(resolveSide(statusline.left), resolveSide(statusline.right), width), ""];
+		} else {
+			lines = [
+				this.alignLeftRight(idLine, modelLine, width),
+				"",
+				this.alignLeftRight(statsLine, contextLine, width),
+			];
+		}
 
-		// Add extension statuses on a single line, sorted by key alphabetically
-		const extensionStatuses = this.footerData.getExtensionStatuses();
-		if (extensionStatuses.size > 0) {
-			const sortedStatuses = Array.from(extensionStatuses.entries())
-				.sort(([a], [b]) => a.localeCompare(b))
-				.map(([, text]) => sanitizeStatusText(text));
+		// Add extension statuses on a single line, sorted by key alphabetically.
+		// The "todo" key is excluded: it renders natively as a styled segment below.
+		const sortedStatuses = Array.from(extensionStatuses.entries())
+			.sort(([a], [b]) => a.localeCompare(b))
+			.filter(([key]) => key !== "todo")
+			.map(([, text]) => sanitizeStatusText(text));
+		const todoSummary = this.footerData.getTodoSummary();
+		if (todoSummary) {
+			const [counts, ...rest] = sanitizeStatusText(todoSummary).split(" · ");
+			const detail = rest.length > 0 ? ` ${theme.fg("dim", `· ${rest.join(" · ")}`)}` : "";
+			sortedStatuses.unshift(`${theme.fg("dim", "TODOs")} ${theme.fg("accent", counts)}${detail}`);
+		}
+		if (sortedStatuses.length > 0) {
 			const statusLine = sortedStatuses.join(" ");
 			// Truncate to terminal width with dim ellipsis for consistency with footer style
 			lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));

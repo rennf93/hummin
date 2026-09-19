@@ -39,8 +39,10 @@
   - Vitest: `node "$(git rev-parse --show-toplevel)/node_modules/vitest/dist/cli.js" --run test/specific.test.ts`
   - `packages/tui` (`node:test`): `node --test test/specific.test.ts`
 - If you create or modify a test file, run it and iterate on test or implementation until it passes.
+- Child dispatch cost discipline: spawned sessions (`task` tool) always run the `fast` tier (glm-5.3-flash); never `glm-5.3` or any premium model without the user's explicit request, regardless of thinking level. Long-running children need an explicit `timeout_sec` - the 600s default kills mid-work; resume from the child's partial files instead of restarting from scratch.
 - For `packages/coding-agent/test/suite/`, use `test/suite/harness.ts` + the faux provider. No real provider APIs, keys, or paid tokens.
 - When regressions tests for fixing a github issue, add a comment with the github issue number next to the test.
+- Live-verify user-facing changes (extensions, commands, TUI, panels) in a fresh terminal session (tmux per .pi/skills/interactive-testing.md) before reporting done - unit tests passing is not sufficient.
 - For ad-hoc scripts, `write` them to a temp file (e.g. `/tmp`), run, edit if needed, remove when done. Don't embed multi-line scripts in `bash` commands.
 - Never wait on long-running work (builds, test runs, CI) with blocking `sleep`/poll loops in `bash`. Start a `monitor` for the process or status check and let it deliver output; keep bash calls for one-shot commands.
 - Never commit unless the user asks.

@@ -108,6 +108,13 @@ export function retargetMouseEvent(event: TuiMouseEvent, target: TuiMouseDispatc
 	};
 }
 
+/** A scrollbar marker hit produced during Container rendering: a content row plus marker kind. */
+export interface ContainerMarker {
+	/** Row within the container's rendered lines (0-based). */
+	row: number;
+	kind: string;
+}
+
 export interface Component {
 	/**
 	 * Render the component to lines for the given viewport width
@@ -326,6 +333,12 @@ export class Container implements Component {
 	children: Component[] = [];
 	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
 
+	/**
+	 * Scrollbar marker hits collected during the last render: content rows (relative to this
+	 * container's rendered lines) that should show an index marker. Populated by render().
+	 */
+	renderMarkers: ContainerMarker[] = [];
+
 	addChild(component: Component): void {
 		this.children.push(component);
 	}
@@ -372,14 +385,29 @@ export class Container implements Component {
 	render(width: number): string[] {
 		const lines: string[] = [];
 		const mouseChildren: Array<{ component: Component; height: number }> = [];
+		const markers: ContainerMarker[] = [];
 		for (const child of this.children) {
+			const childOffset = lines.length;
 			const childLines = child.render(width);
 			mouseChildren.push({ component: child, height: childLines.length });
+			if (typeof child.scrollbarMarkerKind === "string" && childLines.length > 0) {
+				const anchoredBottom = child.scrollbarMarkerAnchor === "bottom";
+				markers.push({
+					row: childOffset + (anchoredBottom ? childLines.length - 1 : 0),
+					kind: child.scrollbarMarkerKind,
+				});
+			}
+			if (child instanceof Container) {
+				for (const marker of child.renderMarkers) {
+					markers.push({ ...marker, row: marker.row + childOffset });
+				}
+			}
 			for (const line of childLines) {
 				lines.push(line);
 			}
 		}
 		this.mouseLayout = { width, children: mouseChildren };
+		this.renderMarkers = markers;
 		return lines;
 	}
 }

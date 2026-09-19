@@ -45,6 +45,16 @@ hummin -p "summarize this repo"   # oneshot mode
 
 GLM-5.3, GLM-5.3-Flash and GLM-5.3-highspeed ship in the `zai` provider catalog (1M-token context, reasoning variants mapped to `reasoning_effort`). Pick models with `/model`; set a persistent default with the picker's "set as default" action.
 
+## Features
+
+- **Agent teamwork**: sessions message each other across terminals and projects (`agent_send`, `/agents`), share a task board (`/team`), spawn bounded subagents (`task`, `/background` on `ctrl+b`), and run scheduled wake-ups (`/cron`).
+- **Local fleet**: one provider across all your OpenAI-compatible servers (colibri, llama.cpp, Ollama, ...), health-probed and startable from the model picker, with per-origin serialization and real context windows.
+- **Integrations**: MCP client (`mcpServers`), TypeScript LSP tools (diagnostics/definition/references/hover), declarative `hooks.json`, `ask_user` questions, DuckDuckGo search and SSRF-guarded fetch.
+- **Safety**: bash sandboxing (macOS seatbelt / Linux bubblewrap) with `[Sandbox]` in-band blocks, destructive-command advisories (`/bashguard`), loop + budget guardrails, project trust, file checkpoints with `/rewind`.
+- **Memory**: session distillation into lessons plus a self-curating Obsidian-compatible vault with BM25-ranked recall injected into every session.
+- **Visibility**: `/context` token breakdown with cache-hit ratio, `/cost` with local-served vs cloud split, `/status` + `/doctor` dashboards, two-row statusline (user-definable segments).
+- **UX**: vim editing mode, grouped command palette, custom statusline segments, fullscreen transcript search, themeable, remote browser control over loopback.
+
 ## Local inference (colibri, llama.cpp, ...)
 
 The bundled `hummin-colibri` extension registers ONE provider (`colibri`) that exposes every model found on your local OpenAI-compatible servers. The engine behind each server does not matter - colibri (MoE streaming), llama.cpp, Ollama all work; the server's own `/v1/models` is the source of truth for model ids, and the first server in the list that serves a model wins (duplicates dedupe into one entry with fallback ordering).

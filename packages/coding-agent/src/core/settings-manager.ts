@@ -156,6 +156,41 @@ export interface FleetSettings {
 	docker?: FleetDockerSettings;
 }
 
+/** hummin: custom statusline layout — ordered segment tokens per footer side. */
+export interface StatuslineSettings {
+	left?: string[];
+	right?: string[];
+}
+
+/** Known statusline segment tokens. Unknown strings are kept and rendered dim as-is. */
+export const STATUSLINE_TOKENS = [
+	"dir",
+	"repo",
+	"branch",
+	"model",
+	"provider",
+	"ctx",
+	"tokens",
+	"cost",
+	"queue",
+	"background",
+	"sandbox",
+	"mcp",
+	"git",
+	"diff",
+] as const;
+
+export type StatuslineToken = (typeof STATUSLINE_TOKENS)[number];
+
+/** Tolerant parse of one statusline side: keep non-empty strings, drop everything else. */
+export function parseStatuslineSegments(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.filter((entry): entry is string => typeof entry === "string")
+		.map((entry) => entry.trim())
+		.filter((entry) => entry.length > 0);
+}
+
 export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
@@ -218,6 +253,8 @@ export interface Settings {
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
 	editorPaddingX?: number; // Horizontal padding for input editor (default: 0)
+	/** hummin: input editor key mode (env HUMMIN_VIM=1 overrides) */
+	editorMode?: "default" | "vim";
 	outputPad?: 0 | 1; // Horizontal padding for chat message output (default: 1)
 	autocompleteMaxVisible?: number; // Max visible items in autocomplete dropdown (default: 5)
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
@@ -231,6 +268,8 @@ export interface Settings {
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
 	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
+	/** hummin: custom statusline segment layout (see STATUSLINE_TOKENS); empty = default footer */
+	statusline?: StatuslineSettings;
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -877,6 +916,19 @@ export class SettingsManager {
 		return this.settings.followUpMode || "one-at-a-time";
 	}
 
+	/** hummin: input editor key mode. HUMMIN_VIM=1 forces vim, otherwise
+	 * settings, otherwise "default". */
+	getEditorMode(): "default" | "vim" {
+		if (process.env.HUMMIN_VIM === "1") return "vim";
+		return this.settings.editorMode === "vim" ? "vim" : "default";
+	}
+
+	setEditorMode(mode: "default" | "vim"): void {
+		this.globalSettings.editorMode = mode;
+		this.markModified("editorMode");
+		this.save();
+	}
+
 	setFollowUpMode(mode: "all" | "one-at-a-time"): void {
 		this.globalSettings.followUpMode = mode;
 		this.markModified("followUpMode");
@@ -1201,6 +1253,19 @@ export class SettingsManager {
 				typeof s.target === "string" &&
 				(s.kind === "launchd" || s.kind === "docker"),
 		);
+	}
+
+	/** hummin: parsed statusline layout. Default empty both sides (default footer rendering). */
+	getStatusline(): StatuslineSettings {
+		const raw = this.settings.statusline;
+		if (raw === undefined || raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+			return { left: [], right: [] };
+		}
+		const parsed = raw as StatuslineSettings;
+		return {
+			left: parseStatuslineSegments(parsed.left),
+			right: parseStatuslineSegments(parsed.right),
+		};
 	}
 
 	/** hummin fleet: launchd control endpoints (env HUMMIN_FLEET_LAUNCHD_DOMAIN / HUMMIN_FLEET_PLIST_DIR override). */

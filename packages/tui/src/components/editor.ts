@@ -19,6 +19,7 @@ import {
 	sliceByColumn,
 	visibleWidth,
 } from "../utils.ts";
+import { type VimMode, vimTransition } from "../vim.ts";
 import { findWordBackward, findWordForward } from "../word-navigation.ts";
 import { SelectList, type SelectListLayoutOptions, type SelectListTheme } from "./select-list.ts";
 
@@ -247,6 +248,8 @@ export interface EditorOptions {
 	highlighter?: (text: string) => string;
 	/** Automatically insert closing brackets/quotes and skip over them (default true). */
 	autoPairing?: boolean;
+	/** Enable vim modal editing (default false). */
+	vimMode?: boolean;
 }
 
 const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
@@ -370,6 +373,13 @@ export class Editor implements Component, Focusable {
 	/** Bracket/quote auto-pairing and closer skip-over (see EditorOptions.autoPairing). */
 	private autoPairing: boolean;
 
+	// Vim modal editing (see vim.ts)
+	private vimEnabled: boolean;
+	private vimState: VimMode = "INSERT";
+	private vimPending: string | null = null;
+	/** Whether the most recent vim yank was linewise (affects `p`). */
+	private vimYankLinewise = false;
+
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
 	public disableSubmit: boolean = false;
@@ -380,6 +390,7 @@ export class Editor implements Component, Focusable {
 		this.borderColor = theme.borderColor;
 		this.highlighter = options.highlighter;
 		this.autoPairing = options.autoPairing ?? true;
+		this.vimEnabled = options.vimMode ?? false;
 		const paddingX = options.paddingX ?? 0;
 		this.paddingX = Number.isFinite(paddingX) ? Math.max(0, Math.floor(paddingX)) : 0;
 		const maxVisible = options.autocompleteMaxVisible ?? 5;
@@ -609,7 +620,11 @@ export class Editor implements Component, Focusable {
 		if (this.historySearchActive) {
 			return this.borderColor(`─ bck-i-search: ${this.historySearchQuery}_`.slice(0, width));
 		}
-		const border = hiddenLineCount > 0 ? createScrollBorder("↓", hiddenLineCount, width) : "─".repeat(width);
+		let border = hiddenLineCount > 0 ? createScrollBorder("↓", hiddenLineCount, width) : "─".repeat(width);
+		if (this.vimEnabled) {
+			const label = this.vimState === "NORMAL" ? " -- NORMAL -- " : " -- INSERT -- ";
+			border = label + border.slice(Math.min(border.length, visibleWidth(label)));
+		}
 		return this.borderColor(border);
 	}
 
@@ -808,6 +823,9 @@ export class Editor implements Component, Focusable {
 
 	handleInput(data: string): void {
 		const kb = getKeybindings();
+
+		// Vim modal layer (only active when editorMode is "vim")
+		if (this.vimEnabled && this.handleVimInput(data)) return;
 
 		// Incremental history search mode (ctrl+r)
 		if (this.historySearchActive) {
@@ -2122,6 +2140,118 @@ export class Editor implements Component, Focusable {
 		if (this.autocompleteState) {
 			this.updateAutocomplete();
 		}
+	}
+
+	/** Enable/disable vim modal editing. Resets to INSERT mode. */
+	setVimMode(enabled: boolean): void {
+		this.vimEnabled = enabled;
+		this.vimState = "INSERT";
+		this.vimPending = null;
+		this.tui.requestRender();
+	}
+
+	/** Whether vim modal editing is active. */
+	isVimMode(): boolean {
+		return this.vimEnabled;
+	}
+
+	/** Current vim mode indicator ("-- INSERT --" / "-- NORMAL --"), or undefined when vim is off. */
+	getVimIndicator(): string | undefined {
+		return this.vimEnabled ? `-- ${this.vimState} --` : undefined;
+	}
+
+	/** True when vim mode is on and the editor is in INSERT state (hummin: escape switches modes). */
+	isVimInsert(): boolean {
+		return this.vimEnabled && this.vimState === "INSERT";
+	}
+
+	/**
+	 * Vim modal key handling. Returns true when the key was consumed by the
+	 * vim layer; false falls through to default editor handling.
+	 */
+	private handleVimInput(data: string): boolean {
+		const kb = getKeybindings();
+		let key: string;
+		if (kb.matches(data, "tui.select.cancel")) {
+			key = "escape";
+		} else if (kb.matches(data, "tui.editor.cursorUp")) {
+			key = "up";
+		} else if (kb.matches(data, "tui.editor.cursorDown")) {
+			key = "down";
+		} else if (kb.matches(data, "tui.editor.cursorLeft")) {
+			key = "left";
+		} else if (kb.matches(data, "tui.editor.cursorRight")) {
+			key = "right";
+		} else {
+			if (data === "\x1b") key = "escape";
+			else {
+				const printable =
+					decodePrintableKey(data) ?? (data.length === 1 && data.charCodeAt(0) >= 32 ? data : undefined);
+				if (printable === undefined) return false;
+				key = printable;
+			}
+		}
+
+		const res = vimTransition(
+			this.vimState,
+			key,
+			{ lines: this.state.lines, cursorLine: this.state.cursorLine, cursorCol: this.state.cursorCol },
+			this.vimPending,
+		);
+		if (!res.handled) return false;
+
+		this.vimPending = res.pending;
+		const modeChanged = res.mode !== this.vimState;
+		this.vimState = res.mode;
+
+		// Snapshot undo only for text edits (motions reuse the same lines array).
+		const textEdited = res.lines !== this.state.lines;
+
+		if (res.undo) {
+			this.undo();
+			return true;
+		}
+
+		if (textEdited || res.yanked !== undefined) {
+			this.pushUndoSnapshot();
+			this.state.lines = res.lines;
+			this.state.cursorLine = res.cursorLine;
+			this.setCursorCol(res.cursorCol);
+		} else if (res.cursorLine !== this.state.cursorLine || res.cursorCol !== this.state.cursorCol) {
+			// Cursor-only transitions (motions, INSERT->NORMAL clamp) still move.
+			this.state.cursorLine = res.cursorLine;
+			this.setCursorCol(res.cursorCol);
+		}
+
+		if (res.yanked !== undefined) {
+			this.killRing.push(res.yanked, { prepend: false });
+			this.vimYankLinewise = res.yankLinewise === true;
+		}
+
+		if (res.put) {
+			const text = this.killRing.peek();
+			if (text) {
+				this.pushUndoSnapshot();
+				if (this.vimYankLinewise) {
+					this.state.lines.splice(this.state.cursorLine + 1, 0, ...text.split("\n"));
+					this.state.cursorLine = this.state.cursorLine + 1;
+					this.setCursorCol(0);
+				} else {
+					// p inserts after the cursor character.
+					const line = this.state.lines[this.state.cursorLine] || "";
+					this.setCursorCol(Math.min(line.length, this.state.cursorCol + 1));
+					this.insertYankedText(text);
+				}
+				this.lastAction = null;
+			}
+		} else if (textEdited || res.yanked !== undefined) {
+			this.lastAction = null;
+			this.exitHistoryBrowsing();
+			if (this.onChange) this.onChange(this.getText());
+		}
+
+		if (modeChanged) this.tui.requestRender();
+		return true;
 	}
 
 	/**
