@@ -14,6 +14,8 @@ export interface ProcessJob {
 	exitCode: number | null;
 	output: string;
 	error?: string;
+	/** hummin: user cleared this finished job from listings (ctrl+x in /background). */
+	dismissed?: boolean;
 	done: Promise<void>;
 	stop: (reason?: "cancelled" | "timed_out") => void;
 }
@@ -69,7 +71,7 @@ export function backgroundStatus(): string | undefined {
 function allJobs(): ProcessJob[] {
 	const jobs: ProcessJob[] = [];
 	for (const manager of managers) jobs.push(...manager.jobs.values());
-	return jobs;
+	return jobs.filter((job) => !job.dismissed);
 }
 
 /** Every job in every manager (the /background overlay list). */
@@ -84,6 +86,20 @@ export function findProcessJob(id: string): ProcessJob | undefined {
 		if (job) return job;
 	}
 	return undefined;
+}
+
+/** What ctrl+x does for a job in the /background panel: stop running, remove finished. */
+export function backgroundPanelAction(job: ProcessJob | undefined): "stop" | "remove" | undefined {
+	if (!job) return undefined;
+	return job.state === "running" ? "stop" : "remove";
+}
+
+/** hummin: clear a finished job from listings (ctrl+x in /background). Running jobs cannot be dismissed. */
+export function dismissProcessJob(id: string): boolean {
+	const job = findProcessJob(id);
+	if (!job || job.state === "running") return false;
+	job.dismissed = true;
+	return true;
 }
 
 /** Set or clear the shared "bg" footer status from any extension context. */

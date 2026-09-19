@@ -24,6 +24,8 @@ import {
 	ProcessManager,
 	refreshBackgroundStatus,
 	stateGlyph,
+	backgroundPanelAction,
+	dismissProcessJob,
 } from "./lib/processes.ts";
 
 export function resolveTaskModel(
@@ -262,6 +264,18 @@ class BackgroundPanelComponent {
 			if (this.rows[this.selected]) this.done(this.rows[this.selected]);
 			return;
 		}
+		else if (this.kb.matches(data, "app.background.stopOrRemove")) {
+			const row = this.rows[this.selected];
+			const job = row ? findProcessJob(row.id) : undefined;
+			const action = backgroundPanelAction(job);
+			if (action === "stop" && job) {
+				job.stop();
+			} else if (action === "remove" && job) {
+				dismissProcessJob(row.id);
+			}
+			void this.refresh();
+			return;
+		}
 		this.tui.requestRender();
 	}
 
@@ -277,7 +291,7 @@ class BackgroundPanelComponent {
 			const line = `  ${index === this.selected ? this.theme.fg("accent", "▸") : " "}${glyph} ${row.kind.padEnd(8)} ${row.duration}  ${row.label}  ·  ${row.logFile}`;
 			lines.push(truncateToWidth(line, width));
 		}
-		lines.push("", `  ${this.theme.fg("dim", "↑/↓ select · Enter actions · Escape close · auto-refreshes")}`);
+		lines.push("", `  ${this.theme.fg("dim", "↑/↓ select · Enter actions · ctrl+x stop/remove · Escape close · auto-refreshes")}`);
 		return lines;
 	}
 }

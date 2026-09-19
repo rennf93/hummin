@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
 import {
 	buildCollapsedRow,
 	parseDuration,
@@ -7,6 +10,24 @@ import {
 	promptLabel,
 	taskCallDetail,
 } from "../extensions/hummin-subagents.ts";
+import {
+	allProcessJobs,
+	backgroundPanelAction,
+	dismissProcessJob,
+	findProcessJob,
+	type ProcessJob,
+	ProcessManager,
+} from "../extensions/lib/processes.ts";
+
+const createdDirs: string[] = [];
+function newDirectory(prefix: string): string {
+	const dir = mkdtempSync(join(tmpdir(), prefix));
+	createdDirs.push(dir);
+	return dir;
+}
+afterAll(() => {
+	for (const dir of createdDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 describe("promptLabel", () => {
 	it("collapses whitespace and trims", () => {
@@ -123,5 +144,36 @@ describe("parseMonitorNotice", () => {
 		expect(info.state).toBe("cancelled");
 		expect(info.exitCode).toBeNull();
 		expect(info.detail).toBe("cancelled (exit none)");
+	});
+});
+
+describe("background panel ctrl+x semantics", () => {
+	it("stop for running jobs, remove for terminal jobs, undefined for unknown", () => {
+		const running = { id: "a", state: "running" } as unknown as ProcessJob;
+		const completed = { id: "b", state: "completed" } as unknown as ProcessJob;
+		expect(backgroundPanelAction(running)).toBe("stop");
+		expect(backgroundPanelAction(completed)).toBe("remove");
+		expect(backgroundPanelAction(undefined)).toBeUndefined();
+	});
+
+	it("dismissProcessJob clears terminal jobs from listings and refuses running ones", async () => {
+		const manager = new ProcessManager(newDirectory("hummin-dismiss-"), "task");
+		const noop = (): void => undefined;
+		const runningJob = manager.start({
+			command: "sleep",
+			args: ["5"],
+			cwd: newDirectory("hummin-dismiss-"),
+			kind: "task",
+			label: "live",
+			timeoutMs: 60_000,
+			onOutput: noop,
+		});
+		expect(dismissProcessJob(runningJob.id)).toBe(false);
+		await runningJob.stop();
+		expect(dismissProcessJob(runningJob.id)).toBe(true);
+		// The record stays for lookup but is hidden from every listing.
+		expect(findProcessJob(runningJob.id)?.dismissed).toBe(true);
+		expect(allProcessJobs().some((job) => job.id === runningJob.id)).toBe(false);
+		await manager.close();
 	});
 });

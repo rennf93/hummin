@@ -3,6 +3,7 @@ import {
 	type KeybindingDefinitions,
 	type KeybindingsConfig,
 	type KeyId,
+	matchesKey,
 	TUI_KEYBINDINGS,
 	KeybindingsManager as TuiKeybindingsManager,
 } from "@earendil-works/pi-tui";
@@ -23,6 +24,8 @@ export interface AppKeybindings {
 	"app.model.select": true;
 	"app.tools.expand": true;
 	"app.background.show": true;
+	"app.background.stopOrRemove": true;
+	"app.footer.navigate": true;
 	"app.thinking.toggle": true;
 	"app.session.toggleNamedFilter": true;
 	"app.editor.external": true;
@@ -121,6 +124,14 @@ export const KEYBINDINGS = {
 	"app.background.show": {
 		defaultKeys: "ctrl+b",
 		description: "Show background tasks and monitors",
+	},
+	"app.background.stopOrRemove": {
+		defaultKeys: "ctrl+x",
+		description: "In the background panel: stop the selected running task/monitor, or clear a finished one",
+	},
+	"app.footer.navigate": {
+		defaultKeys: ["alt+down", "down"],
+		description: "Open footer navigator (down arrow works when the editor is empty)",
 	},
 	"app.thinking.toggle": {
 		defaultKeys: "ctrl+t",
@@ -414,3 +425,17 @@ export class KeybindingsManager extends TuiKeybindingsManager {
 }
 
 export type { Keybinding, KeyId, KeybindingsConfig };
+
+/**
+ * Contextual fast path for the footer navigator: matches when `data` triggers
+ * `app.footer.navigate`, including the plain down arrow whenever "down" is part
+ * of the binding's resolved keys (the default configuration includes it only as
+ * a documented empty-editor convenience, so the editor checks emptiness).
+ */
+export function matchesFooterNavigatorFastPath(
+	manager: Pick<KeybindingsManager, "matches" | "getKeys">,
+	data: string,
+): boolean {
+	if (manager.matches(data, "app.footer.navigate")) return true;
+	return manager.getKeys("app.footer.navigate").includes("down") && matchesKey(data, "down");
+}
