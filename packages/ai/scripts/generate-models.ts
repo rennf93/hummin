@@ -1343,6 +1343,13 @@ function processZaiModels(data: ModelsDevCatalog): Model<Api>[] {
 			provider: "zai-coding-cn",
 			baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
 		},
+		{
+			// Same models as the coding plan but billed against the usage API
+			// credit instead of the coding-plan quota.
+			source: "zai-coding-plan",
+			provider: "zai-api",
+			baseUrl: "https://api.z.ai/api/paas/v4",
+		},
 	] as const;
 	const models: Model<Api>[] = [];
 

@@ -52,6 +52,7 @@ export type KnownProvider =
 	| "vercel-ai-gateway"
 	| "zai"
 	| "zai-coding-cn"
+	| "zai-api"
 	| "mistral"
 	| "minimax"
 	| "minimax-cn"

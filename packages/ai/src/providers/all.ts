@@ -43,6 +43,7 @@ import { xiaomiTokenPlanAmsProvider } from "./xiaomi-token-plan-ams.ts";
 import { xiaomiTokenPlanCnProvider } from "./xiaomi-token-plan-cn.ts";
 import { xiaomiTokenPlanSgpProvider } from "./xiaomi-token-plan-sgp.ts";
 import { zaiProvider } from "./zai.ts";
+import { zaiApiProvider } from "./zai-api.ts";
 import { zaiCodingCnProvider } from "./zai-coding-cn.ts";
 
 export { radiusProvider };
@@ -127,6 +128,7 @@ export function builtinProviders(): Provider[] {
 		xiaomiTokenPlanCnProvider(),
 		xiaomiTokenPlanSgpProvider(),
 		zaiProvider(),
+		zaiApiProvider(),
 		zaiCodingCnProvider(),
 	];
 }
