@@ -154,6 +154,8 @@ export interface FleetSettings {
 	servers?: FleetServerSettings[];
 	launchd?: FleetLaunchdSettings;
 	docker?: FleetDockerSettings;
+	/** Skip the "Start <server>?" confirm when an offline fleet model is selected (env HUMMIN_FLEET_AUTOSTART overrides). */
+	autoStart?: boolean;
 }
 
 /** hummin: custom statusline layout — ordered segment tokens per footer side. */
@@ -1132,6 +1134,25 @@ export class SettingsManager {
 		return parseTimeoutSetting(this.settings.websocketConnectTimeoutMs, "websocketConnectTimeoutMs");
 	}
 
+	setWebSocketConnectTimeoutMs(timeoutMs: number | undefined): void {
+		if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs < 0)) {
+			throw new Error(`Invalid websocketConnectTimeoutMs setting: ${String(timeoutMs)}`);
+		}
+		this.globalSettings.websocketConnectTimeoutMs = timeoutMs === undefined ? undefined : Math.floor(timeoutMs);
+		this.markModified("websocketConnectTimeoutMs");
+		this.save();
+	}
+
+	getHttpProxy(): string | undefined {
+		return this.globalSettings.httpProxy;
+	}
+
+	setHttpProxy(proxy: string | undefined): void {
+		this.globalSettings.httpProxy = proxy && proxy.trim() !== "" ? proxy : undefined;
+		this.markModified("httpProxy");
+		this.save();
+	}
+
 	getHideThinkingBlock(): boolean {
 		return this.settings.hideThinkingBlock ?? false;
 	}
@@ -1150,6 +1171,12 @@ export class SettingsManager {
 			return environmentEditor;
 		}
 		return process.platform === "win32" ? "notepad" : "nano";
+	}
+
+	setExternalEditor(command: string | undefined): void {
+		this.globalSettings.externalEditor = command && command.trim() !== "" ? command : undefined;
+		this.markModified("externalEditor");
+		this.save();
 	}
 
 	setHideThinkingBlock(hide: boolean): void {
@@ -1255,6 +1282,23 @@ export class SettingsManager {
 		);
 	}
 
+	/** hummin fleet: autoStart skips the server-start confirm (env > project > global). */
+	getFleetAutoStart(): boolean {
+		if (process.env.HUMMIN_FLEET_AUTOSTART === "1") return true;
+		if (process.env.HUMMIN_FLEET_AUTOSTART === "0") return false;
+		if (typeof this.projectSettings.fleet?.autoStart === "boolean") return this.projectSettings.fleet.autoStart;
+		return this.globalSettings.fleet?.autoStart ?? false;
+	}
+
+	setFleetAutoStart(autoStart: boolean): void {
+		if (!this.globalSettings.fleet) {
+			this.globalSettings.fleet = {};
+		}
+		this.globalSettings.fleet.autoStart = autoStart;
+		this.markModified("fleet");
+		this.save();
+	}
+
 	/** hummin: parsed statusline layout. Default empty both sides (default footer rendering). */
 	getStatusline(): StatuslineSettings {
 		const raw = this.settings.statusline;
@@ -1323,6 +1367,30 @@ export class SettingsManager {
 		}
 		this.globalSettings.memoryVaultDir = dir;
 		this.markModified("memoryVaultDir");
+		this.save();
+	}
+
+	setMemoryProvider(provider: string | undefined, scope: "global" | "project" = "global"): void {
+		if (scope === "project") {
+			this.updateProjectSettings("memoryProvider", (settings) => {
+				settings.memoryProvider = provider;
+			});
+			return;
+		}
+		this.globalSettings.memoryProvider = provider && provider.trim() !== "" ? provider : undefined;
+		this.markModified("memoryProvider");
+		this.save();
+	}
+
+	setMemoryModelId(modelId: string | undefined, scope: "global" | "project" = "global"): void {
+		if (scope === "project") {
+			this.updateProjectSettings("memoryModelId", (settings) => {
+				settings.memoryModelId = modelId;
+			});
+			return;
+		}
+		this.globalSettings.memoryModelId = modelId && modelId.trim() !== "" ? modelId : undefined;
+		this.markModified("memoryModelId");
 		this.save();
 	}
 

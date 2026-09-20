@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Categorized settings UI: /settings now groups its entries behind a tab bar (General, Agent, Models, Memory, Fleet, Editor, Terminal, Network, Shell, Privacy); `tab` or clicking a tab switches categories, and search still filters the active list.
+- Settings previously missing from /settings are now configurable: global default thinking level, per-provider list (providers.showAll), retry on failure, memory (enabled, mode, vault directory, provider, model), local fleet instances and fleet auto-start, editor mode (vim), external editor command, WebSocket connect timeout, HTTP proxy, shell path, shell command prefix, npm command, and analytics opt-in. Free-text fields open an input submenu (Enter saves, Esc cancels).
+
+### Changed
+
+- Message timestamps and skill commands moved to the General category; image settings moved to Terminal; transport and HTTP idle timeout moved to Network.
+
 ## [1.1.0] - 2026-09-19
 
 ### Added

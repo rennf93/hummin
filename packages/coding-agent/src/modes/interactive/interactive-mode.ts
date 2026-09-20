@@ -95,7 +95,11 @@ import {
 	type FooterNavItem,
 	type ReadonlyFooterDataProvider,
 } from "../../core/footer-data-provider.ts";
-import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
+import {
+	applyHttpProxySettings,
+	configureHttpDispatcher,
+	formatHttpIdleTimeoutMs,
+} from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import {
@@ -4997,6 +5001,23 @@ export class InteractiveMode {
 					fullscreenScrollbar: this.settingsManager.getFullscreenScrollbar(),
 					fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 					warnings: this.settingsManager.getWarnings(),
+					providersShowAll: this.settingsManager.getProvidersShowAll(),
+					retryEnabled: this.settingsManager.getRetryEnabled(),
+					memoryEnabled: this.settingsManager.getMemoryEnabled(),
+					memoryMode: this.settingsManager.getMemoryMode(),
+					memoryVaultDir: this.settingsManager.getMemoryVaultDir(),
+					memoryProvider: this.settingsManager.getMemoryProvider(),
+					memoryModelId: this.settingsManager.getMemoryModelId(),
+					localInstances: this.settingsManager.getLocalInstances(),
+					fleetAutoStart: this.settingsManager.getFleetAutoStart(),
+					editorMode: this.settingsManager.getEditorMode(),
+					externalEditor: this.settingsManager.getExternalEditorCommand(),
+					websocketConnectTimeoutMs: this.settingsManager.getWebSocketConnectTimeoutMs(),
+					httpProxy: this.settingsManager.getHttpProxy() ?? "",
+					shellPath: this.settingsManager.getShellPath() ?? "",
+					shellCommandPrefix: this.settingsManager.getShellCommandPrefix() ?? "",
+					npmCommand: this.settingsManager.getNpmCommand()?.join(" ") ?? "",
+					enableAnalytics: this.settingsManager.getEnableAnalytics(),
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -5171,7 +5192,7 @@ export class InteractiveMode {
 					},
 					onTuiModeChange: (mode) => {
 						if (!this.switchTuiMode(mode)) {
-							selector?.getSettingsList().updateValue("tui-mode", this.ui.mode);
+							selector?.updateValue("tui-mode", this.ui.mode);
 							this.showStatus("Close active overlays before changing TUI mode");
 							return;
 						}
@@ -5193,13 +5214,74 @@ export class InteractiveMode {
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
 					},
+					onDefaultThinkingLevelChange: (level) => {
+						this.session.setThinkingLevel(level, { persist: true });
+						this.footer.invalidate();
+						this.updateEditorBorderColor();
+						this.showStatus(`Default thinking level: ${level}`);
+					},
+					onProvidersShowAllChange: (enabled) => {
+						this.settingsManager.setProvidersShowAll(enabled);
+					},
+					onRetryEnabledChange: (enabled) => {
+						this.settingsManager.setRetryEnabled(enabled);
+					},
+					onMemoryEnabledChange: (enabled) => {
+						this.settingsManager.setMemoryEnabled(enabled);
+					},
+					onMemoryModeChange: (mode) => {
+						this.settingsManager.setMemoryMode(mode);
+					},
+					onMemoryVaultDirChange: (dir) => {
+						this.settingsManager.setMemoryVaultDir(dir);
+					},
+					onMemoryProviderChange: (provider) => {
+						this.settingsManager.setMemoryProvider(provider);
+					},
+					onMemoryModelIdChange: (modelId) => {
+						this.settingsManager.setMemoryModelId(modelId);
+					},
+					onLocalInstancesChange: (instances) => {
+						this.settingsManager.setLocalInstances(instances);
+					},
+					onFleetAutoStartChange: (enabled) => {
+						this.settingsManager.setFleetAutoStart(enabled);
+					},
+					onEditorModeChange: (mode) => {
+						this.settingsManager.setEditorMode(mode);
+						this.showStatus(
+							mode === "vim" ? "Editor mode: vim (new sessions)" : "Editor mode: default (new sessions)",
+						);
+					},
+					onExternalEditorChange: (command) => {
+						this.settingsManager.setExternalEditor(command);
+					},
+					onWebSocketConnectTimeoutMsChange: (timeoutMs) => {
+						this.settingsManager.setWebSocketConnectTimeoutMs(timeoutMs);
+					},
+					onHttpProxyChange: (proxy) => {
+						this.settingsManager.setHttpProxy(proxy);
+						applyHttpProxySettings(proxy);
+					},
+					onShellPathChange: (path) => {
+						this.settingsManager.setShellPath(path);
+					},
+					onShellCommandPrefixChange: (prefix) => {
+						this.settingsManager.setShellCommandPrefix(prefix);
+					},
+					onNpmCommandChange: (command) => {
+						this.settingsManager.setNpmCommand(command.length > 0 ? command : undefined);
+					},
+					onEnableAnalyticsChange: (enabled) => {
+						this.settingsManager.setEnableAnalytics(enabled);
+					},
 					onCancel: () => {
 						done();
 						this.ui.requestRender();
 					},
 				},
 			);
-			return { component: selector, focus: selector.getSettingsList() };
+			return { component: selector, focus: selector };
 		});
 	}
 
@@ -6000,7 +6082,8 @@ export class InteractiveMode {
 			}
 		}
 		const showAll = this.settingsManager.getProvidersShowAll();
-		const curated = (id: string): boolean => id === "zai" || id === "zai-coding-cn" || id === "zai-api" || id.startsWith("hummin");
+		const curated = (id: string): boolean =>
+			id === "zai" || id === "zai-coding-cn" || id === "zai-api" || id.startsWith("hummin");
 		const visible = options.filter((option) => showAll || curated(option.id) || option.status !== undefined);
 		return visible.sort((a, b) => {
 			const aCurated = curated(a.id);

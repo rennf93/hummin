@@ -10,6 +10,65 @@ import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 import { createHarness, type Harness } from "./suite/harness.ts";
 
+const baseConfig = {
+	availableDefaultModels: [],
+	availableThinkingLevels: [],
+	modelThinkingLevels: {},
+	availableThemes: [],
+	showImages: true,
+	imageWidthCells: 60,
+	autoResizeImages: true,
+	blockImages: false,
+	enableSkillCommands: true,
+	steeringMode: "all",
+	followUpMode: "all",
+	streamingSubmitMode: "steer",
+	messageTimestamps: false,
+	compactPrompt: false,
+	transport: "auto",
+	httpIdleTimeoutMs: 300000,
+	thinkingLevel: "medium",
+	currentTheme: "dark",
+	terminalTheme: "dark",
+	hideThinkingBlock: false,
+	mermaidRenderingMode: "streaming",
+	showCacheMissNotices: false,
+	collapseChangelog: false,
+	enableInstallTelemetry: true,
+	doubleEscapeAction: "tree",
+	treeFilterMode: "default",
+	showHardwareCursor: true,
+	editorPaddingX: 0,
+	outputPad: 1,
+	autocompleteMaxVisible: 5,
+	quietStartup: true,
+	defaultProjectTrust: "ask",
+	clearOnShrink: false,
+	showTerminalProgress: false,
+	tuiMode: "regular",
+	fullscreenExitOutput: "transcript",
+	fullscreenScrollbar: "auto",
+	fullscreenCopyOnSelect: true,
+	warnings: {},
+	providersShowAll: false,
+	retryEnabled: true,
+	memoryEnabled: false,
+	memoryMode: "lesson",
+	memoryVaultDir: "",
+	memoryProvider: "zai",
+	memoryModelId: "glm-5.3-flash",
+	localInstances: [],
+	fleetAutoStart: false,
+	editorMode: "default",
+	externalEditor: "",
+	websocketConnectTimeoutMs: undefined,
+	httpProxy: "",
+	shellPath: "",
+	shellCommandPrefix: "",
+	npmCommand: "",
+	enableAnalytics: false,
+} as unknown as SettingsConfig;
+
 describe("SettingsSelectorComponent", () => {
 	let harness: Harness | undefined;
 	beforeAll(() => {
@@ -27,6 +86,7 @@ describe("SettingsSelectorComponent", () => {
 		const onScrollbarChange = vi.fn();
 		const onCopyOnSelectChange = vi.fn();
 		const config = {
+			...baseConfig,
 			fullscreenExitOutput: "transcript",
 			fullscreenScrollbar: "auto",
 			fullscreenCopyOnSelect: true,
@@ -44,7 +104,7 @@ describe("SettingsSelectorComponent", () => {
 		} as unknown as SettingsCallbacks;
 
 		const cycle = (label: string, count: number) => {
-			const list = new SettingsSelectorComponent(config, callbacks).getSettingsList();
+			const list = new SettingsSelectorComponent(config, callbacks).getList("terminal");
 			for (const character of label) list.handleInput(character);
 			for (let i = 0; i < count; i++) list.handleInput("\r");
 		};
@@ -61,6 +121,7 @@ describe("SettingsSelectorComponent", () => {
 		const onStreamingSubmitModeChange = vi.fn();
 		const onMessageTimestampsChange = vi.fn();
 		const config = {
+			...baseConfig,
 			streamingSubmitMode: "steer",
 			messageTimestamps: true,
 			availableDefaultModels: [],
@@ -69,19 +130,24 @@ describe("SettingsSelectorComponent", () => {
 		const list = new SettingsSelectorComponent(config, {
 			onStreamingSubmitModeChange,
 			onMessageTimestampsChange,
-		} as unknown as SettingsCallbacks).getSettingsList();
+		} as unknown as SettingsCallbacks).getList("agent");
 		list.selectItem("streaming-submit-mode");
 		list.handleInput("\r");
 		list.handleInput("\r");
 		expect(onStreamingSubmitModeChange.mock.calls.flat()).toEqual(["followUp", "steer"]);
-		list.selectItem("message-timestamps");
-		list.handleInput("\r");
-		list.handleInput("\r");
+		const generalList = new SettingsSelectorComponent(config, {
+			onStreamingSubmitModeChange,
+			onMessageTimestampsChange,
+		} as unknown as SettingsCallbacks).getList("general");
+		generalList.selectItem("message-timestamps");
+		generalList.handleInput("\r");
+		generalList.handleInput("\r");
 		expect(onMessageTimestampsChange.mock.calls.flat()).toEqual([false, true]);
 	});
 
 	it("keeps the configured fixed theme marked while browsing", () => {
 		const config = {
+			...baseConfig,
 			defaultModel: "not set",
 			availableDefaultModels: [],
 			modelThinkingLevels: {},
@@ -91,7 +157,7 @@ describe("SettingsSelectorComponent", () => {
 			warnings: {},
 		} as unknown as SettingsConfig;
 		const callbacks = { onThemePreview: vi.fn(), onCancel: () => {} } as unknown as SettingsCallbacks;
-		const list = new SettingsSelectorComponent(config, callbacks).getSettingsList();
+		const list = new SettingsSelectorComponent(config, callbacks).getList("terminal");
 
 		list.selectItem("theme");
 		list.handleInput("\r");
@@ -107,6 +173,7 @@ describe("SettingsSelectorComponent", () => {
 
 	it("keeps a configured automatic theme marked while browsing", () => {
 		const config = {
+			...baseConfig,
 			defaultModel: "not set",
 			availableDefaultModels: [],
 			modelThinkingLevels: {},
@@ -116,7 +183,7 @@ describe("SettingsSelectorComponent", () => {
 			warnings: {},
 		} as unknown as SettingsConfig;
 		const callbacks = { onThemePreview: vi.fn(), onCancel: () => {} } as unknown as SettingsCallbacks;
-		const list = new SettingsSelectorComponent(config, callbacks).getSettingsList();
+		const list = new SettingsSelectorComponent(config, callbacks).getList("terminal");
 
 		list.selectItem("theme");
 		list.handleInput("\r");
@@ -137,13 +204,14 @@ describe("SettingsSelectorComponent", () => {
 		const model = harness.getModel("thinking-model")!;
 		const modelKey = `${model.provider}/${model.id}`;
 		const config = {
+			...baseConfig,
 			defaultModel: modelKey,
 			availableDefaultModels: [model],
 			thinkingLevel: "high",
 			modelThinkingLevels: { [modelKey]: "medium" },
 		} as unknown as SettingsConfig;
 		const callbacks = { onCancel: () => {} } as unknown as SettingsCallbacks;
-		const list = new SettingsSelectorComponent(config, callbacks).getSettingsList();
+		const list = new SettingsSelectorComponent(config, callbacks).getList("models");
 
 		list.selectItem("model-thinking");
 		list.handleInput("\r");
