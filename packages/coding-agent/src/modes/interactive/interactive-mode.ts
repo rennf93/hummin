@@ -4533,6 +4533,7 @@ export class InteractiveMode {
 		const curated = (id: string): boolean =>
 			id === "zai" ||
 			id === "zai-coding-cn" ||
+			id === "zai-api" ||
 			id.startsWith("hummin") ||
 			id.startsWith("llamacpp") ||
 			credentialed.has(id);
@@ -5999,7 +6000,7 @@ export class InteractiveMode {
 			}
 		}
 		const showAll = this.settingsManager.getProvidersShowAll();
-		const curated = (id: string): boolean => id === "zai" || id === "zai-coding-cn" || id.startsWith("hummin");
+		const curated = (id: string): boolean => id === "zai" || id === "zai-coding-cn" || id === "zai-api" || id.startsWith("hummin");
 		const visible = options.filter((option) => showAll || curated(option.id) || option.status !== undefined);
 		return visible.sort((a, b) => {
 			const aCurated = curated(a.id);
