@@ -758,9 +758,16 @@ describe("pending operation coalescing", () => {
 			t.flush();
 			return performance.now() - started;
 		};
-		wide(200); // warm
-		const small = Math.max(wide(250), 0.1);
-		const large = wide(2500);
+		// Best-of-N timings: a single noisy run on CI runners (GC pause, scheduler
+		// jitter) can inflate the large measurement or deflate the small one.
+		const timed = (n: number) => {
+			wide(n); // warm
+			let best = Number.POSITIVE_INFINITY;
+			for (let attempt = 0; attempt < 3; attempt++) best = Math.min(best, wide(n));
+			return Math.max(best, 0.1);
+		};
+		const small = timed(250);
+		const large = timed(2500);
 		expect(large / small).toBeLessThan(40); // linear would be ~10x
 	});
 
