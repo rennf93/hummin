@@ -9,6 +9,7 @@ Add custom providers and models (Ollama, vLLM, LM Studio, proxies) via `~/.pi/ag
 - [Supported APIs](#supported-apis)
 - [Provider Configuration](#provider-configuration)
 - [Model Configuration](#model-configuration)
+- [Prompt Cache Lifetimes](#prompt-cache-lifetimes)
 - [Overriding Built-in Providers](#overriding-built-in-providers)
 - [Per-model Overrides](#per-model-overrides)
 - [Anthropic Messages Compatibility](#anthropic-messages-compatibility)
@@ -204,10 +205,12 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | `reasoning` | No | `false` | Supports extended thinking |
 | `thinkingLevelMap` | No | omitted | Maps pi thinking levels to provider values and marks unsupported levels (see below) |
 | `input` | No | `["text"]` | Input types: `["text"]` or `["text", "image"]` |
+| `inputLimits` | No | omitted | Request limits and image preprocessing for this model (see below) |
 | `contextWindow` | No | `128000` | Context window size in tokens |
 | `maxTokens` | No | `16384` | Maximum output tokens |
 | `samplingParams` | No | omitted | Sampling parameters merged verbatim into every request body (see below) |
 | `cost` | No | all zeros | Per-million-token rates with optional request-wide input pricing tiers |
+| `promptCache` | No | omitted | Best-effort prompt cache lifetime in seconds per retention tier (see below) |
 | `compat` | No | provider `compat` | Provider compatibility overrides. Merged with provider-level `compat` when both are set. |
 
 A cost tier supplies a complete alternate rate set and applies to the full request when total input usage (`input + cacheRead + cacheWrite`) exceeds `inputTokensAbove`. When multiple tiers match, the highest threshold wins.
@@ -235,6 +238,46 @@ A cost tier supplies a complete alternate rate set and applies to the full reque
 Current behavior:
 - `/model`, `--list-models`, and the interactive footer display entries by model `id`.
 - The configured `name` is used for model matching and secondary model detail text. It does not replace the footer/status-bar model id.
+
+### Image Input Limits
+
+Use `inputLimits.images.resize` to configure how new images are encoded before they enter conversation history:
+
+```json
+{
+  "id": "vision-model",
+  "input": ["text", "image"],
+  "inputLimits": {
+    "images": {
+      "resize": {
+        "maxWidth": 1568,
+        "maxHeight": 1568,
+        "maxBytes": 524288,
+        "jpegQuality": 75
+      }
+    }
+  }
+}
+```
+
+`maxBytes` is the maximum base64-encoded payload size. Omitted resize fields use pi's conservative defaults: 2000×2000, 4.5 MiB encoded, and JPEG quality 80. Built-in vision models carry that profile explicitly so unknown gateways never receive larger images than before.
+
+Pi applies the selected model's resize profile to `@file` attachments, the `read` tool, and images returned by tools. Images are encoded once before they enter history; changing models does not rewrite historical images or invalidate the cached conversation prefix. The `images.autoResize` setting can disable resizing globally.
+
+The catalog can also record `inputLimits.maxRequestBytes`, `images.maxPerMessage`, and `images.maxPerRequest`. These fields describe hard provider limits; this initial implementation does not yet rewrite or reject conversation history based on them.
+
+### Prompt Cache Lifetimes
+
+`promptCache` states how long the provider keeps a prompt cache entry alive for each retention tier pi can request (`short` is the default tier; `long` is used when `PI_CACHE_RETENTION=long`). Values are seconds and are estimates: providers publish ranges, so pick the conservative end.
+
+```json
+{
+  "id": "claude-sonnet-5",
+  "promptCache": { "short": 300, "long": 3600 }
+}
+```
+
+The built-in catalog fills this in for direct Anthropic (5 min / 1 h). Other providers, including direct OpenAI, have no built-in lifetime until their cache-expiry and replay behavior has been validated for warming. A model without a value for the tier a request used is never warmed; custom models and provider overrides can opt in when the backing cache behavior is known. See [Cache Warming](settings.md#cache-warming).
 
 ### Sampling Parameters
 
@@ -359,7 +402,23 @@ Use `modelOverrides` to customize built-in models and matching extension-registe
 }
 ```
 
-`modelOverrides` supports these fields per model: `name`, `reasoning`, `thinkingLevelMap`, `input`, `cost` (partial), `contextWindow`, `maxTokens`, `samplingParams` (merged per key), `headers`, `compat`.
+`modelOverrides` supports these fields per model: `name`, `reasoning`, `thinkingLevelMap`, `input`, `inputLimits` (deep-merged), `cost` (partial), `promptCache` (merged per tier), `contextWindow`, `maxTokens`, `samplingParams` (merged per key), `headers`, `compat`.
+
+Use a `promptCache` override to enable cache warming through a proxy whose backing cache you know, for example OpenRouter routed to Anthropic:
+
+```json
+{
+  "providers": {
+    "openrouter": {
+      "modelOverrides": {
+        "anthropic/claude-sonnet-4": {
+          "promptCache": { "short": 300 }
+        }
+      }
+    }
+  }
+}
+```
 
 Direct OpenAI GPT-5.6 Sol, Terra, and Luna default to a `272000` context window so requests remain within OpenAI's short-context pricing tier. To opt into OpenAI's 1.05M context window, increase it for each model you use:
 

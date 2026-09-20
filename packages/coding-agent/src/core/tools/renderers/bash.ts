@@ -97,25 +97,25 @@ function buildShellCallComponent(
 	const suffix = timeoutSuffix + formatShellStatusSuffix(state, isError, isPartial);
 	if (command === null) {
 		const invalid = invalidArgText(theme);
-		shellComponent.setExpandedText(`${label} ${invalid}${timeoutSuffix}`);
-		shellComponent.buildCollapsedLine = () => `${label} ${invalid}${suffix}`;
+		shellComponent.setExpandedText(`${label}  ${invalid}${timeoutSuffix}`);
+		shellComponent.buildCollapsedLine = () => `${label}  ${invalid}${suffix}`;
 		return shellComponent;
 	}
 	if (!command) {
 		const placeholder = theme.fg("toolOutput", "...");
-		shellComponent.setExpandedText(`${label} ${placeholder}${timeoutSuffix}`);
-		shellComponent.buildCollapsedLine = () => `${label} ${placeholder}${suffix}`;
+		shellComponent.setExpandedText(`${label}  ${placeholder}${timeoutSuffix}`);
+		shellComponent.buildCollapsedLine = () => `${label}  ${placeholder}${suffix}`;
 		return shellComponent;
 	}
 	// Expanded: the full multi-line command (wrapped by Text).
-	shellComponent.setExpandedText(`${label} ${command}${timeoutSuffix}`);
-	// Collapsed: one line - label, single separator, command trimmed to width.
+	shellComponent.setExpandedText(`${label}  ${command}${timeoutSuffix}`);
+	// Collapsed: one line - label, separator, command trimmed to width.
 	const singleLine = collapseCommandToSingleLine(command);
 	shellComponent.buildCollapsedLine = (width: number) => {
-		const prefixWidth = visibleWidth(label) + 1;
+		const prefixWidth = visibleWidth(label) + 2;
 		const budget = Math.max(0, width - prefixWidth - visibleWidth(suffix));
 		const commandDisplay = truncateToWidth(singleLine, budget, "…");
-		return `${label} ${commandDisplay}${suffix}`;
+		return `${label}  ${commandDisplay}${suffix}`;
 	};
 	shellComponent.expanded = expanded;
 	return shellComponent;

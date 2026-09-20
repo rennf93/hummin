@@ -18,6 +18,10 @@ export interface ProcessJob {
 	dismissed?: boolean;
 	done: Promise<void>;
 	stop: (reason?: "cancelled" | "timed_out") => void;
+	/** Live output hook. Mutable so a session that adopts a migrated job can rebind delivery. */
+	onOutput?: (text: string) => void;
+	/** Completion hook, fired once by `finish`. Mutable for the same reason. */
+	onComplete?: (job: ProcessJob) => void;
 }
 
 export interface ProcessOptions {
@@ -33,8 +37,31 @@ export interface ProcessOptions {
 	onComplete?: (job: ProcessJob) => void;
 }
 
-/** All process managers alive in this extension host, for /background and status counts. */
-const managers = new Set<ProcessManager>();
+/** All process managers alive in this process, for /background and status counts.
+ *
+ * Lives on `globalThis`: extension modules are re-evaluated per session switch
+ * (jiti runs with `moduleCache: false`), so plain module state would fork per
+ * session and migrated jobs would vanish from every listing.
+ */
+const MANAGERS_KEY = Symbol.for("hummin.process-managers");
+const managerState = ((globalThis as Record<symbol, unknown>)[MANAGERS_KEY] ??= {
+	managers: new Set<ProcessManager>(),
+}) as { managers: Set<ProcessManager> };
+const managers = managerState.managers;
+
+/**
+ * The user's clear-session choice, written by core before the session switch
+ * (see `src/core/session-migration.ts`, same registered symbol).
+ *
+ * "migrate": `session_shutdown` for a switch keeps jobs running for adoption by
+ * the incoming session. "abort" (default): the switch kills everything, which
+ * was the behavior before migration existed.
+ */
+export function migrationChoice(): "migrate" | "abort" {
+	return (globalThis as Record<symbol, unknown>)[Symbol.for("hummin.background.migration")] === "migrate"
+		? "migrate"
+		: "abort";
+}
 
 /** Number of currently running background processes across all managers. */
 export function runningProcessCount(): number {
@@ -263,7 +290,7 @@ export class ProcessManager {
 			closeSync(fd);
 			resolveDone();
 			try {
-				if (!this.closed) options.onComplete?.(job);
+				if (!this.closed) job.onComplete?.(job);
 			} catch (error) {
 				job.error = `Completion notification failed: ${String(error)}`;
 			}
@@ -274,7 +301,7 @@ export class ProcessManager {
 				const buffer = Buffer.from(text);
 				const length = Math.min(buffer.length, Math.max(0, 1024 * 1024 - bytes));
 				if (length) bytes += writeSync(fd, buffer, 0, length);
-				options.onOutput?.(text);
+				job.onOutput?.(text);
 			} catch (error) {
 				job.error = String(error);
 				job.stop();
@@ -282,6 +309,8 @@ export class ProcessManager {
 		};
 		this.jobs.set(id, job);
 		this.active.add(id);
+		job.onOutput = options.onOutput;
+		job.onComplete = options.onComplete;
 		try {
 			child = spawn(options.command, options.args, {
 				cwd: options.cwd,
@@ -317,7 +346,33 @@ export class ProcessManager {
 		this.closed = true;
 		for (const job of this.jobs.values()) job.stop();
 		await Promise.all([...this.jobs.values()].map((job) => job.done));
+		managers.delete(this);
 	}
+}
+
+/** Running jobs of one kind across ALL managers, for session-switch adoption.
+ * Old-session managers stay registered until they are closed, so a fresh
+ * session's extension finds and rebinds the jobs the outgoing session left running.
+ */
+export function adoptRunningJobs(kind: string): ProcessJob[] {
+	const adopted: ProcessJob[] = [];
+	for (const manager of managers) {
+		for (const job of manager.jobs.values()) {
+			if (job.kind === kind && job.state === "running") adopted.push(job);
+		}
+	}
+	return adopted;
+}
+
+/** Every job of one kind across ALL managers, any state (tool status listings). */
+export function jobsByKind(kind: string): ProcessJob[] {
+	const jobs: ProcessJob[] = [];
+	for (const manager of managers) {
+		for (const job of manager.jobs.values()) {
+			if (job.kind === kind && !job.dismissed) jobs.push(job);
+		}
+	}
+	return jobs;
 }
 
 export function describeJob(job: ProcessJob): string {

@@ -1,7 +1,12 @@
 import { join, resolve } from "node:path";
-import { Text, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { resetCapabilitiesCache, setCapabilities, Text, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+
+const imageConvertMocks = vi.hoisted(() => ({ convertToPng: vi.fn() }));
+
+vi.mock("../src/utils/image-convert.ts", () => imageConvertMocks);
+
 import { CONFIG_DIR_NAME, getReadmePath } from "../src/config.ts";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.ts";
@@ -37,7 +42,45 @@ describe("ToolExecutionComponent parity", () => {
 	});
 
 	afterEach(() => {
+		resetCapabilitiesCache();
+		imageConvertMocks.convertToPng.mockReset();
 		vi.useRealTimers();
+	});
+
+	// Issue #8577: ignore conversions that finish after the image was replaced.
+	test("keeps the final tool image when a partial image conversion finishes late", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		let finishConversion!: (result: { data: string; mimeType: string }) => void;
+		const conversion = new Promise<{ data: string; mimeType: string }>((resolve) => {
+			finishConversion = resolve;
+		});
+		imageConvertMocks.convertToPng.mockReturnValue(conversion);
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-image-race",
+			{},
+			{},
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		component.updateResult(
+			{ content: [{ type: "image", data: "partial-jpeg", mimeType: "image/jpeg" }], isError: false },
+			true,
+		);
+		component.updateResult({
+			content: [{ type: "image", data: "final-png", mimeType: "image/png" }],
+			isError: false,
+		});
+		expect(component.render(120).join("\n")).toContain("final-png");
+
+		finishConversion({ data: "converted-partial", mimeType: "image/png" });
+		await conversion;
+
+		const rendered = component.render(120).join("\n");
+		expect(rendered).toContain("final-png");
+		expect(rendered).not.toContain("converted-partial");
 	});
 
 	test("stacks custom call and result renderers like the old implementation", () => {
@@ -540,7 +583,7 @@ describe("ToolExecutionComponent parity", () => {
 			title: "SKILL.md",
 			path: join(process.cwd(), "attio", "SKILL.md"),
 			content: "---\nname: attio\ndescription: CRM helper\n---\n\n# Hidden skill instructions",
-			compact: "Skill       attio",
+			compact: "Skill  attio",
 			hidden: "Hidden skill instructions",
 			absent: "read skill attio",
 		},
@@ -548,7 +591,7 @@ describe("ToolExecutionComponent parity", () => {
 			title: "AGENTS.md",
 			path: join(process.cwd(), CONFIG_DIR_NAME, "AGENTS.md"),
 			content: "Hidden resource instructions",
-			compact: `Read        ${CONFIG_DIR_NAME}/AGENTS.md`,
+			compact: `Read  ${CONFIG_DIR_NAME}/AGENTS.md`,
 			hidden: "Hidden resource instructions",
 			absent: undefined,
 		},
@@ -556,7 +599,7 @@ describe("ToolExecutionComponent parity", () => {
 			title: "AGENTS.override.md",
 			path: join(process.cwd(), CONFIG_DIR_NAME, "AGENTS.override.md"),
 			content: "Hidden override instructions",
-			compact: `Read        ${CONFIG_DIR_NAME}/AGENTS.override.md`,
+			compact: `Read  ${CONFIG_DIR_NAME}/AGENTS.override.md`,
 			hidden: "Hidden override instructions",
 			absent: undefined,
 		},
@@ -564,7 +607,7 @@ describe("ToolExecutionComponent parity", () => {
 			title: "outside AGENTS.md",
 			path: resolve(process.cwd(), "..", "AGENTS.md"),
 			content: "Hidden outside resource instructions",
-			compact: `Read        ${resolve(process.cwd(), "..", "AGENTS.md").replace(/\\/g, "/")}`,
+			compact: `Read  ${resolve(process.cwd(), "..", "AGENTS.md").replace(/\\/g, "/")}`,
 			hidden: "Hidden outside resource instructions",
 			absent: undefined,
 		},
@@ -572,7 +615,7 @@ describe("ToolExecutionComponent parity", () => {
 			title: "Pi documentation",
 			path: getReadmePath(),
 			content: "Hidden docs content",
-			compact: "Read        README.md",
+			compact: "Read  README.md",
 			hidden: "Hidden docs content",
 			absent: undefined,
 		},
@@ -606,8 +649,8 @@ describe("ToolExecutionComponent parity", () => {
 	}
 
 	for (const scenario of [
-		{ title: "SKILL.md", path: join(process.cwd(), "attio", "SKILL.md"), compact: "Skill       attio:120-329" },
-		{ title: "Pi documentation", path: getReadmePath(), compact: "Read        README.md:120-329" },
+		{ title: "SKILL.md", path: join(process.cwd(), "attio", "SKILL.md"), compact: "Skill  attio:120-329" },
+		{ title: "Pi documentation", path: getReadmePath(), compact: "Read  README.md:120-329" },
 	] as const) {
 		test(`shows the read line range in compact ${scenario.title} reads before the expand hint`, () => {
 			const component = new ToolExecutionComponent(

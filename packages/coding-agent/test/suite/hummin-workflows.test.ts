@@ -153,18 +153,43 @@ it("records actual write-tool changes and rewinds files through the command hand
 				clearStatusIndicator: () => void;
 				runtimeHost: { newSession: () => Promise<{ cancelled: boolean }> };
 				chatContainer: { addChild: (child: unknown) => void };
-				session: { restoreRememberedModel: () => Promise<void> };
+				session: {
+					restoreRememberedModel: () => Promise<void>;
+					isStreaming: boolean;
+					isBashRunning: boolean;
+					pendingMessageCount: number;
+					getQueuedUserMessages: () => unknown[];
+					sendUserMessage: () => Promise<void>;
+				};
+				compactionQueuedMessages: unknown[];
+				footerDataProvider: { getExtensionStatuses: () => Map<string, string> };
 				ui: { requestRender: () => void };
 			}) => Promise<void>;
 		}
 	).handleClearCommand;
-	await clearCommand.call({
-		clearStatusIndicator,
-		runtimeHost: { newSession },
-		chatContainer: { addChild },
-		session: { restoreRememberedModel },
-		ui: { requestRender },
+	// Prototype-backed this: handleClearCommand now delegates to sibling methods
+	// (collectQueuedForMigration, describeRunningWork) on the prototype chain.
+	const fakeThis = Object.create(InteractiveMode.prototype) as Record<string, unknown>;
+	Object.defineProperties(fakeThis, {
+		clearStatusIndicator: { value: clearStatusIndicator, configurable: true },
+		runtimeHost: { value: { newSession }, configurable: true },
+		chatContainer: { value: { addChild }, configurable: true },
+		session: {
+			value: {
+				restoreRememberedModel,
+				isStreaming: false,
+				isBashRunning: false,
+				pendingMessageCount: 0,
+				getQueuedUserMessages: () => [],
+				sendUserMessage: async () => {},
+			},
+			configurable: true,
+		},
+		compactionQueuedMessages: { value: [], configurable: true },
+		footerDataProvider: { value: { getExtensionStatuses: () => new Map() }, configurable: true },
+		ui: { value: { requestRender }, configurable: true },
 	});
+	await clearCommand.call(fakeThis as never);
 	expect(newSession).toHaveBeenCalledOnce();
 	expect(clearStatusIndicator).toHaveBeenCalledOnce();
 	expect(restoreRememberedModel).toHaveBeenCalledOnce();

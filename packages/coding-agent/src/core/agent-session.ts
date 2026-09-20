@@ -52,10 +52,13 @@ import {
 import { getAgentDir } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
+import { processImage } from "../utils/image-process.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
+import { generateBugReportSummary } from "./bug-report.ts";
+import type { CacheWarmer, CacheWarmingStatus } from "./cache-warmer.ts";
 import { compactToolDescription, stripSchemaDescriptions } from "./compact-prompt.ts";
 import {
 	type CompactionPreparation,
@@ -109,7 +112,7 @@ import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.t
 import { exportSessionToJsonl } from "./session-export.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
 import { getLatestCompactionEntry } from "./session-manager.ts";
-import type { SettingsManager } from "./settings-manager.ts";
+import type { CacheWarmingMode, SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import {
@@ -221,6 +224,8 @@ export interface AgentSessionConfig {
 	customTools?: ToolDefinition[];
 	/** Canonical model/auth runtime used by coding-agent internals. */
 	modelRuntime: ModelRuntime;
+	/** Keeps the prompt cache entry of the last session request warm. */
+	cacheWarmer?: Pick<CacheWarmer, "cancel" | "status" | "onAgentSettled" | "onModeChanged" | "onWarmed">;
 	/** Initial active built-in tool names. Default: [read, bash, edit, write] */
 	initialActiveToolNames?: string[];
 	/** Optional allowlist of tool names. When provided, only these tool names are exposed. */
@@ -325,6 +330,7 @@ export class AgentSession {
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _isAgentRunActive = false;
+	private _agentRunAbortRequested = false;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
 
@@ -377,6 +383,7 @@ export class AgentSession {
 	private _extensionErrorUnsubscriber?: () => void;
 
 	private _modelRuntime: ModelRuntime;
+	private _cacheWarmer?: Pick<CacheWarmer, "cancel" | "status" | "onAgentSettled" | "onModeChanged" | "onWarmed">;
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
@@ -397,6 +404,10 @@ export class AgentSession {
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		this._modelRuntime = config.modelRuntime;
+		this._cacheWarmer = config.cacheWarmer;
+		if (this._cacheWarmer) {
+			this._cacheWarmer.onWarmed = (entry) => this._emit({ type: "entry_appended", entry });
+		}
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
@@ -422,7 +433,10 @@ export class AgentSession {
 		return this._modelRuntime;
 	}
 
-	private async _getRequiredRequestAuth(model: Model<any>): Promise<{
+	private async _getRequiredRequestAuth(
+		model: Model<any>,
+		signal?: AbortSignal,
+	): Promise<{
 		model: Model<any>;
 		apiKey?: string;
 		headers?: Record<string, string>;
@@ -430,7 +444,7 @@ export class AgentSession {
 	}> {
 		let result: AuthResult | undefined;
 		try {
-			result = await this._modelRuntime.getAuth(model);
+			result = await this._modelRuntime.getAuth(model, { signal });
 		} catch (error) {
 			const cause = error instanceof Error ? error.cause : undefined;
 			if (cause instanceof Error && cause.message === "authHeader requires a resolved API key") {
@@ -459,18 +473,21 @@ export class AgentSession {
 		throw new Error(formatNoApiKeyFoundMessage(model.provider));
 	}
 
-	private async _getSummarizationRequestAuth(model: Model<any>): Promise<{
+	private async _getSummarizationRequestAuth(
+		model: Model<any>,
+		signal?: AbortSignal,
+	): Promise<{
 		model: Model<any>;
 		apiKey?: string;
 		headers?: Record<string, string>;
 		env?: Record<string, string>;
 	}> {
 		if (this.agent.streamFunction === streamSimple) {
-			return this._getRequiredRequestAuth(model);
+			return this._getRequiredRequestAuth(model, signal);
 		}
 
 		try {
-			const result = await this._modelRuntime.getAuth(model);
+			const result = await this._modelRuntime.getAuth(model, { signal });
 			if (!result) return { model };
 			const requestModel = result.auth.baseUrl ? { ...model, baseUrl: result.auth.baseUrl } : model;
 			return {
@@ -479,7 +496,8 @@ export class AgentSession {
 				headers: withoutDeletedHeaders(result.auth.headers),
 				env: result.env,
 			};
-		} catch {
+		} catch (error) {
+			if (signal?.aborted) throw error;
 			return { model };
 		}
 	}
@@ -531,8 +549,10 @@ export class AgentSession {
 
 			const content = hookResult?.content ?? result.content ?? [];
 			// Runs after the extension hook so images injected or replaced by extensions are normalized too.
+			const resizeOptions = this.model?.inputLimits?.images?.resize;
 			const normalizedContent = await normalizeToolResultImages(content, {
 				autoResizeImages: this.settingsManager.getImageAutoResize(),
+				...(resizeOptions ? { resizeOptions } : {}),
 			});
 
 			if (!hookResult && normalizedContent === content) {
@@ -648,6 +668,7 @@ export class AgentSession {
 	}
 
 	private async _emitAgentSettled(): Promise<void> {
+		this._cacheWarmer?.onAgentSettled();
 		this._isAgentRunActive = false;
 		try {
 			await this._extensionRunner.emit({ type: "agent_settled" });
@@ -737,6 +758,7 @@ export class AgentSession {
 	};
 
 	private _willRetryAfterAgentEnd(event: Extract<AgentEvent, { type: "agent_end" }>): boolean {
+		if (this._agentRunAbortRequested) return false;
 		const settings = this.settingsManager.getRetrySettings();
 		if (!settings.enabled || this._retryAttempt >= settings.maxRetries) {
 			return false;
@@ -908,6 +930,10 @@ export class AgentSession {
 		);
 		this._disconnectFromAgent();
 		this._eventListeners = [];
+		if (this._cacheWarmer) {
+			this._cacheWarmer.onWarmed = undefined;
+			this._cacheWarmer.cancel();
+		}
 		cleanupSessionResources(this.sessionId);
 	}
 
@@ -918,6 +944,17 @@ export class AgentSession {
 	/** Full agent state */
 	get state(): AgentState {
 		return this.agent.state;
+	}
+
+	/** Current cache-warming state and the policy inputs that produced it. */
+	get cacheWarmingStatus(): CacheWarmingStatus | undefined {
+		return this._cacheWarmer?.status;
+	}
+
+	/** Persist the cache-warming mode and immediately reconcile active warming. */
+	setCacheWarmingMode(mode: CacheWarmingMode): void {
+		this.settingsManager.setCacheWarmingMode(mode);
+		this._cacheWarmer?.onModeChanged();
 	}
 
 	/** Current model (may be undefined if not yet selected) */
@@ -1187,13 +1224,16 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		this._agentRunAbortRequested = false;
 		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
 			while (await this._handlePostAgentRun()) {
+				if (this._agentRunAbortRequested) break;
 				await this.agent.continue();
 			}
 		} finally {
+			if (this._agentRunAbortRequested) this._finishCancelledRetry();
 			this._runSystemPromptOptions = undefined;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
@@ -1204,12 +1244,21 @@ export class AgentSession {
 	private async _handlePostAgentRun(): Promise<boolean> {
 		const msg = this._lastAssistantMessage;
 		this._lastAssistantMessage = undefined;
+		if (this._agentRunAbortRequested) {
+			this._finishCancelledRetry();
+			return false;
+		}
 		if (!msg) {
 			return false;
 		}
 
 		if (this._isRetryableError(msg) && (await this._prepareRetry(msg))) {
-			return true;
+			if (this._agentRunAbortRequested) this._finishCancelledRetry();
+			return !this._agentRunAbortRequested;
+		}
+		if (this._agentRunAbortRequested) {
+			this._finishCancelledRetry();
+			return false;
 		}
 
 		if (msg.stopReason === "error" && this._retryAttempt > 0) {
@@ -1223,12 +1272,12 @@ export class AgentSession {
 		}
 
 		if (await this._checkCompaction(msg)) {
-			return true;
+			return !this._agentRunAbortRequested;
 		}
 
 		// The agent loop drains both queues before emitting agent_end. Any messages
 		// here were queued by agent_end extension handlers and need a continuation.
-		return this.agent.hasQueuedMessages();
+		return !this._agentRunAbortRequested && this.agent.hasQueuedMessages();
 	}
 
 	private async _runInputHandlers(
@@ -1249,6 +1298,28 @@ export class AgentSession {
 			return { text: inputResult.text, images: inputResult.images ?? images };
 		}
 		return { text, images };
+	}
+
+	private async _normalizePromptImages(
+		images: ImageContent[] | undefined,
+	): Promise<{ images: ImageContent[]; hints: string[] }> {
+		if (!images) return { images: [], hints: [] };
+
+		const normalizedImages: ImageContent[] = [];
+		const hints: string[] = [];
+		for (const image of images) {
+			const processed = await processImage(Buffer.from(image.data, "base64"), image.mimeType, {
+				autoResizeImages: this.settingsManager.getImageAutoResize(),
+				resizeOptions: this.model?.inputLimits?.images?.resize,
+			});
+			if (!processed.ok) {
+				hints.push(processed.message);
+				continue;
+			}
+			normalizedImages.push({ type: "image", data: processed.data, mimeType: processed.mimeType });
+			hints.push(...processed.hints);
+		}
+		return { images: normalizedImages, hints };
 	}
 
 	/**
@@ -1350,27 +1421,8 @@ export class AgentSession {
 				await this._checkCompaction(lastAssistant, false);
 			}
 
-			// Build messages array (custom message if any, then user message)
-			messages = [];
-
-			// Add user message
-			const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: expandedText }];
-			if (currentImages) {
-				userContent.push(...currentImages);
-			}
-			messages.push({
-				role: "user",
-				content: userContent,
-				timestamp: Date.now(),
-			});
-
-			// Inject any pending "nextTurn" messages as context alongside the user message
-			for (const msg of this._pendingNextTurnMessages) {
-				messages.push(msg);
-			}
-			this._pendingNextTurnMessages = [];
-
-			// Emit before_agent_start extension event
+			// Emit before_agent_start before normalizing images so extension-driven model
+			// selection determines the resize profile used for the request and history.
 			const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
 			const result = await this._extensionRunner.emitBeforeAgentStart(
 				expandedText,
@@ -1384,6 +1436,27 @@ export class AgentSession {
 				result.systemPromptOptions.selectedTools.length !== selectedToolsBefore.length ||
 				result.systemPromptOptions.selectedTools.some((name, index) => name !== selectedToolsBefore[index]);
 			if (!handlerEditedTools) result.systemPromptOptions.selectedTools = this.getActiveToolNames();
+
+			const normalized = await this._normalizePromptImages(currentImages);
+			const userText =
+				normalized.hints.length > 0 ? `${expandedText}\n\n${normalized.hints.join("\n")}` : expandedText;
+
+			// Build messages only after hooks and image normalization have completed.
+			messages = [];
+			const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: userText }];
+			userContent.push(...normalized.images);
+			messages.push({
+				role: "user",
+				content: userContent,
+				timestamp: Date.now(),
+			});
+
+			// Inject any pending "nextTurn" messages as context alongside the user message
+			for (const msg of this._pendingNextTurnMessages) {
+				messages.push(msg);
+			}
+			this._pendingNextTurnMessages = [];
+
 			for (const msg of result.messages) {
 				messages.push({
 					role: "custom",
@@ -1736,6 +1809,9 @@ export class AgentSession {
 	 * Abort current operation and wait for agent to become idle.
 	 */
 	async abort(): Promise<void> {
+		if (this._isAgentRunActive) {
+			this._agentRunAbortRequested = true;
+		}
 		this.abortRetry();
 		this.abortCompaction();
 		this.abortBranchSummary();
@@ -2106,6 +2182,7 @@ export class AgentSession {
 		this._compactionAbortController = new AbortController();
 		this._emit({ type: "compaction_start", reason: "manual" });
 		let fromExtension = false;
+		let cancelledByExtension = false;
 
 		try {
 			const model = this.model;
@@ -2114,7 +2191,12 @@ export class AgentSession {
 			}
 
 			const settings = this.settingsManager.getCompactionSettings(model);
-			const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(model);
+			const {
+				model: requestModel,
+				apiKey,
+				headers,
+				env,
+			} = await this._getSummarizationRequestAuth(model, this._compactionAbortController.signal);
 
 			const pathEntries = this.sessionManager.getBranch();
 
@@ -2142,6 +2224,7 @@ export class AgentSession {
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (result?.cancel) {
+					cancelledByExtension = true;
 					throw new Error("Compaction cancelled");
 				}
 
@@ -2228,7 +2311,7 @@ export class AgentSession {
 			return compactionResult;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			const aborted = message === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
+			const aborted = this._compactionAbortController.signal.aborted || cancelledByExtension;
 			const errorMessage = aborted ? undefined : `Compaction failed: ${message}`;
 			this._clearManualCompactionState();
 			this._emit({
@@ -2407,26 +2490,35 @@ export class AgentSession {
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
 		const model = this.model;
 		const settings = this.settingsManager.getCompactionSettings(model);
+		let abortController: AbortController | undefined;
 		let started = false;
 		let fromExtension = false;
+		let cancelledByExtension = false;
 
 		try {
 			if (!model) {
 				return false;
 			}
 
-			const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(model);
-
 			const pathEntries = this.sessionManager.getBranch();
-
 			const preparation = prepareCompaction(pathEntries, settings);
 			if (!preparation) {
 				return false;
 			}
 
-			this._emit({ type: "compaction_start", reason });
-			this._autoCompactionAbortController = new AbortController();
+			abortController = new AbortController();
+			this._autoCompactionAbortController = abortController;
 			started = true;
+			this._emit({ type: "compaction_start", reason });
+			abortController.signal.throwIfAborted();
+
+			const {
+				model: requestModel,
+				apiKey,
+				headers,
+				env,
+			} = await this._getSummarizationRequestAuth(model, abortController.signal);
+			abortController.signal.throwIfAborted();
 
 			let extensionCompaction: CompactionResult | undefined;
 
@@ -2438,24 +2530,12 @@ export class AgentSession {
 					customInstructions: undefined,
 					reason,
 					willRetry,
-					signal: this._autoCompactionAbortController.signal,
+					signal: abortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (extensionResult?.cancel) {
-					this._emit({
-						type: "compaction_end",
-						reason,
-						result: undefined,
-						aborted: true,
-						willRetry: false,
-					});
-					await this._emitSessionCompactFailed({
-						reason,
-						aborted: true,
-						willRetry: false,
-						fromExtension: false,
-					});
-					return false;
+					cancelledByExtension = true;
+					throw new Error("Compaction cancelled");
 				}
 
 				if (extensionResult?.compaction) {
@@ -2463,6 +2543,7 @@ export class AgentSession {
 					fromExtension = true;
 				}
 			}
+			abortController.signal.throwIfAborted();
 
 			let summary: string;
 			let firstKeptEntryId: string;
@@ -2485,7 +2566,7 @@ export class AgentSession {
 					apiKey,
 					headers,
 					undefined,
-					this._autoCompactionAbortController.signal,
+					abortController.signal,
 					env,
 					reason,
 				);
@@ -2495,23 +2576,7 @@ export class AgentSession {
 				usage = compactResult.usage;
 				details = compactResult.details;
 			}
-
-			if (this._autoCompactionAbortController.signal.aborted) {
-				this._emit({
-					type: "compaction_end",
-					reason,
-					result: undefined,
-					aborted: true,
-					willRetry: false,
-				});
-				await this._emitSessionCompactFailed({
-					reason,
-					aborted: true,
-					willRetry: false,
-					fromExtension,
-				});
-				return false;
-			}
+			abortController.signal.throwIfAborted();
 
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
 			const newEntries = this.sessionManager.getEntries();
@@ -2561,31 +2626,35 @@ export class AgentSession {
 			// Continue once so queued messages are delivered.
 			return this.agent.hasQueuedMessages();
 		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : "compaction failed";
+			const message = error instanceof Error ? error.message : "compaction failed";
+			const aborted = abortController?.signal.aborted === true || cancelledByExtension;
 			if (started) {
-				const formattedErrorMessage =
-					reason === "overflow"
-						? `Context overflow recovery failed: ${errorMessage}`
-						: `Auto-compaction failed: ${errorMessage}`;
+				const errorMessage = aborted
+					? undefined
+					: reason === "overflow"
+						? `Context overflow recovery failed: ${message}`
+						: `Auto-compaction failed: ${message}`;
 				this._emit({
 					type: "compaction_end",
 					reason,
 					result: undefined,
-					aborted: false,
+					aborted,
 					willRetry: false,
-					errorMessage: formattedErrorMessage,
+					errorMessage,
 				});
 				await this._emitSessionCompactFailed({
 					reason,
-					errorMessage: formattedErrorMessage,
-					aborted: false,
+					errorMessage,
+					aborted,
 					willRetry: false,
 					fromExtension,
 				});
 			}
 			return false;
 		} finally {
-			this._autoCompactionAbortController = undefined;
+			if (this._autoCompactionAbortController === abortController) {
+				this._autoCompactionAbortController = undefined;
+			}
 			this._resolveIdleWaitIfIdle();
 		}
 	}
@@ -3046,6 +3115,18 @@ export class AgentSession {
 		};
 	}
 
+	private _finishCancelledRetry(): void {
+		if (this._retryAttempt === 0) return;
+		const attempt = this._retryAttempt;
+		this._retryAttempt = 0;
+		this._emit({
+			type: "auto_retry_end",
+			success: false,
+			attempt,
+			finalError: "Retry cancelled",
+		});
+	}
+
 	/**
 	 * Prepare a retryable error for continuation with exponential backoff.
 	 * @returns true if the caller should continue the agent, false otherwise
@@ -3086,14 +3167,7 @@ export class AgentSession {
 			await sleep(delayMs, this._retryAbortController.signal);
 		} catch {
 			// Aborted during sleep - emit end event so UI can clean up
-			const attempt = this._retryAttempt;
-			this._retryAttempt = 0;
-			this._emit({
-				type: "auto_retry_end",
-				success: false,
-				attempt,
-				finalError: "Retry cancelled",
-			});
+			this._finishCancelledRetry();
 			return false;
 		} finally {
 			this._retryAbortController = undefined;
@@ -3502,7 +3576,9 @@ export class AgentSession {
 		const usageTotals = createUsageTotals();
 
 		for (const entry of this.sessionManager.getEntries()) {
-			if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
+			if (entry.type === "usage") {
+				addUsageToTotals(usageTotals, entry.usage);
+			} else if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
 				addUsageToTotals(usageTotals, entry.usage);
 			}
 			if (entry.type !== "message") continue;
@@ -3629,6 +3705,31 @@ export class AgentSession {
 	/** Export the current session branch to a Markdown transcript. */
 	exportToMarkdown(outputPath?: string, overwrite = false): string {
 		return exportSessionToMarkdown(this.sessionManager, outputPath, overwrite);
+	}
+
+	/**
+	 * Ask the current model to describe what went wrong in this session for a bug report.
+	 * Used when the user declines to share the transcript itself.
+	 */
+	async summarizeForBugReport(options: { hint?: string; signal: AbortSignal }): Promise<string> {
+		const model = this.model;
+		if (!model) {
+			throw new Error("No model selected");
+		}
+		const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(model);
+		return generateBugReportSummary({
+			messages: this.messages,
+			hint: options.hint,
+			model: requestModel,
+			apiKey,
+			headers,
+			env,
+			signal: options.signal,
+			thinkingLevel: this.thinkingLevel,
+			streamFn: this.agent.streamFunction,
+			retry: this.settingsManager.getRetrySettings(),
+			sessionId: this.sessionId,
+		});
 	}
 
 	// =========================================================================

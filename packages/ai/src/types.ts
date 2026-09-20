@@ -65,6 +65,7 @@ export type KnownProvider =
 	| "opencode"
 	| "opencode-go"
 	| "kimi-coding"
+	| "meta"
 	| "cloudflare-workers-ai"
 	| "cloudflare-ai-gateway"
 	| "qwen-token-plan"
@@ -107,6 +108,12 @@ export interface ThinkingBudgets {
 
 // Base options all providers share
 export type CacheRetention = "none" | "short" | "long";
+
+/**
+ * Best-effort prompt cache lifetime in seconds for each retention tier a request can ask for.
+ * A missing tier means the lifetime is unknown; pi does not warm such caches.
+ */
+export type ModelPromptCache = Partial<Record<Exclude<CacheRetention, "none">, number>>;
 
 export type Transport = "sse" | "websocket" | "websocket-cached" | "auto";
 
@@ -949,6 +956,29 @@ export interface ModelCost extends ModelCostRates {
 	tiers?: ModelCostTier[];
 }
 
+export interface ModelImageResizeOptions {
+	maxWidth?: number;
+	maxHeight?: number;
+	/** Maximum base64-encoded payload size in bytes. */
+	maxBytes?: number;
+	jpegQuality?: number;
+}
+
+export interface ModelImageInputLimits {
+	/** Cache-safe resize profile applied before a new image enters conversation history. */
+	resize?: ModelImageResizeOptions;
+	/** Maximum images accepted in one provider message. */
+	maxPerMessage?: number;
+	/** Maximum images accepted across one provider request. */
+	maxPerRequest?: number;
+}
+
+export interface ModelInputLimits {
+	/** Maximum serialized provider request size in bytes. */
+	maxRequestBytes?: number;
+	images?: ModelImageInputLimits;
+}
+
 // Model interface for the unified model system
 export interface Model<TApi extends Api> {
 	id: string;
@@ -963,7 +993,11 @@ export interface Model<TApi extends Api> {
 	 */
 	thinkingLevelMap?: ThinkingLevelMap;
 	input: ("text" | "image")[];
+	/** Provider input limits and cache-safe preprocessing metadata. */
+	inputLimits?: ModelInputLimits;
 	cost: ModelCost;
+	/** Prompt cache lifetimes per retention tier. Unset when the provider's cache behavior is unknown. */
+	promptCache?: ModelPromptCache;
 	contextWindow: number;
 	maxTokens: number;
 	/** Default sampling parameters for this model. See {@link StreamOptions.samplingParams}; per-request keys override these. */
