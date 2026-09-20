@@ -44,7 +44,7 @@ describe("collapsed bash call row", () => {
 		const lines = component.render(width);
 		expect(lines).toHaveLength(1);
 		const text = stripAnsi(lines[0]).trimEnd();
-		expect(text.startsWith(`${formatToolLabel("bash")} npm run check`)).toBe(true);
+		expect(text.startsWith(`${formatToolLabel("bash")}  npm run check`)).toBe(true);
 		expect(text.endsWith("(timeout 30s)")).toBe(true);
 		expect(text.length).toBeLessThanOrEqual(width);
 	});
@@ -58,24 +58,24 @@ describe("collapsed bash call row", () => {
 		expect(lines.join("\n")).toContain(multiLineCommand);
 	});
 
-	it("uses a single separator between the padded label and the command", () => {
+	it("uses a two-space separator between the label and the command", () => {
 		const component = bash.renderCall!({ command: "echo hi" }, theme, renderContext());
 		const text = stripAnsi(component.render(120)[0]).trimEnd();
 		const label = formatToolLabel("bash");
-		expect(text.startsWith(`${label} echo hi`)).toBe(true);
+		expect(text.startsWith(`${label}  echo hi`)).toBe(true);
 	});
 });
 
 describe("collapsed write/edit call rows", () => {
-	it("write renders one line with the padded label and a single separator", () => {
+	it("write renders one line with the label and a two-space separator", () => {
 		const component = writeRenderers.renderCall!({ path: "/tmp/foo.ts", content: "hello" }, theme, renderContext());
 		const lines = component.render(120);
 		expect(lines).toHaveLength(1);
 		const text = stripAnsi(lines[0]).trimEnd();
-		expect(text.startsWith(`${formatToolLabel("write")} /tmp/foo.ts`)).toBe(true);
+		expect(text.startsWith(`${formatToolLabel("write")}  /tmp/foo.ts`)).toBe(true);
 	});
 
-	it("edit renders one line with the padded label and a single separator", () => {
+	it("edit renders one line with the label and a two-space separator", () => {
 		const component = editRenderers.renderCall!(
 			{ path: "/tmp/foo.ts", edits: [{ oldText: "a", newText: "b" }] },
 			theme,
@@ -84,6 +84,6 @@ describe("collapsed write/edit call rows", () => {
 		const lines = component.render(120);
 		expect(lines).toHaveLength(3); // Box(1,1) vertical padding
 		const text = stripAnsi(lines[1]).trimEnd();
-		expect(text.startsWith(` ${formatToolLabel("edit")} /tmp/foo.ts`)).toBe(true);
+		expect(text.startsWith(` ${formatToolLabel("edit")}  /tmp/foo.ts`)).toBe(true);
 	});
 });

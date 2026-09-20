@@ -583,7 +583,7 @@ describe("ToolExecutionComponent parity", () => {
 			title: "SKILL.md",
 			path: join(process.cwd(), "attio", "SKILL.md"),
 			content: "---\nname: attio\ndescription: CRM helper\n---\n\n# Hidden skill instructions",
-			compact: "Skill       attio",
+			compact: "Skill  attio",
 			hidden: "Hidden skill instructions",
 			absent: "read skill attio",
 		},
@@ -591,7 +591,7 @@ describe("ToolExecutionComponent parity", () => {
 			title: "AGENTS.md",
 			path: join(process.cwd(), CONFIG_DIR_NAME, "AGENTS.md"),
 			content: "Hidden resource instructions",
-			compact: `Read        ${CONFIG_DIR_NAME}/AGENTS.md`,
+			compact: `Read  ${CONFIG_DIR_NAME}/AGENTS.md`,
 			hidden: "Hidden resource instructions",
 			absent: undefined,
 		},
@@ -599,7 +599,7 @@ describe("ToolExecutionComponent parity", () => {
 			title: "AGENTS.override.md",
 			path: join(process.cwd(), CONFIG_DIR_NAME, "AGENTS.override.md"),
 			content: "Hidden override instructions",
-			compact: `Read        ${CONFIG_DIR_NAME}/AGENTS.override.md`,
+			compact: `Read  ${CONFIG_DIR_NAME}/AGENTS.override.md`,
 			hidden: "Hidden override instructions",
 			absent: undefined,
 		},
@@ -607,7 +607,7 @@ describe("ToolExecutionComponent parity", () => {
 			title: "outside AGENTS.md",
 			path: resolve(process.cwd(), "..", "AGENTS.md"),
 			content: "Hidden outside resource instructions",
-			compact: `Read        ${resolve(process.cwd(), "..", "AGENTS.md").replace(/\\/g, "/")}`,
+			compact: `Read  ${resolve(process.cwd(), "..", "AGENTS.md").replace(/\\/g, "/")}`,
 			hidden: "Hidden outside resource instructions",
 			absent: undefined,
 		},
@@ -615,7 +615,7 @@ describe("ToolExecutionComponent parity", () => {
 			title: "Pi documentation",
 			path: getReadmePath(),
 			content: "Hidden docs content",
-			compact: "Read        README.md",
+			compact: "Read  README.md",
 			hidden: "Hidden docs content",
 			absent: undefined,
 		},
@@ -649,8 +649,8 @@ describe("ToolExecutionComponent parity", () => {
 	}
 
 	for (const scenario of [
-		{ title: "SKILL.md", path: join(process.cwd(), "attio", "SKILL.md"), compact: "Skill       attio:120-329" },
-		{ title: "Pi documentation", path: getReadmePath(), compact: "Read        README.md:120-329" },
+		{ title: "SKILL.md", path: join(process.cwd(), "attio", "SKILL.md"), compact: "Skill  attio:120-329" },
+		{ title: "Pi documentation", path: getReadmePath(), compact: "Read  README.md:120-329" },
 	] as const) {
 		test(`shows the read line range in compact ${scenario.title} reads before the expand hint`, () => {
 			const component = new ToolExecutionComponent(

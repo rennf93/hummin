@@ -82,7 +82,7 @@ function getRenderablePreviewInput(args: RenderableEditArgs | undefined): { path
 }
 function formatEditCall(args: RenderableEditArgs | undefined, theme: Theme, cwd: string, stat?: DiffStat): string {
 	const pathDisplay = renderToolPath(str(args?.file_path ?? args?.path), theme, cwd);
-	let text = `${theme.fg("toolTitle", theme.bold(formatToolLabel("edit")))} ${pathDisplay}`;
+	let text = `${theme.fg("toolTitle", theme.bold(formatToolLabel("edit")))}  ${pathDisplay}`;
 	if (stat && (stat.added > 0 || stat.removed > 0)) {
 		const parts: string[] = [];
 		if (stat.added > 0) parts.push(theme.fg("toolDiffAdded", `+${stat.added}`));

@@ -1,6 +1,7 @@
 /** ask_user: structured multi-choice question rendered as a TUI selector. */
 import { type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import {
+	Text,
 	truncateToWidth,
 	visibleWidth,
 	type Component,
@@ -67,6 +68,40 @@ function toolResult(out: AskUserResult): { content: { type: "text"; text: string
 		? "ask_user: the user dismissed the question. Do not retry with the same question; proceed with your best judgment."
 		: `ask_user: "${out.choice}"${out.notice ? ` (${out.notice})` : ""}`;
 	return { content: [{ type: "text", text }], details: out };
+}
+
+const ASK_USER_LABEL = "Ask User";
+
+/** Collapsed one-liner vs expanded question+choices for the transcript row. */
+class AskUserCallComponent implements Component {
+	expanded = false;
+	private collapsedLine = "";
+	private expandedLines: string[] = [];
+
+	setArgs(theme: Theme, args: { question?: string; choices?: string[]; allowFreeText?: boolean } | undefined): void {
+		const label = theme.fg("toolTitle", theme.bold(ASK_USER_LABEL));
+		const question = typeof args?.question === "string" ? args.question.replace(/\s+/g, " ").trim() : "";
+		if (!question) {
+			this.collapsedLine = `${label}  ${theme.fg("toolOutput", "...")}`;
+			this.expandedLines = [this.collapsedLine];
+			return;
+		}
+		this.collapsedLine = `${label}  ${theme.fg("text", question)}`;
+		const lines = [`${label}  ${theme.fg("text", theme.bold(question))}`];
+		const choices = Array.isArray(args?.choices) ? args!.choices!.filter((c) => typeof c === "string") : [];
+		choices.forEach((choice, index) => {
+			lines.push(`  ${theme.fg("dim", `${index + 1}.`)} ${theme.fg("muted", choice)}`);
+		});
+		if (args?.allowFreeText) lines.push(`  ${theme.fg("dim", FREE_TEXT_LABEL)}`);
+		this.expandedLines = lines;
+	}
+
+	render(width: number): string[] {
+		if (this.expanded) return this.expandedLines.map((line) => truncateToWidth(line, width, "…"));
+		return [truncateToWidth(this.collapsedLine, width, "…")];
+	}
+
+	invalidate(): void {}
 }
 
 /**
@@ -236,6 +271,25 @@ export default function humminAsk(pi: ExtensionAPI): void {
 				return toolResult(result(choices[0], false, "non-interactive: defaulted to first choice"));
 			}
 			return toolResult(await askInteractive(question, choices, allowFreeText, ctx, signal));
+		},
+
+		renderCall(args, theme, context) {
+			const component = (context.lastComponent as AskUserCallComponent | undefined) ?? new AskUserCallComponent();
+			component.setArgs(theme, args as { question?: string; choices?: string[]; allowFreeText?: boolean });
+			component.expanded = context.expanded;
+			return component;
+		},
+
+		renderResult(result, _options, theme, context) {
+			if (context.isError) {
+				const text = result.content.find((c) => c.type === "text")?.text ?? "error";
+				return new Text(theme.fg("error", text.trim()), 0, 0);
+			}
+			const details = result.details as AskUserResult | undefined;
+			if (!details || details.cancelled) return new Text(theme.fg("dim", "cancelled"), 0, 0);
+			let line = `${theme.fg("success", "→")} ${theme.fg("accent", details.choice)}`;
+			if (details.notice) line += ` ${theme.fg("dim", `(${details.notice})`)}`;
+			return new Text(line, 0, 0);
 		},
 	});
 }

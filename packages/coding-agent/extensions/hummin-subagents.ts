@@ -12,6 +12,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
+	adoptRunningJobs,
 	allProcessJobs,
 	type BackgroundJobRow,
 	describeAllProcesses,
@@ -20,6 +21,7 @@ import {
 	jobRows,
 	type ProcessJob,
 	formatDuration,
+	migrationChoice,
 	outputTail,
 	ProcessManager,
 	refreshBackgroundStatus,
@@ -296,8 +298,48 @@ class BackgroundPanelComponent {
 	}
 }
 
+/** Prompt/model metadata per background task, keyed by job id.
+ *
+ * Lives on `globalThis` (extension modules are re-evaluated per session switch)
+ * so an adopted task can rebuild its completion message in the new session.
+ */
+interface TaskMeta {
+	what: string;
+	model: string;
+}
+const TASK_META_KEY = Symbol.for("hummin.subagent.tasks");
+const taskMeta = ((globalThis as Record<symbol, unknown>)[TASK_META_KEY] ??= new Map<string, TaskMeta>()) as Map<
+	string,
+	TaskMeta
+>;
+
 export default function humminSubagents(pi: ExtensionAPI): void {
 	const manager = new ProcessManager(join(getAgentDir(), "subagents"), "task");
+
+	/** Find a task across ALL managers, including ones adopted from a previous session. */
+	const adoptedTask = (id: string): ProcessJob | undefined => {
+		const job = findProcessJob(id);
+		return job?.kind === "task" ? job : undefined;
+	};
+
+	const deliverCompletion = (finished: ProcessJob, meta: TaskMeta): void => {
+		const duration = Date.now() - finished.startedAt;
+		void pi.sendMessage(
+			{
+				customType: "hummin-task",
+				content: describeJob(finished),
+				display: true,
+				details: {
+					label: `"${meta.what}"`,
+					model: meta.model,
+					state: finished.state,
+					exitCode: finished.exitCode,
+					durationMs: duration,
+				},
+			},
+			{ deliverAs: "followUp", triggerTurn: true },
+		);
+	};
 	// Collapsible completion rows for background task reports. Collapsed by
 	// default: glyph, label, exit, duration. Expanded shows the full report.
 	// extension load. Optional call: headless fakes in tests omit it.
@@ -330,8 +372,28 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 		component.expanded = options.expanded;
 		return component;
 	});
-	pi.on("session_shutdown", async () => {
-		await manager.close();
+	pi.on("session_start", async () => {
+		// Re-point completion delivery of tasks adopted from an outgoing session
+		// (user chose "continue running" on clear) at THIS session.
+		for (const job of adoptRunningJobs("task")) {
+			const meta = taskMeta.get(job.id);
+			if (meta) {
+				job.onComplete = (finished: ProcessJob) => {
+					taskMeta.delete(finished.id);
+					deliverCompletion(finished, meta);
+				};
+			}
+		}
+	});
+
+	pi.on("session_shutdown", async (event?) => {
+		// Keep tasks alive across a session switch the user chose to migrate;
+		// the incoming session's instance re-adopts them on session_start.
+		const migrating = event?.reason !== "quit" && migrationChoice() === "migrate";
+		if (!migrating) {
+			taskMeta.clear();
+			await manager.close();
+		}
 	});
 	pi.registerCommand?.("background", {
 		description: "List running background tasks and monitors",
@@ -434,25 +496,18 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 							// Exactly-once holds without a delivery-id: ProcessManager.finish is
 							// once-guarded (settled flag) and this callback fires synchronously
 							// from it, so sendMessage runs at most once per job.
-							const duration = Date.now() - finished.startedAt;
-							pi.sendMessage(
-								{
-									customType: "hummin-task",
-									content: describeJob(finished),
-									display: true,
-									details: {
-										label: `"${what}"`,
-										model: `${model.provider}/${model.id}`,
-										state: finished.state,
-										exitCode: finished.exitCode,
-										durationMs: duration,
-									},
-								},
-								{ deliverAs: "followUp", triggerTurn: true },
-							);
+							const meta = taskMeta.get(finished.id);
+							taskMeta.delete(finished.id);
+							if (!meta) return;
+							deliverCompletion(finished, meta);
 						}
 					: undefined,
 			});
+			// Adoption metadata: lets a session that migrates this task rebuild the
+			// completion message. Deleted by the completion hook on delivery.
+			if (params.background) {
+				taskMeta.set(job.id, { what, model: `${model.provider}/${model.id}` });
+			}
 			refreshBackgroundStatus(ctx.ui);
 			// Make the spawn visible to the user immediately, with what it is and where it logs
 			ctx.ui?.notify?.(`Started background ${describeJob(job)}`, "info");
@@ -475,9 +530,8 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 					: "Cancel a child task owned by this session.",
 			parameters: Type.Object({ task_id: Type.String() }),
 			async execute(_id, params, _signal, _update, ctx) {
-				const job = manager.jobs.get(params.task_id);
-				if (!job) throw new Error(`Unknown task: ${params.task_id}`);
-				if (action === "cancel") {
+				const job = manager.jobs.get(params.task_id) ?? adoptedTask(params.task_id);
+				if (!job) throw new Error(`Unknown task: ${params.task_id}`);				if (action === "cancel") {
 					job.stop();
 					await job.done;
 				}

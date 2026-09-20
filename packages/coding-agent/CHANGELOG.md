@@ -4,12 +4,17 @@
 
 ### Added
 
+- Todo plan widget above the editor: live checklist with header counts (`TODOs 2/6`), the in-progress step plus up to three pending ones, and a collapsed `+N pending, M completed` summary line; hidden once every step is completed.
+- Clear-session choice: `/clear` (and `app.session.new`) with work in flight (active response, bash, queued messages, background tasks/monitors) asks whether to continue running and migrate to the new session, or abort all; queued messages are re-delivered into the new session and background jobs are adopted by its extensions (rebindable output/completion hooks on background jobs).
+- `ask_user` transcript rendering: the call row shows the question (expanded shows numbered choices) and the result shows the picked answer or `cancelled`, instead of a raw JSON dump.
 - Categorized settings UI: /settings now groups its entries behind a tab bar (General, Agent, Models, Memory, Fleet, Editor, Terminal, Network, Shell, Privacy); `tab` or clicking a tab switches categories, and search still filters the active list.
 - Settings previously missing from /settings are now configurable: global default thinking level, per-provider list (providers.showAll), retry on failure, memory (enabled, mode, vault directory, provider, model), local fleet instances and fleet auto-start, editor mode (vim), external editor command, WebSocket connect timeout, HTTP proxy, shell path, shell command prefix, npm command, and analytics opt-in. Free-text fields open an input submenu (Enter saves, Esc cancels).
 - Upstream sync: bug reporting (`/bug` with model-generated summary), prompt cache warming with off/streaming/idle modes (setting under Agent), progressive session picker loading, faster recent session discovery, compiled Node CLI module caching, deferred extension loader dependencies, and an experimental micro agent.
 
 ### Changed
 
+- Tool rows drop the padded 12-char label column: each label is followed by a two-space gap, so rows like `Bash  <command>` no longer carry a wide empty stretch.
+- Footer right-aligned clusters (provider + model + thinking level, and the ctx meter) no longer start with a dim `·` separator with nothing to their left.
 - Message timestamps and skill commands moved to the General category; image settings moved to Terminal; transport and HTTP idle timeout moved to Network.
 
 ### Fixed

@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
+import type { AuthEvent, AuthPrompt, TextContent } from "@earendil-works/pi-ai";
 import {
 	type AssistantMessage,
 	type ImageContent,
@@ -126,6 +126,7 @@ import {
 	sessionEntryToContextMessages,
 	type UsageEntry,
 } from "../../core/session-manager.ts";
+import { consumeBackgroundMigrationChoice, setBackgroundMigrationChoice } from "../../core/session-migration.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
@@ -7215,16 +7216,95 @@ export class InteractiveMode {
 	private async handleClearCommand(): Promise<void> {
 		this.clearStatusIndicator();
 		try {
+			// Snapshot before the switch: queued messages live on the outgoing
+			// session and would otherwise be dropped with it.
+			const queued = this.collectQueuedForMigration();
+			const running = this.describeRunningWork();
+			let migrate = false;
+			if (running.length > 0) {
+				const choice = await this.showExtensionSelector(
+					`Running work: ${running.join(", ")}. Keep it running in the new session?`,
+					["Continue running (migrate to new session)", "Abort all"],
+				);
+				if (choice === undefined) return; // escape cancels the clear
+				migrate = choice.startsWith("Continue running");
+			}
+			setBackgroundMigrationChoice(migrate ? "migrate" : "abort");
 			const result = await this.runtimeHost.newSession();
+			consumeBackgroundMigrationChoice();
 			if (result.cancelled) {
 				return;
 			}
 			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(new Text(`${theme.fg("accent", "✓ New session started")}`, 1, 1));
+			this.chatContainer.addChild(
+				new Text(
+					theme.fg("accent", migrate ? "✓ New session started (running work migrated)" : "✓ New session started"),
+					1,
+					1,
+				),
+			);
+			if (migrate) {
+				await this.session.restoreRememberedModel().catch(() => {});
+				await this.restoreQueuedAfterMigration(queued);
+			}
 			void this.session.restoreRememberedModel().catch(() => {});
 			this.ui.requestRender();
 		} catch (error: unknown) {
 			await this.handleFatalRuntimeError("Failed to create session", error);
+		}
+	}
+
+	/** Everything queued on the CURRENT session that a migrated clear should carry over. */
+	private collectQueuedForMigration(): {
+		queued: { content: string | (TextContent | ImageContent)[]; deliverAs: "steer" | "followUp" }[];
+		compaction: CompactionQueuedMessage[];
+	} {
+		return {
+			queued: [
+				...this.session.getQueuedUserMessages("steering").map((message) => ({
+					content: message.content as string | (TextContent | ImageContent)[],
+					deliverAs: "followUp" as const,
+				})),
+				...this.session.getQueuedUserMessages("followUp").map((message) => ({
+					content: message.content as string | (TextContent | ImageContent)[],
+					deliverAs: "followUp" as const,
+				})),
+			],
+			compaction: [...this.compactionQueuedMessages],
+		};
+	}
+
+	/** Human-readable list of work that a clear would interrupt; empty when idle. */
+	private describeRunningWork(): string[] {
+		const running: string[] = [];
+		if (this.session.isStreaming) running.push("active response");
+		if (this.session.isBashRunning) running.push("bash command");
+		const queuedCount = this.session.pendingMessageCount + this.compactionQueuedMessages.length;
+		if (queuedCount > 0) running.push(`${queuedCount} queued message${queuedCount === 1 ? "" : "s"}`);
+		const background = this.footerDataProvider.getExtensionStatuses().get("bg");
+		if (background) running.push(background);
+		return running;
+	}
+
+	/** Re-deliver queued messages into the fresh session after a migrated clear. */
+	private async restoreQueuedAfterMigration(queued: {
+		queued: { content: string | (TextContent | ImageContent)[]; deliverAs: "steer" | "followUp" }[];
+		compaction: CompactionQueuedMessage[];
+	}): Promise<void> {
+		const messages = [
+			...queued.compaction.map((entry) => ({
+				content: entry.text as string | (TextContent | ImageContent)[],
+				deliverAs: entry.mode,
+			})),
+			...queued.queued,
+		];
+		for (const message of messages) {
+			try {
+				await this.session.sendUserMessage(message.content, { deliverAs: message.deliverAs });
+			} catch {
+				// A message that cannot re-deliver (e.g. no model) must not abort the
+				// remaining migrations; the user sees the fresh session either way.
+			}
 		}
 	}
 

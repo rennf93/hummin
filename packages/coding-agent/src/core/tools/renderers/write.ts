@@ -105,7 +105,7 @@ function formatWriteCall(
 	const rawPath = str(args?.file_path ?? args?.path);
 	const fileContent = str(args?.content);
 	const pathDisplay = renderToolPath(rawPath, theme, cwd);
-	let text = `${theme.fg("toolTitle", theme.bold(formatToolLabel("write")))} ${pathDisplay}`;
+	let text = `${theme.fg("toolTitle", theme.bold(formatToolLabel("write")))}  ${pathDisplay}`;
 	if (stat && (stat.added > 0 || stat.removed > 0)) {
 		const parts: string[] = [];
 		if (stat.added > 0) parts.push(theme.fg("toolDiffAdded", `+${stat.added}`));

@@ -16,7 +16,7 @@ import { DEFAULT_MAX_BYTES, formatSize } from "../truncate.ts";
 function formatLsCall(args: { path?: string; limit?: number } | undefined, theme: Theme, cwd: string): string {
 	const limit = args?.limit;
 	const pathDisplay = renderToolPath(str(args?.path), theme, cwd, { emptyFallback: "." });
-	let text = `${theme.fg("toolTitle", theme.bold(formatToolLabel("ls")))} ${pathDisplay}`;
+	let text = `${theme.fg("toolTitle", theme.bold(formatToolLabel("ls")))}  ${pathDisplay}`;
 	if (limit !== undefined) {
 		text += theme.fg("toolOutput", ` (limit ${limit})`);
 	}

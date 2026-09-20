@@ -8,12 +8,6 @@ import { resolvePath } from "../../utils/paths.ts";
 import { sanitizeBinaryOutput } from "../../utils/shell.ts";
 
 /**
- * Fixed width of the tool-label column in collapsed transcript rows. Labels are
- * padded to this width so the details of consecutive tool rows align.
- */
-export const TOOL_LABEL_COLUMN_WIDTH = 12;
-
-/**
  * Human-readable tool labels for transcript rows. Each tool keeps its own
  * distinct label; anything not listed here is auto-title-cased from its
  * snake_case name (e.g. `task_status` -> `Task Status`).
@@ -44,12 +38,12 @@ function titleCaseWord(word: string): string {
 
 /**
  * Format a tool name for display in a transcript row: one distinct label per
- * tool, Title Case, padded to the shared label-column width.
+ * tool, Title Case. Call sites separate the label from the row content with a
+ * two-space gap; labels are not padded to a shared column.
  */
 export function formatToolLabel(toolName: string): string {
 	const override = TOOL_LABEL_OVERRIDES[toolName.toLowerCase()];
-	const label = override ?? toolName.split(/[_-]/).map(titleCaseWord).join(" ");
-	return label.padEnd(TOOL_LABEL_COLUMN_WIDTH);
+	return override ?? toolName.split(/[_-]/).map(titleCaseWord).join(" ");
 }
 
 export function shortenPath(path: unknown): string {

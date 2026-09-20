@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatToolLabel, TOOL_LABEL_COLUMN_WIDTH } from "../src/core/tools/render-utils.ts";
+import { formatToolLabel } from "../src/core/tools/render-utils.ts";
 
 describe("formatToolLabel", () => {
 	it("gives each tool its own Title Case label", () => {
@@ -16,8 +16,8 @@ describe("formatToolLabel", () => {
 		expect(formatToolLabel("my_custom_tool").trim()).toBe("My Custom Tool");
 	});
 
-	it("pads labels to the shared column width so details align", () => {
-		expect(formatToolLabel("read")).toBe("Read".padEnd(TOOL_LABEL_COLUMN_WIDTH));
-		expect(formatToolLabel("bash")).toBe("Bash".padEnd(TOOL_LABEL_COLUMN_WIDTH));
+	it("returns the bare label; call sites add the two-space separator", () => {
+		expect(formatToolLabel("read")).toBe("Read");
+		expect(formatToolLabel("bash")).toBe("Bash");
 	});
 });

@@ -15,7 +15,6 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-
 type TodoStatus = "pending" | "in_progress" | "completed";
 
 export interface Todo {
@@ -39,6 +38,10 @@ const TodoParams = Type.Object({
 });
 
 const TODO_STATUS_KEY = "todo";
+const TODO_WIDGET_KEY = "todo-plan";
+
+/** Active steps listed in the editor widget before the rest collapse into the summary line. */
+const TODO_WIDGET_MAX_STEPS = 4;
 
 /** Footer segment counts: `4/5 · <current item>` (the footer renders the styled "TODOs" label). */
 export function formatTodoStatus(todos: Todo[]): string | undefined {
@@ -70,6 +73,44 @@ function renderChecklist(todos: Todo[], theme: Theme, expanded: boolean): string
 		out += `\n${theme.fg("dim", `  ... ${todos.length - visible.length} more`)}`;
 	}
 	return out;
+}
+
+/**
+ * Compact plan widget shown above the editor: the in-progress step followed by
+ * the next pending ones (at most TODO_WIDGET_MAX_STEPS lines), then a collapsed
+ * summary (`+2 pending, 3 completed`). Cleared once nothing is active.
+ */
+function renderTodoWidget(todos: Todo[], theme: Theme, width: number): string[] {
+	const done = todos.filter((t) => t.status === "completed").length;
+	const inProgress = todos.findIndex((t) => t.status === "in_progress");
+	const pendingIndexes = todos.flatMap((t, i) => (t.status === "pending" ? [i] : []));
+	const shown = new Set<number>();
+	if (inProgress >= 0) shown.add(inProgress);
+	for (const index of pendingIndexes) {
+		if (shown.size >= TODO_WIDGET_MAX_STEPS) break;
+		shown.add(index);
+	}
+
+	const lines: string[] = [
+		truncateToWidth(
+			`${theme.fg("accent", theme.bold("TODOs"))} ${theme.fg("muted", `${done}/${todos.length}`)}`,
+			width,
+		),
+	];
+	for (const index of shown) {
+		const todo = todos[index]!;
+		if (todo.status === "in_progress") {
+			lines.push(truncateToWidth(`${theme.fg("accent", "▸")} ${theme.fg("text", todo.text)}`, width));
+		} else {
+			lines.push(truncateToWidth(`${theme.fg("dim", "○")} ${theme.fg("muted", todo.text)}`, width));
+		}
+	}
+	const hiddenPending = pendingIndexes.length - (shown.size - (inProgress >= 0 ? 1 : 0));
+	const summary: string[] = [];
+	if (hiddenPending > 0) summary.push(`+${hiddenPending} pending`);
+	if (done > 0) summary.push(`${done} completed`);
+	if (summary.length > 0) lines.push(truncateToWidth(theme.fg("dim", summary.join(", ")), width));
+	return lines;
 }
 
 class TodoListComponent {
@@ -111,8 +152,21 @@ class TodoListComponent {
 export default function (pi: ExtensionAPI) {
 	let todos: Todo[] = [];
 
-	const updateStatus = (ui: ExtensionUIContext): void => {
+	const widgetVisible = (): boolean => todos.some((t) => t.status !== "completed");
+
+	const updateWidgets = (ui: ExtensionUIContext): void => {
 		ui.setStatus(TODO_STATUS_KEY, formatTodoStatus(todos));
+		// The factory re-renders from the live `todos` closure, so the widget only
+		// needs to be re-registered when it appears or disappears.
+		ui.setWidget(
+			TODO_WIDGET_KEY,
+			widgetVisible()
+				? (_tui, theme) => ({
+						render: (width: number) => renderTodoWidget(todos, theme, width),
+						invalidate: () => {},
+					})
+				: undefined,
+		);
 	};
 
 	const reconstructState = (ctx: ExtensionContext): void => {
@@ -124,7 +178,7 @@ export default function (pi: ExtensionAPI) {
 			const details = msg.details as TodoDetails | undefined;
 			if (details?.todos) todos = details.todos;
 		}
-		updateStatus(ctx.ui);
+		updateWidgets(ctx.ui);
 	};
 
 	pi.on("session_start", async (_event, ctx) => reconstructState(ctx));
@@ -145,7 +199,7 @@ export default function (pi: ExtensionAPI) {
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			todos = params.todos.map((t) => ({ text: t.text, status: t.status }));
-			updateStatus(ctx.ui);
+			updateWidgets(ctx.ui);
 			const inProgress = todos.find((t) => t.status === "in_progress");
 			const summary = inProgress
 				? `TODOs: ${inProgress.text}`
