@@ -124,6 +124,10 @@ export class FooterComponent implements Component {
 		const message = entry.message as
 			| { role?: string; usage?: Usage; details?: unknown; toolCallId?: string }
 			| undefined;
+		if (entry.type === "usage") {
+			addUsageToTotals(usage, entry.usage as Usage);
+			return undefined;
+		}
 		if (entry.type === "message" && message?.role === "assistant") {
 			const msgUsage = message.usage as Usage;
 			addUsageToTotals(usage, msgUsage);

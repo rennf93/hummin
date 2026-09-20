@@ -787,6 +787,82 @@ describe("ModelRegistry", () => {
 			expect(opus?.samplingParams).toBeUndefined();
 		});
 
+		test("custom model and model override carry prompt cache lifetimes", async () => {
+			writeRawModelsJson({
+				openrouter: {
+					baseUrl: "https://my-proxy.example.com/v1",
+					api: "openai-completions",
+					models: [{ id: "custom/cached-model", promptCache: { short: 120 } }],
+					modelOverrides: {
+						"anthropic/claude-sonnet-4": { promptCache: { short: 300 } },
+					},
+				},
+				anthropic: {
+					modelOverrides: {
+						"claude-sonnet-4-6": { promptCache: { long: 1800 } },
+					},
+				},
+			});
+
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			const openrouter = getModelsForProvider(registry, "openrouter");
+
+			expect(registry.getError()).toBeUndefined();
+			expect(openrouter.find((m) => m.id === "custom/cached-model")?.promptCache).toEqual({ short: 120 });
+			expect(openrouter.find((m) => m.id === "anthropic/claude-sonnet-4")?.promptCache).toEqual({ short: 300 });
+			expect(openrouter.find((m) => m.id === "anthropic/claude-opus-4")?.promptCache).toBeUndefined();
+			// Overrides merge per tier with the built-in catalog.
+			expect(registry.find("anthropic", "claude-sonnet-4-6")?.promptCache).toEqual({ short: 300, long: 1800 });
+		});
+
+		// Regression test for https://github.com/earendil-works/pi/issues/9631
+		test("model override deep-merges image resize limits", async () => {
+			writeRawModelsJson({
+				test: {
+					baseUrl: "https://example.com",
+					apiKey: "test-key",
+					api: "openai-completions",
+					models: [
+						{
+							id: "vision-model",
+							input: ["text", "image"],
+							inputLimits: {
+								maxRequestBytes: 32 * 1024 * 1024,
+								images: {
+									maxPerRequest: 100,
+									resize: {
+										maxWidth: 2000,
+										maxHeight: 2000,
+										maxBytes: 4.5 * 1024 * 1024,
+										jpegQuality: 80,
+									},
+								},
+							},
+						},
+					],
+					modelOverrides: {
+						"vision-model": {
+							inputLimits: {
+								images: { resize: { maxWidth: 1568, maxBytes: 524288, jpegQuality: 75 } },
+							},
+						},
+					},
+				},
+			});
+
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			const model = registry.find("test", "vision-model");
+
+			expect(registry.getError()).toBeUndefined();
+			expect(model?.inputLimits).toMatchObject({
+				maxRequestBytes: 32 * 1024 * 1024,
+				images: {
+					maxPerRequest: 100,
+					resize: { maxWidth: 1568, maxHeight: 2000, maxBytes: 524288, jpegQuality: 75 },
+				},
+			});
+		});
+
 		test("model override with compat.openRouterRouting", async () => {
 			writeRawModelsJson({
 				openrouter: {
