@@ -149,12 +149,27 @@ const MUTATORS = new Set(["push", "pop", "shift", "unshift", "splice", "sort", "
 const MISSING = Symbol("missing");
 type MaybeJson = JsonValue | typeof MISSING;
 
+/**
+ * Insert `items` at `index` without ever passing them as call arguments.
+ *
+ * `splice(i, 0, ...items)` puts every item on the call stack; a large append
+ * (the tracker accepts spread `push` calls with 100k+ arguments) then exceeds
+ * the worker-thread stack on CI even though it passes locally. `copyWithin`
+ * shifts the tail with no argument-list growth, and the loop writes one item
+ * per call.
+ */
+const insertItems = (target: unknown[], index: number, items: JsonValue[]): void => {
+	const count = items.length;
+	if (count === 0) return;
+	const tail = target.length - index;
+	target.length += count;
+	if (tail > 0) target.copyWithin(index + count, index, index + tail);
+	for (let offset = 0; offset < count; offset++) target[index + offset] = items[offset]!;
+};
+
 const spliceItems = (target: unknown[], index: number, remove: number, items: JsonValue[]): JsonValue[] => {
 	const removed = Reflect.apply(Array.prototype.splice, target, [index, remove]) as JsonValue[];
-	const chunkSize = 10_000;
-	for (let offset = 0; offset < items.length; offset += chunkSize) {
-		Reflect.apply(Array.prototype.splice, target, [index + offset, 0, ...items.slice(offset, offset + chunkSize)]);
-	}
+	insertItems(target, index, items);
 	return removed;
 };
 
@@ -1644,10 +1659,7 @@ function applyOps<T>(target: T | undefined, ops: readonly Op[]): T {
 			const target_ = path.length === 0 ? root : resolve(root, path);
 			if (!Array.isArray(target_)) throw new PathError(path);
 			target_.splice(op[2], op[3]);
-			const chunkSize = 10_000;
-			for (let offset = 0; offset < op[4].length; offset += chunkSize) {
-				target_.splice(op[2] + offset, 0, ...op[4].slice(offset, offset + chunkSize));
-			}
+			insertItems(target_, op[2], op[4]);
 			continue;
 		}
 
