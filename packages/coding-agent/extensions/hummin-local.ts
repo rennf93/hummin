@@ -200,7 +200,7 @@ const localAuth = (): ApiKeyAuth => ({
 // zero reasoning tokens). Other model families register without thinking
 // controls rather than sending them kwargs of unknown meaning.
 function takesEnableThinking(modelId: string): boolean {
-	return /^(qwen|nemotron)/i.test(modelId);
+	return /^(qwen|nemotron|north)/i.test(modelId);
 }
 
 // Per-engine, per-host providers: the footer and picker badges must say
