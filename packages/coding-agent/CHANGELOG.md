@@ -13,6 +13,7 @@
 
 - `hummin --version` (and other global flags) was swallowed by the `sessions` subcommand dispatcher and never reached its own handling.
 - Bundled installs failed to load extensions importing `minimatch` (not resolvable next to the user's extensions directory); the runtime's own copy is now served to extensions.
+- Footer tok/s never showed for local models: OpenAI-compatible servers report token usage only in the final stream chunk, so completion-token counts stayed 0 while streaming; usage is now estimated per chunk (~4 chars/token) and overwritten by exact counts when the stream reports them.
 
 ## [1.1.1] - 2026-09-21
 
