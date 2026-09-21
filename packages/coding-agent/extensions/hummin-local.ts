@@ -20,6 +20,13 @@ const MAX_BUSY_RETRIES = 5;
 const BUSY_BASE_DELAY_MS = 2000;
 const BUSY_MAX_DELAY_MS = 30000;
 
+// Failover-worthy transport failures: server down, unreachable, or the TCP
+// stream died before any content. Deliberately narrow - HTTP-level model
+// errors (context overflow, bad request) would fail identically on every
+// fleet host, so they surface to the user instead of cascading.
+const CONNECTIVITY_ERROR =
+	/\bfetch failed\b|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|socket hang up|connection refused|connection lost/i;
+
 interface LocalModelInfo {
 	id: string;
 }
@@ -130,57 +137,142 @@ async function fetchContextWindow(baseUrl: string, apiKey: string | undefined): 
 	}
 }
 
-export function serializedLocalStream(
+export interface SerializedStreamOptions {
+	/** Called when the stream hands off from one candidate to the next. */
+	onFailover?: (from: Model<Api>, to: Model<Api>, reason: "unreachable" | "busy") => void;
+	/** Retry knobs for tests only; production callers use the defaults. */
+	busyBaseDelayMs?: number;
+	maxBusyRetries?: number;
+}
+
+type CandidateOutcome =
+	| { status: "completed" }
+	| { status: "aborted" }
+	| { status: "failover"; reason: "unreachable" | "busy"; errorMessage: string }
+	| { status: "failed"; connectivity: boolean; errorMessage: string };
+
+/** Run one candidate endpoint to completion under its own inference lock.
+ * Never emits terminal events itself except on completion paths - the caller
+ * decides failover vs terminal emission. */
+async function runCandidate(
 	model: Model<Api>,
 	signal: AbortSignal | undefined,
-	streamFactory: (signal: AbortSignal) => AssistantMessageEventStream,
-): AssistantMessageEventStream {
-	const events = createAssistantMessageEventStream();
-	void withLocalInferenceLock(model.baseUrl, signal, async (lockedSignal) => {
-		for (let attempt = 0; ; attempt++) {
-			lockedSignal.throwIfAborted();
-			if (attempt)
-				await delay(Math.min(BUSY_BASE_DELAY_MS * attempt, BUSY_MAX_DELAY_MS), undefined, { signal: lockedSignal });
-			let retry = false;
-			let emittedContent = false;
-			for await (const event of streamFactory(lockedSignal)) {
-				if (
-					event.type === "error" &&
-					!emittedContent &&
-					attempt < MAX_BUSY_RETRIES &&
-					/\b429\b|\bbusy\b|\boverloaded\b/i.test(event.error.errorMessage ?? "")
-				) {
-					retry = true;
-					break;
+	streamFactory: (model: Model<Api>, signal: AbortSignal) => AssistantMessageEventStream,
+	events: AssistantMessageEventStream,
+	options: SerializedStreamOptions,
+): Promise<CandidateOutcome> {
+	const maxRetries = options.maxBusyRetries ?? MAX_BUSY_RETRIES;
+	const baseDelay = options.busyBaseDelayMs ?? BUSY_BASE_DELAY_MS;
+	try {
+		return await withLocalInferenceLock(model.baseUrl, signal, async (lockedSignal) => {
+			for (let attempt = 0; ; attempt++) {
+				lockedSignal.throwIfAborted();
+				if (attempt)
+					await delay(Math.min(baseDelay * attempt, BUSY_MAX_DELAY_MS), undefined, { signal: lockedSignal });
+				let retry = false;
+				let emittedContent = false;
+				for await (const event of streamFactory(model, lockedSignal)) {
+					if (event.type === "error" && !emittedContent) {
+						const message = event.error?.errorMessage ?? "";
+						if (/\b429\b|\bbusy\b|\boverloaded\b/i.test(message)) {
+							if (attempt < maxRetries) {
+								retry = true;
+								break;
+							}
+							// Busy beyond the retry budget: another fleet host may be free.
+							return { status: "failover", reason: "busy", errorMessage: message };
+						}
+						if (CONNECTIVITY_ERROR.test(message)) {
+							return { status: "failover", reason: "unreachable", errorMessage: message };
+						}
+					}
+					if (event.type !== "start" && event.type !== "error") emittedContent = true;
+					events.push(event);
+					if (event.type === "done" || event.type === "error") return { status: "completed" };
 				}
-				if (event.type !== "start" && event.type !== "error") emittedContent = true;
-				events.push(event);
-				if (event.type === "done" || event.type === "error") return;
+				if (!retry) throw new Error("Local provider stream ended without a terminal event");
 			}
-			if (!retry) throw new Error("Local provider stream ended without a terminal event");
+		});
+	} catch (error) {
+		if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+			return { status: "aborted" };
 		}
-	}).catch((error: unknown) => {
-		const aborted = signal?.aborted || (error instanceof Error && error.name === "AbortError");
-		const message: AssistantMessage = {
-			role: "assistant",
-			api: model.api,
-			provider: model.provider,
-			model: model.id,
-			content: [],
-			stopReason: aborted ? "aborted" : "error",
-			errorMessage: String(error),
-			timestamp: Date.now(),
-			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-			},
-		};
-		events.push({ type: "error", reason: message.stopReason as "aborted" | "error", error: message });
-	});
+		const message = String(error);
+		return { status: "failed", connectivity: CONNECTIVITY_ERROR.test(message), errorMessage: message };
+	}
+}
+
+function failureMessage(model: Model<Api>, aborted: boolean, errorMessage: string): AssistantMessage {
+	return {
+		role: "assistant",
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		content: [],
+		stopReason: aborted ? "aborted" : "error",
+		errorMessage,
+		timestamp: Date.now(),
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+	};
+}
+
+/** Stream from the first fleet endpoint that can serve the request. The
+ * candidate list starts with the selected model and continues with the other
+ * fleet instances of the same model id, in fleet priority order. Failover
+ * happens only before any content is emitted, only on connectivity-class
+ * failures or busy exhaustion, and each hop takes its own server's lock. */
+export function serializedLocalStream(
+	candidates: Model<Api> | readonly Model<Api>[],
+	signal: AbortSignal | undefined,
+	streamFactory: (model: Model<Api>, signal: AbortSignal) => AssistantMessageEventStream,
+	options: SerializedStreamOptions = {},
+): AssistantMessageEventStream {
+	const list = Array.isArray(candidates) ? [...candidates] : [candidates];
+	const events = createAssistantMessageEventStream();
+	void (async () => {
+		for (let index = 0; index < list.length; index++) {
+			const model = list[index]!;
+			const outcome = await runCandidate(model, signal, streamFactory, events, options);
+			switch (outcome.status) {
+				case "completed":
+					return;
+				case "aborted":
+					events.push({
+						type: "error",
+						reason: "aborted",
+						error: failureMessage(model, true, "aborted"),
+					});
+					return;
+				case "failover":
+				case "failed": {
+					const canFailOver =
+						outcome.status === "failover" || (outcome.status === "failed" && outcome.connectivity);
+					if (canFailOver && index + 1 < list.length) {
+						const next = list[index + 1]!;
+						options.onFailover?.(
+							model,
+							next,
+							outcome.status === "failover" ? outcome.reason : "unreachable",
+						);
+						continue;
+					}
+					events.push({
+						type: "error",
+						reason: "error",
+						error: failureMessage(model, false, outcome.errorMessage),
+					});
+					return;
+				}
+			}
+		}
+	})();
 	return events;
 }
 
@@ -322,6 +414,39 @@ export default async function humminLocalExtension(pi: ExtensionAPI): Promise<vo
 
 	const base = openAICompletionsApi();
 
+	const instanceModels = new Map<DiscoveredInstance, Model<"openai-completions">>();
+
+	// Fleet failover chains: model id -> every online fleet endpoint serving it,
+	// in fleet priority order (discovery preserves fleet.servers order), with
+	// the selected endpoint first. Endpoints marked offline at discovery are
+	// skipped; they would only burn the connectivity timeout before failing
+	// again. Chains are keyed by model id + endpoint so each provider closure
+	// can look up its own fallbacks without cross-provider knowledge.
+	const chainKey = (model: { id: string; baseUrl: string }): string => `${model.id}|${model.baseUrl}`;
+	const failoverChains = new Map<string, Model<"openai-completions">[]>();
+	for (const entry of serving) {
+		const model = instanceModels.get(entry);
+		if (!model) continue;
+		const fallbacks = serving
+			.filter((other) => other.modelId === entry.modelId && !other.offline && other.baseUrl !== entry.baseUrl)
+			.map((other) => instanceModels.get(other))
+			.filter((other): other is Model<"openai-completions"> => other !== undefined);
+		failoverChains.set(chainKey(model), [model, ...fallbacks]);
+	}
+
+	// ctx.ui is only reachable from event/command handlers, never from provider
+	// streams. Capture notify at session start so failovers can surface there.
+	let notify: ((message: string, type?: "info" | "warning" | "error") => void) | undefined;
+	pi.on("session_start", (_event, ctx) => {
+		notify = (message, type) => ctx.ui.notify(message, type);
+	});
+
+	const failoverNotify = (): SerializedStreamOptions["onFailover"] => (from, to, reason) => {
+		const label = (candidate: Model<Api>): string =>
+			`${displayName(candidate.id)} [${(candidate as Model<Api> & HumminModelMetadata).humminHost ?? candidate.provider}]`;
+		notify?.(`Fleet failover: ${label(from)} ${reason}, trying ${label(to)}`, "warning");
+	};
+
 	// Group by engine + host: one provider per combination so badges read
 	// e.g. "unsloth/llama.cpp - NAS" and "hummin - Mac".
 	const ENGINE_NAMES: Record<string, string> = { colibri: "colibri", llamacpp: "unsloth/llama.cpp" };
@@ -340,35 +465,36 @@ export default async function humminLocalExtension(pi: ExtensionAPI): Promise<vo
 		const hostLabel = group.host;
 		const providerId = `${group.engine}-${hostLabel.toLowerCase()}-${group.entries[0]!.port}`;
 		const providerName = `${ENGINE_NAMES[group.engine]} - ${hostLabel}:${group.entries[0]!.port}`;
-		const models: Model<"openai-completions">[] = group.entries.map(
-			(entry) =>
-				({
-					id: entry.modelId,
-					name: `${displayName(entry.modelId)} [${hostLabel}]${entry.offline ? " (offline - start from menubar)" : ""}`,
-					api: "openai-completions",
-					provider: providerId,
-					baseUrl: `${entry.baseUrl}/v1`,
-					reasoning: takesEnableThinking(entry.modelId),
-					input: ["text"],
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-					contextWindow: entry.contextWindow,
-					// Local reasoning models can spend more than 4k tokens before emitting
-					// answer text. The simple-stream path clamps this against the prompt and
-					// keeps a context safety margin before sending max_tokens to the server.
-					maxTokens: entry.contextWindow,
-					compat: {
-						supportsStore: false,
-						supportsDeveloperRole: false,
-						supportsReasoningEffort: false,
-						maxTokensField: "max_tokens",
-						...(takesEnableThinking(entry.modelId) ? { thinkingFormat: "qwen-chat-template" as const } : {}),
-					},
-					// The picker uses these optional fields for styling. They survive the
-					// provider/model runtime because models are passed by reference.
-					humminHost: hostLabel,
-					humminOffline: entry.offline,
-				}) as Model<"openai-completions"> & HumminModelMetadata,
-		);
+		const models: Model<"openai-completions">[] = group.entries.map((entry) => {
+			const model = {
+				id: entry.modelId,
+				name: `${displayName(entry.modelId)} [${hostLabel}]${entry.offline ? " (offline - start from menubar)" : ""}`,
+				api: "openai-completions",
+				provider: providerId,
+				baseUrl: `${entry.baseUrl}/v1`,
+				reasoning: takesEnableThinking(entry.modelId),
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: entry.contextWindow,
+				// Local reasoning models can spend more than 4k tokens before emitting
+				// answer text. The simple-stream path clamps this against the prompt and
+				// keeps a context safety margin before sending max_tokens to the server.
+				maxTokens: entry.contextWindow,
+				compat: {
+					supportsStore: false,
+					supportsDeveloperRole: false,
+					supportsReasoningEffort: false,
+					maxTokensField: "max_tokens",
+					...(takesEnableThinking(entry.modelId) ? { thinkingFormat: "qwen-chat-template" as const } : {}),
+				},
+				// The picker uses these optional fields for styling. They survive the
+				// provider/model runtime because models are passed by reference.
+				humminHost: hostLabel,
+				humminOffline: entry.offline,
+			} as Model<"openai-completions"> & HumminModelMetadata;
+			instanceModels.set(entry, model);
+			return model;
+		});
 		const provider = createProvider({
 			id: providerId,
 			name: providerName,
@@ -377,12 +503,18 @@ export default async function humminLocalExtension(pi: ExtensionAPI): Promise<vo
 			models,
 			api: {
 				stream: (model, context, options) =>
-					serializedLocalStream(model, options?.signal, (signal) =>
-						base.stream(model, context, { ...options, signal }),
+					serializedLocalStream(
+						failoverChains.get(chainKey(model)) ?? [model],
+						options?.signal,
+						(candidate, signal) => base.stream(candidate, context, { ...options, signal }),
+						{ onFailover: failoverNotify() },
 					),
 				streamSimple: (model, context, options) =>
-					serializedLocalStream(model, options?.signal, (signal) =>
-						base.streamSimple(model, context, { ...options, signal }),
+					serializedLocalStream(
+						failoverChains.get(chainKey(model)) ?? [model],
+						options?.signal,
+						(candidate, signal) => base.streamSimple(candidate, context, { ...options, signal }),
+						{ onFailover: failoverNotify() },
 					),
 			},
 		});

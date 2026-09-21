@@ -18,7 +18,12 @@ interface RegisteredProvider {
 }
 
 function fakeApi(providers: RegisteredProvider[]): ExtensionAPI {
-	return { registerProvider: (provider: RegisteredProvider) => providers.push(provider) } as unknown as ExtensionAPI;
+	return {
+		registerProvider: (provider: RegisteredProvider) => providers.push(provider),
+		// The extension subscribes to session_start to capture ui.notify; tests
+		// never fire the event, so an unregisterable no-op subscription is enough.
+		on: () => () => {},
+	} as unknown as ExtensionAPI;
 }
 
 function response(body: unknown, status = 200): Response {
