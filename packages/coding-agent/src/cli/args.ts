@@ -272,7 +272,8 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} list                      List installed extensions from settings
   ${APP_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
   ${APP_NAME} auth <command>            Print credentials or check provider readiness
-  ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
+  ${APP_NAME} sessions [subcommand]     List, show, or delete conversation sessions
+  ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth/sessions
 
 ${chalk.bold("Options:")}
   --provider <name>              Provider name (default: google)
@@ -384,6 +385,11 @@ ${chalk.bold("Examples:")}
   # Export a session file to HTML
   ${APP_NAME} --export ~/${CONFIG_DIR_NAME}/agent/sessions/--path--/session.jsonl
   ${APP_NAME} --export session.jsonl output.html
+
+  # List conversation sessions from the terminal
+  ${APP_NAME} sessions
+  ${APP_NAME} sessions show 01J0abcd1234
+  ${APP_NAME} sessions rm 01J0abcd1234 -y
 
 ${chalk.bold("Environment Variables:")}
   ANTHROPIC_AUTH_TOKEN             - Anthropic bearer auth token

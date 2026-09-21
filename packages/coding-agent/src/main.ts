@@ -33,6 +33,7 @@ import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { selectSession } from "./cli/session-picker.ts";
+import { handleSessionsCommand } from "./cli/sessions.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
 import { APP_NAME, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
@@ -608,6 +609,13 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (await handleConfigCommand(args, { extensionFactories })) {
+		return;
+	}
+
+	// `hummin sessions` manages conversation sessions from the terminal.
+	// Runs before the heavy runtime bootstrap so it stays lightweight.
+	if (await handleSessionsCommand(args, { cwd })) {
+		process.exit(process.exitCode ?? 0);
 		return;
 	}
 
