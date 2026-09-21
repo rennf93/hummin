@@ -10,6 +10,8 @@
 - Categorized settings UI: /settings now groups its entries behind a tab bar (General, Agent, Models, Memory, Fleet, Editor, Terminal, Network, Shell, Privacy); `tab` or clicking a tab switches categories, and search still filters the active list.
 - Settings previously missing from /settings are now configurable: global default thinking level, per-provider list (providers.showAll), retry on failure, memory (enabled, mode, vault directory, provider, model), local fleet instances and fleet auto-start, editor mode (vim), external editor command, WebSocket connect timeout, HTTP proxy, shell path, shell command prefix, npm command, and analytics opt-in. Free-text fields open an input submenu (Enter saves, Esc cancels).
 - Upstream sync: bug reporting (`/bug` with model-generated summary), prompt cache warming with off/streaming/idle modes (setting under Agent), progressive session picker loading, faster recent session discovery, compiled Node CLI module caching, deferred extension loader dependencies, and an experimental micro agent.
+- Per-model image resize profiles: `inputLimits.images.resize` in `models.json` applies to file attachments, image reads, and tool-result images ([#9631](https://github.com/earendil-works/pi/issues/9631)).
+- Upstream sync: crash diagnostics now hint at loaded extensions that appear in the stack trace.
 
 ### Changed
 
@@ -19,7 +21,7 @@
 
 ### Fixed
 
-- Upstream sync: restore OSC 52 clipboard fallback for headless sessions; ignore stale tool image conversions ([#8743](https://github.com/earendil-works/pi/issues/8743)); close compaction cancellation races; compact oversized trailing tool results; suppress repeated Anthropic thinking drop notices; suppress bug hints for expected failures; preserve multiline bug descriptions; await the terminal remote prompt event.
+- Upstream sync: restore OSC 52 clipboard fallback for headless sessions; ignore stale tool image conversions ([#8743](https://github.com/earendil-works/pi/issues/8743)); close compaction cancellation races; compact oversized trailing tool results; suppress repeated Anthropic thinking drop notices; suppress bug hints for expected failures; preserve multiline bug descriptions; await the terminal remote prompt event; rebuild expired idle prompt-cache warming caches only when the timer or extension decision is not delayed.
 - TUI (upstream sync): preserve fullscreen images in WezTerm; rank skill autocomplete by bare name ([#9120](https://github.com/earendil-works/pi/issues/9120)); handle CJK punctuation in file autocomplete ([#9746](https://github.com/earendil-works/pi/issues/9746)); improve LaTeX compatibility and layouts.
 
 ## [1.1.0] - 2026-09-19
