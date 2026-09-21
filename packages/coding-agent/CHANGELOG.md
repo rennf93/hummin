@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Footer tokens-per-second indicator: live completion-token rate left of the ctx meter while a response streams (EMA-smoothed, self-clears when generation stalls); `list-models --mode json` for machine-readable output.
+- `hummin sessions` terminal subcommand: `sessions [ls|show|rm]` to list, inspect, and delete stored sessions without starting the TUI (`--all`, `--project`, `--limit`, `--session-dir`; `rm` asks for confirmation unless `--yes`).
+- Fleet auto-failover: when the selected local fleet endpoint is unreachable or stays busy past the retry budget, the request continues on the next fleet server serving the same model, in fleet priority order; only before any content is emitted, each hop re-acquires that server's inference lock, and every hop is announced with a warning notification.
+- Path-scoped project rules: `.hummin/rules/*.md` with optional `paths` (globs) and `description` frontmatter. Always-apply rules are injected on the first turn; path-scoped rules are listed as a catalog and their full text is delivered the first time a tool call touches a matching file, so unused rule bodies never occupy context.
+
+### Fixed
+
+- `hummin --version` (and other global flags) was swallowed by the `sessions` subcommand dispatcher and never reached its own handling.
+- Bundled installs failed to load extensions importing `minimatch` (not resolvable next to the user's extensions directory); the runtime's own copy is now served to extensions.
+
 ## [1.1.1] - 2026-09-21
 
 ### Added
