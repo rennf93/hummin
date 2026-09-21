@@ -885,8 +885,15 @@ describe("ModelRegistry", () => {
 		});
 
 		test("supportsFinishReason can be configured at provider and model levels", async () => {
+			// Explicit models: upstream retired claude-opus-4 from the openrouter catalog.
 			const provider: ModelsJsonProvider = {
+				baseUrl: "https://openrouter.ai/api/v1",
+				api: "openai-completions",
 				compat: { supportsFinishReason: true },
+				models: [
+					{ id: "anthropic/claude-sonnet-4", name: "Sonnet" },
+					{ id: "anthropic/claude-opus-4", name: "Opus" },
+				],
 				modelOverrides: {
 					"anthropic/claude-sonnet-4": {
 						compat: { supportsFinishReason: false },
@@ -927,8 +934,15 @@ describe("ModelRegistry", () => {
 		});
 
 		test("multiple model overrides on same provider", async () => {
+			// Explicit models: upstream retired claude-opus-4 from the openrouter catalog.
 			writeRawModelsJson({
 				openrouter: {
+					baseUrl: "https://openrouter.ai/api/v1",
+					api: "openai-completions",
+					models: [
+						{ id: "anthropic/claude-sonnet-4", name: "Sonnet" },
+						{ id: "anthropic/claude-opus-4", name: "Opus" },
+					],
 					modelOverrides: {
 						"anthropic/claude-sonnet-4": {
 							compat: { openRouterRouting: { only: ["amazon-bedrock"] } },
@@ -953,9 +967,15 @@ describe("ModelRegistry", () => {
 		});
 
 		test("model override combined with baseUrl override", async () => {
+			// Explicit models: upstream retired claude-opus-4 from the openrouter catalog.
 			writeRawModelsJson({
 				openrouter: {
 					baseUrl: "https://my-proxy.example.com/v1",
+					api: "openai-completions",
+					models: [
+						{ id: "anthropic/claude-sonnet-4", name: "Sonnet" },
+						{ id: "anthropic/claude-opus-4", name: "Opus" },
+					],
 					modelOverrides: {
 						"anthropic/claude-sonnet-4": {
 							name: "Proxied Sonnet",
