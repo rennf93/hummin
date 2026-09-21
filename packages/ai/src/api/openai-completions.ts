@@ -326,6 +326,18 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 		// `reasoning_details` are replay metadata, not user-visible stream deltas.
 		// Keep them in memory during streaming and serialize once when the block is finalized.
 		let streamedReasoningDetails: OpenAIReasoningDetail[] | undefined;
+
+		// Most OpenAI-compatible servers (llama.cpp among them) only report token
+		// usage in the final stream chunk, leaving usage.output at 0 while the
+		// response is in flight. Estimate completion tokens from streamed
+		// characters (~4 chars per token) so consumers tracking live progress see
+		// growth; the final usage chunk overwrites this with exact counts.
+		const CHARS_PER_TOKEN_ESTIMATE = 4;
+		let streamedChars = 0;
+		const estimateOutputTokens = (): void => {
+			output.usage.output = Math.ceil(streamedChars / CHARS_PER_TOKEN_ESTIMATE);
+		};
+
 		const applyStreamedReasoningDetails = (block: ThinkingContent): void => {
 			if (streamedReasoningDetails !== undefined) {
 				block.thinkingSignature = JSON.stringify(streamedReasoningDetails);
@@ -590,6 +602,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					) {
 						const block = ensureTextBlock();
 						block.text += choice.delta.content;
+						streamedChars += choice.delta.content.length;
+						estimateOutputTokens();
 						stream.push({
 							type: "text_delta",
 							contentIndex: getContentIndex(block),
@@ -622,6 +636,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 									: foundReasoningField;
 							const block = ensureThinkingBlock(thinkingSignature);
 							block.thinking += delta;
+							streamedChars += delta.length;
+							estimateOutputTokens();
 							stream.push({
 								type: "thinking_delta",
 								contentIndex: getContentIndex(block),
@@ -652,6 +668,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 								const nextInput = getCustomToolCallInput(block) + toolCall.custom.input;
 								delta = appendCustomToolCallInput(block, nextInput, false) ?? "";
 							}
+							streamedChars += delta.length;
+							estimateOutputTokens();
 							stream.push({
 								type: "toolcall_delta",
 								contentIndex: getContentIndex(block),
