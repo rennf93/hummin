@@ -48,6 +48,15 @@ interface SessionCmdOptions {
  * Handle the `sessions` subcommand. Returns true when the `sessions` keyword was
  * recognised so the caller can exit instead of falling through to interactive mode.
  */
+/** True when argv is a sessions invocation from the CLI: "sessions ...",
+ * optionally preceded by the global --session-dir flag. Used by main.ts to
+ * dispatch only real sessions commands - without this gate, `hummin --version`
+ * and other flags would fall into the sessions subcommand switch's default
+ * handler instead of reaching their own handling. */
+export function isSessionsInvocation(args: string[]): boolean {
+	return stripPair(args, "--session-dir")[0] === "sessions";
+}
+
 export async function handleSessionsCommand(args: string[], options: SessionCmdOptions = {}): Promise<boolean> {
 	// Extract the global --session-dir flag first, then strip it (and its
 	// value) from the args so it does not leak into a subcommand's parsing.

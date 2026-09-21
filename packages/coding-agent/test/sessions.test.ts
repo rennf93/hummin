@@ -3,7 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import type { createInterface, Interface } from "readline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { handleSessionsCommand } from "../src/cli/sessions.ts";
+import { handleSessionsCommand, isSessionsInvocation } from "../src/cli/sessions.ts";
 
 // Fake only the interactive confirm prompt. Stream-backed uses of readline
 // (session file parsing inside session-manager) must reach the real
@@ -103,6 +103,27 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.restoreAllMocks();
+});
+
+describe("sessions dispatch gate", () => {
+	// Regression: `hummin --version` used to land in the sessions subcommand
+	// switch's default ("Unknown sessions subcommand: --version") because
+	// main.ts called handleSessionsCommand for every argv.
+	it("recognizes CLI sessions invocations", () => {
+		expect(isSessionsInvocation(["sessions"])).toBe(true);
+		expect(isSessionsInvocation(["sessions", "ls"])).toBe(true);
+		expect(isSessionsInvocation(["sessions", "show", "id"])).toBe(true);
+		expect(isSessionsInvocation(["--session-dir", "/tmp/x", "sessions", "ls"])).toBe(true);
+		expect(isSessionsInvocation(["--session-dir=/tmp/x", "sessions"])).toBe(true);
+	});
+
+	it("does not claim unrelated argv, including global flags", () => {
+		expect(isSessionsInvocation(["--version"])).toBe(false);
+		expect(isSessionsInvocation(["--help"])).toBe(false);
+		expect(isSessionsInvocation([])).toBe(false);
+		expect(isSessionsInvocation(["-p", "prompt"])).toBe(false);
+		expect(isSessionsInvocation(["--session-dir", "/tmp/x", "--version"])).toBe(false);
+	});
 });
 
 describe("sessions --help", () => {
