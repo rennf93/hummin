@@ -218,13 +218,14 @@ export class FooterComponent implements Component {
 	 * identity or timing assumptions and self-clears while generation stalls.
 	 */
 	private computeTokenRate(now = Date.now()): number | undefined {
-		const messages = this.session.state.messages ?? [];
-		const last = messages.at(-1);
-		const isAssistant = last?.role === "assistant";
+		// The in-flight partial assistant message lives in state.streamingMessage
+		// during streaming; state.messages only gains the final message at
+		// completion. No streaming message = nothing generating: reset and hide.
+		const streaming = this.session.state.streamingMessage as
+			| { role: string; usage?: { output?: number } }
+			| undefined;
 		const output =
-			isAssistant && typeof (last as { usage?: { output?: number } }).usage?.output === "number"
-				? (last as { usage: { output: number } }).usage.output
-				: -1;
+			streaming?.role === "assistant" && typeof streaming.usage?.output === "number" ? streaming.usage.output : -1;
 
 		if (output < 0) {
 			// Generation stalled (idle, tool execution, or a completed response): reset.

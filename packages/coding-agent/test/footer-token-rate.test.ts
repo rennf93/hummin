@@ -13,7 +13,7 @@ type LastMessage = {
 function createSession(last?: LastMessage): AgentSession {
 	const messages: LastMessage[] = last ? [last] : [];
 	return {
-		state: { model: undefined, thinkingLevel: "off", messages },
+		state: { model: undefined, thinkingLevel: "off", messages, streamingMessage: undefined },
 		sessionManager: {
 			getEntries: () => [],
 			getSessionName: () => "",
@@ -47,9 +47,23 @@ function statsRow(footer: FooterComponent): string {
 
 /** Bump the in-flight assistant response's completion-token count (test only). */
 function setOutput(session: AgentSession, output: number): void {
-	const last = (session.state.messages ?? []).at(-1);
-	if (!last) throw new Error("no messages");
-	(last as unknown as { usage: { output: number } }).usage.output = output;
+	const streaming = (session.state as { streamingMessage?: LastMessage }).streamingMessage;
+	if (!streaming) throw new Error("no streaming message");
+	streaming.usage.output = output;
+}
+
+/** Start streaming a partial assistant message (test only). */
+function startStreaming(session: AgentSession, output = 0): void {
+	(session.state as { streamingMessage?: LastMessage }).streamingMessage = {
+		role: "assistant",
+		usage: { input: 0, output },
+	};
+}
+
+/** End streaming: the partial moves into messages and streamingMessage clears. */
+function endStreaming(session: AgentSession, output: number): void {
+	(session.state as { streamingMessage?: LastMessage }).streamingMessage = undefined;
+	(session.state as { messages: LastMessage[] }).messages.push({ role: "assistant", usage: { input: 0, output } });
 }
 
 beforeAll(() => {
@@ -75,14 +89,16 @@ describe("formatTokenRate", () => {
 describe("FooterComponent live token rate", () => {
 	it("hides the indicator before any output has been generated", () => {
 		vi.spyOn(Date, "now").mockReturnValue(1000);
-		const session = createSession({ role: "assistant", usage: { input: 0, output: 0 } });
+		const session = createSession();
+		startStreaming(session, 0);
 		const footer = new FooterComponent(session, createFooterData());
 		expect(statsRow(footer)).not.toContain("tok/s");
 	});
 
 	it("formats a 100-token / 2s generation as 50.0 tok/s", () => {
 		vi.spyOn(Date, "now").mockReturnValue(1000);
-		const session = createSession({ role: "assistant", usage: { input: 0, output: 0 } });
+		const session = createSession();
+		startStreaming(session);
 		const footer = new FooterComponent(session, createFooterData());
 		footer.render(120); // anchor tick: no value yet
 		vi.spyOn(Date, "now").mockReturnValue(3000);
@@ -92,7 +108,8 @@ describe("FooterComponent live token rate", () => {
 
 	it("smooths the next delta with an EMA and stays next to the ctx bar", () => {
 		vi.spyOn(Date, "now").mockReturnValue(1000);
-		const session = createSession({ role: "assistant", usage: { input: 0, output: 0 } });
+		const session = createSession();
+		startStreaming(session);
 		const footer = new FooterComponent(session, createFooterData());
 		footer.render(120);
 		vi.spyOn(Date, "now").mockReturnValue(3000);
@@ -105,17 +122,27 @@ describe("FooterComponent live token rate", () => {
 		expect(statsRow(footer)).toMatch(/tok\/s 67\.5 .*ctx /);
 	});
 
+	it("does not show the rate for a completed response resting in messages", () => {
+		// Regression: the rate was originally read from state.messages, where the
+		// final assistant message lands only after streaming ends - so the live
+		// indicator could never appear. Only state.streamingMessage counts.
+		vi.spyOn(Date, "now").mockReturnValue(1000);
+		const session = createSession({ role: "assistant", usage: { input: 10, output: 500 } });
+		const footer = new FooterComponent(session, createFooterData());
+		footer.render(120);
+		expect(statsRow(footer)).not.toContain("tok/s");
+	});
+
 	it("clears the indicator while tool execution or idle stalls generation", () => {
 		vi.spyOn(Date, "now").mockReturnValue(1000);
-		const session = createSession({ role: "assistant", usage: { input: 0, output: 0 } });
+		const session = createSession();
+		startStreaming(session);
 		const footer = new FooterComponent(session, createFooterData());
 		footer.render(120);
 		vi.spyOn(Date, "now").mockReturnValue(3000);
 		setOutput(session, 100);
 		expect(statsRow(footer)).toContain("tok/s");
-		(session.state as { messages: LastMessage[] }).messages = [
-			{ role: "toolResult", usage: { input: 1, output: 0 } },
-		];
+		endStreaming(session, 100);
 		vi.spyOn(Date, "now").mockReturnValue(4000);
 		expect(statsRow(footer)).not.toContain("tok/s");
 	});
