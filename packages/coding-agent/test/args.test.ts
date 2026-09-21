@@ -476,6 +476,24 @@ describe("parseArgs", () => {
 		});
 	});
 
+	describe("--list-models flag", () => {
+		test("parses bare --list-models", () => {
+			const result = parseArgs(["--list-models"]);
+			expect(result.listModels).toBe(true);
+		});
+
+		test("parses --list-models with search pattern", () => {
+			const result = parseArgs(["--list-models", "sonnet"]);
+			expect(result.listModels).toBe("sonnet");
+		});
+
+		test("honors --mode json for machine-readable output", () => {
+			const result = parseArgs(["--list-models", "--mode", "json"]);
+			expect(result.listModels).toBe(true);
+			expect(result.mode).toBe("json");
+		});
+	});
+
 	describe("complex combinations", () => {
 		test("parses multiple flags together", () => {
 			const result = parseArgs([

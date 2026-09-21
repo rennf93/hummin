@@ -31,6 +31,13 @@ export function formatTokens(count: number): string {
 	return `${Math.round(count / 1000000)}M`;
 }
 
+/** Format a live token-generation rate (tokens/second) for compact footer display. */
+export function formatTokenRate(rate: number): string {
+	if (!Number.isFinite(rate)) return "?";
+	// Keep one decimal below 100 tok/s (more readable for slower models); integer above.
+	return rate < 100 ? rate.toFixed(1) : Math.round(rate).toString();
+}
+
 export function formatCwdForFooter(cwd: string, home: string | undefined): string {
 	if (!home) return cwd;
 
@@ -56,6 +63,18 @@ export class FooterComponent implements Component {
 	private compactionQueueCount = 0;
 	/** Cached per-toolCall diff stats so re-renders don't re-count patches. */
 	private diffStatCache = new Map<string, DiffStat>();
+	/**
+	 * Live token-generation rate for the current assistant response.
+	 * Anchored against the previous render's completion-token count; the rate is the
+	 * smoothed (EMA) delta of `usage.output` between consecutive renders. Cleared
+	 * automatically whenever generation stalls (e.g. during tool execution or while
+	 * idle), because completion tokens stop changing.
+	 */
+	private rateState = { prevOutput: 0, hasPrev: false, smoothed: undefined as number | undefined };
+	private rateStatePrevTime = 0;
+	/** EMA smoothing factor for the live tok/s rate (0..1). Lower = smoother. */
+	private static readonly RATE_SMOOTHING = 0.35;
+
 	/** Aggregated stats for all entries except the last; recomputed only when the entry set grows. */
 	private cachedPrefix:
 		| {
@@ -192,8 +211,58 @@ export class FooterComponent implements Component {
 	}
 
 	/** One left-aligned footer row: groups joined by dim separators. */
+	/**
+	 * Compute the live token-generation rate (tokens/second) for the current in-flight
+	 * assistant response, or undefined when no response is actively generating. Uses the
+	 * delta of completion tokens between consecutive renders so it needs no reference
+	 * identity or timing assumptions and self-clears while generation stalls.
+	 */
+	private computeTokenRate(now = Date.now()): number | undefined {
+		const messages = this.session.state.messages ?? [];
+		const last = messages.at(-1);
+		const isAssistant = last?.role === "assistant";
+		const output =
+			isAssistant && typeof (last as { usage?: { output?: number } }).usage?.output === "number"
+				? (last as { usage: { output: number } }).usage.output
+				: -1;
+
+		if (output < 0) {
+			// Generation stalled (idle, tool execution, or a completed response): reset.
+			this.rateState = { prevOutput: 0, hasPrev: false, smoothed: undefined };
+			return undefined;
+		}
+
+		if (!this.rateState.hasPrev) {
+			this.rateState = { prevOutput: output, hasPrev: true, smoothed: undefined };
+			this.rateStatePrevTime = now;
+			return undefined;
+		}
+
+		const dtSeconds = (now - this.rateStatePrevTime) / 1000;
+		const delta = output - this.rateState.prevOutput;
+		this.rateState.prevOutput = output;
+		this.rateStatePrevTime = now;
+
+		if (dtSeconds <= 0 || delta <= 0) {
+			// Same-tick render or a stall tick: keep the smoothed value, don't update it.
+			return this.rateState.smoothed;
+		}
+
+		const rawRate = delta / dtSeconds;
+		this.rateState.smoothed =
+			this.rateState.smoothed === undefined
+				? rawRate
+				: FooterComponent.RATE_SMOOTHING * rawRate + (1 - FooterComponent.RATE_SMOOTHING) * this.rateState.smoothed;
+		return this.rateState.smoothed;
+	}
+
 	private joinGroups(groups: string[]): string {
 		return groups.filter((group) => group.length > 0).join(theme.fg("dim", " | "));
+	}
+
+	/** Build the dim-labeled live tok/s segment, e.g. `tok/s 45.2`. */
+	private formatTokenRateLabel(rate: number): string {
+		return `${theme.fg("dim", "tok/s")} ${theme.fg("accent", formatTokenRate(rate))}`;
 	}
 
 	/** Fit a left and right block on one width, right block pinned to the edge; left truncates first. */
@@ -380,11 +449,13 @@ export class FooterComponent implements Component {
 					.join(theme.fg("dim", " · "));
 			lines = [this.alignLeftRight(resolveSide(statusline.left), resolveSide(statusline.right), width), ""];
 		} else {
-			lines = [
-				this.alignLeftRight(idLine, modelLine, width),
-				"",
-				this.alignLeftRight(statsLine, contextLine, width),
-			];
+			// Right group: live tok/s (when generating) sits immediately left of the ctx meter.
+			const tokenRate = this.computeTokenRate();
+			const rightItems = [];
+			if (tokenRate !== undefined) rightItems.push(this.formatTokenRateLabel(tokenRate));
+			if (contextLine) rightItems.push(contextLine);
+			const rightGroup = rightItems.join(theme.fg("dim", " · "));
+			lines = [this.alignLeftRight(idLine, modelLine, width), "", this.alignLeftRight(statsLine, rightGroup, width)];
 		}
 
 		// Add extension statuses on a single line, sorted by key alphabetically.

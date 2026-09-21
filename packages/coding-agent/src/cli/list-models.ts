@@ -30,6 +30,7 @@ export async function listModels(
 	modelRuntime: ModelRuntime,
 	searchPattern?: string,
 	signal?: AbortSignal,
+	options: { json?: boolean } = {},
 ): Promise<void> {
 	const loadError = modelRuntime.getError();
 	if (loadError) {
@@ -39,7 +40,11 @@ export async function listModels(
 	const models = [...(await modelRuntime.getAvailable(undefined, { signal }))];
 
 	if (models.length === 0) {
-		console.log(formatNoModelsAvailableMessage());
+		if (options.json) {
+			console.log(JSON.stringify([]));
+		} else {
+			console.log(formatNoModelsAvailableMessage());
+		}
 		return;
 	}
 
@@ -50,7 +55,29 @@ export async function listModels(
 	}
 
 	if (filteredModels.length === 0) {
-		console.log(`No models matching "${searchPattern}"`);
+		if (options.json) {
+			console.log(JSON.stringify([]));
+		} else {
+			console.log(`No models matching "${searchPattern}"`);
+		}
+		return;
+	}
+
+	// Machine-readable output for scripting/tooling (honors --mode json).
+	if (options.json) {
+		console.log(
+			JSON.stringify(
+				filteredModels.map((m) => ({
+					provider: m.provider,
+					id: m.id,
+					name: m.name,
+					contextWindow: m.contextWindow,
+					maxTokens: m.maxTokens,
+					reasoning: m.reasoning,
+					input: m.input,
+				})),
+			),
+		);
 		return;
 	}
 
