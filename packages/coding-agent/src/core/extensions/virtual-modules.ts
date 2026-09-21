@@ -3,6 +3,7 @@ import * as bundledPiAiCompat from "@earendil-works/pi-ai/compat";
 import * as bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
 import * as bundledPiAiProviders from "@earendil-works/pi-ai/providers/all";
 import * as bundledPiTui from "@earendil-works/pi-tui";
+import * as bundledMinimatch from "minimatch";
 import * as bundledTypebox from "typebox";
 import * as bundledTypeboxCompile from "typebox/compile";
 import * as bundledTypeboxValue from "typebox/value";
@@ -20,6 +21,10 @@ const RAW_VIRTUAL_MODULES: Record<string, unknown> = {
 	"@sinclair/typebox/value": bundledTypeboxValue,
 	"@earendil-works/pi-agent-core": bundledPiAgentCore,
 	"@earendil-works/pi-tui": bundledPiTui,
+	// Extensions may import globs (hummin-rules); ship the same package the
+	// runtime itself uses instead of relying on node_modules near the user's
+	// extensions directory, which does not exist for bundled installs.
+	minimatch: bundledMinimatch,
 	// Extensions resolve the pi-ai root to the compat entrypoint (a strict
 	// superset of the core entrypoint): existing extensions using the old
 	// global API keep working at runtime until compat is removed.
