@@ -77,6 +77,8 @@ describe("Fireworks models", () => {
 		const base = getModel("fireworks", "accounts/fireworks/models/kimi-k3");
 		const fast = getModel("fireworks", "accounts/fireworks/routers/kimi-k3-fast");
 		const compat = {
+			// Explicit in the generated catalog because the runtime default is non-strict.
+			supportsStrictMode: true,
 			supportsStore: false,
 			supportsDeveloperRole: false,
 			requiresReasoningContentOnAssistantMessages: true,
