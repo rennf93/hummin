@@ -1,0 +1,124 @@
+/* hummin brand styling on top of Material */
+
+:root > * {
+	--md-primary-fg-color: #0d1117;
+	--md-primary-bg-color: #f0883e;
+	--md-accent-fg-color: #f0883e;
+	--md-typeset-a-color: #e8720c;
+}
+
+[data-md-color-scheme="slate"] {
+	--md-primary-fg-color: #0d1117;
+	--md-default-bg-color: #0d1117;
+	--md-accent-fg-color: #f0883e;
+}
+
+/* Slightly denser header with the wordmark */
+.md-header__title {
+	font-weight: 700;
+}
+
+/* Landing hero */
+.tx-hero {
+	padding: 3.5rem 0 2.5rem;
+	text-align: center;
+}
+
+.tx-hero h1 {
+	font-size: 2.4rem;
+	font-weight: 800;
+	letter-spacing: -0.02em;
+	margin-bottom: 0.75rem;
+}
+
+.tx-hero .tx-tagline {
+	font-size: 1.15rem;
+	color: var(--md-default-fg-color--light);
+	max-width: 44rem;
+	margin: 0 auto 2rem;
+}
+
+.tx-hero__buttons {
+	display: flex;
+	gap: 0.75rem;
+	justify-content: center;
+	flex-wrap: wrap;
+	margin-bottom: 2.5rem;
+}
+
+.md-button {
+	border-radius: 6px !important;
+	font-weight: 600 !important;
+	padding: 0.55rem 1.4rem !important;
+}
+
+.md-button--primary {
+	background-color: var(--md-accent-fg-color) !important;
+	border-color: var(--md-accent-fg-color) !important;
+	color: #0d1117 !important;
+}
+
+.md-button--primary:hover,
+.md-button--primary:focus {
+	background-color: #ffb265 !important;
+	border-color: #ffb265 !important;
+}
+
+/* Terminal snippet in the hero */
+.tx-hero__term {
+	background: #010409;
+	border: 1px solid #30363d;
+	border-radius: 8px;
+	max-width: 42rem;
+	margin: 0 auto 2.5rem;
+	text-align: left;
+	overflow: hidden;
+	box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.tx-hero__term .term-bar {
+	background: #161b22;
+	padding: 0.45rem 0.9rem;
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	border-bottom: 1px solid #30363d;
+}
+
+.tx-hero__term .term-bar span {
+	width: 11px;
+	height: 11px;
+	border-radius: 50%;
+	display: inline-block;
+}
+
+.tx-hero__term .term-bar .r { background: #f85149; }
+.tx-hero__term .term-bar .y { background: #d29922; }
+.tx-hero__term .term-bar .g { background: #3fb950; }
+
+.tx-hero__term pre {
+	margin: 0;
+	border: none;
+	box-shadow: none;
+	background: transparent;
+	padding: 1rem 1.2rem;
+}
+
+/* Card grids */
+.md-typeset .grid.cards > ul > li {
+	border: 1px solid var(--md-default-fg-color--lightest);
+	border-radius: 8px;
+	transition: border-color 0.2s, transform 0.2s;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+	border-color: var(--md-accent-fg-color);
+	transform: translateY(-2px);
+}
+
+/* Logo header sizing */
+.md-header__button.md-logo img,
+.md-header__button.md-logo {
+	height: 1.5rem;
+	width: auto;
+}
