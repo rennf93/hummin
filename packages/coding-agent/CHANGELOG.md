@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added inherited Claude Opus 5.5, GPT-6 Sol, and GPT-6 Luna support for GitHub Copilot.
 - `/model` rebuilt in the settings-view style: an aligned two-column table (model name, context/provider value column), a description pane with provider, context, reasoning, and endpoint details for the highlighted model, an All/Scoped tab bar (clickable), and mouse press/click/wheel row interaction via the shared `SettingsList` component.
 - Selector screens opened by built-in commands (`/settings`, `/model`, `/models`, `/theme`, `/session`, trust, thinking, etc.) now render as centered overlays (X and Y) above the transcript instead of replacing the editor inline.
 - Added inherited GPT-6 Sol and GPT-6 Luna support for OpenAI API keys and OpenAI Codex subscriptions.
