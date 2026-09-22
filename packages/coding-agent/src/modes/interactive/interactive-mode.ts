@@ -5108,6 +5108,7 @@ export class InteractiveMode {
 			if (this.activeSelectorToken !== token) return;
 			this.activeSelectorToken = undefined;
 			this.activeSelectorDispose = undefined;
+			this.ui.setFocus(this.editor);
 			this.ui.requestRender();
 		};
 		const created = create(done);
