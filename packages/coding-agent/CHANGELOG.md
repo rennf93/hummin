@@ -14,6 +14,9 @@
 - `hummin --version` (and other global flags) was swallowed by the `sessions` subcommand dispatcher and never reached its own handling.
 - Bundled installs failed to load extensions importing `minimatch` (not resolvable next to the user's extensions directory); the runtime's own copy is now served to extensions.
 - Footer tok/s never showed for local models: OpenAI-compatible servers report token usage only in the final stream chunk, so completion-token counts stayed 0 while streaming; usage is now estimated per chunk (~4 chars/token) and overwritten by exact counts when the stream reports them. Additionally, the rate was read from completed messages instead of the in-flight streaming message, so the indicator never appeared for any provider; it now shows only while a response is streaming and clears on completion.
+- Built-in tools honor an explicit custom `cwd` when the tool set is created with `customCwd: true` (#9839): the factory cwd is authoritative over `ExtensionContext.cwd`. Without the opt-in, `ctx.cwd` (the live session cwd) still wins, preserving the #8627 behavior.
+- Persisted sessions now write the session header at `create()` time (and when branching a path without an assistant message), so the session file exists and is valid before the first assistant response; a normal termination in that window no longer loses the session (#9792).
+- Importing the SDK no longer captures the global undici dispatcher (#9787): the runtime `undici` import moved out of `http-dispatcher.ts` (on the SDK import graph via `settings-manager`) into `undici-runtime.ts`, imported only by the deliberate dispatcher-configuration entry points. A bare SDK import previously installed a version-skewed default `Agent` as the global dispatcher for the process lifetime, breaking stream aborts and mid-body reads in embedded hosts.
 
 ## [1.1.1] - 2026-09-21
 
