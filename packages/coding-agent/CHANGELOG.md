@@ -4,8 +4,12 @@
 
 ### Added
 
+- Provider grouping headers in `/model`: rows are grouped under dim provider name headers (curated providers first, current model first within its group); headers are non-selectable and drop out while searching.
+- `/session` info is now rendered as aligned two-column tables per section (Session Info, Messages, Tokens, Cache Warming, Cost), matching the settings-view table style.
+- Extension list pickers (`pi.select`-style `ExtensionSelectorComponent`) open as centered overlay panels like built-in selectors.
 - `/model` rebuilt in the settings-view style: an aligned two-column table (model name, context/provider value column), a description pane with provider, context, reasoning, and endpoint details for the highlighted model, an All/Scoped tab bar (clickable), and mouse press/click/wheel row interaction via the shared `SettingsList` component.
 - Selector screens opened by built-in commands (`/settings`, `/model`, `/models`, `/theme`, `/session`, trust, thinking, etc.) now render as centered overlays (X and Y) above the transcript instead of replacing the editor inline.
+- Centered selector screens are framed with themed side rails (`Panel`), so dialogs read as solid panels against the transcript behind them.
 
 ### Fixed
 

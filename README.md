@@ -18,12 +18,16 @@ Ornith 1.5 35B (local GGUF via llama.cpp) working through four upstream bugs in 
 
 ## Install
 
+Install the npm package (recommended - the clone below is only for developing hummin itself):
+
 ```bash
 npm install -g hummin-cli
 ```
-Or from a clone:
+Or from a clone (development only):
 
 ```bash
+git clone https://github.com/rennf93/hummin.git
+cd hummin
 npm install
 npm run build
 cd packages/coding-agent && npm link     # puts `hummin` on your PATH

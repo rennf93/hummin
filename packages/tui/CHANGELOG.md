@@ -4,7 +4,12 @@
 
 ### Added
 
+- `SettingsList` heading rows: `SettingItem.heading` marks non-selectable group headers (dim, skipped by cursor/wheel/mouse, dropped while searching); `selectIndex()` for callers that need row-position-preserving rebuilds.
 - `SettingsList` extensibility for selector-style pickers: optional `activate` action on `SettingItem` (Enter/click), per-item search text, custom hint and empty/no-match messages, initial search query, configurable label-column width, `setItems()` to swap the item list, and `getSearchInput()`/`getSelectedItem()` accessors.
+
+### Fixed
+
+- `SettingsList` no longer resets the selection when a key that does not change the search query reaches the search input.
 
 ## [0.87.1] - 2026-09-22
 

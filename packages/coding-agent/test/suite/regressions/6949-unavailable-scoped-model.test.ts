@@ -83,7 +83,8 @@ describe("issue #6949 unavailable scoped models", () => {
 		);
 
 		const rendered = selector.render(100).join("\n");
-		expect(stripAnsi(rendered)).toContain(`${unavailableId} [unavailable]`);
+		// Unavailable models render with fullId and an "unavailable" value marker.
+		expect(stripAnsi(rendered)).toMatch(new RegExp(`${unavailableId}\\s{2,}on \\u00b7 unavailable`));
 		expect(rendered).toContain(theme.strikethrough(unavailableId));
 		selector.handleInput("\r");
 		expect(changes).toEqual([[availableId]]);
@@ -106,7 +107,7 @@ describe("issue #6949 unavailable scoped models", () => {
 		if (!selector) throw new Error("Expected scoped-model selector to open");
 		const rendered = stripAnsi(selector.render(100).join("\n"));
 		for (const unavailableId of unavailableIds) {
-			expect(rendered).toContain(`${unavailableId} [unavailable]`);
+			expect(rendered).toMatch(new RegExp(`${unavailableId}\\s{2,}on \\u00b7 unavailable`));
 		}
 		expect(getAvailableSnapshot).toHaveBeenCalled();
 	});
@@ -126,7 +127,7 @@ describe("issue #6949 unavailable scoped models", () => {
 
 		const selector = getSelector();
 		if (!selector) throw new Error("Expected scoped-model selector to open");
-		expect(stripAnsi(selector.render(100).join("\n"))).toContain(`${fullId} [unavailable]`);
+		expect(stripAnsi(selector.render(100).join("\n"))).toMatch(new RegExp(`${fullId}\\s{2,}on \\u00b7 unavailable`));
 	});
 
 	it("does not clear a partial scope when an enabled model is unavailable", async () => {
