@@ -23,6 +23,8 @@ export interface SettingItem {
 	) => Component;
 	/** If provided, Enter/click invokes this action instead of cycling values or opening a submenu. */
 	activate?: () => void;
+	/** Non-selectable group header row (skipped by cursor and mouse; dropped when searching). */
+	heading?: boolean;
 }
 
 export interface SettingsListTheme {
@@ -129,6 +131,7 @@ export class SettingsList implements Component {
 	selectIndex(index: number): void {
 		const items = this.getDisplayItems();
 		this.selectedIndex = Math.max(0, Math.min(index, Math.max(0, items.length - 1)));
+		if (items[this.selectedIndex]?.heading) this.moveSelection(1);
 	}
 
 	invalidate(): void {
@@ -171,16 +174,21 @@ export class SettingsList implements Component {
 		// Calculate visible range with scrolling
 		const { startIndex, endIndex } = this.getVisibleRange(displayItems);
 
-		// Calculate max label width for alignment
+		// Calculate max label width for alignment (headings are not label rows)
 		const maxLabelWidth = Math.min(
 			this.options.maxLabelWidth ?? 36,
-			Math.max(...this.items.map((item) => visibleWidth(item.label))),
+			Math.max(...this.items.filter((item) => !item.heading).map((item) => visibleWidth(item.label)), 1),
 		);
 
 		// Render visible items
 		for (let i = startIndex; i < endIndex; i++) {
 			const item = displayItems[i];
 			if (!item) continue;
+
+			if (item.heading) {
+				lines.push(truncateToWidth(this.theme.hint(`  ${item.label}`), width));
+				continue;
+			}
 
 			const isSelected = i === this.selectedIndex;
 			const prefix = isSelected ? this.theme.cursor : "  ";
@@ -241,7 +249,7 @@ export class SettingsList implements Component {
 		if (event.type === "wheel" && event.wheelDelta) {
 			const delta = event.wheelDelta < 0 ? -1 : 1;
 			const previousIndex = this.selectedIndex;
-			this.selectedIndex = Math.max(0, Math.min(displayItems.length - 1, this.selectedIndex + delta));
+			this.moveSelection(delta);
 			return { handled: true, render: this.selectedIndex !== previousIndex };
 		}
 		// Hover must not change selection: the visible range is centered on it.
@@ -252,11 +260,13 @@ export class SettingsList implements Component {
 		const itemIndex = startIndex + event.y - rowOffset;
 		if (itemIndex < startIndex || itemIndex >= endIndex) return undefined;
 		if (event.type === "press") {
+			if (displayItems[itemIndex]?.heading) return { handled: true, focus: true };
 			this.mousePressedIndex = itemIndex;
 			this.selectedIndex = itemIndex;
 			return { handled: true, focus: true };
 		}
 		if (event.type === "click") {
+			if (displayItems[itemIndex]?.heading) return { handled: true };
 			this.selectedIndex = this.mousePressedIndex ?? itemIndex;
 			this.mousePressedIndex = undefined;
 			this.activateItem();
@@ -278,10 +288,10 @@ export class SettingsList implements Component {
 		const displayItems = this.getDisplayItems();
 		if (kb.matches(data, "tui.select.up")) {
 			if (displayItems.length === 0) return;
-			this.selectedIndex = this.selectedIndex === 0 ? displayItems.length - 1 : this.selectedIndex - 1;
+			this.moveSelection(-1);
 		} else if (kb.matches(data, "tui.select.down")) {
 			if (displayItems.length === 0) return;
-			this.selectedIndex = this.selectedIndex === displayItems.length - 1 ? 0 : this.selectedIndex + 1;
+			this.moveSelection(1);
 		} else if (
 			kb.matches(data, "tui.select.confirm") ||
 			(data === " " && (!this.searchEnabled || this.searchInput?.getValue().length === 0))
@@ -290,8 +300,13 @@ export class SettingsList implements Component {
 		} else if (kb.matches(data, "tui.select.cancel")) {
 			this.onCancel();
 		} else if (this.searchEnabled && this.searchInput) {
+			const previousValue = this.searchInput.getValue();
 			this.searchInput.handleInput(data);
-			this.applyFilter(this.searchInput.getValue());
+			// Only refilter when the query actually changed; a stray control key
+			// must not reset the selection.
+			if (this.searchInput.getValue() !== previousValue) {
+				this.applyFilter(this.searchInput.getValue());
+			}
 		}
 	}
 
@@ -307,9 +322,21 @@ export class SettingsList implements Component {
 		return { startIndex, endIndex: Math.min(startIndex + this.maxVisible, displayItems.length) };
 	}
 
+	/** Move selection by delta, skipping heading rows and wrapping around. */
+	private moveSelection(delta: number): void {
+		const items = this.getDisplayItems();
+		if (items.length === 0) return;
+		let index = this.selectedIndex;
+		for (let step = 0; step < items.length; step++) {
+			index = (index + delta + items.length) % items.length;
+			if (!items[index]?.heading) break;
+		}
+		this.selectedIndex = index;
+	}
+
 	private activateItem(): void {
 		const item = this.getDisplayItems()[this.selectedIndex];
-		if (!item) return;
+		if (!item || item.heading) return;
 
 		if (item.activate) {
 			item.activate();
@@ -357,8 +384,11 @@ export class SettingsList implements Component {
 
 	private applyFilter(query: string): void {
 		const textFn = this.options.searchText ?? ((item: SettingItem) => item.label);
-		this.filteredItems = fuzzyFilter(this.items, query, textFn);
+		const filtered = fuzzyFilter(this.items, query, textFn);
+		// Group headers only make sense in the unfiltered list.
+		this.filteredItems = query ? filtered.filter((item) => !item.heading) : filtered;
 		this.selectedIndex = 0;
+		if (this.filteredItems[0]?.heading) this.moveSelection(1);
 	}
 
 	private addHintLine(lines: string[], width: number): void {

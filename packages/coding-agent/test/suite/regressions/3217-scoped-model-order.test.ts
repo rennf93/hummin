@@ -90,10 +90,11 @@ describe("issue #3217 scoped model ordering", () => {
 			expect(rendered).toContain("Model catalogs refreshed.");
 		});
 
-		// Rows end with the provider name in the value column.
+		// Rows end with the provider name in the value column; group header rows
+		// are bare provider names and are excluded.
 		const renderedLines = stripAnsi(selector.render(120).join("\n"))
 			.split("\n")
-			.filter((line) => line.trimEnd().endsWith(modelOne.provider));
+			.filter((line) => line.trimEnd().endsWith(modelOne.provider) && line.trim() !== modelOne.provider);
 		const orderedIds = renderedLines.slice(0, 3).map((line) => {
 			// Rows show the model name (fallback id) followed by the value column.
 			const [label] = line

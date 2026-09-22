@@ -235,7 +235,19 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	 * current model selected when it is present. */
 	private rebuildItems(): void {
 		this.searchTexts.clear();
-		const items: SettingItem[] = this.activeModels.map((item) => {
+		const items: SettingItem[] = [];
+		let lastProvider: string | undefined;
+		for (const item of this.activeModels) {
+			const providerName = this.modelRuntime.getProvider(item.provider)?.name ?? item.provider;
+			if (item.provider !== lastProvider) {
+				lastProvider = item.provider;
+				items.push({
+					id: `provider-header:${item.provider}`,
+					label: providerName,
+					currentValue: "",
+					heading: true,
+				});
+			}
 			const key = `${item.provider}/${item.id}`;
 			const isCurrent = modelsAreEqual(this.currentModel, item.model);
 			const isDefault = this.isDefaultModel(item.model);
@@ -245,21 +257,20 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			const marker = isCurrent ? theme.fg("accent", "✓ ") : "";
 			const plainWidth = LABEL_MAX_WIDTH - (isCurrent ? 2 : 0);
 			const label = `${marker}${truncateToWidth(rowLabel, plainWidth, "")}`;
-			const providerName = this.modelRuntime.getProvider(item.provider)?.name ?? item.provider;
 			const ctxLabel = formatContextWindow(item.model.contextWindow);
 			const valueParts = [ctxLabel, providerName, isDefault ? "default" : undefined];
 			this.searchTexts.set(
 				key,
 				`${getModelSelectorSearchText({ id: item.id, provider: item.provider, name: item.model.name })}${isDefault ? " default" : ""}`,
 			);
-			return {
+			items.push({
 				id: key,
 				label,
 				currentValue: valueParts.filter(Boolean).join(" · "),
 				description: this.getModelDescription(item, providerName, isDefault),
 				activate: () => this.selectModelByKey(key),
-			};
-		});
+			});
+		}
 		this.settingsList.setItems(items);
 		if (this.currentModel) {
 			this.settingsList.selectItem(`${this.currentModel.provider}/${this.currentModel.id}`);
@@ -343,25 +354,20 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private sortModels(models: ModelItem[]): ModelItem[] {
 		const curated = (provider: string): boolean =>
 			provider === "zai" || provider === "zai-coding-cn" || provider.startsWith("hummin");
-		const sorted = [...models];
-		// Sort: current model first, default model second, curated providers
-		// (zai, hummin) next, then remaining providers alphabetically.
-		sorted.sort((a, b) => {
-			const aIsCurrent = modelsAreEqual(this.currentModel, a.model);
-			const bIsCurrent = modelsAreEqual(this.currentModel, b.model);
-			if (aIsCurrent && !bIsCurrent) return -1;
-			if (!aIsCurrent && bIsCurrent) return 1;
-			const aIsDefault = this.isDefaultModel(a.model);
-			const bIsDefault = this.isDefaultModel(b.model);
-			if (aIsDefault && !bIsDefault) return -1;
-			if (!aIsDefault && bIsDefault) return 1;
-			const aCurated = curated(a.provider);
-			const bCurated = curated(b.provider);
-			if (aCurated && !bCurated) return -1;
-			if (!aCurated && bCurated) return 1;
-			return a.provider.localeCompare(b.provider);
+		const providerRank = (provider: string): number => (curated(provider) ? 0 : 1);
+		// Group by provider (curated providers first, then alphabetical); within a
+		// group the current model comes first, then models by id.
+		return [...models].sort((a, b) => {
+			if (a.provider !== b.provider) {
+				const rankDelta = providerRank(a.provider) - providerRank(b.provider);
+				if (rankDelta !== 0) return rankDelta;
+				return a.provider.localeCompare(b.provider);
+			}
+			const aIsCurrent = modelsAreEqual(this.currentModel, a.model) ? 0 : 1;
+			const bIsCurrent = modelsAreEqual(this.currentModel, b.model) ? 0 : 1;
+			if (aIsCurrent !== bIsCurrent) return aIsCurrent - bIsCurrent;
+			return a.id.localeCompare(b.id);
 		});
-		return sorted;
 	}
 
 	private isDefaultModel(model: Model<any>): boolean {
