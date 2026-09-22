@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Memory vault: `graph.canvas` now refreshes automatically whenever the vault is touched (write only on content change) instead of going stale between manual `/vault-canvas` runs, and reciprocal `## Links` entries render as a single undirected edge instead of doubled arrows.
+
 ## [1.1.2] - 2026-09-22
 
 ### Added

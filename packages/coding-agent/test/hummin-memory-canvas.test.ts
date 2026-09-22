@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, expect, test } from "vitest";
-import { writeCanvas } from "../extensions/hummin-memory.ts";
+import { ensureVault, writeCanvas } from "../extensions/hummin-memory.ts";
 
 const createdDirs: string[] = [];
 
@@ -69,16 +69,14 @@ test("writeCanvas builds typed file nodes and Link-section edges", () => {
 	expect(hummin?.type).toBe("file");
 
 	// Edges drawn only for wikilinks that resolve to existing entities, and
-	// only from the "## Links" section: ram-cap -> hummin, hummin -> ram-cap;
-	// the dangling [[zfs]] and the frontmatter/overview produce no edges.
-	expect(canvas.edges).toHaveLength(2);
-	const edgeFiles = canvas.edges.map((e) => {
-		const from = canvas.nodes.find((n) => n.id === e.fromNode);
-		const to = canvas.nodes.find((n) => n.id === e.toNode);
-		return `${from?.file}->${to?.file}`;
-	});
-	expect(edgeFiles).toContain("entities/gotcha/ram-cap.md->entities/tool/hummin.md");
-	expect(edgeFiles).toContain("entities/tool/hummin.md->entities/gotcha/ram-cap.md");
+	// only from the "## Links" section: the dangling [[zfs]] and the
+	// frontmatter/overview produce no edges. The reciprocal pair ram-cap <->
+	// hummin collapses to ONE undirected edge instead of two arcs.
+	expect(canvas.edges).toHaveLength(1);
+	const edge = canvas.edges[0];
+	const from = canvas.nodes.find((n) => n.id === edge.fromNode);
+	const to = canvas.nodes.find((n) => n.id === edge.toNode);
+	expect(new Set([from?.file, to?.file])).toEqual(new Set(["entities/gotcha/ram-cap.md", "entities/tool/hummin.md"]));
 	expect(existsSync(join(dir, "graph.canvas"))).toBe(true);
 });
 
@@ -87,4 +85,53 @@ test("writeCanvas returns 0 and writes nothing for an empty vault", () => {
 	createdDirs.push(dir);
 	expect(writeCanvas(dir)).toBe(0);
 	expect(existsSync(join(dir, "graph.canvas"))).toBe(false);
+});
+
+test("ensureVault refreshes a stale graph.canvas and skips rewriting when unchanged", () => {
+	const prevVaultDir = process.env.HUMMIN_MEMORY_VAULT_DIR;
+	const dir = mkdtempSync(join(tmpdir(), "hummin-canvas-refresh-test-"));
+	createdDirs.push(dir);
+	process.env.HUMMIN_MEMORY_VAULT_DIR = dir;
+	try {
+		mkdirSync(join(dir, "entities", "project"), { recursive: true });
+		writeFileSync(
+			join(dir, "entities", "project", "hub.md"),
+			"---\ntype: project\ncreated: 2026-09-14\ntags: [project]\n---\n\nOverview.\n\n## Links\n- [[leaf]]\n",
+		);
+		// Simulate a canvas rendered before the newest entities existed: only
+		// an older node set, missing the current entity.
+		writeFileSync(join(dir, "graph.canvas"), `${JSON.stringify({ nodes: [], edges: [] }, null, "\t")}\n`);
+
+		ensureVault();
+		const refreshed = JSON.parse(readFileSync(join(dir, "graph.canvas"), "utf8")) as {
+			nodes: Array<{ file: string }>;
+			edges: Array<{ fromNode: string; toNode: string }>;
+		};
+		expect(refreshed.nodes.map((n) => n.file)).toContain("entities/project/hub.md");
+		// dangling [[leaf]] still yields no edge
+		expect(refreshed.edges).toHaveLength(0);
+
+		// No entity change -> content is identical -> mtime must not move
+		// (rewriting on every vault touch would dirty the vault git worktree).
+		const canvasPath = join(dir, "graph.canvas");
+		const before = statSync(canvasPath).mtimeMs;
+		ensureVault();
+		expect(statSync(canvasPath).mtimeMs).toBe(before);
+
+		// A new entity is picked up on the next ensureVault call.
+		writeFileSync(
+			join(dir, "entities", "project", "leaf.md"),
+			"---\ntype: project\ncreated: 2026-09-15\ntags: [project]\n---\n\nOverview.\n\n## Links\n- [[hub]]\n",
+		);
+		ensureVault();
+		const grown = JSON.parse(readFileSync(canvasPath, "utf8")) as {
+			nodes: Array<{ file: string }>;
+			edges: Array<{ fromNode: string; toNode: string }>;
+		};
+		expect(grown.nodes).toHaveLength(2);
+		expect(grown.edges).toHaveLength(1);
+	} finally {
+		if (prevVaultDir === undefined) delete process.env.HUMMIN_MEMORY_VAULT_DIR;
+		else process.env.HUMMIN_MEMORY_VAULT_DIR = prevVaultDir;
+	}
 });

@@ -821,7 +821,7 @@ curator. Rules:
 Do not skip the commit. Do not touch anything outside the vault.`;
 }
 
-function ensureVault(settings?: SettingsManager): string {
+export function ensureVault(settings?: SettingsManager): string {
 	const dir = vaultDir(settings ?? cachedSettings);
 	for (const sub of ["inbox", "processed", join("entities", "project"), join("entities", "concept"), join("entities", "decision"), join("entities", "gotcha"), join("entities", "tool"), join("entities", "person")]) {
 		mkdirSync(join(dir, sub), { recursive: true });
@@ -836,6 +836,10 @@ function ensureVault(settings?: SettingsManager): string {
 	if (!existsSync(join(dir, ".git"))) {
 		spawnSync("git", ["init", "-q"], { cwd: dir, env: { ...process.env, HUMMIN_MEMORY: "0" } });
 	}
+	// Every vault touchpoint (session start, fold trigger check, tool call)
+	// re-renders the canvas if entities changed, so the Obsidian view tracks
+	// folds without relying on the fold child remembering to run /vault-canvas.
+	refreshCanvas(dir);
 	return dir;
 }
 
@@ -857,14 +861,16 @@ ${lesson}
 
 // Graph canvas (jsoncanvas.org format, opens natively in Obsidian): file
 // nodes pointing at entity notes, one column per entity type, edges drawn
-// from each entity's "## Links" wikilinks. Regenerated after every fold so
-// the vault always has a current visual map of the graph.
+// from each entity's "## Links" wikilinks. A derived view of the graph:
+// refreshed lazily from ensureVault (only when the rendered content changes)
+// plus on demand via /vault-canvas, so it can never silently fall behind the
+// entities the way a fold-triggered-only render did.
 const CANVAS_ENTITY_TYPES = ["project", "concept", "decision", "gotcha", "tool", "person"];
 const CANVAS_TYPE_COLORS: Record<string, string> = {
 	project: "1", concept: "4", decision: "5", gotcha: "2", tool: "6", person: "3",
 };
 
-export function writeCanvas(dir: string): number {
+function renderCanvas(dir: string): { nodes: Record<string, unknown>[]; edges: Record<string, unknown>[] } | undefined {
 	const nodes: Record<string, unknown>[] = [];
 	const idBySlug = new Map<string, string>();
 	const colWidth = 320;
@@ -891,9 +897,13 @@ export function writeCanvas(dir: string): number {
 			});
 		}
 	}
-	if (nodes.length === 0) return 0;
+	if (nodes.length === 0) return undefined;
 
 	const edges: Record<string, unknown>[] = [];
+	// "## Links" entries are undirected "related" relations, and every entity
+	// reciprocates its links per the vault contract; emitting both directions
+	// renders as doubled arcs in Obsidian. One edge per unordered pair.
+	const seenPairs = new Set<string>();
 	for (const node of nodes) {
 		const file = node.file as string;
 		const content = readFileSync(join(dir, file), "utf8");
@@ -901,13 +911,41 @@ export function writeCanvas(dir: string): number {
 		for (const match of linksSection.matchAll(/\[\[([^\]|#]+)/g)) {
 			const target = match[1].trim();
 			const to = idBySlug.get(target);
-			if (to && to !== node.id) {
-				edges.push({ id: `edge-${edges.length + 1}`, fromNode: node.id, toNode: to });
-			}
+			if (!to || to === node.id) continue;
+			const pair = [node.id, to].sort().join("\u0000");
+			if (seenPairs.has(pair)) continue;
+			seenPairs.add(pair);
+			edges.push({ id: `edge-${edges.length + 1}`, fromNode: node.id, toNode: to });
 		}
 	}
-	writeFileSync(join(dir, "graph.canvas"), JSON.stringify({ nodes, edges }, null, "\t") + "\n");
-	return nodes.length;
+	return { nodes, edges };
+}
+
+export function writeCanvas(dir: string): number {
+	const canvas = renderCanvas(dir);
+	if (!canvas) return 0;
+	writeFileSync(join(dir, "graph.canvas"), JSON.stringify(canvas, null, "\t") + "\n");
+	return canvas.nodes.length;
+}
+
+/** Lazily refresh graph.canvas from ensureVault: rewrite only when the
+ * rendered content differs, so unrelated vault touches never dirty the git
+ * worktree. Best effort - a render failure must never break vault startup. */
+function refreshCanvas(dir: string): void {
+	try {
+		const canvas = renderCanvas(dir);
+		const next = canvas ? JSON.stringify(canvas, null, "\t") + "\n" : "";
+		const path = join(dir, "graph.canvas");
+		let prev: string | undefined;
+		try {
+			prev = readFileSync(path, "utf8");
+		} catch {
+			// missing canvas, write below
+		}
+		if (next.length > 0 && next !== prev) writeFileSync(path, next);
+	} catch {
+		// canvas is a convenience view, never fatal
+	}
 }
 
 const AUTO_FOLD_THRESHOLD = Number(process.env.HUMMIN_MEMORY_AUTO_FOLD_THRESHOLD ?? 3);
