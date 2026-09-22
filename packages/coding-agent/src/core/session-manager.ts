@@ -989,6 +989,12 @@ export class SessionManager {
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
 			this.sessionFile = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
+			// Write the header eagerly so the session file exists and is a valid
+			// session from create() time, closing the data-loss window where a
+			// normal termination before the first assistant message lost the
+			// session entirely. _persist() later truncates and rewrites the full
+			// entry list, so no duplicate header occurs.
+			writeFileSync(this.sessionFile, `${JSON.stringify(header)}\n`, { flag: "wx" });
 		}
 		return this.sessionFile;
 	}
@@ -1083,7 +1089,11 @@ export class SessionManager {
 		}
 
 		if (!this.flushed) {
-			const fd = openSync(this.sessionFile, "wx");
+			// "w", not "wx": newSession() now writes the header at create time,
+			// so the file already exists. The rewrite is safe - while flushed is
+			// false nothing is ever appended, so the file contains only what we
+			// are about to rewrite.
+			const fd = openSync(this.sessionFile, "w");
 			try {
 				for (const e of this.fileEntries) {
 					writeFileSync(fd, `${JSON.stringify(e)}\n`);
@@ -1568,16 +1578,18 @@ export class SessionManager {
 			this.sessionFile = newSessionFile;
 			this._buildIndex();
 
-			// Only write the file now if it contains an assistant message.
-			// Otherwise defer to _persist(), which creates the file on the
-			// first assistant response, matching the newSession() contract
-			// and avoiding the duplicate-header bug when _persist()'s
-			// no-assistant guard later resets flushed to false.
+			// Write the file eagerly so the new session file is durable from
+			// branching time. With an assistant in the path, write everything;
+			// otherwise write just the header and let _persist()'s full rewrite
+			// (on the first assistant message) flush the rest - avoiding the
+			// duplicate-header bug when _persist()'s no-assistant guard resets
+			// flushed to false.
 			const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
 			if (hasAssistant) {
 				this._rewriteFile();
 				this.flushed = true;
 			} else {
+				writeFileSync(this.sessionFile, `${JSON.stringify(header)}\n`, { flag: "wx" });
 				this.flushed = false;
 			}
 
