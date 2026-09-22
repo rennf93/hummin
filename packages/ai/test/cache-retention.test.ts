@@ -591,8 +591,8 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 					// Expected to fail
 				}
 
-				// Catalog omits compat fields equal to the runtime default; supportsStrictMode defaults to false.
-				expect(model.compat?.supportsStrictMode ?? false).toBe(false);
+				// Catalog omits compat fields equal to the runtime default.
+				expect(model.compat?.supportsStrictMode).toBeUndefined();
 				expect(capturedPayload).toBeDefined();
 				const tools = capturedPayload?.tools as any[] | undefined;
 				expect(tools).toBeDefined();

@@ -2,9 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added inherited Claude Opus 5.5 support for Anthropic with adaptive thinking and a 1M context window.
+
+### Changed
+
+- Changed the default xAI model to Grok 4.7.
+
 ### Fixed
 
 - Memory vault: `graph.canvas` now refreshes automatically whenever the vault is touched (write only on content change) instead of going stale between manual `/vault-canvas` runs, and reciprocal `## Links` entries render as a single undirected edge instead of doubled arrows.
+- Fixed split-turn compaction summaries being refused by Claude Fable 5.1 by clearly separating the conversation and using continuation-oriented instructions ([#9652](https://github.com/earendil-works/pi/issues/9652)).
+- Fixed missing or invalid `--mode` values being silently ignored instead of reporting an error and exiting with a nonzero status ([#9045](https://github.com/earendil-works/pi/issues/9045)).
 
 ## [1.1.2] - 2026-09-22
 
