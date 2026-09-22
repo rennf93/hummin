@@ -1,0 +1,44 @@
+name: Docs Update
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'LICENSE'
+      - 'SECURITY.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: docs-deploy
+  cancel-in-progress: false
+
+jobs:
+  docs-update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: 3.x
+
+      - name: Install dependencies
+        run: pip install mkdocs-material
+
+      - name: Configure Git user
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+      - name: Build and deploy documentation
+        run: mkdocs gh-deploy --force --strict

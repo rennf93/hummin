@@ -59,7 +59,7 @@ GLM-5.3, GLM-5.3-Flash and GLM-5.3-highspeed ship in the `zai` provider catalog 
 
 The bundled `hummin-colibri` extension registers ONE provider (`colibri`) that exposes every model found on your local OpenAI-compatible servers. The engine behind each server does not matter - colibri (MoE streaming), llama.cpp, Ollama all work; the server's own `/v1/models` is the source of truth for model ids, and the first server in the list that serves a model wins (duplicates dedupe into one entry with fallback ordering).
 
-**Full walkthrough - engines, model choices, server setup on Linux/Mac, and a worked example: [COLIBRI-SETUP.md](COLIBRI-SETUP.md).**
+**Full documentation: [rennf93.github.io/hummin](https://rennf93.github.io/hummin/) - engines, model choices, downloading, server setup on Linux/Mac, fleet configuration and troubleshooting.**
 
 ```bash
 export HUMMIN_COLIBRI_INSTANCES="http://nas:9996,http://nas:9998,http://mac:9998"   # order = preference

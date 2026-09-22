@@ -47,3 +47,6 @@ SPEC-ZCODE-CLI.md
 DESIGN.md
 
 bench/results/
+
+# MkDocs build output
+site/
