@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local models, step by step - hummin</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site">
+	<span class="brand">hummin</span>
+	<nav>
+		<a href="index.html">Home</a>
+		<a href="local-models.html" class="active">Local models</a>
+		<a href="reference.html">Reference</a>
+		<a href="https://github.com/rennf93/hummin">GitHub</a>
+	</nav>
+</header>
+
+<main>
+	<h1>Local models, step by step</h1>
+	<p class="lead">Download a model, serve it, talk to it from your terminal. Everything here was battle-tested on a real homelab (UGREEN NAS with 128GB RAM + Apple Silicon Mac Mini with 32GB) over several weeks of daily use.</p>
+
+	<h2>The one decision: which engine?</h2>
+	<p>Two engines cover everything you will realistically want to run. Pick by model shape, not by preference:</p>
+
+	<table>
+		<tr><th></th><th>llama.cpp (GGUF)</th><th>colibri</th></tr>
+		<tr><td><strong>Model type</strong></td><td>Dense models, or MoE models whose whole quant fits in your RAM</td><td>Frontier MoE models far bigger than your RAM</td></tr>
+		<tr><td><strong>Format</strong></td><td><code>.gguf</code> files</td><td>colibri int4 group-64 safetensors containers (not GGUF!)</td></tr>
+		<tr><td><strong>Trick</strong></td><td>Everything in RAM, optional GPU</td><td>Keeps dense weights in RAM, streams experts from NVMe/SSD per token</td></tr>
+		<tr><td><strong>Speed</strong></td><td>Fast (tens of tok/s on Apple Silicon)</td><td>Slow but huge (0.5-3 tok/s for a 321B model)</td></tr>
+		<tr><td><strong>Use it for</strong></td><td>Daily interactive coding</td><td>On-demand maximum quality, batch and privacy-sensitive runs</td></tr>
+	</table>
+
+	<div class="callout">
+		<p><strong>Rule of thumb:</strong> dense model that fits your RAM goes GGUF via llama.cpp. Frontier MoE bigger than your RAM goes colibri streamed from fast storage. If a GGUF exists for a colibri-only model, check llama.cpp architecture support first - new architectures often lag (GLM-5.3's <code>glm5next</code> is not merged into mainline llama.cpp yet).</p>
+	</div>
+
+	<h2>Models we actually run (and what to expect)</h2>
+	<table>
+		<tr><th>Model</th><th>Size on disk</th><th>Engine</th><th>Hardware floor</th><th>Expected speed</th></tr>
+		<tr>
+			<td>Qwen3.8-27B (dense, UD-Q4_K_XL GGUF)</td><td>~17.5GB</td><td>llama.cpp</td><td>24GB RAM</td>
+			<td>~7-10 tok/s on M2 Pro, ~1.5 tok/s CPU-only NAS</td>
+		</tr>
+		<tr>
+			<td>Ornith-1.5-35B-A3B (MoE, ~3B active, Q4_K_M)</td><td>~21.7GB</td><td>llama.cpp</td><td>32GB RAM, SOLO</td>
+			<td>20+ tok/s expected (agentic-coding tuned, emits <code>&lt;think&gt;</code> blocks)</td>
+		</tr>
+		<tr>
+			<td>GLM-5.3-Flash (321B MoE, int4 g64 container)</td><td>~195GB</td><td>colibri</td><td>64GB+ RAM, fast disk</td>
+			<td>~0.5-3 tok/s warm; first generation after start can take up to an hour cold</td>
+		</tr>
+		<tr>
+			<td>GLM-5.3 flagship (int4 g64 container)</td><td>~114GB</td><td>colibri</td><td>64GB+ RAM, fast disk</td>
+			<td>Same ballpark as Flash</td>
+		</tr>
+		<tr>
+			<td>Fast small models (llama3.2:3b, qwen, embeddings)</td><td>&lt;10GB</td><td>Ollama</td><td>Anything</td><td>Instant</td>
+		</tr>
+	</table>
+
+	<div class="callout warn">
+		<p><strong>32GB machines cannot hold GLM-5.3-Flash at all.</strong> That is not a tuning problem: the dense weight slice alone exceeds the RAM. Run it on the 64GB+ box and reach it over the network.</p>
+	</div>
+
+	<h2 class="step"><span class="step-num">1</span>Install hummin and point it at your servers</h2>
+
+	<pre><code>npm install -g hummin-cli
+
+# ~/.zshrc - order is preference: first server serving a model wins,
+# later duplicates become automatic fallbacks
+export HUMMIN_COLIBRI_INSTANCES="http://nas:9996,http://nas:9998,http://mac:9998"
+export COLI_API_KEY=your-key                   # omit if servers run keyless</code></pre>
+
+	<table>
+		<tr><th>Variable</th><th>Purpose</th></tr>
+		<tr><td><code>HUMMIN_COLIBRI_INSTANCES</code></td><td>Comma-separated server base URLs; order = preference, duplicates dedupe into one picker entry with fallback ordering</td></tr>
+		<tr><td><code>COLI_API_KEY</code></td><td>Bearer token; a placeholder is sent for keyless servers</td></tr>
+		<tr><td><code>HUMMIN_COLIBRI_CTX</code></td><td>Fallback context window (default 16384), used only when a server does not report one</td></tr>
+	</table>
+
+	<p>The extension autoloads from <code>~/.hummin/agent/extensions/</code>. Sessions discover models at start, so <strong>restart the session after changing servers</strong>. Use IP addresses rather than <code>.local</code> names on mixed Linux networks - mDNS is flaky there.</p>
+
+	<h2 class="step"><span class="step-num">2</span>Download the model (on the right machine)</h2>
+
+	<p>All downloads use the Hugging Face CLI and are resumable: if anything interrupts, just re-run the same command.</p>
+
+	<pre><code>python3 -m pip install --user -U "huggingface_hub[cli]"
+export PATH="$HOME/.local/bin:$PATH"
+
+# GGUF, single file:
+hf download unsloth/Qwen3.8-27B-GGUF --include "Qwen3.8-27B-UD-Q4_K_XL.gguf" \
+  --local-dir /path/to/models/Qwen3.8-27B-GGUF
+
+# A whole colibri container (~195GB, 62 shards) - same command shape:
+hf download Justvugg/GLM-5.3-Flash-colibri-int4-g64 \
+  --local-dir /path/to/models/GLM-5.3-Flash-colibri-int4-g64</code></pre>
+
+	<div class="callout warn">
+		<p><strong>If the download stalls at 0% with live processes</strong>, it is a Xet transfer hang. Kill the exact PIDs you started (never a name-pattern kill) and relaunch with <code>HF_HUB_DISABLE_XET=1</code>. Every long download we run uses this flag up front.</p>
+	</div>
+
+	<p><strong>Download on the machine with the WAN pipe, not the machine that runs the model.</strong> A NAS moved ~14.4 MB/s aggregate with 8 parallel workers while a Mac single-stream managed only 1.3 MB/s. For hundreds of gigabytes, that is the difference between half a day and a month. Move files between machines over the LAN afterwards (2.5GbE shifts ~282 MB/s via ssh or rsync).</p>
+
+	<div class="callout">
+		<p><strong>Long downloads pattern:</strong> <code>nohup env HF_HUB_DISABLE_XET=1 hf download ... &gt; download.log 2&gt;&amp;1 &amp;</code>, then watch with <code>tail -f download.log</code> and <code>du -sh</code> the target dir. Stop it by killing the exact PIDs from launch, never <code>pkill -f hf</code>.</p>
+	</div>
+
+	<h2 class="step"><span class="step-num">3</span>Serve it</h2>
+
+	<h3>Option A: llama.cpp on a Mac (launchd service)</h3>
+
+	<pre><code>brew install llama.cpp
+
+llama-server --host 0.0.0.0 --port 9998 \
+  --model /path/to/Qwen3.8-27B-UD-Q4_K_XL.gguf \
+  --alias qwen3.8-27b --ctx-size 65536 --jinja --api-key YOURKEY</code></pre>
+
+	<p>Expect ~17.6GB RSS plus ~64KB/token of KV cache - size <code>--ctx-size</code> to your RAM headroom. Run it under a launchd agent so it survives reboots and restarts on crash; a ready-to-edit plist template is on the <a href="reference.html">reference page</a>.</p>
+
+	<h3>Option B: llama.cpp on Linux (docker compose)</h3>
+
+	<pre><code>services:
+  qwen-27b:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    restart: unless-stopped
+    ports: ["9996:9996"]
+    volumes: ["/volume1/ai-models/llama.cpp:/models:ro"]
+    command: ["--host", "0.0.0.0", "--port", "9996",
+              "--model", "/models/Qwen3.8-27B-UD-Q4_K_XL.gguf",
+              "--alias", "qwen3.8-27b", "--ctx-size", "262144",
+              "--threads", "4", "--jinja", "--api-key", "YOURKEY"]</code></pre>
+
+	<div class="callout">
+		<p>Set <code>--threads</code> to your <em>real</em> core count - llama.cpp defaults to physical cores and undercounts efficiency-core CPUs. Context is cheap on big-RAM boxes: 262K is ~17GB of KV.</p>
+	</div>
+
+	<h3>Option C: colibri for the frontier MoE models</h3>
+
+	<pre><code># Grab the prebuilt runtime from github.com/JustVugg/colibri/releases,
+# then (Linux example):
+COLI_MODEL=/path/to/GLM-5.3-Flash-colibri-int4-g64 \
+COLI_API_KEY=$(openssl rand -hex 24) \
+  coli serve --ram 48 --host 0.0.0.0 --port 9998 --no-browser</code></pre>
+
+	<ul>
+		<li><code>--ram</code> sizes the hot-expert cache; leave headroom for the OS and everything else on the box.</li>
+		<li>Verify a fresh download before trusting it: <code>coli doctor --deep</code> then <code>coli plan</code>. A broken republish once shipped with whole shard ranges empty, so a tensor census against <code>config.json</code> is worth the minute.</li>
+		<li>Keep it running and warm. The first generation after a start can take up to an hour (cold page cache); warm runs settle to seconds per token.</li>
+		<li>One generation at a time per instance - concurrent requests queue (HTTP 429). Run a second instance on another port and its own <code>--ram</code> budget if you need parallelism; expect 2-3x total throughput, not Nx, because instances share the disk pipe.</li>
+	</ul>
+
+	<h2 class="step"><span class="step-num">4</span>Use it in hummin</h2>
+
+	<pre><code>hummin            # start a session
+/model            # open the picker; your local models appear next to the zai catalog
+/reload           # re-scan servers after you start or stop one
+/thinking off     # disable reasoning for qwen-family models</code></pre>
+
+	<p>What happens under the hood, so nothing surprises you:</p>
+	<ul>
+		<li>Every model found on any configured server appears in <strong>one picker namespace</strong>, with a host badge. Unreachable servers contribute no models until a session restart - no guessed placeholder ids.</li>
+		<li>Context windows are read from each server's <code>/props</code> when available (llama.cpp serves it; colibri does not, so colibri models use <code>HUMMIN_COLIBRI_CTX</code>).</li>
+		<li>One generation at a time per server is handled for you: requests are serialized per server and 429 busy responses are retried with capped backoff.</li>
+		<li>Reasoning: qwen-family models map hummin's thinking level to <code>chat_template_kwargs.enable_thinking</code>, on by default; <code>/thinking off</code> disables it. Other families register without thinking controls.</li>
+		<li>Set <code>httpIdleTimeoutMs</code> to <code>0</code> (disabled) for local models - slow prefills otherwise look like dead connections.</li>
+	</ul>
+
+	<div class="callout ok">
+		<p><strong>Sanity check a new server</strong> before opening hummin: <code>curl -s -H "Authorization: Bearer KEY" http://host:port/v1/models</code> should list your model's id, and one small chat completion should stream. Everything hummin shows derives from these two calls.</p>
+	</div>
+
+	<h2 class="step"><span class="step-num">5</span>Keep it running</h2>
+
+	<p>Servers you actually use daily should be launchd agents (Mac) or containers with <code>restart: unless-stopped</code> (Linux). The three rules we learned the hard way:</p>
+
+	<ol>
+		<li><strong>Solo on small-RAM machines.</strong> Two GGUF servers on a 32GB Mac fight for page cache and both degrade. Check who is resident before starting another: <code>ps aux | grep llama-server</code>.</li>
+		<li><strong>CPU-only for giant MoE GGUFs on the Mac.</strong> <code>--n-gpu-layers 0</code> is mandatory: Metal buffers for a 500GB-class model are a guaranteed OOM that takes down whatever else is running.</li>
+		<li><strong>Never glob <code>/Volumes/*</code> in launchd scripts on macOS.</strong> External-disk listings from launchd get TCC EPERM. Use exact paths, or mount network shares under your home directory (<code>~/mnt/ai-models</code>), which avoids the whole class of failure.</li>
+	</ol>
+
+	<h2>Troubleshooting</h2>
+
+	<table>
+		<tr><th>Symptom</th><th>Fix</th></tr>
+		<tr><td>Download stalls at 0%</td><td><code>export HF_HUB_DISABLE_XET=1</code>, re-run (resumes)</td></tr>
+		<tr><td>HTTP 401 in hummin</td><td>Key mismatch between server and client; test scripts must export the same key as the server</td></tr>
+		<tr><td>HTTP 429</td><td>Server mid-generation; the extension retries automatically</td></tr>
+		<tr><td>Model missing from the picker</td><td>Its server was unreachable at session start; fix the server, restart the session (or <code>/reload</code>)</td></tr>
+		<tr><td>Picker shows the wrong context size</td><td>Server was still loading during discovery; <code>/props</code> is only read at session start</td></tr>
+		<tr><td>First token takes forever on the NAS</td><td>Cold colibri cache (up to 1h) or slow CPU prefill - use the fast machine for interactive work</td></tr>
+		<tr><td>llama.cpp slow on an efficiency-core CPU</td><td>Set <code>--threads</code> to the real core count</td></tr>
+		<tr><td><code>unknown model architecture</code> from llama.cpp</td><td>The GGUF's architecture is newer than your llama.cpp build (GLM-5.3's <code>glm5next</code> is still unmerged upstream); use the colibri container instead</td></tr>
+		<tr><td>launchd server cannot find model files on an external disk</td><td>TCC EPERM on <code>/Volumes</code> listings; use exact paths or a home-dir mount point</td></tr>
+		<tr><td>"Connection error" but the server is up</td><td>Client missing the API key; keyless colibri servers accept any placeholder, enforced servers need the real one</td></tr>
+	</table>
+
+	<h2>Where to go next</h2>
+	<ul>
+		<li><a href="reference.html">Reference</a>: env vars, port map, launchd plist and docker compose templates.</li>
+		<li><a href="https://github.com/JustVugg/colibri">colibri</a> docs for cluster mode, tuning (<code>coli tune</code>) and environment knobs.</li>
+	</ul>
+</main>
+
+<footer class="site">hummin is MIT licensed. Based on pi by Mario Zechner / earendil-works.</footer>
+</body>
+</html>
