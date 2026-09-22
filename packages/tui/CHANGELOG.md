@@ -2,11 +2,11 @@
 
 ## [Unreleased]
 
-## [0.87.1] - 2026-09-22
-
 ### Added
 
 - `SettingsList` extensibility for selector-style pickers: optional `activate` action on `SettingItem` (Enter/click), per-item search text, custom hint and empty/no-match messages, initial search query, configurable label-column width, `setItems()` to swap the item list, and `getSearchInput()`/`getSelectedItem()` accessors.
+
+## [0.87.1] - 2026-09-22
 
 ## [1.1.0] - 2026-09-19
 

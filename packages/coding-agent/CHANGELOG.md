@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- `/model` rebuilt in the settings-view style: an aligned two-column table (model name, context/provider value column), a description pane with provider, context, reasoning, and endpoint details for the highlighted model, an All/Scoped tab bar (clickable), and mouse press/click/wheel row interaction via the shared `SettingsList` component.
+- Selector screens opened by built-in commands (`/settings`, `/model`, `/models`, `/theme`, `/session`, trust, thinking, etc.) now render as centered overlays (X and Y) above the transcript instead of replacing the editor inline.
+
+### Fixed
+
+- Memory vault: `graph.canvas` now refreshes automatically whenever the vault is touched (write only on content change) instead of going stale between manual `/vault-canvas` runs, and reciprocal `## Links` entries render as a single undirected edge instead of doubled arrows.
+
 ## [0.87.1] - 2026-09-22
 
 ### New Features
@@ -12,8 +21,6 @@
 ### Added
 
 - Added inherited Claude Opus 5.5, GPT-6 Sol, and GPT-6 Luna support for GitHub Copilot.
-- `/model` rebuilt in the settings-view style: an aligned two-column table (model name, context/provider value column), a description pane with provider, context, reasoning, and endpoint details for the highlighted model, an All/Scoped tab bar (clickable), and mouse press/click/wheel row interaction via the shared `SettingsList` component.
-- Selector screens opened by built-in commands (`/settings`, `/model`, `/models`, `/theme`, `/session`, trust, thinking, etc.) now render as centered overlays (X and Y) above the transcript instead of replacing the editor inline.
 - Added inherited GPT-6 Sol and GPT-6 Luna support for OpenAI API keys and OpenAI Codex subscriptions.
 - Added inherited Claude Opus 5.5 support for Anthropic with adaptive thinking and a 1M context window.
 
@@ -23,7 +30,6 @@
 
 ### Fixed
 
-- Memory vault: `graph.canvas` now refreshes automatically whenever the vault is touched (write only on content change) instead of going stale between manual `/vault-canvas` runs, and reciprocal `## Links` entries render as a single undirected edge instead of doubled arrows.
 - Fixed split-turn compaction summaries being refused by Claude Fable 5.1 by clearly separating the conversation and using continuation-oriented instructions ([#9908](https://github.com/earendil-works/pi/pull/9908) by [@davidbrai](https://github.com/davidbrai)).
 - Fixed missing or invalid `--mode` values being silently ignored instead of reporting an error and exiting with a nonzero status ([#9045](https://github.com/earendil-works/pi/issues/9045)).
 - Fixed inherited image-only user messages being rejected by some OpenAI-compatible providers because they included an empty text part ([#9797](https://github.com/earendil-works/pi/issues/9797)).
