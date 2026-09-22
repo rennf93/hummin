@@ -169,6 +169,7 @@ import {
 	formatAuthSelectorProviderType,
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
+import { Panel } from "./components/panel.ts";
 import { type QueuedMessageEntry, QueueManagerComponent } from "./components/queue-manager.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
@@ -644,6 +645,7 @@ export class InteractiveMode {
 
 	// Extension UI state
 	private extensionSelector: ExtensionSelectorComponent | undefined = undefined;
+	private extensionSelectorOverlay: OverlayHandle | undefined = undefined;
 	private extensionInput: ExtensionInputComponent | undefined = undefined;
 	private extensionEditor: ExtensionEditorComponent | undefined = undefined;
 	private extensionTerminalInputSubscriptions = new Set<{
@@ -2815,8 +2817,7 @@ export class InteractiveMode {
 			);
 
 			this.disposeActiveSelector();
-			this.editorContainer.clear();
-			this.editorContainer.addChild(this.extensionSelector);
+			this.extensionSelectorOverlay = this.ui.showOverlay(new Panel(this.extensionSelector), { anchor: "center" });
 			this.ui.setFocus(this.extensionSelector);
 			this.ui.requestRender();
 		});
@@ -2827,8 +2828,8 @@ export class InteractiveMode {
 	 */
 	private hideExtensionSelector(): void {
 		this.extensionSelector?.dispose();
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
+		this.extensionSelectorOverlay?.hide();
+		this.extensionSelectorOverlay = undefined;
 		this.extensionSelector = undefined;
 		this.ui.setFocus(this.editor);
 		this.ui.requestRender();
@@ -5086,6 +5087,9 @@ export class InteractiveMode {
 		this.activeSelectorToken = undefined;
 		this.activeSelectorDispose = undefined;
 		dispose?.();
+		// Extension selectors float as overlays; make sure a lingering one is
+		// torn down whenever any other screen mounts.
+		if (this.extensionSelector) this.hideExtensionSelector();
 	}
 
 	/**
@@ -5114,7 +5118,7 @@ export class InteractiveMode {
 			hide?.();
 			dispose?.();
 		};
-		const handle = this.ui.showOverlay(created.component, { anchor: "center" });
+		const handle = this.ui.showOverlay(new Panel(created.component), { anchor: "center" });
 		hide = () => handle.hide();
 		this.ui.setFocus(created.focus);
 		this.ui.requestRender();
