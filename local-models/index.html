@@ -1228,10 +1228,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#models-we-actually-run" class="md-nav__link">
+  <a href="#every-model-we-tested-with-verdicts" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Models we actually run
+        Every model we tested, with verdicts
       
     </span>
   </a>
@@ -1281,7 +1281,7 @@
 
 
 <h1 id="local-models">Local models<a class="headerlink" href="#local-models" title="Permanent link">&para;</a></h1>
-<p>Run GLM and other open models on your own hardware and talk to them from hummin in the terminal. This section is the complete path, battle-tested on a real homelab (a UGREEN NAS with 128GB RAM and an Apple Silicon Mac Mini with 32GB) over weeks of daily use.</p>
+<p>Run GLM and other open models on <strong>your own computer</strong> and talk to them from hummin in the terminal. One Mac or PC is a complete setup - no NAS, no server, no second machine required. Where our instructions came from a bigger homelab (a UGREEN DXP6800 Pro NAS with an Intel N150 CPU and 128GB RAM, plus an Apple Silicon Mac Mini M2 Pro with 32GB RAM), we say so explicitly in side notes; the main path assumes the machine in front of you.</p>
 <h2 id="the-one-decision-which-engine">The one decision: which engine?<a class="headerlink" href="#the-one-decision-which-engine" title="Permanent link">&para;</a></h2>
 <p>Pick by model shape, not by preference:</p>
 <table>
@@ -1322,79 +1322,113 @@
 </table>
 <div class="admonition tip">
 <p class="admonition-title">Rule of thumb</p>
-<p>Dense model that fits your RAM goes GGUF via llama.cpp. Frontier MoE bigger than your RAM goes colibri streamed from fast storage. If a GGUF exists for a colibri-only model, check llama.cpp architecture support first - new architectures often lag.</p>
+<p>Model that fits your RAM goes GGUF via llama.cpp. Frontier MoE bigger than your RAM goes colibri streamed from fast storage. If a GGUF exists for a colibri-only model, check llama.cpp architecture support first - new architectures often lag.</p>
 </div>
-<h2 id="models-we-actually-run">Models we actually run<a class="headerlink" href="#models-we-actually-run" title="Permanent link">&para;</a></h2>
-<p>These are proven configurations, with real measured numbers on real hardware:</p>
+<h2 id="every-model-we-tested-with-verdicts">Every model we tested, with verdicts<a class="headerlink" href="#every-model-we-tested-with-verdicts" title="Permanent link">&para;</a></h2>
+<p>This is the honest list: what we ran, on which machine, whether it worked, and what it was actually good for. Sizes are measured on disk.</p>
 <table>
 <thead>
 <tr>
 <th>Model</th>
-<th>Size on disk</th>
-<th>Engine</th>
-<th>Hardware floor</th>
-<th>Expected speed</th>
+<th>Quant / format</th>
+<th>Size</th>
+<th>Tested on</th>
+<th>Verdict</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><a href="https://huggingface.co/unsloth/Qwen3.8-27B-GGUF">Qwen3.8-27B</a> (dense, UD-Q4_K_XL)</td>
-<td>~17.5GB</td>
-<td>llama.cpp</td>
-<td>24GB RAM</td>
-<td>~7-10 tok/s on M2 Pro, ~1.5 tok/s CPU-only NAS</td>
+<td><a href="https://huggingface.co/unsloth/North-Mini-Code-1.0-GGUF">North Mini Code 1.0</a></td>
+<td>UD-Q4_K_XL</td>
+<td>18GB</td>
+<td>Mac Mini (M2 Pro), also NAS docker</td>
+<td><strong>Fast and good.</strong> Best bulk worker we have: classification, digests, triage. 262K native context</td>
 </tr>
 <tr>
-<td><a href="https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF">Ornith-1.5-35B-A3B</a> (MoE, ~3B active, Q4_K_M)</td>
-<td>~21.7GB</td>
-<td>llama.cpp</td>
-<td>32GB RAM, solo</td>
-<td>20+ tok/s (agentic-coding tuned)</td>
+<td><a href="https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF">Ornith 1.5 35B-A3B</a></td>
+<td>Q4_K_M</td>
+<td>20GB</td>
+<td>Mac Mini</td>
+<td><strong>Fast and good.</strong> ~3B active params, 20+ tok/s expected, agentic-coding tuned. Must run solo on 32GB</td>
 </tr>
 <tr>
-<td><a href="https://huggingface.co/Justvugg/GLM-5.3-Flash-colibri-int4-g64">GLM-5.3-Flash</a> (321B MoE)</td>
-<td>~195GB</td>
-<td>colibri</td>
-<td>64GB+ RAM, fast disk</td>
-<td>~0.5-3 tok/s warm</td>
+<td><a href="https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF">Nemotron 3.5 Lightning 30B-A3B</a></td>
+<td>UD-Q4_K_XL</td>
+<td>24GB</td>
+<td>Mac Mini</td>
+<td><strong>Overthinks.</strong> Emits very long reasoning chains; exclude unless a task rewards deep reasoning</td>
 </tr>
 <tr>
-<td><a href="https://huggingface.co/Justvugg/GLM-5.3-colibri-int4-g64">GLM-5.3</a> flagship</td>
-<td>~114GB</td>
-<td>colibri</td>
-<td>64GB+ RAM, fast disk</td>
-<td>Same ballpark as Flash</td>
+<td><a href="https://huggingface.co/unsloth/Qwen3.8-27B-GGUF">Qwen3.8-27B</a></td>
+<td>UD-Q4_K_XL</td>
+<td>16GB</td>
+<td>Mac Mini (Metal), NAS (CPU)</td>
+<td><strong>Good interactive coder</strong> (~7-10 tok/s on the M2 Pro), but too slow for bulk automation on either machine (~1.5 tok/s on the NAS's N150)</td>
 </tr>
 <tr>
-<td>Small fast models (llama3.2:3b, qwen, embeddings)</td>
-<td>&lt;10GB</td>
-<td>Ollama</td>
-<td>Anything</td>
-<td>Instant</td>
+<td>GLM-5.3-Flash (colibri container)</td>
+<td>int4 g64 safetensors</td>
+<td>195GB</td>
+<td>NAS (N150, 128GB)</td>
+<td><strong>Works, slow sip.</strong> ~0.5-3 tok/s warm; needs 64GB+ RAM; needs a fast disk</td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF">GLM-5.3-Flash GGUF</a></td>
+<td>UD-IQ2_XXS</td>
+<td>95GB</td>
+<td>Mac Mini</td>
+<td><strong>Ran, not worth it.</strong> 2-bit quality, CPU-only (<code>--n-gpu-layers 0</code> or Metal OOMs). The colibri container is the better path for GLM</td>
+</tr>
+<tr>
+<td>GLM-5.3 (colibri container)</td>
+<td>int4 g64 safetensors</td>
+<td>114GB</td>
+<td>NAS</td>
+<td>Same ballpark as Flash; flagship quality</td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/unsloth/GLM-5.3-GGUF">GLM-5.3 GGUF</a></td>
+<td>UD-IQ2_M</td>
+<td>222GB</td>
+<td>Mac Mini</td>
+<td><strong>Ran, not worth it.</strong> Same caveats as the Flash GGUF</td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/unsloth/Kimi-K3-GGUF">Kimi K3 GGUF</a></td>
+<td>UD-TQ2_0</td>
+<td>514GB</td>
+<td>downloaded, Mac attempt</td>
+<td><strong>Blocked upstream.</strong> Unsloth's custom quant types 64/65 are not decoded by any public llama.cpp tree. Do not download until engine support ships</td>
+</tr>
+<tr>
+<td>Kimi K3 official checkpoint</td>
+<td>MXFP4 safetensors</td>
+<td>1.56TB</td>
+<td>Mac Mini (kimi-k3-in-c engine)</td>
+<td><strong>Runs, batch-grade only.</strong> ~3-5 min/token over a network mount; for output quality experiments, not interaction</td>
 </tr>
 </tbody>
 </table>
 <div class="admonition warning">
-<p class="admonition-title">32GB machines cannot hold GLM-5.3-Flash</p>
-<p>That is not a tuning problem: the dense weight slice alone exceeds the RAM. Run it on the 64GB+ box and reach it over the network.</p>
+<p class="admonition-title">32GB machines cannot hold GLM-5.3-Flash in colibri</p>
+<p>The dense weight slice alone exceeds the RAM. On a 32GB Mac, GLM comes as the 2-bit GGUFs (ran, quality cost) or not at all; the colibri containers want a 64GB+ machine.</p>
 </div>
 <h2 id="the-path-in-five-steps">The path, in five steps<a class="headerlink" href="#the-path-in-five-steps" title="Permanent link">&para;</a></h2>
 <ol>
-<li><strong><a href="downloading/">Download the model</a></strong> - with <code>hf download</code>, on the machine with the WAN pipe, stall-proof.</li>
-<li><strong><a href="serving-llamacpp/">Serve it</a></strong> - llama.cpp on Mac (launchd) or Linux (docker compose).</li>
-<li><strong><a href="serving-colibri/">Or serve the big ones</a></strong> - colibri for GLM-5.3-Flash and GLM-5.3.</li>
-<li><strong><a href="fleet/">Connect hummin</a></strong> - one env var, one model picker, everything on your LAN.</li>
+<li><strong><a href="downloading/">Download the model</a></strong> - with <code>hf download</code>, resumable and stall-proof.</li>
+<li><strong><a href="serving-llamacpp/">Serve it</a></strong> - <code>llama-server</code> on your own machine; NAS/docker as a side note.</li>
+<li><strong><a href="serving-colibri/">Or serve the big ones</a></strong> - colibri for GLM-5.3-Flash and GLM-5.3 on a 64GB+ machine.</li>
+<li><strong><a href="fleet/">Connect hummin</a></strong> - one env var pointing at <code>127.0.0.1</code>, one model picker.</li>
 <li><strong><a href="operations/">Keep it running</a></strong> - launchd services, co-run rules, warm caches.</li>
 </ol>
 <p>Stuck? <a href="troubleshooting/">Troubleshooting</a> covers every failure we have hit, with fixes.</p>
 <h2 id="the-60-second-version">The 60-second version<a class="headerlink" href="#the-60-second-version" title="Permanent link">&para;</a></h2>
-<p>Already know what you are doing? This is the whole loop:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># 1. download (resumable; add HF_HUB_DISABLE_XET=1 if it stalls)</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>hf<span class="w"> </span>download<span class="w"> </span>unsloth/Qwen3.8-27B-GGUF<span class="w"> </span>--include<span class="w"> </span><span class="s2">"Qwen3.8-27B-UD-Q4_K_XL.gguf"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>--local-dir<span class="w"> </span>~/models/Qwen3.8-27B-GGUF
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># 2. serve</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>llama-server<span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">9998</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># 2. serve, on this machine</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>llama-server<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">9998</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span>--model<span class="w"> </span>~/models/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span>--alias<span class="w"> </span>qwen3.8-27b<span class="w"> </span>--ctx-size<span class="w"> </span><span class="m">65536</span><span class="w"> </span>--jinja
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>

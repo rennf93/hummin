@@ -1463,7 +1463,7 @@
 <h2 id="linux-docker-compose">Linux: docker compose<a class="headerlink" href="#linux-docker-compose" title="Permanent link">&para;</a></h2>
 <p><code>restart: unless-stopped</code> + the official <code>ghcr.io/ggml-org/llama.cpp:server</code> image (see the <a href="../serving-llamacpp/#as-a-docker-service-linux-nas">compose example</a>). Restart containers freely; the model directory is a read-only mount.</p>
 <h2 id="ports">Ports<a class="headerlink" href="#ports" title="Permanent link">&para;</a></h2>
-<p>One port per service, documented, never reused casually. A convention that works:</p>
+<p>One port per service, documented, never reused casually. On a single machine you only need your first one; here is the convention our own fleet grew into, as an example of how far it scales:</p>
 <table>
 <thead>
 <tr>
@@ -1498,7 +1498,7 @@
 </tr>
 </tbody>
 </table>
-<p>Pick from 9990 upward, checking what is free first (<code>lsof -iTCP -sTCP:LISTEN</code>).</p>
+<p>Pick from 9990 upward, checking what is free first (<code>lsof -iTCP -sTCP:LISTEN</code>). One model per port is enough on a single machine.</p>
 <h2 id="first-smoke-test-for-any-new-service">First smoke test for any new service<a class="headerlink" href="#first-smoke-test-for-any-new-service" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Co-run check: only the new server starting.</li>

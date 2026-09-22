@@ -751,10 +751,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#as-a-launchd-service-mac" class="md-nav__link">
+  <a href="#as-a-service-mac" class="md-nav__link">
     <span class="md-ellipsis">
       
-        As a launchd service (Mac)
+        As a service (Mac)
       
     </span>
   </a>
@@ -762,10 +762,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#as-a-docker-service-linux-nas" class="md-nav__link">
+  <a href="#as-a-docker-service-linux-side-note" class="md-nav__link">
     <span class="md-ellipsis">
       
-        As a docker service (Linux NAS)
+        As a docker service (Linux side note)
       
     </span>
   </a>
@@ -1363,10 +1363,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#as-a-launchd-service-mac" class="md-nav__link">
+  <a href="#as-a-service-mac" class="md-nav__link">
     <span class="md-ellipsis">
       
-        As a launchd service (Mac)
+        As a service (Mac)
       
     </span>
   </a>
@@ -1374,10 +1374,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#as-a-docker-service-linux-nas" class="md-nav__link">
+  <a href="#as-a-docker-service-linux-side-note" class="md-nav__link">
     <span class="md-ellipsis">
       
-        As a docker service (Linux NAS)
+        As a docker service (Linux side note)
       
     </span>
   </a>
@@ -1421,8 +1421,7 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Mac (Apple Silicon, Metal enabled):</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>brew<span class="w"> </span>install<span class="w"> </span>llama.cpp
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Linux (docker, official image):</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># see the compose file below - no local install needed</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Linux (any PC or NAS, docker image - see the compose example below)</span>
 </code></pre></div>
 <h2 id="run-it-manual-first-time">Run it (manual, first time)<a class="headerlink" href="#run-it-manual-first-time" title="Permanent link">&para;</a></h2>
 <p>Always run a new model by hand once, before turning it into a service:</p>
@@ -1477,21 +1476,22 @@
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>curl<span class="w"> </span>-s<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer YOURKEY"</span><span class="w"> </span>http://127.0.0.1:9998/health
 </code></pre></div>
 <p>The models list should show your alias. Then send one small chat completion before wiring up any clients.</p>
-<h2 id="as-a-launchd-service-mac">As a launchd service (Mac)<a class="headerlink" href="#as-a-launchd-service-mac" title="Permanent link">&para;</a></h2>
-<p>Manual runs die with the terminal. For daily use, run it as a <a href="../operations/#mac-launchd-template">launchd service</a> - a ready-to-edit plist template is in <a href="../../reference/templates/">Server Templates</a>.</p>
-<h2 id="as-a-docker-service-linux-nas">As a docker service (Linux NAS)<a class="headerlink" href="#as-a-docker-service-linux-nas" title="Permanent link">&para;</a></h2>
+<h2 id="as-a-service-mac">As a service (Mac)<a class="headerlink" href="#as-a-service-mac" title="Permanent link">&para;</a></h2>
+<p>Manual runs die with the terminal. For daily use, run it as a <a href="../operations/#mac-launchd-template">launchd service</a> - a ready-to-edit plist template is in <a href="../../reference/templates/">Server Templates</a>. This is the standard setup on a single-machine Mac: one plist per model, started on demand.</p>
+<h2 id="as-a-docker-service-linux-side-note">As a docker service (Linux side note)<a class="headerlink" href="#as-a-docker-service-linux-side-note" title="Permanent link">&para;</a></h2>
+<p>On a Linux PC, NAS or any always-on box, the official image in compose is the cleanest service form:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">services</span><span class="p">:</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">qwen-27b</span><span class="p">:</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghcr.io/ggml-org/llama.cpp:server</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">unless-stopped</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="nt">ports</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"9996:9996"</span><span class="p p-Indicator">]</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="nt">volumes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"/volume1/ai-models/llama.cpp:/models:ro"</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="nt">volumes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"/path/to/models:/models:ro"</span><span class="p p-Indicator">]</span>
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"--host"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"0.0.0.0"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"--port"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"9996"</span><span class="p p-Indicator">,</span>
 <a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">              </span><span class="s">"--model"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"/models/Qwen3.8-27B-UD-Q4_K_XL.gguf"</span><span class="p p-Indicator">,</span>
 <a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">              </span><span class="s">"--alias"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"qwen3.8-27b"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"--ctx-size"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"262144"</span><span class="p p-Indicator">,</span>
 <a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">              </span><span class="s">"--threads"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"4"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"--jinja"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"--api-key"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"YOURKEY"</span><span class="p p-Indicator">]</span>
 </code></pre></div>
-<p>Context is cheap on big-RAM boxes: 262K (the model's native max) is ~17GB of KV. A 4-core efficiency CPU measured ~1.5 tok/s: an always-on fallback and batch host, not an interactive endpoint. The fast machine in your network should serve the interactive model.</p>
+<p>Context is cheap on big-RAM boxes: 262K (the model's native max) is ~17GB of KV. On a weak CPU (our test box is an Intel N150 with 4 efficiency cores) generation measured ~1.5 tok/s: an always-on fallback and batch host, not an interactive endpoint. Put the interactive model on the fastest CPU in your network.</p>
 <h2 id="known-architecture-gaps">Known architecture gaps<a class="headerlink" href="#known-architecture-gaps" title="Permanent link">&para;</a></h2>
 <p>llama.cpp cannot load every GGUF. Notably, GLM-5.3's <code>glm5next</code> architecture is <strong>not merged into mainline llama.cpp</strong>, so stock llama.cpp, Ollama and LM Studio all fail with <code>unknown model architecture: 'glm5next'</code>. If a fresh model fails to load with an architecture error, check llama.cpp PRs for support before debugging anything else - and use the <a href="../serving-colibri/">colibri container</a> instead, which is exactly what it exists for.</p>
 <p>Next: <a href="../serving-colibri/">serving the big ones with colibri</a>.</p>

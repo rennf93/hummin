@@ -774,10 +774,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-point-hummin-at-your-servers" class="md-nav__link">
+  <a href="#1-point-hummin-at-your-server" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Point hummin at your servers
+        1. Point hummin at your server
       
     </span>
   </a>
@@ -1341,10 +1341,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-point-hummin-at-your-servers" class="md-nav__link">
+  <a href="#1-point-hummin-at-your-server" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Point hummin at your servers
+        1. Point hummin at your server
       
     </span>
   </a>
@@ -1439,11 +1439,15 @@
 
 <h1 id="connecting-to-hummin">Connecting to hummin<a class="headerlink" href="#connecting-to-hummin" title="Permanent link">&para;</a></h1>
 <p>hummin ships a bundled extension that turns every OpenAI-compatible server on your LAN - colibri, llama.cpp, Ollama, anything - into entries in <strong>one model picker</strong>, with per-server serialization, health probing and real context windows. The engine behind each server does not matter.</p>
-<h2 id="1-point-hummin-at-your-servers">1. Point hummin at your servers<a class="headerlink" href="#1-point-hummin-at-your-servers" title="Permanent link">&para;</a></h2>
-<p>One environment variable, comma-separated, <strong>order is preference</strong>: the first server serving a model wins, later duplicates become automatic fallbacks.</p>
+<h2 id="1-point-hummin-at-your-server">1. Point hummin at your server<a class="headerlink" href="#1-point-hummin-at-your-server" title="Permanent link">&para;</a></h2>
+<p>One environment variable is all it takes. On a single-machine setup, that is the machine you are sitting at:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># ~/.zshrc</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">HUMMIN_COLIBRI_INSTANCES</span><span class="o">=</span><span class="s2">"http://nas:9996,http://nas:9998,http://mac:9998"</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">HUMMIN_COLIBRI_INSTANCES</span><span class="o">=</span><span class="s2">"http://127.0.0.1:9998"</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">COLI_API_KEY</span><span class="o">=</span>your-key<span class="w">               </span><span class="c1"># omit if servers run keyless</span>
+</code></pre></div>
+<p>Running more than one server (a second machine, a NAS, several models)? Comma-separate them, <strong>order is preference</strong>: the first server serving a model wins, later duplicates become automatic fallbacks.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># homelab example: two machines, NAS first for always-on, Mac for fallback</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">HUMMIN_COLIBRI_INSTANCES</span><span class="o">=</span><span class="s2">"http://192.168.50.111:9998,http://127.0.0.1:9998"</span>
 </code></pre></div>
 <table>
 <thead>
@@ -1469,11 +1473,11 @@
 </table>
 <div class="admonition tip">
 <p class="admonition-title">Use IPs, not <code>.local</code> names</p>
-<p>mDNS is flaky on mixed Linux networks. Your Pis and NAS will silently disappear from discovery on bad days; IP addresses do not.</p>
+<p>mDNS is flaky on mixed Linux networks. Other machines on your LAN can silently disappear from discovery on bad days; IP addresses do not. For <code>127.0.0.1</code> this obviously does not apply.</p>
 </div>
 <h2 id="2-start-hummin-and-pick-a-model">2. Start hummin and pick a model<a class="headerlink" href="#2-start-hummin-and-pick-a-model" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>hummin
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>/model
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>hummin
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>/model
 </code></pre></div>
 <p>What you will see:</p>
 <ul>
@@ -1498,8 +1502,8 @@
 </ul>
 <h2 id="5-reasoning-controls">5. Reasoning controls<a class="headerlink" href="#5-reasoning-controls" title="Permanent link">&para;</a></h2>
 <p>Qwen-family models map hummin's thinking level onto <code>chat_template_kwargs.enable_thinking</code>, which llama.cpp applies per request:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/thinking off     # direct answers, zero reasoning tokens
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>/thinking high    # deeper reasoning
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>/thinking off     # direct answers, zero reasoning tokens
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>/thinking high    # deeper reasoning
 </code></pre></div>
 <p>The default is ON (medium). Other model families register without thinking controls.</p>
 <h2 id="6-the-fleet-start-and-stop-servers-from-hummin">6. The fleet: start and stop servers from hummin<a class="headerlink" href="#6-the-fleet-start-and-stop-servers-from-hummin" title="Permanent link">&para;</a></h2>

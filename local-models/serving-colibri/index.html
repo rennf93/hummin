@@ -1444,6 +1444,10 @@
 <li><strong>Reads</strong>: directories of <code>.safetensors</code> shards in colibri's int4 group-64 format, plus <code>config.json</code> and tokenizer files.</li>
 <li><strong>Does not read</strong>: GGUF. It is not llama.cpp, not Ollama, and no amount of conversion tools changes that.</li>
 </ul>
+<div class="admonition warning">
+<p class="admonition-title">Single 32GB machine? Colibri GLM is not your path.</p>
+<p>The GLM containers want 64GB+ of RAM. On a 32GB Mac the only GLM that runs is the 2-bit GGUF - which we tested and do not recommend (see the <a href="../#every-model-we-tested-with-verdicts">verdict table</a>). Pick a model that fits your RAM instead; colibri shines on a big-RAM box (our test bench: a 128GB NAS).</p>
+</div>
 <p>The GLM-5.3 family ships as first-class colibri containers:</p>
 <table>
 <thead>

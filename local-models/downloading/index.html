@@ -1411,21 +1411,22 @@
 </code></pre></div>
 <p>Quant size guide for GGUF: Q4_K_M / UD-Q4_K_XL are the sweet spot for quality per gigabyte. Below Q3 quality falls fast; above Q5 the size doubles for a difference you will not notice in a terminal.</p>
 <h2 id="3-download-on-the-machine-with-the-wan-pipe">3. Download on the machine with the WAN pipe<a class="headerlink" href="#3-download-on-the-machine-with-the-wan-pipe" title="Permanent link">&para;</a></h2>
-<p>This is the single biggest time save in the whole process. On one homelab, a NAS sustained <strong>~14.4 MB/s</strong> aggregate with 8 parallel workers while a Mac single-stream managed only <strong>1.3 MB/s</strong>. For a 195GB container, that is the difference between half a day and a month.</p>
+<p>On a single-computer setup this section is trivial: download on that computer, you are done.</p>
+<p>If you run a homelab with more than one machine, this becomes the single biggest time save in the whole process. On our bench, a UGREEN DXP6800 Pro NAS (Intel N150) sustained <strong>~14.4 MB/s</strong> aggregate with 8 parallel workers while the Mac Mini single-stream managed only <strong>1.3 MB/s</strong>. For a 195GB container, that is the difference between half a day and a month.</p>
 <ul>
-<li>Download big models on the NAS/server, then move them over the LAN (2.5GbE shifts ~282 MB/s via <code>rsync</code> or <code>ssh</code>).</li>
+<li>Download big models on whichever machine has the better WAN pipe, then move them over the LAN (2.5GbE shifts ~282 MB/s via <code>rsync</code> or <code>ssh</code>).</li>
 <li>The HF CLI parallelizes internally; let it.</li>
-<li>Disk space check before you start: a GLM-5.3-Flash container is ~195GB (62 shards), the flagship ~114GB (38 shards).</li>
+<li>Disk space check before you start: a GLM-5.3-Flash colibri container is ~195GB (62 shards), the flagship ~114GB (38 shards), the Kimi K3 GGUF 514GB.</li>
 </ul>
 <h2 id="4-long-downloads-the-nohup-pattern">4. Long downloads: the nohup pattern<a class="headerlink" href="#4-long-downloads-the-nohup-pattern" title="Permanent link">&para;</a></h2>
 <p>Anything over an hour should run detached, logging to a file:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>nohup<span class="w"> </span>env<span class="w"> </span><span class="nv">HF_HUB_DISABLE_XET</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>hf<span class="w"> </span>download<span class="w"> </span>Justvugg/GLM-5.3-Flash-colibri-int4-g64<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--local-dir<span class="w"> </span>/volume1/ai-models/colibri/GLM-5.3-Flash-colibri-int4-g64<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--local-dir<span class="w"> </span>~/models/GLM-5.3-Flash-colibri-int4-g64<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>&gt;<span class="w"> </span>download.log<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="p">&amp;</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="c1"># watch progress:</span>
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>tail<span class="w"> </span>-f<span class="w"> </span>download.log
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>du<span class="w"> </span>-sh<span class="w"> </span>/volume1/ai-models/colibri/GLM-5.3-Flash-colibri-int4-g64
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>du<span class="w"> </span>-sh<span class="w"> </span>~/models/GLM-5.3-Flash-colibri-int4-g64
 </code></pre></div>
 <div class="admonition warning">
 <p class="admonition-title">Stopping a download</p>

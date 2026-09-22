@@ -1220,10 +1220,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#hardware-reference" class="md-nav__link">
+  <a href="#generation-speed-by-model-and-machine" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Hardware reference
+        Generation speed by model and machine
       
     </span>
   </a>
@@ -1231,21 +1231,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#generation-speed" class="md-nav__link">
+  <a href="#networking-homelab-side-note" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Generation speed
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#networking" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Networking
+        Networking (homelab side note)
       
     </span>
   </a>
@@ -1306,10 +1295,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#hardware-reference" class="md-nav__link">
+  <a href="#generation-speed-by-model-and-machine" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Hardware reference
+        Generation speed by model and machine
       
     </span>
   </a>
@@ -1317,21 +1306,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#generation-speed" class="md-nav__link">
+  <a href="#networking-homelab-side-note" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Generation speed
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#networking" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Networking
+        Networking (homelab side note)
       
     </span>
   </a>
@@ -1370,62 +1348,97 @@
 
 
 <h1 id="measured-performance">Measured performance<a class="headerlink" href="#measured-performance" title="Permanent link">&para;</a></h1>
-<p>Real numbers from a working homelab, so you can calibrate expectations against actual hardware instead of marketing. Measure your own with <code>coli tune</code> (colibri) or a timed completion (llama.cpp) - treat these as order-of-magnitude guides.</p>
-<h2 id="hardware-reference">Hardware reference<a class="headerlink" href="#hardware-reference" title="Permanent link">&para;</a></h2>
+<p>Real numbers from our test bench, so you can calibrate expectations against actual hardware instead of marketing. The two machines the numbers come from:</p>
+<ul>
+<li><strong>Mac Mini (Apple M2 Pro, 32GB unified memory)</strong> - the interactive machine. Apple Silicon: CPU, GPU and RAM on one package.</li>
+<li><strong>UGREEN DXP6800 Pro NAS (Intel N150, 4 efficiency cores, 128GB RAM, 2x1TB NVMe in RAID 1)</strong> - the always-on box. The N150 is a weak CPU; its value is 128GB of RAM and uptime, not speed.</li>
+</ul>
+<p>Measure your own with <code>coli tune</code> (colibri) or a timed completion (llama.cpp); treat these as order-of-magnitude guides.</p>
+<h2 id="generation-speed-by-model-and-machine">Generation speed by model and machine<a class="headerlink" href="#generation-speed-by-model-and-machine" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
+<th>Model</th>
+<th>Format</th>
 <th>Machine</th>
-<th>Specs</th>
-<th>Role in the fleet</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>UGREEN NAS</td>
-<td>Intel N150 (4 efficiency cores), 128GB RAM, 2x1TB NVMe (RAID 1)</td>
-<td>Always-on API server for the whole LAN</td>
-</tr>
-<tr>
-<td>Mac Mini</td>
-<td>Apple M2 Pro, 32GB RAM, external NVMe SSD</td>
-<td>Interactive host, second copy of models</td>
-</tr>
-</tbody>
-</table>
-<h2 id="generation-speed">Generation speed<a class="headerlink" href="#generation-speed" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Setup</th>
-<th>Measured</th>
+<th>Measured / expected</th>
 <th>Reading</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Qwen3.8-27B Q4_K_XL, M2 Pro (Metal)</td>
+<td>North Mini Code 1.0 (UD-Q4_K_XL)</td>
+<td>GGUF</td>
+<td>Mac Mini (M2 Pro)</td>
+<td>Fast, high quality for bulk</td>
+<td>Best bulk worker tested: classification, digests, triage</td>
+</tr>
+<tr>
+<td>North Mini Code 1.0</td>
+<td>GGUF</td>
+<td>NAS (N150, docker)</td>
+<td>Usable, CPU-bound</td>
+<td>Always-on fallback for batch work</td>
+</tr>
+<tr>
+<td>Ornith 1.5 35B-A3B (Q4_K_M)</td>
+<td>GGUF</td>
+<td>Mac Mini</td>
+<td>20+ tok/s expected (~3B active)</td>
+<td>Fast MoE; must run solo on 32GB</td>
+</tr>
+<tr>
+<td>Nemotron 3.5 Lightning 30B-A3B (UD-Q4_K_XL)</td>
+<td>GGUF</td>
+<td>Mac Mini</td>
+<td>Fast, but long reasoning chains</td>
+<td>Overthinks; exclude unless deep reasoning is the point</td>
+</tr>
+<tr>
+<td>Qwen3.8-27B (UD-Q4_K_XL)</td>
+<td>GGUF</td>
+<td>Mac Mini (M2 Pro, Metal)</td>
 <td>~7-10 tok/s generation, ~54 tok/s prompt processing</td>
-<td>The interactive daily driver</td>
+<td>Good interactive coder</td>
 </tr>
 <tr>
-<td>Qwen3.8-27B, 4-core efficiency CPU only</td>
+<td>Qwen3.8-27B (UD-Q4_K_XL)</td>
+<td>GGUF</td>
+<td>NAS (N150, 4 threads)</td>
 <td>~1.5 tok/s</td>
-<td>Batch/fallback host, not interactive</td>
+<td>Always-on fallback, not interactive; too slow for bulk automation</td>
 </tr>
 <tr>
-<td>GLM-5.3-Flash colibri, N150 NAS, warm</td>
-<td>~0.5-3 tok/s</td>
-<td>On-demand depth; cold first generation after start up to ~1h</td>
+<td>GLM-5.3-Flash (colibri int4 g64)</td>
+<td>container</td>
+<td>NAS (N150, 128GB)</td>
+<td>~0.5-3 tok/s warm; first generation after a cold start up to ~1h</td>
+<td>On-demand depth, not a daily driver</td>
 </tr>
 <tr>
-<td>Ornith-1.5-35B-A3B (~3B active), M2 Pro</td>
-<td>20+ tok/s expected</td>
-<td>Fast MoE, solo on the 32GB machine</td>
+<td>GLM-5.3-Flash (UD-IQ2_XXS)</td>
+<td>GGUF</td>
+<td>Mac Mini (CPU-only)</td>
+<td>Ran; slow, 2-bit quality</td>
+<td>The colibri container is the better GLM path</td>
+</tr>
+<tr>
+<td>Kimi K3 (UD-TQ2_0)</td>
+<td>GGUF</td>
+<td>-</td>
+<td>Unloadable</td>
+<td>Unsloth quant types 64/65 unsupported by every public llama.cpp tree</td>
+</tr>
+<tr>
+<td>Kimi K3 (official MXFP4, kimi-k3-in-c)</td>
+<td>safetensors</td>
+<td>Mac Mini, model over network mount</td>
+<td>~3-5 min/token</td>
+<td>Batch-grade only; quality experiments</td>
 </tr>
 </tbody>
 </table>
-<h2 id="networking">Networking<a class="headerlink" href="#networking" title="Permanent link">&para;</a></h2>
+<h2 id="networking-homelab-side-note">Networking (homelab side note)<a class="headerlink" href="#networking-homelab-side-note" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1448,7 +1461,7 @@
 <tr>
 <td>HF WAN download, Mac single-stream</td>
 <td>~1.3 MB/s</td>
-<td><strong>Never download big models on the Mac directly</strong></td>
+<td>Download big models on whichever host has the better WAN pipe</td>
 </tr>
 <tr>
 <td>NAS volume read</td>
@@ -1463,6 +1476,7 @@
 <li><strong>Prefix caching</strong>: hummin's own prompt is ~5.4K tokens; llama.cpp's prefix cache absorbs that across turns. The first request of a session pays it.</li>
 <li><strong>Colibri concurrency</strong>: one generation per instance. A second instance gives 2-3x total throughput, not 2x - instances share the disk pipe.</li>
 <li><strong>Cold vs warm</strong>: colibri cold starts are brutal (page cache empty); warm runs settle. Do not restart colibri casually.</li>
+<li><strong>CPU is the real baseline</strong>: RAM decides <em>whether</em> a model runs; the CPU decides <em>how fast</em>. An N150 and an M2 Pro hold the same model at wildly different speeds - which is why every table here names the chip.</li>
 <li><strong>Local is for patience</strong>: coding-agent loops, batch jobs, privacy-sensitive work. Interactive back-and-forth wants the fast model on the fast machine, or the cloud.</li>
 </ul>
 
