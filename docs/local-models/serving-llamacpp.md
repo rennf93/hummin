@@ -8,8 +8,7 @@ llama.cpp serves GGUF models over an OpenAI-compatible API. It is the right engi
 # Mac (Apple Silicon, Metal enabled):
 brew install llama.cpp
 
-# Linux (docker, official image):
-# see the compose file below - no local install needed
+# Linux (any PC or NAS, docker image - see the compose example below)
 ```
 
 ## Run it (manual, first time)
@@ -46,11 +45,13 @@ curl -s -H "Authorization: Bearer YOURKEY" http://127.0.0.1:9998/health
 
 The models list should show your alias. Then send one small chat completion before wiring up any clients.
 
-## As a launchd service (Mac)
+## As a service (Mac)
 
-Manual runs die with the terminal. For daily use, run it as a [launchd service](operations.md#mac-launchd-template) - a ready-to-edit plist template is in [Server Templates](../reference/templates.md).
+Manual runs die with the terminal. For daily use, run it as a [launchd service](operations.md#mac-launchd-template) - a ready-to-edit plist template is in [Server Templates](../reference/templates.md). This is the standard setup on a single-machine Mac: one plist per model, started on demand.
 
-## As a docker service (Linux NAS)
+## As a docker service (Linux side note)
+
+On a Linux PC, NAS or any always-on box, the official image in compose is the cleanest service form:
 
 ```yaml
 services:
@@ -58,14 +59,14 @@ services:
     image: ghcr.io/ggml-org/llama.cpp:server
     restart: unless-stopped
     ports: ["9996:9996"]
-    volumes: ["/volume1/ai-models/llama.cpp:/models:ro"]
+    volumes: ["/path/to/models:/models:ro"]
     command: ["--host", "0.0.0.0", "--port", "9996",
               "--model", "/models/Qwen3.8-27B-UD-Q4_K_XL.gguf",
               "--alias", "qwen3.8-27b", "--ctx-size", "262144",
               "--threads", "4", "--jinja", "--api-key", "YOURKEY"]
 ```
 
-Context is cheap on big-RAM boxes: 262K (the model's native max) is ~17GB of KV. A 4-core efficiency CPU measured ~1.5 tok/s: an always-on fallback and batch host, not an interactive endpoint. The fast machine in your network should serve the interactive model.
+Context is cheap on big-RAM boxes: 262K (the model's native max) is ~17GB of KV. On a weak CPU (our test box is an Intel N150 with 4 efficiency cores) generation measured ~1.5 tok/s: an always-on fallback and batch host, not an interactive endpoint. Put the interactive model on the fastest CPU in your network.
 
 ## Known architecture gaps
 

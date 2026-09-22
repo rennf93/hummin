@@ -2,14 +2,21 @@
 
 hummin ships a bundled extension that turns every OpenAI-compatible server on your LAN - colibri, llama.cpp, Ollama, anything - into entries in **one model picker**, with per-server serialization, health probing and real context windows. The engine behind each server does not matter.
 
-## 1. Point hummin at your servers
+## 1. Point hummin at your server
 
-One environment variable, comma-separated, **order is preference**: the first server serving a model wins, later duplicates become automatic fallbacks.
+One environment variable is all it takes. On a single-machine setup, that is the machine you are sitting at:
 
 ```bash
 # ~/.zshrc
-export HUMMIN_COLIBRI_INSTANCES="http://nas:9996,http://nas:9998,http://mac:9998"
+export HUMMIN_COLIBRI_INSTANCES="http://127.0.0.1:9998"
 export COLI_API_KEY=your-key               # omit if servers run keyless
+```
+
+Running more than one server (a second machine, a NAS, several models)? Comma-separate them, **order is preference**: the first server serving a model wins, later duplicates become automatic fallbacks.
+
+```bash
+# homelab example: two machines, NAS first for always-on, Mac for fallback
+export HUMMIN_COLIBRI_INSTANCES="http://192.168.50.111:9998,http://127.0.0.1:9998"
 ```
 
 | Variable | Purpose |
@@ -19,7 +26,7 @@ export COLI_API_KEY=your-key               # omit if servers run keyless
 | `HUMMIN_COLIBRI_CTX` | Fallback context window (default 16384), used only when a server does not report one |
 
 !!! tip "Use IPs, not `.local` names"
-    mDNS is flaky on mixed Linux networks. Your Pis and NAS will silently disappear from discovery on bad days; IP addresses do not.
+    mDNS is flaky on mixed Linux networks. Other machines on your LAN can silently disappear from discovery on bad days; IP addresses do not. For `127.0.0.1` this obviously does not apply.
 
 ## 2. Start hummin and pick a model
 

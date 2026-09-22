@@ -31,11 +31,13 @@ Quant size guide for GGUF: Q4_K_M / UD-Q4_K_XL are the sweet spot for quality pe
 
 ## 3. Download on the machine with the WAN pipe
 
-This is the single biggest time save in the whole process. On one homelab, a NAS sustained **~14.4 MB/s** aggregate with 8 parallel workers while a Mac single-stream managed only **1.3 MB/s**. For a 195GB container, that is the difference between half a day and a month.
+On a single-computer setup this section is trivial: download on that computer, you are done.
 
-- Download big models on the NAS/server, then move them over the LAN (2.5GbE shifts ~282 MB/s via `rsync` or `ssh`).
+If you run a homelab with more than one machine, this becomes the single biggest time save in the whole process. On our bench, a UGREEN DXP6800 Pro NAS (Intel N150) sustained **~14.4 MB/s** aggregate with 8 parallel workers while the Mac Mini single-stream managed only **1.3 MB/s**. For a 195GB container, that is the difference between half a day and a month.
+
+- Download big models on whichever machine has the better WAN pipe, then move them over the LAN (2.5GbE shifts ~282 MB/s via `rsync` or `ssh`).
 - The HF CLI parallelizes internally; let it.
-- Disk space check before you start: a GLM-5.3-Flash container is ~195GB (62 shards), the flagship ~114GB (38 shards).
+- Disk space check before you start: a GLM-5.3-Flash colibri container is ~195GB (62 shards), the flagship ~114GB (38 shards), the Kimi K3 GGUF 514GB.
 
 ## 4. Long downloads: the nohup pattern
 
@@ -43,12 +45,12 @@ Anything over an hour should run detached, logging to a file:
 
 ```bash
 nohup env HF_HUB_DISABLE_XET=1 hf download Justvugg/GLM-5.3-Flash-colibri-int4-g64 \
-  --local-dir /volume1/ai-models/colibri/GLM-5.3-Flash-colibri-int4-g64 \
+  --local-dir ~/models/GLM-5.3-Flash-colibri-int4-g64 \
   > download.log 2>&1 &
 
 # watch progress:
 tail -f download.log
-du -sh /volume1/ai-models/colibri/GLM-5.3-Flash-colibri-int4-g64
+du -sh ~/models/GLM-5.3-Flash-colibri-int4-g64
 ```
 
 !!! warning "Stopping a download"

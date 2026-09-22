@@ -79,7 +79,7 @@ Also worth knowing on a Mac that sleeps: stop the external disk from sleeping mi
 
 ## Ports
 
-One port per service, documented, never reused casually. A convention that works:
+One port per service, documented, never reused casually. On a single machine you only need your first one; here is the convention our own fleet grew into, as an example of how far it scales:
 
 | Range | Use |
 |---|---|
@@ -90,7 +90,7 @@ One port per service, documented, never reused casually. A convention that works
 | 9999 | reserved (UGOS nginx on UGREEN NAS - never use) |
 | 11434 | Ollama |
 
-Pick from 9990 upward, checking what is free first (`lsof -iTCP -sTCP:LISTEN`).
+Pick from 9990 upward, checking what is free first (`lsof -iTCP -sTCP:LISTEN`). One model per port is enough on a single machine.
 
 ## First smoke test for any new service
 
