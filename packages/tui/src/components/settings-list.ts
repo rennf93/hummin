@@ -125,6 +125,12 @@ export class SettingsList implements Component {
 		}
 	}
 
+	/** Move selection to a clamped row index. */
+	selectIndex(index: number): void {
+		const items = this.getDisplayItems();
+		this.selectedIndex = Math.max(0, Math.min(index, Math.max(0, items.length - 1)));
+	}
+
 	invalidate(): void {
 		this.submenuComponent?.invalidate?.();
 	}
