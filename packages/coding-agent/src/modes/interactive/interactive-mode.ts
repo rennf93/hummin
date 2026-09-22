@@ -104,11 +104,7 @@ import {
 	type FooterNavItem,
 	type ReadonlyFooterDataProvider,
 } from "../../core/footer-data-provider.ts";
-import {
-	applyHttpProxySettings,
-	configureHttpDispatcher,
-	formatHttpIdleTimeoutMs,
-} from "../../core/http-dispatcher.ts";
+import { applyHttpProxySettings, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import {
@@ -134,6 +130,7 @@ import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
+import { configureHttpDispatcher } from "../../core/undici-runtime.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";

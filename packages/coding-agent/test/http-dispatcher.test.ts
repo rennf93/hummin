@@ -1,12 +1,40 @@
+import { execFile } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
+import path from "node:path";
 import tls from "node:tls";
+import { promisify } from "node:util";
 import * as undici from "undici";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { applyHttpProxySettings, configureHttpDispatcher } from "../src/core/http-dispatcher.ts";
+import { applyHttpProxySettings } from "../src/core/http-dispatcher.ts";
+import { configureHttpDispatcher } from "../src/core/undici-runtime.ts";
 
 const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY"] as const;
 const DISPATCHER_PROXY_ENV_KEYS = [...PROXY_ENV_KEYS, "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"] as const;
+
+describe("sdk import graph", () => {
+	// #9787: importing the SDK must not capture the global undici dispatcher.
+	// Run in a child process so this test file's own undici import doesn't
+	// interfere with the observation.
+	const execFileAsync = promisify(execFile);
+
+	it("does not capture the global undici dispatcher on import", async () => {
+		const settingsManagerPath = path.resolve(__dirname, "../src/core/settings-manager.ts");
+		const script = `
+			await import(${JSON.stringify(settingsManagerPath)});
+			const captured = globalThis[Symbol.for("undici.globalDispatcher.1")];
+			console.log(captured === undefined ? "uncaptured" : "captured");
+		`;
+		const { stdout } = await execFileAsync(
+			process.execPath,
+			["--experimental-strip-types", "--input-type=module", "-e", script],
+			{
+				cwd: path.resolve(__dirname, ".."),
+			},
+		);
+		expect(stdout.trim()).toBe("uncaptured");
+	});
+});
 
 describe("http proxy settings", () => {
 	let savedEnv: Record<(typeof PROXY_ENV_KEYS)[number], string | undefined>;

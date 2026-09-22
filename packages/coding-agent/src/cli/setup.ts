@@ -1,5 +1,5 @@
 import { aliasZcodeEnv, DISPLAY_NAME } from "../config.ts";
-import { configureHttpDispatcher } from "../core/http-dispatcher.ts";
+import { configureHttpDispatcher } from "../core/undici-runtime.ts";
 
 export function setupCli(): void {
 	process.title = DISPLAY_NAME;
