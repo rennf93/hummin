@@ -16,15 +16,6 @@ Ornith 1.5 35B (local GGUF via llama.cpp) working through four upstream bugs in 
 
 ![hummin running Ornith 1.5 35B locally at 31 tok/s](docs/assets/demo-ornith.gif)
 
-## Status
-
-Early and moving fast. The working spec lives in Renn's local clone (not part of the public repo):
-
-- M0 rebrand + build: done
-- M1 Z.ai catalog: done upstream (GLM-5.3 / GLM-5.3-Flash ship in the zai provider); live acceptance pending
-- M2 colibri extension: scaffolded and mock-tested; queue-aware UX and zero-config autoload next
-- M3 docs/branding/release: in progress
-
 ## Install
 
 ```bash
