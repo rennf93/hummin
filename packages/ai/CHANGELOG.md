@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Estimated completion tokens per streaming chunk for OpenAI-compatible transports: most such servers (llama.cpp among them) report token usage only in the final stream chunk, so the in-flight assistant message's usage stayed 0 for the whole stream and consumers reading it mid-stream (e.g. the tok/s footer) showed nothing for local models. Estimates are overwritten by exact counts when the stream reports usage.
+
 ## [1.1.1] - 2026-09-21
 
 ### Added
