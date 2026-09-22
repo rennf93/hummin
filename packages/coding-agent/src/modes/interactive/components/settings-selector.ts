@@ -584,7 +584,7 @@ interface TabRect {
 }
 
 /** Category tab bar row above the settings list. Click a tab to switch. */
-class SettingsTabBar implements Component {
+export class SettingsTabBar implements Component {
 	private readonly tabs: readonly SettingsCategory[];
 	private activeId: string;
 	private readonly onSelect: (id: string) => void;

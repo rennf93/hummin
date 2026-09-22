@@ -12,8 +12,7 @@ function createFakeTui(): TUI {
 
 /** Return the model id of the highlighted (→) row in the rendered selector. */
 function selectedModelId(rendered: string): string | undefined {
-	// Rows show the model name (fallback id) plus a context badge; map the
-	// label back to the model id.
+	// Rows are "<cursor><✓ marker?><name>  <value>"; map the name back to the model id.
 	const byLabel = new Map([
 		["alpha one", "alpha-1"],
 		["alpha two", "alpha-2"],
@@ -21,15 +20,9 @@ function selectedModelId(rendered: string): string | undefined {
 	]);
 	const line = rendered.split("\n").find((l) => l.startsWith("→ "));
 	if (!line) return undefined;
-	const rest = line.replace(/^→\s*/, "");
-	const label =
-		rest
-			.split(" [")[0]
-			?.replace(/^✓\s*/, "")
-			.replace(/\s+\d+(\.\d+)?[KM]?\s*·$/, "")
-			.trim() ?? "";
-	const mapped = byLabel.get(label.toLowerCase());
-	return mapped ?? (label || undefined);
+	const rest = line.replace(/^→\s*/, "").replace(/^✓\s*/, "").trim().toLowerCase();
+	const match = [...byLabel.entries()].find(([label]) => rest.startsWith(label));
+	return match?.[1] ?? (rest || undefined);
 }
 
 describe("model selector filter resets selection to top", () => {

@@ -5089,30 +5089,33 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Shows a selector component in place of the editor.
+	 * Shows a selector as a centered overlay above the transcript.
 	 * @param create Factory that receives a `done` callback and returns the component and focus target
 	 */
 	private showSelector(
 		create: (done: () => void) => { component: Component; focus: Component; dispose?: () => void },
 	): void {
 		const token = {};
+		let hide: (() => void) | undefined;
 		let dispose: (() => void) | undefined;
 		const done = () => {
 			dispose?.();
+			hide?.();
 			if (this.activeSelectorToken !== token) return;
 			this.activeSelectorToken = undefined;
 			this.activeSelectorDispose = undefined;
-			this.editorContainer.clear();
-			this.editorContainer.addChild(this.editor);
-			this.ui.setFocus(this.editor);
+			this.ui.requestRender();
 		};
 		const created = create(done);
 		dispose = created.dispose;
 		this.disposeActiveSelector();
 		this.activeSelectorToken = token;
-		this.activeSelectorDispose = dispose;
-		this.editorContainer.clear();
-		this.editorContainer.addChild(created.component);
+		this.activeSelectorDispose = () => {
+			hide?.();
+			dispose?.();
+		};
+		const handle = this.ui.showOverlay(created.component, { anchor: "center" });
+		hide = () => handle.hide();
 		this.ui.setFocus(created.focus);
 		this.ui.requestRender();
 	}

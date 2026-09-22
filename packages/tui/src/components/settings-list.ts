@@ -21,6 +21,8 @@ export interface SettingItem {
 		currentValue: string,
 		done: (selectedValue?: string, options?: { navigateTo?: string }) => void,
 	) => Component;
+	/** If provided, Enter/click invokes this action instead of cycling values or opening a submenu. */
+	activate?: () => void;
 }
 
 export interface SettingsListTheme {
@@ -33,6 +35,18 @@ export interface SettingsListTheme {
 
 export interface SettingsListOptions {
 	enableSearch?: boolean;
+	/** Extract the text matched by the search filter (defaults to the item label). */
+	searchText?: (item: SettingItem) => string;
+	/** Custom hint line (defaults to the standard change/cancel hints). */
+	hint?: string;
+	/** Initial search query (requires enableSearch). */
+	initialSearch?: string;
+	/** Message shown when the item list is empty. */
+	emptyMessage?: string;
+	/** Message shown when the search filter matches nothing. */
+	noMatchMessage?: string;
+	/** Max width of the label column before values are aligned (default 36). */
+	maxLabelWidth?: number;
 }
 
 export class SettingsList implements Component {
@@ -46,6 +60,7 @@ export class SettingsList implements Component {
 	private onCancel: () => void;
 	private searchInput?: Input;
 	private searchEnabled: boolean;
+	private readonly options: SettingsListOptions;
 
 	// Submenu state
 	private submenuComponent: Component | null = null;
@@ -66,9 +81,14 @@ export class SettingsList implements Component {
 		this.theme = theme;
 		this.onChange = onChange;
 		this.onCancel = onCancel;
+		this.options = options;
 		this.searchEnabled = options.enableSearch ?? false;
 		if (this.searchEnabled) {
 			this.searchInput = new Input();
+			if (options.initialSearch) {
+				this.searchInput.setValue(options.initialSearch);
+				this.applyFilter(options.initialSearch);
+			}
 		}
 	}
 
@@ -78,6 +98,22 @@ export class SettingsList implements Component {
 		if (item) {
 			item.currentValue = newValue;
 		}
+	}
+
+	/** Replace the item list, reapplying the active search filter. */
+	setItems(items: SettingItem[]): void {
+		this.items = items;
+		this.applyFilter(this.searchEnabled ? (this.searchInput?.getValue() ?? "") : "");
+	}
+
+	/** The search input when search is enabled, for focus/IME handling. */
+	getSearchInput(): Input | undefined {
+		return this.searchInput;
+	}
+
+	/** The currently selected item (respecting the active search filter). */
+	getSelectedItem(): SettingItem | undefined {
+		return this.getDisplayItems()[this.selectedIndex];
 	}
 
 	/** Move selection to the item with the given id (no-op if not found). */
@@ -111,7 +147,7 @@ export class SettingsList implements Component {
 		}
 
 		if (this.items.length === 0) {
-			lines.push(this.theme.hint("  No settings available"));
+			lines.push(this.theme.hint(`  ${this.options.emptyMessage ?? "No settings available"}`));
 			if (this.searchEnabled) {
 				this.addHintLine(lines, width);
 			}
@@ -120,7 +156,8 @@ export class SettingsList implements Component {
 
 		const displayItems = this.getDisplayItems();
 		if (displayItems.length === 0) {
-			lines.push(truncateToWidth(this.theme.hint("  No matching settings"), width));
+			const noMatch = this.theme.hint(`  ${this.options.noMatchMessage ?? "No matching settings"}`);
+			lines.push(truncateToWidth(noMatch, width));
 			this.addHintLine(lines, width);
 			return lines;
 		}
@@ -129,7 +166,10 @@ export class SettingsList implements Component {
 		const { startIndex, endIndex } = this.getVisibleRange(displayItems);
 
 		// Calculate max label width for alignment
-		const maxLabelWidth = Math.min(36, Math.max(...this.items.map((item) => visibleWidth(item.label))));
+		const maxLabelWidth = Math.min(
+			this.options.maxLabelWidth ?? 36,
+			Math.max(...this.items.map((item) => visibleWidth(item.label))),
+		);
 
 		// Render visible items
 		for (let i = startIndex; i < endIndex; i++) {
@@ -265,7 +305,9 @@ export class SettingsList implements Component {
 		const item = this.getDisplayItems()[this.selectedIndex];
 		if (!item) return;
 
-		if (item.submenu) {
+		if (item.activate) {
+			item.activate();
+		} else if (item.submenu) {
 			// Open submenu, passing current value so it can pre-select correctly
 			this.submenuItemIndex = this.selectedIndex;
 			this.submenuComponent = item.submenu(
@@ -308,21 +350,18 @@ export class SettingsList implements Component {
 	}
 
 	private applyFilter(query: string): void {
-		this.filteredItems = fuzzyFilter(this.items, query, (item) => item.label);
+		const textFn = this.options.searchText ?? ((item: SettingItem) => item.label);
+		this.filteredItems = fuzzyFilter(this.items, query, textFn);
 		this.selectedIndex = 0;
 	}
 
 	private addHintLine(lines: string[], width: number): void {
 		lines.push("");
-		lines.push(
-			truncateToWidth(
-				this.theme.hint(
-					this.searchEnabled
-						? "  Type to search · Enter/Space to change · Esc to cancel"
-						: "  Enter/Space to change · Esc to cancel",
-				),
-				width,
-			),
-		);
+		const hint =
+			this.options.hint ??
+			(this.searchEnabled
+				? "Type to search · Enter/Space to change · Esc to cancel"
+				: "Enter/Space to change · Esc to cancel");
+		lines.push(truncateToWidth(this.theme.hint(`  ${hint}`), width));
 	}
 }
