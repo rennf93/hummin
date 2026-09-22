@@ -6,7 +6,7 @@ hummin uses environment variables in three ways:
 - hummin sets process markers so child processes can identify hummin as the launching agent.
 - Commands run by the LLM-callable shell tools receive session-state variables describing the current session.
 
-Fork-specific `HUMMIN_*` variables are documented in [Process Configuration](#process-configuration) below. Unless noted there, a `HUMMIN_*` variable overrides the corresponding settings.json value (env beats settings).
+Fork-specific `HUMMIN_*` variables are documented in [hummin Process Configuration](#hummin-process-configuration) below. Unless noted there, a `HUMMIN_*` variable overrides the corresponding settings.json value (env beats settings).
 
 Provider API-key variables are documented separately in [Provider Authentication](providers.md#use-an-api-key-from-the-environment).
 

@@ -1030,7 +1030,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			const geometry = box ? getScrollbarGeometry(box, includeHiddenAuto) : undefined;
 			if (
 				geometry &&
-				(x === geometry.column || x === geometry.markerColumn) &&
+				(x === geometry.column || (x === geometry.markerColumn && scrollView.scrollbarPaintedMarkers.length > 0)) &&
 				y >= geometry.trackTop &&
 				y < geometry.trackTop + geometry.trackHeight
 			) {

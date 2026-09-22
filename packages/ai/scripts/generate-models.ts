@@ -2695,6 +2695,22 @@ async function generateModels() {
 		});
 	}
 
+	// models.dev may list the model with an incomplete level map; enforce the
+	// documented always-on effort levels either way (minimal is not supported).
+	for (const candidate of allModels) {
+		if (candidate.provider === "anthropic" && candidate.id === "claude-opus-5-5") {
+			candidate.thinkingLevelMap = {
+				off: null,
+				minimal: null,
+				low: "low",
+				medium: "medium",
+				high: "high",
+				xhigh: "xhigh",
+				max: "max",
+			};
+		}
+	}
+
 	// Temporary overrides until upstream model metadata is corrected.
 	for (const candidate of allModels) {
 		if (candidate.provider === "github-copilot" && GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS.has(candidate.id)) {
