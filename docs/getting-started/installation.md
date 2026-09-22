@@ -7,6 +7,8 @@
 
 ## Install from npm
 
+The npm package is the recommended way to install hummin:
+
 ```bash
 npm install -g hummin-cli
 ```
@@ -17,7 +19,9 @@ Verify:
 hummin --version
 ```
 
-## Install from a clone
+## Install from a clone (development only)
+
+Cloning the repo is only needed to hack on hummin itself. For everyday use, install the npm package above.
 
 ```bash
 git clone https://github.com/rennf93/hummin.git

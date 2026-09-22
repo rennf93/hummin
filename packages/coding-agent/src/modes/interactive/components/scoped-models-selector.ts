@@ -2,16 +2,17 @@ import type { Model } from "@earendil-works/pi-ai";
 import {
 	Container,
 	type Focusable,
-	fuzzyFilter,
 	getKeybindings,
-	Input,
+	type Input,
 	Key,
 	matchesKey,
+	type SettingItem,
+	SettingsList,
 	Spacer,
 	Text,
 } from "@earendil-works/pi-tui";
 import { getModelSearchText } from "../model-search.ts";
-import { theme } from "../theme/theme.ts";
+import { getSettingsListTheme, theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyDisplayText } from "./keybinding-hints.ts";
 
@@ -91,7 +92,8 @@ export interface ModelsCallbacks {
 }
 
 /**
- * Component for enabling/disabling models for Ctrl+P cycling.
+ * Component for enabling/disabling models for Ctrl+P cycling, rendered in the
+ * settings-view style (search, aligned table, description pane, mouse support).
  * Changes are session-only until explicitly persisted with Ctrl+S.
  */
 export class ScopedModelsSelectorComponent extends Container implements Focusable {
@@ -99,24 +101,25 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 	private allIds: string[] = [];
 	private enabledIds: EnabledIds = null;
 	private filteredItems: ModelItem[] = [];
-	private selectedIndex = 0;
-	private searchInput: Input;
 
-	// Focusable implementation - propagate to searchInput for IME cursor positioning
+	// Focusable implementation - propagate to the search input for IME cursor positioning
 	private _focused = false;
 	get focused(): boolean {
 		return this._focused;
 	}
 	set focused(value: boolean) {
 		this._focused = value;
-		this.searchInput.focused = value;
+		const input = this.settingsList.getSearchInput();
+		if (input) input.focused = value;
 	}
-	private listContainer: Container;
+
+	private settingsList: SettingsList;
 	private footerText: Text;
+	private statusText?: Text;
 	private callbacks: ModelsCallbacks;
-	private maxVisible = 8;
 	private isDirty = false;
-	private refreshStatusText?: Text;
+	/** Extra search text per item id (model id, provider, name). */
+	private readonly searchTexts = new Map<string, string>();
 
 	constructor(config: ModelsConfig, callbacks: ModelsCallbacks) {
 		super();
@@ -136,34 +139,52 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		this.addChild(new Spacer(1));
 		this.addChild(new Text(theme.fg("accent", theme.bold("Model Configuration")), 0, 0));
 		this.addChild(
-			new Text(theme.fg("muted", `Session-only. ${keyDisplayText("app.models.save")} to save to settings.`), 0, 0),
+			new Text(theme.fg("muted", `  Session-only. ${keyDisplayText("app.models.save")} to save to settings.`), 0, 0),
 		);
 		this.addChild(new Spacer(1));
 
-		// Search input
-		this.searchInput = new Input();
-		this.addChild(this.searchInput);
-		this.addChild(new Spacer(1));
+		const hintParts = [
+			`${keyDisplayText("tui.select.confirm")} toggle`,
+			`${keyDisplayText("app.models.enableAll")} all`,
+			`${keyDisplayText("app.models.clearAll")} clear`,
+			`${keyDisplayText("app.models.toggleProvider")} provider`,
+			`${keyDisplayText("app.models.reorderUp")}/${keyDisplayText("app.models.reorderDown")} reorder`,
+			`${keyDisplayText("app.models.save")} save`,
+		];
 
-		// List container
-		this.listContainer = new Container();
-		this.addChild(this.listContainer);
+		this.settingsList = new SettingsList(
+			[],
+			8,
+			getSettingsListTheme(),
+			() => {},
+			() => this.callbacks.onCancel(),
+			{
+				enableSearch: true,
+				hint: hintParts.join(" · "),
+				emptyMessage: "No models available",
+				noMatchMessage: "No matching models",
+				maxLabelWidth: 46,
+				searchText: (item) => this.searchTexts.get(item.id) ?? item.label,
+			},
+		);
+		this.addChild(this.settingsList);
 
-		// Footer hint
-		this.addChild(new Spacer(1));
-		if (config.refreshStatus) {
-			this.refreshStatusText = new Text(theme.fg("muted", `  ${config.refreshStatus}`), 0, 0);
-			this.addChild(this.refreshStatusText);
-		}
-		this.footerText = new Text(this.getFooterText(), 0, 0);
+		// Footer counts + dirty marker (dynamic part of the old footer line)
+		this.footerText = new Text("", 0, 0);
 		this.addChild(this.footerText);
 
+		if (config.refreshStatus) {
+			this.statusText = new Text(theme.fg("muted", `  ${config.refreshStatus}`), 0, 0);
+			this.addChild(this.statusText);
+		}
+
+		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder());
-		this.updateList();
+		this.rebuildItems();
+		this.footerText.setText(this.getFooterText());
 	}
 
 	updateModels(models: readonly Model<any>[], enabledModelIds?: string[] | null): void {
-		const selectedId = this.filteredItems[this.selectedIndex]?.fullId;
 		if (enabledModelIds !== undefined) this.enabledIds = enabledModelIds === null ? null : [...enabledModelIds];
 		this.modelsById.clear();
 		this.allIds = [];
@@ -173,15 +194,10 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			this.allIds.push(fullId);
 		}
 		this.refresh();
-		const refreshedIndex = selectedId ? this.filteredItems.findIndex((item) => item.fullId === selectedId) : -1;
-		if (refreshedIndex >= 0) {
-			this.selectedIndex = refreshedIndex;
-			this.updateList();
-		}
 	}
 
 	setRefreshStatus(message: string, kind: "muted" | "success" | "warning"): void {
-		this.refreshStatusText?.setText(theme.fg(kind, `  ${message}`));
+		this.statusText?.setText(theme.fg(kind, `  ${message}`));
 	}
 
 	private buildItems(): ModelItem[] {
@@ -199,138 +215,86 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		const countText = allEnabled
 			? "all enabled"
 			: `${enabledCount}/${this.allIds.length} enabled${unavailableCount ? ` · ${unavailableCount} unavailable` : ""}`;
-		const parts = [
-			`${keyDisplayText("tui.select.confirm")} toggle`,
-			`${keyDisplayText("app.models.enableAll")} all`,
-			`${keyDisplayText("app.models.clearAll")} clear`,
-			`${keyDisplayText("app.models.toggleProvider")} provider`,
-			`${keyDisplayText("app.models.reorderUp")}/${keyDisplayText("app.models.reorderDown")} reorder`,
-			`${keyDisplayText("app.models.save")} save`,
-			countText,
-		];
-		return this.isDirty
-			? theme.fg("dim", `  ${parts.join(" · ")} `) + theme.fg("warning", "(unsaved)")
-			: theme.fg("dim", `  ${parts.join(" · ")}`);
+		const text = theme.fg("dim", `  ${countText}`);
+		return this.isDirty ? `${text} ${theme.fg("warning", "(unsaved)")}` : text;
 	}
 
 	private refresh(): void {
-		const query = this.searchInput.getValue();
-		const items = this.buildItems();
-		this.filteredItems = query
-			? fuzzyFilter(items, query, (item) =>
-					item.model
-						? getModelSearchText({ id: item.model.id, provider: item.model.provider, name: item.model.name })
-						: item.fullId,
-				)
-			: items;
-		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredItems.length - 1));
-		this.updateList();
+		// Capture the highlighted row position before the item list is rebuilt.
+		const selectedId = this.settingsList?.getSelectedItem()?.id;
+		const selectedIndex = selectedId ? this.filteredItems.findIndex((item) => item.fullId === selectedId) : -1;
+		this.filteredItems = this.buildItems();
+		this.rebuildItems(selectedIndex);
 		this.footerText.setText(this.getFooterText());
+	}
+
+	/** Rebuild the settings-list rows; keep the highlighted row position when known. */
+	private rebuildItems(prevIndex?: number): void {
+		this.searchTexts.clear();
+		const items: SettingItem[] = this.filteredItems.map((item) => {
+			const id = item.model?.id ?? item.fullId;
+			const label = item.model ? id : theme.strikethrough(id);
+			const provider = item.model ? item.model.provider : "unavailable";
+			if (item.model) {
+				this.searchTexts.set(
+					item.fullId,
+					getModelSearchText({ id: item.model.id, provider: item.model.provider, name: item.model.name }),
+				);
+			}
+			return {
+				id: item.fullId,
+				label,
+				currentValue: `${item.enabled ? "on" : "off"} · ${provider}`,
+				description: item.model ? item.model.name || item.model.id : "Model unavailable",
+				activate: () => this.toggleItem(item.fullId),
+			};
+		});
+		this.settingsList.setItems(items);
+		if (prevIndex !== undefined && prevIndex >= 0) this.settingsList.selectIndex(prevIndex);
 	}
 
 	private notifyChange(): void {
 		this.callbacks.onChange(this.enabledIds === null ? null : [...this.enabledIds]);
 	}
 
-	private updateList(): void {
-		this.listContainer.clear();
-
-		if (this.filteredItems.length === 0) {
-			this.listContainer.addChild(new Text(theme.fg("muted", "  No matching models"), 0, 0));
-			return;
-		}
-
-		const startIndex = Math.max(
-			0,
-			Math.min(this.selectedIndex - Math.floor(this.maxVisible / 2), this.filteredItems.length - this.maxVisible),
-		);
-		const endIndex = Math.min(startIndex + this.maxVisible, this.filteredItems.length);
-		for (let i = startIndex; i < endIndex; i++) {
-			const item = this.filteredItems[i]!;
-			const isSelected = i === this.selectedIndex;
-			const prefix = isSelected ? theme.fg("accent", "→ ") : "  ";
-			const id = item.model?.id ?? item.fullId;
-			const styledId = item.model ? id : theme.strikethrough(id);
-			const modelText = isSelected ? theme.fg("accent", styledId) : styledId;
-			const providerBadge = theme.fg("muted", item.model ? ` [${item.model.provider}]` : " [unavailable]");
-			const status = item.model && item.enabled ? theme.fg("accent", "✓ ") : "  ";
-			this.listContainer.addChild(new Text(`${prefix}${status}${modelText}${providerBadge}`, 0, 0));
-		}
-
-		// Add scroll indicator if needed
-		if (startIndex > 0 || endIndex < this.filteredItems.length) {
-			this.listContainer.addChild(
-				new Text(theme.fg("muted", `  (${this.selectedIndex + 1}/${this.filteredItems.length})`), 0, 0),
-			);
-		}
-
-		if (this.filteredItems.length > 0) {
-			const selected = this.filteredItems[this.selectedIndex];
-			this.listContainer.addChild(new Spacer(1));
-			this.listContainer.addChild(
-				new Text(
-					theme.fg("muted", `  ${selected.model ? `Model Name: ${selected.model.name}` : "Model unavailable"}`),
-					0,
-					0,
-				),
-			);
-		}
+	private toggleItem(fullId: string): void {
+		this.enabledIds = toggle(this.enabledIds, this.allIds, fullId);
+		this.isDirty = true;
+		this.refresh();
+		this.notifyChange();
 	}
 
 	handleInput(data: string): void {
 		const kb = getKeybindings();
-
-		// Navigation
-		if (kb.matches(data, "tui.select.up")) {
-			if (this.filteredItems.length === 0) return;
-			this.selectedIndex = this.selectedIndex === 0 ? this.filteredItems.length - 1 : this.selectedIndex - 1;
-			this.updateList();
-			return;
-		}
-		if (kb.matches(data, "tui.select.down")) {
-			if (this.filteredItems.length === 0) return;
-			this.selectedIndex = this.selectedIndex === this.filteredItems.length - 1 ? 0 : this.selectedIndex + 1;
-			this.updateList();
-			return;
-		}
 
 		// Reorder enabled models
 		const reorderUp = kb.matches(data, "app.models.reorderUp");
 		const reorderDown = kb.matches(data, "app.models.reorderDown");
 		if (reorderUp || reorderDown) {
 			if (this.enabledIds === null) return;
-			const item = this.filteredItems[this.selectedIndex];
-			if (item && isEnabled(this.enabledIds, item.fullId)) {
+			const item = this.settingsList.getSelectedItem();
+			if (item && isEnabled(this.enabledIds, item.id)) {
 				const delta = reorderUp ? -1 : 1;
-				const currentIndex = this.enabledIds.indexOf(item.fullId);
+				const currentIndex = this.enabledIds.indexOf(item.id);
 				const newIndex = currentIndex + delta;
 				// Only move if within bounds
 				if (newIndex >= 0 && newIndex < this.enabledIds.length) {
-					this.enabledIds = move(this.enabledIds, item.fullId, delta);
+					this.enabledIds = move(this.enabledIds, item.id, delta);
 					this.isDirty = true;
-					this.selectedIndex += delta;
 					this.refresh();
+					// Follow the moved row within the (re-filtered) list.
+					this.settingsList.selectItem(item.id);
 					this.notifyChange();
 				}
 			}
 			return;
 		}
 
-		// Toggle on Enter
-		if (kb.matches(data, "tui.select.confirm")) {
-			const item = this.filteredItems[this.selectedIndex];
-			if (item) {
-				this.enabledIds = toggle(this.enabledIds, this.allIds, item.fullId);
-				this.isDirty = true;
-				this.refresh();
-				this.notifyChange();
-			}
-			return;
-		}
-
 		// Enable all (filtered if search active, otherwise all)
 		if (kb.matches(data, "app.models.enableAll")) {
-			const targetIds = this.searchInput.getValue() ? this.filteredItems.map((i) => i.fullId) : undefined;
+			const targetIds = this.settingsList.getSearchInput()?.getValue()
+				? this.filteredItems.map((i) => i.fullId)
+				: undefined;
 			this.enabledIds = enableAll(this.enabledIds, this.allIds, targetIds);
 			this.isDirty = true;
 			this.refresh();
@@ -340,7 +304,9 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 
 		// Clear all (filtered if search active, otherwise all)
 		if (kb.matches(data, "app.models.clearAll")) {
-			const targetIds = this.searchInput.getValue() ? this.filteredItems.map((i) => i.fullId) : undefined;
+			const targetIds = this.settingsList.getSearchInput()?.getValue()
+				? this.filteredItems.map((i) => i.fullId)
+				: undefined;
 			this.enabledIds = clearAll(this.enabledIds, this.allIds, targetIds);
 			this.isDirty = true;
 			this.refresh();
@@ -350,7 +316,9 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 
 		// Toggle provider of current item
 		if (kb.matches(data, "app.models.toggleProvider")) {
-			const item = this.filteredItems[this.selectedIndex];
+			const item = this.filteredItems.find(
+				(candidate) => candidate.fullId === this.settingsList.getSelectedItem()?.id,
+			);
 			if (item?.model) {
 				const provider = item.model.provider;
 				const providerIds = this.allIds.filter((id) => this.modelsById.get(id)!.provider === provider);
@@ -375,8 +343,9 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 
 		// Ctrl+C - clear search or cancel if empty
 		if (matchesKey(data, Key.ctrl("c"))) {
-			if (this.searchInput.getValue()) {
-				this.searchInput.setValue("");
+			const input = this.settingsList.getSearchInput();
+			if (input?.getValue()) {
+				input.setValue("");
 				this.refresh();
 			} else {
 				this.callbacks.onCancel();
@@ -384,18 +353,10 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			return;
 		}
 
-		// Escape - cancel
-		if (matchesKey(data, Key.escape)) {
-			this.callbacks.onCancel();
-			return;
-		}
-
-		// Pass everything else to search input
-		this.searchInput.handleInput(data);
-		this.refresh();
+		this.settingsList.handleInput(data);
 	}
 
-	getSearchInput(): Input {
-		return this.searchInput;
+	getSearchInput(): Input | undefined {
+		return this.settingsList.getSearchInput();
 	}
 }

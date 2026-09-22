@@ -584,7 +584,7 @@ interface TabRect {
 }
 
 /** Category tab bar row above the settings list. Click a tab to switch. */
-class SettingsTabBar implements Component {
+export class SettingsTabBar implements Component {
 	private readonly tabs: readonly SettingsCategory[];
 	private activeId: string;
 	private readonly onSelect: (id: string) => void;
@@ -1429,6 +1429,19 @@ export class SettingsSelectorComponent extends Container {
 	/** Get the settings list of one category (mainly for tests). */
 	getList(categoryId: string): SettingsList {
 		return this.lists.get(categoryId)!;
+	}
+
+	/**
+	 * Height the selector reaches in its tallest category at the given width
+	 * (border + tab bar + list with its description and hints), so containers
+	 * can reserve one stable block across tab switches.
+	 */
+	getMaxRenderHeight(width: number): number {
+		let maxList = 0;
+		for (const list of this.lists.values()) {
+			maxList = Math.max(maxList, list.render(width).length);
+		}
+		return maxList + this.tabBar.render(width).length + 3;
 	}
 
 	/** Update an item's displayed value across all category lists. */

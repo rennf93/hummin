@@ -80,8 +80,9 @@ describe("issue #6999 models.json hot reload", () => {
 		const rendered = stripAnsi(selector.render(120).join("\n"));
 		expect(modelRuntime.getModel("new-provider", "new-model")).toBeDefined();
 		expect(modelRuntime.getModel("old-provider", "old-model")).toBeUndefined();
+		// The row lists the model name with the provider in the value column.
 		expect(rendered).toContain("new-model");
-		expect(rendered).toContain("[new-provider]");
+		expect(rendered).toMatch(/new-model\s{2,}.*new-provider$/m);
 		expect(rendered).not.toContain("old-model");
 		selector.dispose();
 	});

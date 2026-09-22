@@ -148,6 +148,7 @@ import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
+import { Centered } from "./components/centered.ts";
 import { CollapsibleSection } from "./components/collapsible-section.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
@@ -380,6 +381,10 @@ function isUsageSessionEntry(item: RenderSessionItem): item is Extract<SessionEn
 }
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
+
+/** Width cap for selector content: long values truncate instead of stretching
+ * the block to the terminal edge, and every selector shares the same cap. */
+const SELECTOR_MAX_WIDTH = 100;
 
 function isDeadTerminalError(error: unknown): boolean {
 	if (!error || typeof error !== "object" || !("code" in error)) {
@@ -2816,7 +2821,12 @@ export class InteractiveMode {
 
 			this.disposeActiveSelector();
 			this.editorContainer.clear();
-			this.editorContainer.addChild(this.extensionSelector);
+			this.editorContainer.addChild(
+				new Centered(this.extensionSelector, {
+					minHeight: () => this.selectorMinHeight(),
+					maxWidth: () => this.selectorMaxWidth(),
+				}),
+			);
 			this.ui.setFocus(this.extensionSelector);
 			this.ui.requestRender();
 		});
@@ -5089,6 +5099,27 @@ export class InteractiveMode {
 	}
 
 	/**
+	 * Upper bound for reserved selector height, so small terminals keep most of
+	 * the transcript visible.
+	 */
+	private selectorHeightCap(): number {
+		return Math.max(0, Math.min(24, this.ui.terminal.rows - 8));
+	}
+
+	/** Shared width cap for selector content (see {@link SELECTOR_MAX_WIDTH}). */
+	private selectorMaxWidth(): number {
+		return SELECTOR_MAX_WIDTH;
+	}
+
+	/**
+	 * Reserved height floor for selectors without a known maximum: proportional
+	 * to the viewport, capped by {@link selectorHeightCap}.
+	 */
+	private selectorMinHeight(): number {
+		return Math.min(Math.round(this.ui.terminal.rows * 0.4), this.selectorHeightCap());
+	}
+
+	/**
 	 * Shows a selector component in place of the editor.
 	 * @param create Factory that receives a `done` callback and returns the component and focus target
 	 */
@@ -5105,14 +5136,26 @@ export class InteractiveMode {
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.editor);
 			this.ui.setFocus(this.editor);
+			this.ui.requestRender();
 		};
 		const created = create(done);
 		dispose = created.dispose;
+		// Selectors that know their tallest state (tabbed views) reserve it upfront;
+		// the ratchet in Centered covers the rest (filtering, submenus).
+		const getMaxHeight = (created.component as { getMaxRenderHeight?: (width: number) => number }).getMaxRenderHeight;
+		const minHeight = getMaxHeight
+			? (width: number) => Math.min(getMaxHeight.call(created.component, width), this.selectorHeightCap())
+			: () => this.selectorMinHeight();
 		this.disposeActiveSelector();
 		this.activeSelectorToken = token;
 		this.activeSelectorDispose = dispose;
 		this.editorContainer.clear();
-		this.editorContainer.addChild(created.component);
+		this.editorContainer.addChild(
+			new Centered(created.component, {
+				minHeight,
+				maxWidth: () => this.selectorMaxWidth(),
+			}),
+		);
 		this.ui.setFocus(created.focus);
 		this.ui.requestRender();
 	}
@@ -7068,62 +7111,95 @@ export class InteractiveMode {
 		// grouped separately so the breakdown reconciles with the session total.
 		const usageBreakdown = getUsageCostBreakdown(entries);
 
-		let info = `${theme.bold("Session Info")}\n\n`;
-		if (sessionName) {
-			info += `${theme.fg("dim", "Name:")} ${sessionName}\n`;
-		}
-		info += `${theme.fg("dim", "File:")} ${stats.sessionFile ?? "In-memory"}\n`;
-		info += `${theme.fg("dim", "ID:")} ${stats.sessionId}\n\n`;
-		info += `${theme.bold("Messages")}\n`;
-		info += `${theme.fg("dim", "Total:")} ${stats.totalMessages}\n`;
-		info += `${theme.fg("dim", "User:")} ${stats.userMessages}\n`;
-		info += `${theme.fg("dim", "Assistant:")} ${stats.assistantMessages}\n`;
-		info += `${theme.fg("dim", "Tools:")} ${stats.toolCalls} calls, ${stats.toolResults} results\n\n`;
-		info += `${theme.bold("Tokens")}\n`;
+		type InfoRow = { label: string; value: string };
+		const sections: Array<{ title: string; rows: InfoRow[] }> = [];
+
+		const header: InfoRow[] = [];
+		if (sessionName) header.push({ label: "Name", value: sessionName });
+		header.push({ label: "File", value: stats.sessionFile ?? "In-memory" });
+		header.push({ label: "ID", value: stats.sessionId });
+		sections.push({ title: "Session Info", rows: header });
+
+		sections.push({
+			title: "Messages",
+			rows: [
+				{ label: "Total", value: String(stats.totalMessages) },
+				{ label: "User", value: String(stats.userMessages) },
+				{ label: "Assistant", value: String(stats.assistantMessages) },
+				{ label: "Tools", value: `${stats.toolCalls} calls, ${stats.toolResults} results` },
+			],
+		});
+
 		// "Input" is the full prompt volume. With cache activity, split it into
 		// cached (served from cache) vs uncached (everything else) - the only
 		// provider-independent split. Cache writes, where reported, are a detail
 		// of the uncached portion.
 		const { input, cacheRead, cacheWrite } = stats.tokens;
 		const promptTokens = input + cacheRead + cacheWrite;
-		info += `${theme.fg("dim", "Input:")} ${promptTokens.toLocaleString()}\n`;
+		const tokenRows: InfoRow[] = [{ label: "Input", value: promptTokens.toLocaleString() }];
 		if (promptTokens > 0 && (cacheRead > 0 || cacheWrite > 0)) {
-			const hitRate = theme.fg("dim", `(${((cacheRead / promptTokens) * 100).toFixed(1)}%)`);
-			info += `  ${theme.fg("dim", "Cached:")} ${cacheRead.toLocaleString()} ${hitRate}\n`;
-			const written =
-				cacheWrite > 0 ? ` ${theme.fg("dim", `(${cacheWrite.toLocaleString()} written to cache)`)}` : "";
-			info += `  ${theme.fg("dim", "Uncached:")} ${(input + cacheWrite).toLocaleString()}${written}\n`;
+			const hitRate = `(${((cacheRead / promptTokens) * 100).toFixed(1)}%)`;
+			tokenRows.push({ label: "Cached", value: `${cacheRead.toLocaleString()} ${hitRate}` });
+			const written = cacheWrite > 0 ? ` (${cacheWrite.toLocaleString()} written to cache)` : "";
+			tokenRows.push({ label: "Uncached", value: `${(input + cacheWrite).toLocaleString()}${written}` });
 		}
-		info += `${theme.fg("dim", "Output:")} ${stats.tokens.output.toLocaleString()}\n`;
-		info += `${theme.fg("dim", "Total:")} ${stats.tokens.total.toLocaleString()}\n`;
+		tokenRows.push({ label: "Output", value: stats.tokens.output.toLocaleString() });
+		tokenRows.push({ label: "Total", value: stats.tokens.total.toLocaleString() });
+		sections.push({ title: "Tokens", rows: tokenRows });
 
 		const cacheWarmingStatus = this.session.cacheWarmingStatus;
-		info += `\n${theme.bold("Cache Warming")}\n`;
-		info += `${theme.fg("dim", "Mode:")} ${this.settingsManager.getCacheWarmingMode()}\n`;
-		info += `${theme.fg("dim", "Status:")} ${cacheWarmingStatus ? formatCacheWarmingStatus(cacheWarmingStatus) : "Inactive (cache warming unavailable)"}\n`;
+		const cacheRows: InfoRow[] = [
+			{ label: "Mode", value: this.settingsManager.getCacheWarmingMode() },
+			{
+				label: "Status",
+				value: cacheWarmingStatus
+					? formatCacheWarmingStatus(cacheWarmingStatus)
+					: "Inactive (cache warming unavailable)",
+			},
+		];
 		const decision = cacheWarmingStatus?.decision;
 		if (decision?.economicsAvailable) {
-			info += `${theme.fg("dim", "Cache miss penalty:")} $${decision.missCost.toFixed(3)}\n`;
-			info += `${theme.fg("dim", "Refresh cost:")} $${decision.warmCost.toFixed(3)}\n`;
+			cacheRows.push({ label: "Cache miss penalty", value: `$${decision.missCost.toFixed(3)}` });
+			cacheRows.push({ label: "Refresh cost", value: `$${decision.warmCost.toFixed(3)}` });
 		}
+		sections.push({ title: "Cache Warming", rows: cacheRows });
 
 		if (stats.cost > 0 || cacheWaste.missedTokens > 0) {
-			info += `\n${theme.bold("Cost")}\n`;
-			info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}`;
+			const costRows: InfoRow[] = [{ label: "Total", value: `$${stats.cost.toFixed(3)}` }];
 			if (usageBreakdown.length > 1) {
 				for (const entry of usageBreakdown) {
-					info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
+					costRows.push({
+						label: entry.key,
+						value: `$${entry.cost.toFixed(3)} (${formatTokens(entry.tokens)} tokens)`,
+					});
 				}
 			}
 			if (cacheWaste.missedTokens > 0) {
 				const missLabel = cacheWaste.missCount === 1 ? "1 miss" : `${cacheWaste.missCount} misses`;
 				const detail = `${cacheWaste.missedTokens.toLocaleString()} tokens, ${missLabel}`;
-				info +=
-					cacheWaste.missedCost >= 0.0001
-						? `\n${theme.fg("dim", "Cache Re-billed:")} $${cacheWaste.missedCost.toFixed(3)} ${theme.fg("dim", `(${detail})`)}`
-						: `\n${theme.fg("dim", "Cache Re-billed:")} ${detail}`;
+				costRows.push({
+					label: "Cache Re-billed",
+					value: cacheWaste.missedCost >= 0.0001 ? `$${cacheWaste.missedCost.toFixed(3)} (${detail})` : detail,
+				});
 			}
+			sections.push({ title: "Cost", rows: costRows });
 		}
+
+		// Aligned two-column table: labels in the left column, values aligned.
+		const labelWidth = Math.min(
+			28,
+			Math.max(...sections.flatMap((section) => section.rows.map((row) => row.label.length))),
+		);
+		let info = "";
+		for (const section of sections) {
+			info += `${theme.bold(section.title)}\n`;
+			for (const row of section.rows) {
+				const label = theme.fg("dim", row.label.padEnd(labelWidth));
+				info += `  ${label}  ${row.value}\n`;
+			}
+			info += "\n";
+		}
+		info = info.trimEnd();
 
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(info, 1, 0));

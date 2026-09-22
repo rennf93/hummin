@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.87.1] - 2026-09-22
+
 ### Added
 
 - Added a portable SQLite storage backend for the durable runtime with a Node adapter, versioned migrations, storage conformance coverage, and benchmarks.

@@ -21,6 +21,10 @@ export interface SettingItem {
 		currentValue: string,
 		done: (selectedValue?: string, options?: { navigateTo?: string }) => void,
 	) => Component;
+	/** If provided, Enter/click invokes this action instead of cycling values or opening a submenu. */
+	activate?: () => void;
+	/** Non-selectable group header row (skipped by cursor and mouse; dropped when searching). */
+	heading?: boolean;
 }
 
 export interface SettingsListTheme {
@@ -33,6 +37,18 @@ export interface SettingsListTheme {
 
 export interface SettingsListOptions {
 	enableSearch?: boolean;
+	/** Extract the text matched by the search filter (defaults to the item label). */
+	searchText?: (item: SettingItem) => string;
+	/** Custom hint line (defaults to the standard change/cancel hints). */
+	hint?: string;
+	/** Initial search query (requires enableSearch). */
+	initialSearch?: string;
+	/** Message shown when the item list is empty. */
+	emptyMessage?: string;
+	/** Message shown when the search filter matches nothing. */
+	noMatchMessage?: string;
+	/** Max width of the label column before values are aligned (default 36). */
+	maxLabelWidth?: number;
 }
 
 export class SettingsList implements Component {
@@ -46,6 +62,7 @@ export class SettingsList implements Component {
 	private onCancel: () => void;
 	private searchInput?: Input;
 	private searchEnabled: boolean;
+	private readonly options: SettingsListOptions;
 
 	// Submenu state
 	private submenuComponent: Component | null = null;
@@ -66,9 +83,14 @@ export class SettingsList implements Component {
 		this.theme = theme;
 		this.onChange = onChange;
 		this.onCancel = onCancel;
+		this.options = options;
 		this.searchEnabled = options.enableSearch ?? false;
 		if (this.searchEnabled) {
 			this.searchInput = new Input();
+			if (options.initialSearch) {
+				this.searchInput.setValue(options.initialSearch);
+				this.applyFilter(options.initialSearch);
+			}
 		}
 	}
 
@@ -80,6 +102,22 @@ export class SettingsList implements Component {
 		}
 	}
 
+	/** Replace the item list, reapplying the active search filter. */
+	setItems(items: SettingItem[]): void {
+		this.items = items;
+		this.applyFilter(this.searchEnabled ? (this.searchInput?.getValue() ?? "") : "");
+	}
+
+	/** The search input when search is enabled, for focus/IME handling. */
+	getSearchInput(): Input | undefined {
+		return this.searchInput;
+	}
+
+	/** The currently selected item (respecting the active search filter). */
+	getSelectedItem(): SettingItem | undefined {
+		return this.getDisplayItems()[this.selectedIndex];
+	}
+
 	/** Move selection to the item with the given id (no-op if not found). */
 	selectItem(id: string): void {
 		const items = this.searchEnabled ? this.filteredItems : this.items;
@@ -87,6 +125,13 @@ export class SettingsList implements Component {
 		if (index !== -1) {
 			this.selectedIndex = index;
 		}
+	}
+
+	/** Move selection to a clamped row index. */
+	selectIndex(index: number): void {
+		const items = this.getDisplayItems();
+		this.selectedIndex = Math.max(0, Math.min(index, Math.max(0, items.length - 1)));
+		if (items[this.selectedIndex]?.heading) this.moveSelection(1);
 	}
 
 	invalidate(): void {
@@ -111,7 +156,7 @@ export class SettingsList implements Component {
 		}
 
 		if (this.items.length === 0) {
-			lines.push(this.theme.hint("  No settings available"));
+			lines.push(this.theme.hint(`  ${this.options.emptyMessage ?? "No settings available"}`));
 			if (this.searchEnabled) {
 				this.addHintLine(lines, width);
 			}
@@ -120,7 +165,8 @@ export class SettingsList implements Component {
 
 		const displayItems = this.getDisplayItems();
 		if (displayItems.length === 0) {
-			lines.push(truncateToWidth(this.theme.hint("  No matching settings"), width));
+			const noMatch = this.theme.hint(`  ${this.options.noMatchMessage ?? "No matching settings"}`);
+			lines.push(truncateToWidth(noMatch, width));
 			this.addHintLine(lines, width);
 			return lines;
 		}
@@ -128,13 +174,21 @@ export class SettingsList implements Component {
 		// Calculate visible range with scrolling
 		const { startIndex, endIndex } = this.getVisibleRange(displayItems);
 
-		// Calculate max label width for alignment
-		const maxLabelWidth = Math.min(36, Math.max(...this.items.map((item) => visibleWidth(item.label))));
+		// Calculate max label width for alignment (headings are not label rows)
+		const maxLabelWidth = Math.min(
+			this.options.maxLabelWidth ?? 36,
+			Math.max(...this.items.filter((item) => !item.heading).map((item) => visibleWidth(item.label)), 1),
+		);
 
 		// Render visible items
 		for (let i = startIndex; i < endIndex; i++) {
 			const item = displayItems[i];
 			if (!item) continue;
+
+			if (item.heading) {
+				lines.push(truncateToWidth(this.theme.hint(`  ${item.label}`), width));
+				continue;
+			}
 
 			const isSelected = i === this.selectedIndex;
 			const prefix = isSelected ? this.theme.cursor : "  ";
@@ -195,7 +249,7 @@ export class SettingsList implements Component {
 		if (event.type === "wheel" && event.wheelDelta) {
 			const delta = event.wheelDelta < 0 ? -1 : 1;
 			const previousIndex = this.selectedIndex;
-			this.selectedIndex = Math.max(0, Math.min(displayItems.length - 1, this.selectedIndex + delta));
+			this.moveSelection(delta);
 			return { handled: true, render: this.selectedIndex !== previousIndex };
 		}
 		// Hover must not change selection: the visible range is centered on it.
@@ -206,11 +260,13 @@ export class SettingsList implements Component {
 		const itemIndex = startIndex + event.y - rowOffset;
 		if (itemIndex < startIndex || itemIndex >= endIndex) return undefined;
 		if (event.type === "press") {
+			if (displayItems[itemIndex]?.heading) return { handled: true, focus: true };
 			this.mousePressedIndex = itemIndex;
 			this.selectedIndex = itemIndex;
 			return { handled: true, focus: true };
 		}
 		if (event.type === "click") {
+			if (displayItems[itemIndex]?.heading) return { handled: true };
 			this.selectedIndex = this.mousePressedIndex ?? itemIndex;
 			this.mousePressedIndex = undefined;
 			this.activateItem();
@@ -232,10 +288,10 @@ export class SettingsList implements Component {
 		const displayItems = this.getDisplayItems();
 		if (kb.matches(data, "tui.select.up")) {
 			if (displayItems.length === 0) return;
-			this.selectedIndex = this.selectedIndex === 0 ? displayItems.length - 1 : this.selectedIndex - 1;
+			this.moveSelection(-1);
 		} else if (kb.matches(data, "tui.select.down")) {
 			if (displayItems.length === 0) return;
-			this.selectedIndex = this.selectedIndex === displayItems.length - 1 ? 0 : this.selectedIndex + 1;
+			this.moveSelection(1);
 		} else if (
 			kb.matches(data, "tui.select.confirm") ||
 			(data === " " && (!this.searchEnabled || this.searchInput?.getValue().length === 0))
@@ -244,8 +300,13 @@ export class SettingsList implements Component {
 		} else if (kb.matches(data, "tui.select.cancel")) {
 			this.onCancel();
 		} else if (this.searchEnabled && this.searchInput) {
+			const previousValue = this.searchInput.getValue();
 			this.searchInput.handleInput(data);
-			this.applyFilter(this.searchInput.getValue());
+			// Only refilter when the query actually changed; a stray control key
+			// must not reset the selection.
+			if (this.searchInput.getValue() !== previousValue) {
+				this.applyFilter(this.searchInput.getValue());
+			}
 		}
 	}
 
@@ -261,11 +322,25 @@ export class SettingsList implements Component {
 		return { startIndex, endIndex: Math.min(startIndex + this.maxVisible, displayItems.length) };
 	}
 
+	/** Move selection by delta, skipping heading rows and wrapping around. */
+	private moveSelection(delta: number): void {
+		const items = this.getDisplayItems();
+		if (items.length === 0) return;
+		let index = this.selectedIndex;
+		for (let step = 0; step < items.length; step++) {
+			index = (index + delta + items.length) % items.length;
+			if (!items[index]?.heading) break;
+		}
+		this.selectedIndex = index;
+	}
+
 	private activateItem(): void {
 		const item = this.getDisplayItems()[this.selectedIndex];
-		if (!item) return;
+		if (!item || item.heading) return;
 
-		if (item.submenu) {
+		if (item.activate) {
+			item.activate();
+		} else if (item.submenu) {
 			// Open submenu, passing current value so it can pre-select correctly
 			this.submenuItemIndex = this.selectedIndex;
 			this.submenuComponent = item.submenu(
@@ -308,21 +383,21 @@ export class SettingsList implements Component {
 	}
 
 	private applyFilter(query: string): void {
-		this.filteredItems = fuzzyFilter(this.items, query, (item) => item.label);
+		const textFn = this.options.searchText ?? ((item: SettingItem) => item.label);
+		const filtered = fuzzyFilter(this.items, query, textFn);
+		// Group headers only make sense in the unfiltered list.
+		this.filteredItems = query ? filtered.filter((item) => !item.heading) : filtered;
 		this.selectedIndex = 0;
+		if (this.filteredItems[0]?.heading) this.moveSelection(1);
 	}
 
 	private addHintLine(lines: string[], width: number): void {
 		lines.push("");
-		lines.push(
-			truncateToWidth(
-				this.theme.hint(
-					this.searchEnabled
-						? "  Type to search · Enter/Space to change · Esc to cancel"
-						: "  Enter/Space to change · Esc to cancel",
-				),
-				width,
-			),
-		);
+		const hint =
+			this.options.hint ??
+			(this.searchEnabled
+				? "Type to search · Enter/Space to change · Esc to cancel"
+				: "Enter/Space to change · Esc to cancel");
+		lines.push(truncateToWidth(this.theme.hint(`  ${hint}`), width));
 	}
 }

@@ -4,6 +4,26 @@
 
 ### Added
 
+- Provider grouping headers in `/model`: rows are grouped under dim provider name headers (curated providers first, current model first within its group); headers are non-selectable and drop out while searching.
+- `/session` info is now rendered as aligned two-column tables per section (Session Info, Messages, Tokens, Cache Warming, Cost), matching the settings-view table style.
+- `/model` rebuilt in the settings-view style: an aligned two-column table (model name, context/provider value column), a description pane with provider, context, reasoning, and endpoint details for the highlighted model, an All/Scoped tab bar (clickable), and mouse press/click/wheel row interaction via the shared `SettingsList` component.
+
+### Fixed
+
+- Memory vault: `graph.canvas` now refreshes automatically whenever the vault is touched (write only on content change) instead of going stale between manual `/vault-canvas` runs, and reciprocal `## Links` entries render as a single undirected edge instead of doubled arrows.
+- `/rewind` (and every other extension selector flow) crashed the CLI with `TypeError: Cannot read properties of undefined (reading 'render')`: the selector-teardown hook ran between selector creation and overlay mount, so the overlay wrapped an undefined component. Selector screens mount in place of the editor again (full-width, above the input) with their content block horizontally centered (`Centered` wrapper; full-width frame rules stay unshifted, gutter clicks are swallowed) and a stable size: content is capped at a shared width (long values truncate) and centered, tabbed selectors reserve their tallest category upfront (`getMaxRenderHeight`), every selector ratchets to the tallest state seen (filtering, wrapped item descriptions), and padding is inserted before the frame's bottom rule so switching tabs never shifts the layout; the tab bars and settings-style organization are unchanged, and the centered-panel framing was removed.
+
+## [0.87.1] - 2026-09-22
+
+### New Features
+
+- **Latest frontier models** — Use Claude Opus 5.5, GPT-6 Sol, and GPT-6 Luna through supported providers, including GitHub Copilot. See [Choose a Model](docs/models.md#select-a-model).
+- **Grok 4.7 by default for xAI** — New xAI sessions now default to Grok 4.7. See [Provider Authentication](docs/providers.md#use-an-api-key-from-the-environment).
+
+### Added
+
+- Added inherited Claude Opus 5.5, GPT-6 Sol, and GPT-6 Luna support for GitHub Copilot.
+- Added inherited GPT-6 Sol and GPT-6 Luna support for OpenAI API keys and OpenAI Codex subscriptions.
 - Added inherited Claude Opus 5.5 support for Anthropic with adaptive thinking and a 1M context window.
 
 ### Changed
@@ -12,9 +32,10 @@
 
 ### Fixed
 
-- Memory vault: `graph.canvas` now refreshes automatically whenever the vault is touched (write only on content change) instead of going stale between manual `/vault-canvas` runs, and reciprocal `## Links` entries render as a single undirected edge instead of doubled arrows.
-- Fixed split-turn compaction summaries being refused by Claude Fable 5.1 by clearly separating the conversation and using continuation-oriented instructions ([#9652](https://github.com/earendil-works/pi/issues/9652)).
+- Fixed split-turn compaction summaries being refused by Claude Fable 5.1 by clearly separating the conversation and using continuation-oriented instructions ([#9908](https://github.com/earendil-works/pi/pull/9908) by [@davidbrai](https://github.com/davidbrai)).
 - Fixed missing or invalid `--mode` values being silently ignored instead of reporting an error and exiting with a nonzero status ([#9045](https://github.com/earendil-works/pi/issues/9045)).
+- Fixed inherited image-only user messages being rejected by some OpenAI-compatible providers because they included an empty text part ([#9797](https://github.com/earendil-works/pi/issues/9797)).
+- Fixed inherited Anthropic OAuth requests reporting an outdated Claude Code version.
 
 ## [1.1.2] - 2026-09-22
 

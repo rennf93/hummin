@@ -15,9 +15,10 @@ interface ModelState {
 function getMarkerStates(selector: ScopedModelsSelectorComponent, models: ModelState[]): boolean[] {
 	const lines = stripAnsi(selector.render(120).join("\n")).split("\n");
 	return models.map((model) => {
-		const line = lines.find((candidate) => candidate.includes(`${model.id} [`));
+		// Rows show the model id in the label column and "on/off · provider" in the value column.
+		const line = lines.find((candidate) => candidate.includes(`${model.id} `) && /(on|off) · /.test(candidate));
 		if (!line) throw new Error(`Expected rendered row for ${model.id}`);
-		return line.slice(2).startsWith("✓ ");
+		return line.includes("on · ");
 	});
 }
 

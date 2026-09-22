@@ -86,22 +86,23 @@ describe("issue #3217 scoped model ordering", () => {
 
 		await vi.waitFor(() => {
 			const rendered = stripAnsi(selector.render(120).join("\n"));
-			expect(rendered).toContain(`[${modelOne.provider}]`);
+			expect(rendered).toContain(modelOne.provider);
 			expect(rendered).toContain("Model catalogs refreshed.");
 		});
 
+		// Rows end with the provider name in the value column; group header rows
+		// are bare provider names and are excluded.
 		const renderedLines = stripAnsi(selector.render(120).join("\n"))
 			.split("\n")
-			.filter((line) => line.includes(`[${modelOne.provider}]`));
+			.filter((line) => line.trimEnd().endsWith(modelOne.provider) && line.trim() !== modelOne.provider);
 		const orderedIds = renderedLines.slice(0, 3).map((line) => {
-			// Rows show the model name (fallback id) followed by a context badge.
-			const [label] = line.trim().replace(/^→\s*/, "").split(" [");
-			return (
-				label
-					?.replace(/^✓\s*/, "")
-					.replace(/\s+\d+(\.\d+)?[KM]?\s*·$/, "")
-					.trim() ?? ""
-			);
+			// Rows show the model name (fallback id) followed by the value column.
+			const [label] = line
+				.trim()
+				.replace(/^→\s*/, "")
+				.replace(/^✓\s*/, "")
+				.split(/\s{2,}/);
+			return label?.trim() ?? "";
 		});
 
 		expect(orderedIds).toEqual([modelTwo.name, modelOne.name, modelThree.name]);

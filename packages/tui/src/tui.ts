@@ -706,6 +706,14 @@ export abstract class TuiBase extends Container implements TUI {
 		return this.getMountedRoots().some((child) => this.containsComponent(child, component));
 	}
 
+	/** True when the currently focused component is the given component or inside it. */
+	private isFocusedWithin(component: Component): boolean {
+		return (
+			this.focusedComponent === component ||
+			(this.focusedComponent !== null && this.containsComponent(component, this.focusedComponent))
+		);
+	}
+
 	private containsComponent(root: Component, target: Component): boolean {
 		if (root === target) return true;
 		if (!(root instanceof Container)) return false;
@@ -740,8 +748,8 @@ export abstract class TuiBase extends Container implements TUI {
 					this.clearOverlayFocusRestoreFor(entry);
 					this.retargetOverlayPreFocus(entry);
 					this.overlayStack.splice(index, 1);
-					// Restore focus if this overlay had focus
-					if (this.focusedComponent === component) {
+					// Restore focus if this overlay (or a component inside it) had focus
+					if (this.isFocusedWithin(component)) {
 						const topVisible = this.getTopmostVisibleOverlay();
 						this.setFocus(topVisible?.component ?? entry.preFocus);
 					}
@@ -755,8 +763,9 @@ export abstract class TuiBase extends Container implements TUI {
 				// Update focus when hiding/showing
 				if (hidden) {
 					this.clearOverlayFocusRestoreFor(entry);
-					// If this overlay had focus, move focus to next visible or preFocus
-					if (this.focusedComponent === component) {
+					// If this overlay (or a component inside it) had focus, move focus
+					// to the next visible overlay or the pre-focus target.
+					if (this.isFocusedWithin(component)) {
 						const topVisible = this.getTopmostVisibleOverlay();
 						this.setFocus(topVisible?.component ?? entry.preFocus);
 					}
