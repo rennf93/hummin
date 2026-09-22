@@ -100,16 +100,16 @@ function renderTodoWidget(todos: Todo[], theme: Theme, width: number): string[] 
 	for (const index of shown) {
 		const todo = todos[index]!;
 		if (todo.status === "in_progress") {
-			lines.push(truncateToWidth(`${theme.fg("accent", "▸")} ${theme.fg("text", todo.text)}`, width));
+			lines.push(truncateToWidth(`  ${theme.fg("accent", "▸")} ${theme.fg("text", todo.text)}`, width));
 		} else {
-			lines.push(truncateToWidth(`${theme.fg("dim", "○")} ${theme.fg("muted", todo.text)}`, width));
+			lines.push(truncateToWidth(`  ${theme.fg("dim", "○")} ${theme.fg("muted", todo.text)}`, width));
 		}
 	}
 	const hiddenPending = pendingIndexes.length - (shown.size - (inProgress >= 0 ? 1 : 0));
 	const summary: string[] = [];
 	if (hiddenPending > 0) summary.push(`+${hiddenPending} pending`);
 	if (done > 0) summary.push(`${done} completed`);
-	if (summary.length > 0) lines.push(truncateToWidth(theme.fg("dim", summary.join(", ")), width));
+	if (summary.length > 0) lines.push(truncateToWidth(theme.fg("dim", `  ${summary.join(", ")}`), width));
 	return lines;
 }
 

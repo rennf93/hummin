@@ -1431,6 +1431,19 @@ export class SettingsSelectorComponent extends Container {
 		return this.lists.get(categoryId)!;
 	}
 
+	/**
+	 * Height the selector reaches in its tallest category at the given width
+	 * (border + tab bar + list with its description and hints), so containers
+	 * can reserve one stable block across tab switches.
+	 */
+	getMaxRenderHeight(width: number): number {
+		let maxList = 0;
+		for (const list of this.lists.values()) {
+			maxList = Math.max(maxList, list.render(width).length);
+		}
+		return maxList + this.tabBar.render(width).length + 3;
+	}
+
 	/** Update an item's displayed value across all category lists. */
 	updateValue(id: string, value: string): void {
 		for (const list of this.lists.values()) {

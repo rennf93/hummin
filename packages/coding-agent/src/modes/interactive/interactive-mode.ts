@@ -148,6 +148,7 @@ import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
+import { Centered } from "./components/centered.ts";
 import { CollapsibleSection } from "./components/collapsible-section.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
@@ -169,7 +170,6 @@ import {
 	formatAuthSelectorProviderType,
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
-import { Panel } from "./components/panel.ts";
 import { type QueuedMessageEntry, QueueManagerComponent } from "./components/queue-manager.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
@@ -381,6 +381,10 @@ function isUsageSessionEntry(item: RenderSessionItem): item is Extract<SessionEn
 }
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
+
+/** Width cap for selector content: long values truncate instead of stretching
+ * the block to the terminal edge, and every selector shares the same cap. */
+const SELECTOR_MAX_WIDTH = 100;
 
 function isDeadTerminalError(error: unknown): boolean {
 	if (!error || typeof error !== "object" || !("code" in error)) {
@@ -645,7 +649,6 @@ export class InteractiveMode {
 
 	// Extension UI state
 	private extensionSelector: ExtensionSelectorComponent | undefined = undefined;
-	private extensionSelectorOverlay: OverlayHandle | undefined = undefined;
 	private extensionInput: ExtensionInputComponent | undefined = undefined;
 	private extensionEditor: ExtensionEditorComponent | undefined = undefined;
 	private extensionTerminalInputSubscriptions = new Set<{
@@ -2817,7 +2820,13 @@ export class InteractiveMode {
 			);
 
 			this.disposeActiveSelector();
-			this.extensionSelectorOverlay = this.ui.showOverlay(new Panel(this.extensionSelector), { anchor: "center" });
+			this.editorContainer.clear();
+			this.editorContainer.addChild(
+				new Centered(this.extensionSelector, {
+					minHeight: () => this.selectorMinHeight(),
+					maxWidth: () => this.selectorMaxWidth(),
+				}),
+			);
 			this.ui.setFocus(this.extensionSelector);
 			this.ui.requestRender();
 		});
@@ -2828,8 +2837,8 @@ export class InteractiveMode {
 	 */
 	private hideExtensionSelector(): void {
 		this.extensionSelector?.dispose();
-		this.extensionSelectorOverlay?.hide();
-		this.extensionSelectorOverlay = undefined;
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
 		this.extensionSelector = undefined;
 		this.ui.setFocus(this.editor);
 		this.ui.requestRender();
@@ -5087,40 +5096,66 @@ export class InteractiveMode {
 		this.activeSelectorToken = undefined;
 		this.activeSelectorDispose = undefined;
 		dispose?.();
-		// Extension selectors float as overlays; make sure a lingering one is
-		// torn down whenever any other screen mounts.
-		if (this.extensionSelector) this.hideExtensionSelector();
 	}
 
 	/**
-	 * Shows a selector as a centered overlay above the transcript.
+	 * Upper bound for reserved selector height, so small terminals keep most of
+	 * the transcript visible.
+	 */
+	private selectorHeightCap(): number {
+		return Math.max(0, Math.min(24, this.ui.terminal.rows - 8));
+	}
+
+	/** Shared width cap for selector content (see {@link SELECTOR_MAX_WIDTH}). */
+	private selectorMaxWidth(): number {
+		return SELECTOR_MAX_WIDTH;
+	}
+
+	/**
+	 * Reserved height floor for selectors without a known maximum: proportional
+	 * to the viewport, capped by {@link selectorHeightCap}.
+	 */
+	private selectorMinHeight(): number {
+		return Math.min(Math.round(this.ui.terminal.rows * 0.4), this.selectorHeightCap());
+	}
+
+	/**
+	 * Shows a selector component in place of the editor.
 	 * @param create Factory that receives a `done` callback and returns the component and focus target
 	 */
 	private showSelector(
 		create: (done: () => void) => { component: Component; focus: Component; dispose?: () => void },
 	): void {
 		const token = {};
-		let hide: (() => void) | undefined;
 		let dispose: (() => void) | undefined;
 		const done = () => {
 			dispose?.();
-			hide?.();
 			if (this.activeSelectorToken !== token) return;
 			this.activeSelectorToken = undefined;
 			this.activeSelectorDispose = undefined;
+			this.editorContainer.clear();
+			this.editorContainer.addChild(this.editor);
 			this.ui.setFocus(this.editor);
 			this.ui.requestRender();
 		};
 		const created = create(done);
 		dispose = created.dispose;
+		// Selectors that know their tallest state (tabbed views) reserve it upfront;
+		// the ratchet in Centered covers the rest (filtering, submenus).
+		const getMaxHeight = (created.component as { getMaxRenderHeight?: (width: number) => number }).getMaxRenderHeight;
+		const minHeight = getMaxHeight
+			? (width: number) => Math.min(getMaxHeight.call(created.component, width), this.selectorHeightCap())
+			: () => this.selectorMinHeight();
 		this.disposeActiveSelector();
 		this.activeSelectorToken = token;
-		this.activeSelectorDispose = () => {
-			hide?.();
-			dispose?.();
-		};
-		const handle = this.ui.showOverlay(new Panel(created.component), { anchor: "center" });
-		hide = () => handle.hide();
+		this.activeSelectorDispose = dispose;
+		this.editorContainer.clear();
+		this.editorContainer.addChild(
+			new Centered(created.component, {
+				minHeight,
+				maxWidth: () => this.selectorMaxWidth(),
+			}),
+		);
 		this.ui.setFocus(created.focus);
 		this.ui.requestRender();
 	}
