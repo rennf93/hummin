@@ -70,6 +70,7 @@ export interface GrepToolOptions {
 export function createGrepToolDefinition(
 	cwd: string,
 	options?: GrepToolOptions,
+	customCwd = false,
 ): ToolDefinition<typeof grepSchema, GrepToolDetails | undefined> {
 	const customOps = options?.operations;
 	return {
@@ -122,7 +123,7 @@ export function createGrepToolDefinition(
 							return;
 						}
 
-						const searchPath = resolveToCwd(searchDir || ".", ctx?.cwd || cwd);
+						const searchPath = resolveToCwd(searchDir || ".", ctx?.cwd && !customCwd ? ctx.cwd : cwd);
 						const ops = customOps ?? defaultGrepOperations;
 						let isDirectory: boolean;
 						try {
@@ -318,6 +319,10 @@ export function createGrepToolDefinition(
 	};
 }
 
-export function createGrepTool(cwd: string, options?: GrepToolOptions): AgentTool<typeof grepSchema> {
-	return wrapToolDefinition(createGrepToolDefinition(cwd, options));
+export function createGrepTool(
+	cwd: string,
+	options?: GrepToolOptions,
+	customCwd = false,
+): AgentTool<typeof grepSchema> {
+	return wrapToolDefinition(createGrepToolDefinition(cwd, options, customCwd));
 }

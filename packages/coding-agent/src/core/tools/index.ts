@@ -113,112 +113,128 @@ export interface ToolsOptions {
 	grep?: GrepToolOptions;
 	find?: FindToolOptions;
 	ls?: LsToolOptions;
+	/**
+	 * When true, the `cwd` passed to this factory takes precedence over
+	 * `ExtensionContext.cwd` in cwd-sensitive tools. Without it, `ctx.cwd`
+	 * (the live session cwd after a `cd`) wins. Set this when constructing
+	 * the built-in tools with an explicit custom cwd (e.g. per-workspace /
+	 * per-project instances) so that value is not silently ignored.
+	 */
+	customCwd?: boolean;
 }
 
 export function createToolDefinition(toolName: ToolName, cwd: string, options?: ToolsOptions): ToolDef {
+	const customCwd = options?.customCwd === true;
 	switch (toolName) {
 		case "read":
-			return createReadToolDefinition(cwd, options?.read);
+			return createReadToolDefinition(cwd, options?.read, customCwd);
 		case "bash":
-			return createBashToolDefinition(cwd, options?.bash);
+			return createBashToolDefinition(cwd, options?.bash, customCwd);
 		case "powershell":
-			return createPowerShellToolDefinition(cwd, options?.powershell);
+			return createPowerShellToolDefinition(cwd, options?.powershell, customCwd);
 		case "edit":
-			return createEditToolDefinition(cwd, options?.edit);
+			return createEditToolDefinition(cwd, options?.edit, customCwd);
 		case "write":
-			return createWriteToolDefinition(cwd, options?.write);
+			return createWriteToolDefinition(cwd, options?.write, customCwd);
 		case "grep":
-			return createGrepToolDefinition(cwd, options?.grep);
+			return createGrepToolDefinition(cwd, options?.grep, customCwd);
 		case "find":
-			return createFindToolDefinition(cwd, options?.find);
+			return createFindToolDefinition(cwd, options?.find, customCwd);
 		case "ls":
-			return createLsToolDefinition(cwd, options?.ls);
+			return createLsToolDefinition(cwd, options?.ls, customCwd);
 		default:
 			throw new Error(`Unknown tool name: ${toolName}`);
 	}
 }
 
 export function createTool(toolName: ToolName, cwd: string, options?: ToolsOptions): Tool {
+	const customCwd = options?.customCwd === true;
 	switch (toolName) {
 		case "read":
-			return createReadTool(cwd, options?.read);
+			return createReadTool(cwd, options?.read, customCwd);
 		case "bash":
-			return createBashTool(cwd, options?.bash);
+			return createBashTool(cwd, options?.bash, customCwd);
 		case "powershell":
-			return createPowerShellTool(cwd, options?.powershell);
+			return createPowerShellTool(cwd, options?.powershell, customCwd);
 		case "edit":
-			return createEditTool(cwd, options?.edit);
+			return createEditTool(cwd, options?.edit, customCwd);
 		case "write":
-			return createWriteTool(cwd, options?.write);
+			return createWriteTool(cwd, options?.write, customCwd);
 		case "grep":
-			return createGrepTool(cwd, options?.grep);
+			return createGrepTool(cwd, options?.grep, customCwd);
 		case "find":
-			return createFindTool(cwd, options?.find);
+			return createFindTool(cwd, options?.find, customCwd);
 		case "ls":
-			return createLsTool(cwd, options?.ls);
+			return createLsTool(cwd, options?.ls, customCwd);
 		default:
 			throw new Error(`Unknown tool name: ${toolName}`);
 	}
 }
 
 export function createCodingToolDefinitions(cwd: string, options?: ToolsOptions): ToolDef[] {
+	const customCwd = options?.customCwd === true;
 	return [
-		createReadToolDefinition(cwd, options?.read),
-		createBashToolDefinition(cwd, options?.bash),
-		createEditToolDefinition(cwd, options?.edit),
-		createWriteToolDefinition(cwd, options?.write),
+		createReadToolDefinition(cwd, options?.read, customCwd),
+		createBashToolDefinition(cwd, options?.bash, customCwd),
+		createEditToolDefinition(cwd, options?.edit, customCwd),
+		createWriteToolDefinition(cwd, options?.write, customCwd),
 	];
 }
 
 export function createReadOnlyToolDefinitions(cwd: string, options?: ToolsOptions): ToolDef[] {
+	const customCwd = options?.customCwd === true;
 	return [
-		createReadToolDefinition(cwd, options?.read),
-		createGrepToolDefinition(cwd, options?.grep),
-		createFindToolDefinition(cwd, options?.find),
-		createLsToolDefinition(cwd, options?.ls),
+		createReadToolDefinition(cwd, options?.read, customCwd),
+		createGrepToolDefinition(cwd, options?.grep, customCwd),
+		createFindToolDefinition(cwd, options?.find, customCwd),
+		createLsToolDefinition(cwd, options?.ls, customCwd),
 	];
 }
 
 export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): Record<ToolName, ToolDef> {
+	const customCwd = options?.customCwd === true;
 	return {
-		read: createReadToolDefinition(cwd, options?.read),
-		bash: createBashToolDefinition(cwd, options?.bash),
-		powershell: createPowerShellToolDefinition(cwd, options?.powershell),
-		edit: createEditToolDefinition(cwd, options?.edit),
-		write: createWriteToolDefinition(cwd, options?.write),
-		grep: createGrepToolDefinition(cwd, options?.grep),
-		find: createFindToolDefinition(cwd, options?.find),
-		ls: createLsToolDefinition(cwd, options?.ls),
+		read: createReadToolDefinition(cwd, options?.read, customCwd),
+		bash: createBashToolDefinition(cwd, options?.bash, customCwd),
+		powershell: createPowerShellToolDefinition(cwd, options?.powershell, customCwd),
+		edit: createEditToolDefinition(cwd, options?.edit, customCwd),
+		write: createWriteToolDefinition(cwd, options?.write, customCwd),
+		grep: createGrepToolDefinition(cwd, options?.grep, customCwd),
+		find: createFindToolDefinition(cwd, options?.find, customCwd),
+		ls: createLsToolDefinition(cwd, options?.ls, customCwd),
 	};
 }
 
 export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
+	const customCwd = options?.customCwd === true;
 	return [
-		createReadTool(cwd, options?.read),
-		createBashTool(cwd, options?.bash),
-		createEditTool(cwd, options?.edit),
-		createWriteTool(cwd, options?.write),
+		createReadTool(cwd, options?.read, customCwd),
+		createBashTool(cwd, options?.bash, customCwd),
+		createEditTool(cwd, options?.edit, customCwd),
+		createWriteTool(cwd, options?.write, customCwd),
 	];
 }
 
 export function createReadOnlyTools(cwd: string, options?: ToolsOptions): Tool[] {
+	const customCwd = options?.customCwd === true;
 	return [
-		createReadTool(cwd, options?.read),
-		createGrepTool(cwd, options?.grep),
-		createFindTool(cwd, options?.find),
-		createLsTool(cwd, options?.ls),
+		createReadTool(cwd, options?.read, customCwd),
+		createGrepTool(cwd, options?.grep, customCwd),
+		createFindTool(cwd, options?.find, customCwd),
+		createLsTool(cwd, options?.ls, customCwd),
 	];
 }
 
 export function createAllTools(cwd: string, options?: ToolsOptions): Record<ToolName, Tool> {
+	const customCwd = options?.customCwd === true;
 	return {
-		read: createReadTool(cwd, options?.read),
-		bash: createBashTool(cwd, options?.bash),
-		powershell: createPowerShellTool(cwd, options?.powershell),
-		edit: createEditTool(cwd, options?.edit),
-		write: createWriteTool(cwd, options?.write),
-		grep: createGrepTool(cwd, options?.grep),
-		find: createFindTool(cwd, options?.find),
-		ls: createLsTool(cwd, options?.ls),
+		read: createReadTool(cwd, options?.read, customCwd),
+		bash: createBashTool(cwd, options?.bash, customCwd),
+		powershell: createPowerShellTool(cwd, options?.powershell, customCwd),
+		edit: createEditTool(cwd, options?.edit, customCwd),
+		write: createWriteTool(cwd, options?.write, customCwd),
+		grep: createGrepTool(cwd, options?.grep, customCwd),
+		find: createFindTool(cwd, options?.find, customCwd),
+		ls: createLsTool(cwd, options?.ls, customCwd),
 	};
 }

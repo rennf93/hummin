@@ -70,6 +70,7 @@ export interface FindToolOptions {
 export function createFindToolDefinition(
 	cwd: string,
 	options?: FindToolOptions,
+	customCwd = false,
 ): ToolDefinition<typeof findSchema, FindToolDetails | undefined> {
 	const customOps = options?.operations;
 	return {
@@ -108,7 +109,7 @@ export function createFindToolDefinition(
 
 				(async () => {
 					try {
-						const searchPath = resolveToCwd(searchDir || ".", ctx?.cwd || cwd);
+						const searchPath = resolveToCwd(searchDir || ".", ctx?.cwd && !customCwd ? ctx.cwd : cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
 						const ops = customOps ?? defaultFindOperations;
 
@@ -313,6 +314,10 @@ export function createFindToolDefinition(
 	};
 }
 
-export function createFindTool(cwd: string, options?: FindToolOptions): AgentTool<typeof findSchema> {
-	return wrapToolDefinition(createFindToolDefinition(cwd, options));
+export function createFindTool(
+	cwd: string,
+	options?: FindToolOptions,
+	customCwd = false,
+): AgentTool<typeof findSchema> {
+	return wrapToolDefinition(createFindToolDefinition(cwd, options, customCwd));
 }

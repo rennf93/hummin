@@ -228,6 +228,7 @@ export function createShellToolDefinition(
 	cwd: string,
 	config: ShellToolConfig,
 	options?: BashToolOptions,
+	customCwd = false,
 ): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
 	const ops = options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath });
 	const commandPrefix = options?.commandPrefix;
@@ -251,7 +252,7 @@ export function createShellToolDefinition(
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(
 				resolvedCommand,
-				ctx?.cwd || cwd,
+				ctx?.cwd && !customCwd ? ctx.cwd : cwd,
 				spawnHook,
 				exposeSessionEnvironment,
 				ctx,
@@ -393,12 +394,17 @@ const bashToolConfig: ShellToolConfig = {
 export function createBashToolDefinition(
 	cwd: string,
 	options?: BashToolOptions,
+	customCwd = false,
 ): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
-	return createShellToolDefinition(cwd, bashToolConfig, options);
+	return createShellToolDefinition(cwd, bashToolConfig, options, customCwd);
 }
 
-export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
-	const definition = createBashToolDefinition(cwd, options);
+export function createBashTool(
+	cwd: string,
+	options?: BashToolOptions,
+	customCwd = false,
+): AgentTool<typeof bashSchema> {
+	const definition = createBashToolDefinition(cwd, options, customCwd);
 	const tool = wrapToolDefinition(definition);
 	Object.assign(tool, {
 		promptSnippet: definition.promptSnippet,

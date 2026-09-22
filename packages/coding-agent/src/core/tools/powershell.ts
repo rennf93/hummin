@@ -49,15 +49,25 @@ const powershellToolConfig: ShellToolConfig = {
 export function createPowerShellToolDefinition(
 	cwd: string,
 	options?: PowerShellToolOptions,
+	customCwd = false,
 ): ReturnType<typeof createShellToolDefinition> {
-	return createShellToolDefinition(cwd, powershellToolConfig, {
-		...options,
-		operations: options?.operations ?? createLocalPowerShellOperations(),
-	});
+	return createShellToolDefinition(
+		cwd,
+		powershellToolConfig,
+		{
+			...options,
+			operations: options?.operations ?? createLocalPowerShellOperations(),
+		},
+		customCwd,
+	);
 }
 
-export function createPowerShellTool(cwd: string, options?: PowerShellToolOptions): ReturnType<typeof createBashTool> {
-	const definition = createPowerShellToolDefinition(cwd, options);
+export function createPowerShellTool(
+	cwd: string,
+	options?: PowerShellToolOptions,
+	customCwd = false,
+): ReturnType<typeof createBashTool> {
+	const definition = createPowerShellToolDefinition(cwd, options, customCwd);
 	const tool = wrapToolDefinition(definition);
 	Object.assign(tool, {
 		promptSnippet: definition.promptSnippet,

@@ -1050,6 +1050,51 @@ describe("tool cwd resolution", () => {
 		const output = getTextOutput(result);
 		expect(output).toContain(testDir);
 	});
+
+	// #9839: an explicitly created custom cwd must take precedence over ctx.cwd
+	// when customCwd is opted in; otherwise ctx.cwd wins (preserves #8627).
+	it("read honors explicit customCwd over ctx.cwd when opted in", async () => {
+		const customDir = join(tmpdir(), `coding-agent-customcwd-${Date.now()}`);
+		mkdirSync(customDir, { recursive: true });
+		try {
+			const customFile = join(customDir, "custom-cwd.txt");
+			writeFileSync(customFile, "resolved against the explicit custom cwd");
+			const tool = createReadToolDefinition(customDir, {}, true);
+			const result = await tool.execute(
+				"test-customcwd",
+				{ path: "custom-cwd.txt" },
+				undefined,
+				undefined,
+				fakeCtx(testDir), // ctx.cwd points at testDir, not customDir
+			);
+			const output = getTextOutput(result);
+			expect(output).toContain("resolved against the explicit custom cwd");
+		} finally {
+			rmSync(customDir, { recursive: true, force: true });
+		}
+	});
+
+	it("read does not use customCwd precedence when not opted in (ctx.cwd wins)", async () => {
+		const customDir = join(tmpdir(), `coding-agent-ctxcwd-wins-${Date.now()}`);
+		mkdirSync(customDir, { recursive: true });
+		try {
+			const customFile = join(customDir, "should-not-be-read.txt");
+			writeFileSync(customFile, "from custom dir");
+			const tool = createReadToolDefinition(customDir); // customCwd not set
+			// ctx.cwd (testDir) wins, so the file in customDir must not be resolved.
+			await expect(
+				tool.execute(
+					"test-ctxcwd-wins",
+					{ path: "should-not-be-read.txt" },
+					undefined,
+					undefined,
+					fakeCtx(testDir),
+				),
+			).rejects.toThrow();
+		} finally {
+			rmSync(customDir, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("edit tool fuzzy matching", () => {

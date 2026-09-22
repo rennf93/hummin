@@ -54,6 +54,7 @@ export interface LsToolOptions {
 export function createLsToolDefinition(
 	cwd: string,
 	options?: LsToolOptions,
+	customCwd = false,
 ): ToolDefinition<typeof lsSchema, LsToolDetails | undefined> {
 	const ops = options?.operations ?? defaultLsOperations;
 	return {
@@ -80,7 +81,7 @@ export function createLsToolDefinition(
 
 				(async () => {
 					try {
-						const dirPath = resolveToCwd(path || ".", ctx?.cwd || cwd);
+						const dirPath = resolveToCwd(path || ".", ctx?.cwd && !customCwd ? ctx.cwd : cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
 
 						// Check if path exists.
@@ -170,6 +171,6 @@ export function createLsToolDefinition(
 	};
 }
 
-export function createLsTool(cwd: string, options?: LsToolOptions): AgentTool<typeof lsSchema> {
-	return wrapToolDefinition(createLsToolDefinition(cwd, options));
+export function createLsTool(cwd: string, options?: LsToolOptions, customCwd = false): AgentTool<typeof lsSchema> {
+	return wrapToolDefinition(createLsToolDefinition(cwd, options, customCwd));
 }
