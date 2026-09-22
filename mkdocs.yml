@@ -11,14 +11,14 @@ theme:
     - media: "(prefers-color-scheme: light)"
       scheme: default
       primary: black
-      accent: orange
+      accent: teal
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: black
-      accent: orange
+      accent: teal
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -99,8 +99,8 @@ plugins:
   - social:
       enabled: !ENV [CI, false]
       cards_layout_options:
-        background_color: "#0d1117"
-        color: "#f0883e"
+        background_color: "#0f1719"
+        color: "#2dd4bf"
 
 extra:
   social:
