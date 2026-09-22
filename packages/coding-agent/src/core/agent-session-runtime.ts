@@ -309,7 +309,10 @@ export class AgentSessionRuntime {
 				return { cancelled: false, selectedText };
 			}
 
-			if (!existsSync(currentSessionFile)) {
+			// #9792: the session file exists from create() time (header only), so
+			// flush state - not file existence - tells us whether the entries the
+			// fork needs are on disk.
+			if (!this.session.sessionManager.isFlushed() || !existsSync(currentSessionFile)) {
 				throw new Error(
 					"This session has not been saved yet. Wait for the first assistant response before cloning or forking it.",
 				);

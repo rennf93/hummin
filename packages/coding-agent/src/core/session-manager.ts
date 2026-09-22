@@ -1054,6 +1054,11 @@ export class SessionManager {
 		return this.persist;
 	}
 
+	/** Whether all in-memory entries are durably written to the session file. */
+	isFlushed(): boolean {
+		return this.flushed;
+	}
+
 	getCwd(): string {
 		return this.cwd;
 	}

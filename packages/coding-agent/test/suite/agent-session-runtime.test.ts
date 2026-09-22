@@ -380,7 +380,9 @@ describe("AgentSessionRuntime characterization", () => {
 		const sessionFile = runtime.session.sessionFile;
 		const leafId = runtime.session.sessionManager.getLeafId();
 		expect(sessionFile).toBeDefined();
-		expect(existsSync(sessionFile!)).toBe(false);
+		// #9792: the header is durable from create() time; the session is still
+		// "unflushed" (no assistant response) so forking must be refused.
+		expect(existsSync(sessionFile!)).toBe(true);
 		expect(leafId).toBeTruthy();
 
 		await expect(runtime.fork(leafId!, { position: "at" })).rejects.toThrow(
