@@ -14,7 +14,7 @@ Why a fork: GLM is a first-class citizen here, not a compatibility mode. The pro
 
 Ornith 1.5 35B (local GGUF via llama.cpp) working through four upstream bugs in hummin's own source. Watch the footer: live **tok/s** next to the context bar - 31 tok/s from a model running on a Mac Mini.
 
-![hummin running Ornith 1.5 35B locally at 31 tok/s](docs/assets/demo-ornith.mp4)
+![hummin running Ornith 1.5 35B locally at 31 tok/s](docs/assets/demo-ornith.gif)
 
 ## Status
 
