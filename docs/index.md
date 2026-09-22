@@ -38,7 +38,7 @@ hummin
 
 Ornith 1.5 35B (local GGUF via llama.cpp) working through four upstream bugs in hummin's own source. Watch the footer: live **tok/s** next to the context bar - 31 tok/s from a model running on a Mac Mini. The full path to this setup is in [Local Models](local-models/index.md).
 
-<img src="assets/demo-ornith.mp4" alt="hummin running Ornith 1.5 35B locally at 31 tok/s" style="width: 100%; border-radius: 8px; border: 1px solid var(--md-default-fg-color--lightest);">
+<img src="assets/demo-ornith.gif" alt="hummin running Ornith 1.5 35B locally at 31 tok/s" style="width: 100%; border-radius: 8px; border: 1px solid var(--md-default-fg-color--lightest);">
 
 ---
 
