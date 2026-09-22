@@ -92,3 +92,11 @@ Terminal support for mouse input, keyboard shortcuts, and inline images varies. 
 When troubleshooting terminal rendering or conversation state, run `/debug`. Pi writes the rendered terminal lines and current session messages to `pi-debug.log` in your [agent directory](configuration.md#agent-directory).
 
 Review this file before sharing it. It can contain prompts, model responses, tool output, file contents, and terminal data.
+
+## Design principles
+
+hummin keeps the core small and pushes workflow-specific behavior into extensions, skills, prompt templates, and packages.
+
+It intentionally does not include permission popups; MCP, sub-agents, plan mode, to-dos, background bash, and related workflows ship as bundled hummin extensions or can be built and installed as extensions or packages. External tools such as containers and tmux remain first-class citizens.
+
+For the full rationale, read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/).
