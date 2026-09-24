@@ -95,6 +95,26 @@ describe("monitor batches", () => {
 		buffer.push(Array.from({ length: 1000 }, (_, i) => `${i} ${"x".repeat(1000)}\n`).join(""));
 		expect(buffer.flush().length).toBeLessThan(4100);
 	});
+	it("treats carriage returns as line overwrites instead of garbage fragments", () => {
+		// `gh run watch`-style spinner: frames separated by \r, no \n yet.
+		const buffer = new MonitorBuffer();
+		buffer.push("Refreshing status\r*    \r*\u00b7   \r*  \u00b7  ");
+		buffer.push("\r*   \u00b7 \r\n");
+		expect(buffer.flush()).toBe("*   \u00b7 ");
+		// A redrawing progress bar whose final frame repeats is suppressed again.
+		buffer.push("done 3/3\n");
+		buffer.push("done 3/3\n");
+		expect(buffer.flush()).toBe("done 3/3");
+	});
+	it("re-queues flushed text after a failed delivery, preserving order", () => {
+		const buffer = new MonitorBuffer();
+		buffer.push("first\nsecond\nthird\n");
+		const text = buffer.flush();
+		expect(text).toBe("first\nsecond\nthird");
+		buffer.unshift(text);
+		buffer.push("fourth\n");
+		expect(buffer.flush()).toBe("first\nsecond\nthird\nfourth");
+	});
 });
 
 describe("subagent model routing", () => {
