@@ -4,7 +4,12 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Api, Context, Model } from "@earendil-works/pi-ai";
-import { SettingsManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+	getAgentDir,
+	SettingsManager,
+	type ExtensionAPI,
+	type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { probeFleet, serversFor } from "./hummin-fleet.ts";
 
 const execFileAsync = promisify(execFile);
@@ -142,6 +147,32 @@ export function environmentOverridesSection(env: Record<string, string | undefin
 	return ["environment overrides:", ...(lines.length > 0 ? lines : ["  none"])];
 }
 
+/** Pure /doctor section builder: the effective memory/vault configuration the
+ * runtime actually resolves (env beats settings.json inside the getters), so
+ * "which vault am I writing to" does not require guessing override precedence. */
+export function memoryConfigSection(
+	vaultDir: string,
+	provider: string,
+	modelId: string,
+	memoryDir: string,
+	mode: string,
+): string[] {
+	return [
+		"memory config (effective, env beats settings):",
+		`  vault dir: ${vaultDir}`,
+		`  provider: ${provider}`,
+		`  model id: ${modelId}`,
+		`  storage dir: ${memoryDir}`,
+		`  mode: ${mode}`,
+	];
+}
+
+/** The effective memory storage dir, mirroring hummin-memory.ts's resolution. */
+function effectiveMemoryDir(): string {
+	const env = process.env.HUMMIN_MEMORY_DIR?.trim();
+	return env && env.length > 0 ? env : join(getAgentDir(), "memory");
+}
+
 async function doctor(ctx: ExtensionContext): Promise<void> {
 	const settings = SettingsManager.create(ctx.cwd);
 	const servers = serversFor(ctx);
@@ -166,6 +197,13 @@ async function doctor(ctx: ExtensionContext): Promise<void> {
 			[
 				`settings parse: ${settings.drainErrors().length === 0 ? "OK" : "ERROR"}`,
 				...environmentOverridesSection(process.env),
+				...memoryConfigSection(
+					settings.getMemoryVaultDir(),
+					settings.getMemoryProvider(),
+					settings.getMemoryModelId(),
+					effectiveMemoryDir(),
+					settings.getMemoryMode(),
+				),
 				`fleet: ${servers.length ? `${servers.length} configured` : "not configured"}`,
 			`zai credential: ${auth.configured ? "present" : "missing"}`,
 			`extensions loaded: ${extensionCount === undefined ? "unknown" : extensionCount}`,
