@@ -2043,6 +2043,7 @@ interface Storage {
   scanConversations(limit: number, cursor: Cursor | undefined, context: Context): Promise<Page<ConversationRecord, Cursor>>;
 
   entry(id: Id, context: Context): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
+  entry(conversationId: Id, id: Id, context: Context): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
   findLatestHeadMarker(conversationId: Id, atOrBeforeEntryId: Id | undefined, context: Context): Promise<(EntryRecord & { readonly head: Id }) | undefined>;
   scanEntries(query: EntryQuery, limit: number, cursor: Cursor | undefined, context: Context): Promise<Page<EntryRecord, Cursor>>;
 
@@ -2072,8 +2073,10 @@ inclusive ID range in newest-first order while applying every conversation
 ancestry cap. With no bounds it pages complete visible history. To read context
 through entry `E`, find the marker at or before `E`, then scan from
 `marker?.head` through `E`. For current context the upper bound is omitted.
-`entry()` combines exact global lookup with the commit sequence required by
-historical document reads. `limit` is always the maximum page size.
+`entry(id)` combines exact global lookup with the commit sequence required by
+historical document reads. `entry(conversationId, id)` returns that pair only
+when the entry is visible through the requested conversation's ancestry. `limit`
+is always the maximum page size.
 `findDocument()` resolves one exact logical kind/scope/key address at current or
 historical membership. A missing key means the singleton, not every family
 member. `scanDocuments()` enumerates only the incarnations alive in one exact

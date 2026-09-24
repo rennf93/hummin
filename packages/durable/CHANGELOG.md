@@ -5,10 +5,12 @@
 ### Breaking Changes
 
 - Reordered Storage scan arguments so the limit precedes the cursor.
+- Added the required conversation-visible `Storage.entry(conversationId, id, context)` overload.
 
 ### Added
 
 - Added transactional Sessions with typed durable documents, task creation, snapshots, retirement, and commit publications.
+- Added document checkpoint selection, lazy version migration, and `Session.snapshotAsOf()` for rewindable conversation documents.
 
 ## [1.1.3] - 2026-09-22
 

@@ -412,6 +412,20 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			expect((await storage.entry(grandchildHead, context))?.commitSeq).toBe(grandchildEntriesSeq);
 			expect((await storage.entry(grandchildTail, context))?.commitSeq).toBe(grandchildEntriesSeq);
 			expect(await storage.entry(999_999, context)).toBeUndefined();
+
+			expect(await storage.entry(grandchildId, rootFirst, context)).toEqual({
+				entry: entry(rootFirst, rootId),
+				commitSeq: rootEntriesSeq,
+			});
+			expect((await storage.entry(grandchildId, childForkPoint, context))?.entry.conversationId).toBe(childId);
+			expect((await storage.entry(grandchildId, grandchildTail, context))?.commitSeq).toBe(grandchildEntriesSeq);
+			expect(await storage.entry(grandchildId, rootExcludedSameCommit, context)).toBeUndefined();
+			expect(await storage.entry(grandchildId, rootExcludedLater, context)).toBeUndefined();
+			expect(await storage.entry(grandchildId, childExcluded, context)).toBeUndefined();
+			expect(await storage.entry(grandchildId, childExcludedLater, context)).toBeUndefined();
+			expect(await storage.entry(rootId, grandchildHead, context)).toBeUndefined();
+			expect(await storage.entry(grandchildId, 999_999, context)).toBeUndefined();
+			await expect(storage.entry(999_999, rootFirst, context)).rejects.toThrow("Unknown conversation");
 			await expect(storage.scanEntries({ conversationId: 999_999 }, 10, undefined, context)).rejects.toThrow(
 				"Unknown conversation",
 			);

@@ -333,12 +333,23 @@ export class MemoryStorage implements Storage {
 		return page(values, limit);
 	}
 
-	async entry(
+	entry(id: Id, context: Context): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
+	entry(
+		conversationId: Id,
 		id: Id,
-		_context: Context,
+		context: Context,
+	): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
+	async entry(
+		idOrConversationId: Id,
+		idOrContext: Id | Context,
+		context?: Context,
 	): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined> {
 		this.assertOpen();
-		const entry = this.state.entries.get(id);
+		const id = context === undefined ? idOrConversationId : (idOrContext as Id);
+		const entry =
+			context === undefined
+				? this.state.entries.get(id)
+				: this.visibleEntries(idOrConversationId, id, id).next().value;
 		if (entry === undefined) return undefined;
 		return { entry: clone(entry), commitSeq: this.state.entryCommitSeqs.get(id)! };
 	}

@@ -230,13 +230,36 @@ export class SqliteStorage implements Storage {
 		);
 	}
 
-	async entry(
+	entry(id: Id, context: Context): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
+	entry(
+		conversationId: Id,
 		id: Id,
-		_context: Context,
+		context: Context,
+	): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
+	async entry(
+		idOrConversationId: Id,
+		idOrContext: Id | Context,
+		context?: Context,
 	): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined> {
 		this.assertOpen();
+		let conversation = context === undefined ? undefined : this.readConversation(idOrConversationId);
+		if (context !== undefined && conversation === undefined) {
+			throw new Error(`Unknown conversation: ${idOrConversationId}`);
+		}
+		const id = context === undefined ? idOrConversationId : (idOrContext as Id);
 		const row = getRow<EntryJsonRow>(this.db.prepare("SELECT record, commit_seq FROM entries WHERE id = ?"), id);
-		return row === undefined ? undefined : { entry: parseJson<EntryRecord>(row.record), commitSeq: row.commit_seq };
+		if (row === undefined) return undefined;
+		const entry = parseJson<EntryRecord>(row.record);
+		if (conversation !== undefined) {
+			let upperEntryId = Number.POSITIVE_INFINITY;
+			while (conversation.id !== entry.conversationId) {
+				if (conversation.parent === undefined) return undefined;
+				upperEntryId = Math.min(upperEntryId, conversation.parent.at);
+				conversation = this.readConversation(conversation.parent.conversationId)!;
+			}
+			if (entry.id > upperEntryId) return undefined;
+		}
+		return { entry, commitSeq: row.commit_seq };
 	}
 
 	async findLatestHeadMarker(

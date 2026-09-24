@@ -68,7 +68,13 @@ class ReopeningStorage implements Storage {
 	conversation: Storage["conversation"] = (id, readContext) => this.current.conversation(id, readContext);
 	scanConversations: Storage["scanConversations"] = (limit, cursor, readContext) =>
 		this.current.scanConversations(limit, cursor, readContext);
-	entry: Storage["entry"] = (id, readContext) => this.current.entry(id, readContext);
+	entry(id: number, readContext: Context): ReturnType<Storage["entry"]>;
+	entry(conversationId: number, id: number, readContext: Context): ReturnType<Storage["entry"]>;
+	entry(idOrConversationId: number, idOrContext: number | Context, readContext?: Context) {
+		return readContext === undefined
+			? this.current.entry(idOrConversationId, idOrContext as Context)
+			: this.current.entry(idOrConversationId, idOrContext as number, readContext);
+	}
 	findLatestHeadMarker: Storage["findLatestHeadMarker"] = (conversationId, at, readContext) =>
 		this.current.findLatestHeadMarker(conversationId, at, readContext);
 	scanEntries: Storage["scanEntries"] = (query, limit, cursor, readContext) =>

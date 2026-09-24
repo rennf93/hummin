@@ -68,8 +68,8 @@ export type DocumentCommitChange = {
 export type LoadedDocument = {
 	readonly addressId: string;
 	readonly record: DocumentRecord;
-	/** Stored definition version of the tracked value. */
-	readonly version: number;
+	/** Persisted definition version; older while the tracked value is migrated only in memory. */
+	storedVersion: number;
 	readonly tracker: Tracker<JsonObject>;
 };
 
@@ -78,8 +78,13 @@ export interface TransactionHost {
 	readonly storage: Storage;
 	/** Return the cached current incarnation without loading. */
 	cached(addressId: string): LoadedDocument | undefined;
-	/** Return the cached current incarnation, cold-loading it on the mutation line when necessary. */
-	load(addressId: string, address: DocumentAddress, context: Context): Promise<LoadedDocument | undefined>;
+	/** Return the cached current incarnation, cold-loading and migrating it when necessary. */
+	load(
+		definition: AnyDocDefinition,
+		addressId: string,
+		address: DocumentAddress,
+		context: Context,
+	): Promise<LoadedDocument | undefined>;
 	/** Install a newly committed incarnation. */
 	install(document: LoadedDocument): void;
 	/** Remove a retired incarnation if it is still the cached occupant of its address. */
@@ -343,11 +348,13 @@ export class Transaction implements Tx {
 
 	async #acquire(entry: DocumentEntry, seed: JsonValue | undefined, skipLoad: boolean): Promise<Draft<JsonObject>> {
 		const definition = entry.definition!;
-		const loaded = skipLoad ? undefined : await this.#host.load(entry.addressId, entry.address, this.#context);
+		const loaded = skipLoad
+			? undefined
+			: await this.#host.load(definition, entry.addressId, entry.address, this.#context);
 		this.#assertOpen();
 		if (loaded !== undefined) {
 			checkRecordScope(definition, loaded.record);
-			checkRecordVersion(definition, loaded.record, loaded.version);
+			checkRecordVersion(definition, loaded.record, loaded.storedVersion);
 			entry.target = { kind: "loaded", document: loaded };
 			entry.change = loaded.tracker.beginChange();
 			return entry.change.state;
@@ -441,7 +448,7 @@ export class Transaction implements Tx {
 						this.#host.install({
 							addressId: document.addressId,
 							record,
-							version: target.version,
+							storedVersion: target.version,
 							tracker: target.tracker,
 						});
 					}
@@ -459,6 +466,9 @@ export class Transaction implements Tx {
 					const changed = prepared.ops.length > 0;
 					if (changed) target.document.tracker.adopt(prepared);
 					else prepared.abort();
+					if (target.document.storedVersion < document.definition!.version) {
+						target.document.storedVersion = document.definition!.version;
+					}
 					if (!document.retireOnCommit && !changed) break;
 					if (document.retireOnCommit) {
 						this.#host.evict(target.document.addressId, target.document.record.id);
@@ -573,22 +583,30 @@ export class Transaction implements Tx {
 					});
 					if (document.retireOnCommit) writes.push({ type: "document.retire", id: target.record.id });
 					break;
-				case "loaded":
-					if (document.prepared!.ops.length > 0) {
+				case "loaded": {
+					const definition = document.definition!;
+					const prepared = document.prepared!;
+					if (target.document.storedVersion < definition.version) {
 						writes.push({
 							type: "document.change",
 							id: target.document.record.id,
-							content: {
-								version: target.document.version,
-								kind: "delta",
-								ops: document.prepared!.ops,
-							},
+							content: { version: definition.version, kind: "base", value: prepared.value },
+						});
+					} else if (prepared.ops.length > 0) {
+						const useBase = definition.checkpointWhen?.(prepared.value, prepared.ops) ?? false;
+						writes.push({
+							type: "document.change",
+							id: target.document.record.id,
+							content: useBase
+								? { version: definition.version, kind: "base", value: prepared.value }
+								: { version: definition.version, kind: "delta", ops: prepared.ops },
 						});
 					}
 					if (document.retireOnCommit) {
 						writes.push({ type: "document.retire", id: target.document.record.id });
 					}
 					break;
+				}
 				case "retire-only":
 					writes.push({ type: "document.retire", id: target.record.id });
 					break;

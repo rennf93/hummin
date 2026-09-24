@@ -12,6 +12,11 @@
 - Provider grouping headers in `/model`: rows are grouped under dim provider name headers (curated providers first, current model first within its group); headers are non-selectable and drop out while searching.
 - `/session` info is now rendered as aligned two-column tables per section (Session Info, Messages, Tokens, Cache Warming, Cost), matching the settings-view table style.
 - `/model` rebuilt in the settings-view style: an aligned two-column table (model name, context/provider value column), a description pane with provider, context, reasoning, and endpoint details for the highlighted model, an All/Scoped tab bar (clickable), and mouse press/click/wheel row interaction via the shared `SettingsList` component.
+- Added image generation to `ModelRuntime`: `generateImages()` with runtime-resolved auth (stored credentials, OAuth, runtime API keys, `models.json` headers), plus `getModelsOfType()`, `getModelOfType()`, `getAvailableOfType()`, `getAllModels()`, and `getAllAvailable()`. OpenRouter image models are listed under the `openrouter` provider and share its credential; an upstream ID can have separate chat and image entries. `models.json` providers and extension registrations without a model list keep built-in image generation. Extension model lists can include discriminated chat, image, and classifier entries with operation implementations; when supplied, they replace the provider catalog across every operation. Chat-facing reads (`getModels()`, `getAvailableSnapshot()`, the model picker) are unchanged.
+- Added classifier support to `ModelRuntime`, including `classify()`, classifier model accessors, runtime-resolved authentication, and the built-in TypeSafe `jev-latest` model.
+- Added `types=chat,image,classifier` to pi.dev model catalog requests so remote refreshes overlay every supported model type; entries of unknown model types are ignored.
+- Added the `provider_stream_event` extension event for observing parsed provider events before normalization, with an opt-in `/debug-provider` example viewer ([#9784](https://github.com/earendil-works/pi/issues/9784)).
+- Added a show/hide toggle (`H`) in HTML exports for custom messages marked `display: false`. Messages remain hidden by default and can also be revealed from the sidebar ([#8896](https://github.com/earendil-works/pi/issues/8896)).
 
 ### Fixed
 

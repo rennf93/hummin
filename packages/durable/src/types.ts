@@ -600,6 +600,20 @@ export interface Session {
 		key: string,
 		context: Context,
 	): Promise<Readonly<T> | undefined>;
+
+	snapshotAsOf<T extends JsonObject>(
+		token: RewindableConversationDocToken<T>,
+		conversationId: Id,
+		at: Id,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
+	snapshotAsOf<T extends JsonObject, I extends JsonValue>(
+		token: RewindableConversationDocFamilyToken<T, I>,
+		conversationId: Id,
+		key: string,
+		at: Id,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
 }
 
 /**
@@ -631,6 +645,12 @@ export interface Storage {
 
 	/** Look up one global entry and the sequence of the commit that persisted it. */
 	entry(id: Id, context: Context): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
+	/** Look up one entry only when it is visible through the requested conversation's ancestry. */
+	entry(
+		conversationId: Id,
+		id: Id,
+		context: Context,
+	): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
 
 	/**
 	 * Return the newest visible entry with a `head` at or below the optional inclusive cutoff.

@@ -309,8 +309,12 @@ export class JsonlStorage implements Storage {
 		return this.store.scanConversations(limit, cursor, context);
 	}
 
-	async entry(id: Id, context: Context) {
-		return this.store.entry(id, context);
+	entry(id: Id, context: Context): ReturnType<Storage["entry"]>;
+	entry(conversationId: Id, id: Id, context: Context): ReturnType<Storage["entry"]>;
+	async entry(idOrConversationId: Id, idOrContext: Id | Context, context?: Context) {
+		return context === undefined
+			? this.store.entry(idOrConversationId, idOrContext as Context)
+			: this.store.entry(idOrConversationId, idOrContext as Id, context);
 	}
 
 	async findLatestHeadMarker(conversationId: Id, atOrBeforeEntryId: Id | undefined, context: Context) {

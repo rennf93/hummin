@@ -1,4 +1,5 @@
-import type { JsonValue } from "@earendil-works/chord";
+import { copyJson, type JsonValue } from "@earendil-works/chord";
+import type { Op } from "@earendil-works/chord/delta";
 import type {
 	CommonDocDefinition,
 	ConversationDocFamilyToken,
@@ -19,6 +20,7 @@ import type {
 	RewindableConversationSemantics,
 	SessionDocFamilyToken,
 	SessionDocToken,
+	StoredDocument,
 	TaskDocFamilyToken,
 	TaskDocToken,
 } from "./types.ts";
@@ -78,6 +80,8 @@ export type AnyDocDefinition = DocumentSemantics & {
 	readonly version: number;
 	readonly family?: true;
 	initial(seed?: JsonValue): JsonObject;
+	migrate?(value: JsonObject, fromVersion: number): JsonObject;
+	checkpointWhen?(value: Readonly<JsonObject>, ops: readonly Op[]): boolean;
 };
 
 /** Erased singleton or family token. */
@@ -166,12 +170,20 @@ export function checkRecordScope(definition: AnyDocDefinition, record: DocumentR
 	}
 }
 
-/** Reject typed access to a stored version the token cannot use without migration. */
+/** Reject typed access to a stored version the supplied definition cannot use. */
 export function checkRecordVersion(definition: AnyDocDefinition, record: DocumentRecord, version: number): void {
 	if (version > definition.version) {
 		throw new Error(`Document ${record.id} (${record.kind}) has newer version ${version} than ${definition.version}`);
 	}
-	if (version < definition.version) {
+	if (version < definition.version && definition.migrate === undefined) {
 		throw new Error(`Document ${record.id} (${record.kind}) requires migration from version ${version}`);
 	}
+}
+
+/** Validate and materialize a detached stored value for typed access. */
+export function materializeDocument(definition: AnyDocDefinition, stored: StoredDocument): JsonObject {
+	checkRecordScope(definition, stored.record);
+	checkRecordVersion(definition, stored.record, stored.version);
+	if (stored.version === definition.version) return stored.value;
+	return copyJson(definition.migrate!(stored.value, stored.version)) as JsonObject;
 }

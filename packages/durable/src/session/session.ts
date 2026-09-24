@@ -1,13 +1,21 @@
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { awaitWithContext, withoutAbortSignal } from "@earendil-works/chord/context";
 import { track } from "@earendil-works/chord/delta";
-import { type AnyDocToken, checkRecordScope, checkRecordVersion, resolveAddress } from "../documents.ts";
+import {
+	type AnyDocToken,
+	checkRecordScope,
+	checkRecordVersion,
+	materializeDocument,
+	resolveAddress,
+} from "../documents.ts";
 import type {
 	ConversationDocFamilyToken,
 	ConversationDocToken,
 	DocumentAddress,
 	Id,
 	JsonObject,
+	RewindableConversationDocFamilyToken,
+	RewindableConversationDocToken,
 	Session,
 	SessionDocFamilyToken,
 	SessionDocToken,
@@ -45,7 +53,7 @@ export class SessionKernel implements Session {
 		this.#host = {
 			storage,
 			cached: (id) => this.#documents.get(id),
-			load: (addressId, address, context) => this.#load(addressId, address, context),
+			load: (definition, addressId, address, context) => this.#load(definition, addressId, address, context),
 			install: (document) => {
 				this.#documents.set(document.addressId, document);
 			},
@@ -101,12 +109,55 @@ export class SessionKernel implements Session {
 			this.#documents.get(resolved.id) ??
 			(await this.#enqueue(async () => {
 				this.#assertHealthy();
-				return this.#load(resolved.id, resolved.address, context);
+				return this.#load(definition, resolved.id, resolved.address, context);
 			}));
 		if (loaded === undefined) return undefined;
 		checkRecordScope(definition, loaded.record);
-		checkRecordVersion(definition, loaded.record, loaded.version);
+		checkRecordVersion(definition, loaded.record, loaded.storedVersion);
 		return loaded.tracker.value;
+	}
+
+	snapshotAsOf<T extends JsonObject>(
+		token: RewindableConversationDocToken<T>,
+		conversationId: Id,
+		at: Id,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
+	snapshotAsOf<T extends JsonObject, I extends JsonValue>(
+		token: RewindableConversationDocFamilyToken<T, I>,
+		conversationId: Id,
+		key: string,
+		at: Id,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
+	async snapshotAsOf(token: AnyDocToken, ...args: readonly unknown[]): Promise<JsonObject | undefined> {
+		this.#assertUsable();
+		const definition = token.definition;
+		const resolved = resolveAddress(definition, args);
+		if (resolved.address.scope.kind !== "conversation") {
+			throw new TypeError("Session.snapshotAsOf() requires a conversation document");
+		}
+		const conversationId = resolved.address.scope.conversationId;
+		const at = args[resolved.nextArgument] as Id;
+		const context = args[resolved.nextArgument + 1] as Context;
+		return this.#enqueue(async () => {
+			this.#assertHealthy();
+			const storedEntry = await this.#storage.entry(conversationId, at, context);
+			if (storedEntry === undefined) {
+				throw new Error(`Entry ${at} is not visible from conversation ${conversationId}`);
+			}
+			const address: DocumentAddress = {
+				...resolved.address,
+				scope: { kind: "conversation", conversationId: storedEntry.entry.conversationId },
+			};
+			const record = await this.#storage.findDocument(address, storedEntry.commitSeq, context);
+			if (record === undefined) return undefined;
+			const stored = await this.#storage.document(record.id, storedEntry.commitSeq, context);
+			if (stored === undefined) {
+				throw new Error(`Historical document ${record.id} (${record.kind}) cannot be read`);
+			}
+			return materializeDocument(definition, stored);
+		});
 	}
 
 	close(context: Context): Promise<void> {
@@ -197,19 +248,24 @@ export class SessionKernel implements Session {
 		});
 	}
 
-	async #load(addressId: string, address: DocumentAddress, context: Context): Promise<LoadedDocument | undefined> {
+	async #load(
+		definition: AnyDocToken["definition"],
+		addressId: string,
+		address: DocumentAddress,
+		context: Context,
+	): Promise<LoadedDocument | undefined> {
 		const cached = this.#documents.get(addressId);
 		if (cached !== undefined) return cached;
 		const record = await this.#storage.findDocument(address, "current", context);
 		if (record === undefined) return undefined;
 		const stored = await this.#storage.document(record.id, "current", context);
 		if (stored === undefined) throw new Error(`Current document ${record.id} (${record.kind}) cannot be read`);
-		// Storage returns detached strict JSON, which the tracker owns without another copy.
+		const value = materializeDocument(definition, stored);
 		const loaded: LoadedDocument = {
 			addressId,
 			record: stored.record,
-			version: stored.version,
-			tracker: track(stored.value),
+			storedVersion: stored.version,
+			tracker: track(value),
 		};
 		this.#documents.set(addressId, loaded);
 		return loaded;
