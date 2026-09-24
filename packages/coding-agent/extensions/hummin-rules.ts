@@ -13,9 +13,11 @@
  * their bodies are delivered lazily (steer) the first time a tool call touches
  * a matching path, so rarely-hit rule bodies never occupy context.
  *
- * Limitation: only tool inputs with a `path` field (read/edit/write/grep/find/
- * ls and custom tools) trigger delivery. Shell commands are deliberately not
- * parsed for paths - false positives would be worse than missing a rule.
+ * Triggers: tool inputs with a `path` field (read/edit/write/grep/find/ls and
+ * custom tools), plus bash commands via the minimal `bashCommandPaths`
+ * tokenizer. There is no real shell parsing: quoted arguments containing
+ * spaces split into bogus tokens, and flag values are treated as candidate
+ * paths, so over-delivery of a rule is possible where under-delivery is not.
  */
 import { basename, isAbsolute, join, relative } from "node:path";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -103,10 +105,28 @@ export function pathMatchesRule(rule: ProjectRule, filePath: string, cwd: string
 	return rule.paths.some((pattern) => matchesGlob(rel, abs, baseName, pattern));
 }
 
-/** Tool inputs that carry file paths. Shell commands are excluded on purpose. */
+/** Tool inputs that carry file paths. Bash commands are handled separately
+ * via bashCommandPaths. */
 export function inputPaths(input: Record<string, unknown>): string[] {
 	const value = input.path;
 	return typeof value === "string" && value.length > 0 ? [value] : [];
+}
+
+/** Path-like tokens in a bash command line. Minimal heuristic, no shell
+ * parsing and no fs checks: quotes are stripped, the command is split on
+ * whitespace, and flags are dropped. Flag values stay in as candidates
+ * (`grep -e foo.md src/` yields both), which is acceptable over-delivery for
+ * rule matching. Redirect operators never count ("2>&1", ">", "2>/dev/null"),
+ * and a dotted token needs a non-empty stem (".gitignore" is skipped,
+ * "out.txt" is kept). */
+export function bashCommandPaths(command: string): string[] {
+	const paths: string[] = [];
+	for (const token of command.replace(/['"]/g, "").split(/\s+/)) {
+		if (!token || token.startsWith("-") || /[<>]/.test(token)) continue;
+		const dot = token.indexOf(".");
+		if (token.includes("/") || (dot > 0 && dot < token.length - 1)) paths.push(token);
+	}
+	return paths;
 }
 
 export function ruleMessage(rule: ProjectRule): string {
@@ -175,7 +195,12 @@ export default async function humminRulesExtension(pi: ExtensionAPI): Promise<vo
 		if (rules.length === 0) return;
 		const pending = rules.filter((rule) => rule.paths.length > 0 && !delivered.has(rule.name));
 		if (pending.length === 0) return;
-		for (const filePath of inputPaths(event.input)) {
+		const candidates = inputPaths(event.input);
+		if (event.toolName === "bash") {
+			const command = (event.input as { command?: unknown }).command;
+			if (typeof command === "string") candidates.push(...bashCommandPaths(command));
+		}
+		for (const filePath of candidates) {
 			for (const rule of pending) {
 				if (delivered.has(rule.name)) continue;
 				if (!pathMatchesRule(rule, filePath, ctx.cwd)) continue;

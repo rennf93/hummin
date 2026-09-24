@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### Added
+
+- `exec` tool: run a one-shot shell command in the background (default timeout 1h) with its output delivered when it exits; removes the monitor-tool misuse for one-shots (`sleep 30 && gh run view`). Exec jobs are adopted on session switch like monitors
+- Monitor: silence heartbeat - after about 60s with no new matching output, a one-line "still running (last line: ...)" message is sent so stable watches do not look dead
+- Laya gate: audit log at `~/.hummin/agent/laya-gate.log` (JSON lines) recording every block (with score) and every marker confirmation, so self-served gate bypasses are visible after the fact
+- Memory: lesson usage tracking - injected and vault-searched lessons are stamped with `lastInjectedAt`, and the size-bound decay now prefers dropping never-injected stale lessons over recently used ones
+- Memory: recall follows the work - when a prompt's top recall hits contain lessons not yet injected this session, the new lessons are injected as a delta (persisted in the recall message details), so long sessions get memory on topic shifts instead of only at the first prompt
+- Memory: the fold contract now instructs the fold session to detect and merge contradictory lessons and record the resolution
+- Memory: laya-gated lesson intake - the distill worker scores each distilled lesson with one laya read ("durable project knowledge vs session noise"); below 0.5 the lesson is dropped, laya failures store anyway (`HUMMIN_LAYA_INTAKE=off` disables)
+- Laya: test-failure triage - when a bash test run fails, one laya read scores whether the failure was caused by the current change; below 0.45 a hidden advisory suggests verifying the failure reproduces on HEAD before fixing (`HUMMIN_LAYA_TRIAGE=off` disables, rate-limited to one read per 10 minutes)
+- Laya: every laya read (steer, gate, decide, triage, intake) is now audited to `laya-gate.log` as `{ts, type: "read", kind, p}` so thresholds can be calibrated against data
+- `/friction` command: summarizes the last 7 days of LLM friction (tool errors, budget/loop/circuit events, bashguard advisories, LSP offline-stub hits) plus laya gate activity, from `~/.hummin/agent/friction.log` and `laya-gate.log`
+- Guardrails: a one-time informational ping at 250 tool calls in a session suggesting /compact or a checkpoint (independent of the default-off budget caps)
+- Rules: path-scoped rules now also trigger on bash commands via cheap path-token extraction (`cat src/foo.ts` delivers the matching rule without full shell parsing)
+- `/doctor`: new "environment overrides" section listing the HUMMIN_* env vars that silently beat settings.json (values shown, credentials as "(set)", header with "none" line when unset)
+- Laya calibration: the gate and steer thresholds are settings (`layaGateThreshold`, default 0.75; `layaSteerThreshold`, default 0.7; env `HUMMIN_LAYA_GATE_THRESHOLD`/`HUMMIN_LAYA_STEER_THRESHOLD` override, out-of-range values ignored), and `/friction` gained a laya calibration section: block score distribution (min/median/max), confirm rate, near-miss gate reads that passed below the threshold, and a suggested threshold derived from confirmed blocks (ground-truth false positives). Confirmations now carry the score of the block they matched, which is what makes the suggestion computable. The suggestion is a hint only; it is never auto-applied
+
+### Fixed
+
+- Monitor: carriage-return spinner output (`gh run watch`, progress bars) is now treated as line overwrites instead of delivering garbled fragments every interval
+- Monitor: named handles (`name` parameter on start, usable as `id` in status/stop) so watches can be referred to without UUIDs
+- Monitor: delivery to a busy agent no longer throws "Agent is already processing a prompt" and no longer loses output; failed sends are re-buffered and retried
+
+### Changed
+
+- Monitor: `interval_sec` maximum raised from 60s to 600s for long CI watches
+- Laya gate: read-only allowlist now splits pipelines quote-aware, so quoted `|` patterns (e.g. `rg 'a|b'`, `awk -F'|'`) no longer trigger gate reads; allowlist expanded to common read-only commands (`gh api/run view/pr view`, `curl` GETs, `git rev-parse`/`blame`, etc.)
+- Laya gate: destructive-intent prompt recalibrated to score read-only inspection and network reads low; a second block of the same command now instructs the model to ask the user instead of retrying
+
 ## [1.1.3] - 2026-09-22
 
 ### Added

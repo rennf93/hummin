@@ -99,6 +99,49 @@ async function initProject(ctx: ExtensionContext): Promise<void> {
 	ctx.ui.notify(`wrote ${path}`, "info");
 }
 
+/** HUMMIN_* env vars that silently beat settings.json, plus the laya
+ * credential (presence only). Names verified against settings-manager.ts and
+ * the hummin extensions; /doctor surfaces them so "why is my setting ignored"
+ * has an answer. Pre-rename fallbacks (HUMMIN_COLIBRI_INSTANCES,
+ * HUMMIN_COLIBRI_CTX) are deliberately not listed. */
+interface EnvOverride {
+	name: string;
+	overrides: string;
+	/** Credential-like: /doctor shows "(set)", never the value. */
+	secret?: boolean;
+}
+
+const ENV_OVERRIDES: EnvOverride[] = [
+	{ name: "HUMMIN_INSTANCES", overrides: "ordered fleet servers" },
+	{ name: "HUMMIN_CTX", overrides: "per-model context window fallback" },
+	{ name: "HUMMIN_MEMORY_DIR", overrides: "memory storage dir" },
+	{ name: "HUMMIN_MEMORY_VAULT_DIR", overrides: "memory vault dir" },
+	{ name: "HUMMIN_MEMORY_PROVIDER", overrides: "memory provider" },
+	{ name: "HUMMIN_MEMORY_MODEL_ID", overrides: "memory model id" },
+	{ name: "HUMMIN_LAYA_URL", overrides: "laya service URL" },
+	{ name: "HUMMIN_LAYA_GATE", overrides: "laya bash tripwire switch" },
+	{ name: "HUMMIN_LAYA_STEER", overrides: "laya per-turn steering switch" },
+	{ name: "HUMMIN_LAYA_GATE_THRESHOLD", overrides: "laya gate block threshold (settings layaGateThreshold)" },
+	{ name: "HUMMIN_LAYA_STEER_THRESHOLD", overrides: "laya steer threshold (settings layaSteerThreshold)" },
+	{ name: "HUMMIN_LAYA_TRIAGE", overrides: "laya test-failure triage switch" },
+	{ name: "HUMMIN_LAYA_INTAKE", overrides: "laya lesson-intake gate switch" },
+	{ name: "COLI_API_KEY", overrides: "laya credential", secret: true },
+];
+
+/** Pure /doctor section builder: the header plus one line per set override,
+ * or a "none" line when nothing overrides, so users learn the section exists.
+ * Takes an env record instead of process.env so tests can cover set, unset,
+ * and presence-only cases. */
+export function environmentOverridesSection(env: Record<string, string | undefined>): string[] {
+	const lines: string[] = [];
+	for (const { name, overrides, secret } of ENV_OVERRIDES) {
+		const value = env[name]?.trim();
+		if (!value) continue;
+		lines.push(`  ${name}: ${secret ? "(set)" : value} (${overrides})`);
+	}
+	return ["environment overrides:", ...(lines.length > 0 ? lines : ["  none"])];
+}
+
 async function doctor(ctx: ExtensionContext): Promise<void> {
 	const settings = SettingsManager.create(ctx.cwd);
 	const servers = serversFor(ctx);
@@ -120,9 +163,10 @@ async function doctor(ctx: ExtensionContext): Promise<void> {
 		: [];
 	const extensionCount = ctx.getExtensionPaths?.().length;
 	ctx.ui.notify(
-		[
-			`settings parse: ${settings.drainErrors().length === 0 ? "OK" : "ERROR"}`,
-			`fleet: ${servers.length ? `${servers.length} configured` : "not configured"}`,
+			[
+				`settings parse: ${settings.drainErrors().length === 0 ? "OK" : "ERROR"}`,
+				...environmentOverridesSection(process.env),
+				`fleet: ${servers.length ? `${servers.length} configured` : "not configured"}`,
 			`zai credential: ${auth.configured ? "present" : "missing"}`,
 			`extensions loaded: ${extensionCount === undefined ? "unknown" : extensionCount}`,
 			`vault git: ${vaultGit}`,

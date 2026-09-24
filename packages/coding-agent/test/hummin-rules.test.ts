@@ -1,8 +1,10 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import {
+import humminRulesExtension, {
+	bashCommandPaths,
 	buildFirstTurnMessage,
 	inputPaths,
 	loadRules,
@@ -85,4 +87,65 @@ it("renders rule messages with scope and body", () => {
 	expect(ruleMessage({ name: "r", paths: ["a", "b"], description: "", body: "Body." })).toBe(
 		"[Rule: r] (paths: a, b)\nBody.",
 	);
+});
+
+it("extracts path-like tokens from bash commands", () => {
+	expect(bashCommandPaths("cat src/foo.ts")).toEqual(["src/foo.ts"]);
+	expect(bashCommandPaths('cat "src/foo.ts"')).toEqual(["src/foo.ts"]);
+	expect(bashCommandPaths("cat 'src/foo.ts'")).toEqual(["src/foo.ts"]);
+	expect(bashCommandPaths("sh ./test.sh --verbose")).toEqual(["./test.sh"]);
+	expect(bashCommandPaths("node build/script.js")).toEqual(["build/script.js"]);
+	// Flag values are kept as candidates; only the flag token itself is dropped.
+	expect(bashCommandPaths("grep -e foo.md src/")).toEqual(["foo.md", "src/"]);
+	expect(bashCommandPaths("sort > out.txt")).toEqual(["out.txt"]);
+});
+
+it("bash token extraction: empty commands, bare words, and redirects yield no paths", () => {
+	expect(bashCommandPaths("")).toEqual([]);
+	expect(bashCommandPaths("make test")).toEqual([]);
+	expect(bashCommandPaths("npm run check -- --fix")).toEqual([]);
+	expect(bashCommandPaths("ls 2>&1")).toEqual([]);
+	expect(bashCommandPaths("sort 2>/dev/null")).toEqual([]);
+	// A dotted token needs a non-empty stem before the dot.
+	expect(bashCommandPaths("touch .gitignore foo.ts")).toEqual(["foo.ts"]);
+});
+
+it("delivers a path-scoped rule once on the first matching bash command", async () => {
+	const rulesDir = join(directory, CONFIG_DIR_NAME, "rules");
+	mkdirSync(rulesDir, { recursive: true });
+	writeFileSync(
+		join(rulesDir, "ts-style.md"),
+		'---\npaths: ["src/**/*.ts"]\ndescription: TS style\n---\nUse explicit types.',
+	);
+	const toolCallHandlers: Array<(event: ToolCallEvent, ctx: ExtensionContext) => unknown> = [];
+	const messages: Array<{ customType: string; content: unknown; deliverAs?: string }> = [];
+	const api = {
+		on: (event: string, handler: (e: ToolCallEvent, ctx: ExtensionContext) => unknown) => {
+			if (event === "tool_call") toolCallHandlers.push(handler);
+			return () => undefined;
+		},
+		appendEntry: () => undefined,
+		sendMessage: (message: { customType: string; content: unknown }, options?: { deliverAs?: string }) => {
+			messages.push({ customType: message.customType, content: message.content, deliverAs: options?.deliverAs });
+			return undefined;
+		},
+	} as unknown as ExtensionAPI;
+	await humminRulesExtension(api);
+	const ctx = { cwd: directory } as unknown as ExtensionContext;
+	const callBash = (command: string): void => {
+		const event: ToolCallEvent = { type: "tool_call", toolCallId: "t1", toolName: "bash", input: { command } };
+		for (const handler of toolCallHandlers) handler(event, ctx);
+	};
+	callBash("make test");
+	expect(messages).toEqual([]);
+	callBash('cat "src/a.ts"');
+	expect(messages).toEqual([
+		{
+			customType: "hummin-rules",
+			content: "[Rule: ts-style] (paths: src/**/*.ts)\nUse explicit types.",
+			deliverAs: "steer",
+		},
+	]);
+	callBash("cat src/b.ts");
+	expect(messages).toHaveLength(1);
 });

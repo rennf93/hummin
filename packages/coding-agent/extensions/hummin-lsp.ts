@@ -11,6 +11,7 @@
  * Tools are registered only while the server is ready. On a server crash the
  * tool names are re-registered as offline stubs that fail with an actionable
  * message (the harness has no unregister API; this mirrors hummin-mcp).
+ * Offline stub calls are appended to the friction log (lib/friction.ts).
  * One-time notify on crash via a followUp session message.
  */
 import { execFile } from "node:child_process";
@@ -19,6 +20,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type TSchema } from "typebox";
+import { appendFriction } from "./lib/friction.ts";
 import {
 	LspClient,
 	type LspLocation,
@@ -123,6 +125,7 @@ export default function humminLsp(pi: ExtensionAPI): void {
 	const registerTools = (current: LspEntry, ready: boolean): void => {
 		current.registered.clear();
 		const offline = (tool: string): never => {
+			appendFriction({ kind: "lsp_stub", source: "lsp", detail: `${current.config.command}/${tool}` });
 			throw new Error(`[LSP] language server is offline; ${tool} unavailable. /lsp to check and restart`);
 		};
 		const requireReady = (tool: string): void => {

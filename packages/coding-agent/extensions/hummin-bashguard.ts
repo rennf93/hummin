@@ -35,7 +35,8 @@
  * extension entirely. Precedence: env > project settings > global settings
  * > defaults (block: false, readOnly: false, exempt: []).
  *
- * `/bashguard` shows a status table and reloads settings.
+ * `/bashguard` shows a status table and reloads settings. Every advisory
+ * emitted is appended to the friction log (lib/friction.ts, fail-silent).
  */
 
 import {
@@ -43,6 +44,7 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { appendFriction } from "./lib/friction.ts";
 
 // ---------------------------------------------------------------------------
 // Config parsing
@@ -518,6 +520,7 @@ export default function humminBashguard(pi: ExtensionAPI): void {
 			return { block: true, reason: decision.reason };
 		}
 		pendingAdvisories.set(event.toolCallId, decision.notice);
+		appendFriction({ kind: "advisory", source: "bashguard", detail: decision.notice });
 		return undefined;
 	});
 

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { defaultPolicy, GuardrailsState, hashToolCall } from "../extensions/hummin-guardrails.ts";
+import {
+	defaultPolicy,
+	denialKind,
+	GuardrailsState,
+	hashToolCall,
+	SOFT_PING_AT,
+} from "../extensions/hummin-guardrails.ts";
 
 function fixedClock(start = 1_000_000) {
 	let now = start;
@@ -48,13 +54,17 @@ describe("hashToolCall", () => {
 });
 
 describe("GuardrailsState budget", () => {
-	it("never warns or halts with the default (disabled) policy", () => {
+	it("never warns or halts with the default (disabled) policy, but fires the soft ping once", () => {
 		const state = new GuardrailsState(defaultPolicy({}), fixedClock());
+		const results: (string | undefined)[] = [];
 		for (let i = 0; i < 400; i++) {
 			expect(state.observeCall("bash", { command: `cmd-${i}` }).allowed).toBe(true);
-			expect(state.observeResult("bash", false)).toBeUndefined();
+			results.push(state.observeResult("bash", false));
 		}
 		expect(state.halted).toBe(false);
+		const pings = results.filter((text) => text !== undefined);
+		expect(pings).toHaveLength(1);
+		expect(pings[0]).toContain(`${SOFT_PING_AT} tool calls`);
 	});
 
 	it("warns in-band once the warning threshold is crossed", () => {
@@ -75,6 +85,49 @@ describe("GuardrailsState budget", () => {
 		expect(decision.allowed).toBe(false);
 		expect(state.halted).toBe(true);
 		expect(decision.allowed ? "" : decision.reason).toContain("halt");
+	});
+});
+
+describe("soft ping", () => {
+	function runCalls(state: GuardrailsState, count: number): void {
+		for (let i = 0; i < count; i++) {
+			state.observeCall("bash", { command: `cmd-${i}` });
+			state.observeResult("bash", false);
+		}
+	}
+
+	it("fires exactly once at SOFT_PING_AT calls and never again", () => {
+		const state = new GuardrailsState(defaultPolicy({}), fixedClock());
+		runCalls(state, SOFT_PING_AT - 1);
+		expect(state.observeResult("bash", false)).toBeUndefined();
+		state.observeCall("bash", { command: "trigger" });
+		expect(state.observeResult("bash", false)).toContain(`${SOFT_PING_AT} tool calls`);
+		state.observeCall("bash", { command: "more" });
+		expect(state.observeResult("bash", false)).toBeUndefined();
+	});
+
+	it("does not fire on error results but fires on the next success", () => {
+		const state = new GuardrailsState(defaultPolicy({}), fixedClock());
+		for (let i = 0; i < SOFT_PING_AT; i++) {
+			state.observeCall("bash", { command: `cmd-${i}` });
+		}
+		expect(state.observeResult("bash", true)).toBeUndefined();
+		expect(state.observeResult("bash", false)).toContain("tool calls");
+	});
+
+	it("takes precedence over the budget warn exactly once, then the warn resumes", () => {
+		const state = new GuardrailsState({ ...defaultPolicy({}), toolCallWarnAt: 10 }, fixedClock());
+		runCalls(state, SOFT_PING_AT);
+		state.observeCall("bash", { command: "more" });
+		expect(state.observeResult("bash", false)).toContain("[Budget]");
+	});
+});
+
+describe("denialKind", () => {
+	it("maps denial reasons to friction kinds", () => {
+		expect(denialKind("[Loop] identical bash call x3 in the last 10 calls")).toBe("loop_detected");
+		expect(denialKind("[Circuit] bash has failed 8 time(s)")).toBe("circuit_breaker");
+		expect(denialKind("[Budget] 11/10 tool calls - halt.")).toBe("tool_rejected");
 	});
 });
 
