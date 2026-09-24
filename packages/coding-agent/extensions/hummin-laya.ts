@@ -21,6 +21,7 @@ const LAYA_URL = process.env.HUMMIN_LAYA_URL?.trim() || "http://127.0.0.1:9989/v
  * and screenshots; the literal key only lives in the serve scripts and plists. */
 const LAYA_API_KEY = process.env.COLI_API_KEY?.trim() || "";
 const TIMEOUT_MS = 15_000;
+const WARM_TIMEOUT_MS = 45_000;
 const MAX_QUESTIONS = 8;
 const MAX_STATE_CHARS = 50_000;
 const LOW_CONFIDENCE = 0.5;
@@ -74,18 +75,49 @@ interface LayaNoulPayload {
 async function layaNoul(state: string, name: string, instructions: string): Promise<{ noul: number } | null> {
 	if (!LAYA_API_KEY) return null;
 	try {
-		const response = await fetch(LAYA_URL, {
-			method: "POST",
-			headers: { "Content-Type": "application/json", Authorization: `Bearer ${LAYA_API_KEY}` },
-			body: JSON.stringify({ state, questions: { [name]: { type: "noul", instructions } } }),
-			signal: AbortSignal.timeout(GATE_TIMEOUT_MS),
-		});
+		const response = await layaFetch(
+			JSON.stringify({ state, questions: { [name]: { type: "noul", instructions } } }),
+			GATE_TIMEOUT_MS,
+		);
 		if (!response.ok) return null;
 		const payload = (await response.json()) as LayaNoulPayload;
 		const answer = payload.answers?.[name];
 		return typeof answer?.noul === "number" ? { noul: answer.noul } : null;
 	} catch {
 		return null;
+	}
+}
+
+let checkpointWarmed = false;
+/** POST to laya with auth + a per-attempt timeout. Retries once on abort/timeout
+ * (the cold-start checkpoint load) so a just-started server does not fail the
+ * very first call. Any other error is rethrown for the caller to handle. */
+async function layaFetch(body: string, timeoutMs: number): Promise<Response> {
+	const common = {
+		method: "POST" as const,
+		headers: { "Content-Type": "application/json", Authorization: `Bearer ${LAYA_API_KEY}` },
+		body,
+	};
+	try {
+		return await fetch(LAYA_URL, { ...common, signal: AbortSignal.timeout(timeoutMs) });
+	} catch (err) {
+		if (err instanceof Error && /abort|timeout|econnreset|eclosed|eai_again|enotfound|econnrefused/i.test(err.message)) {
+			return await fetch(LAYA_URL, { ...common, signal: AbortSignal.timeout(timeoutMs) });
+		}
+		throw err;
+	}
+}
+
+/** Best-effort single load of the laya checkpoint. Called once at startup and
+ * awaited on the first agent turn if the startup prime has not finished; fails
+ * silently so an unreachable server never blocks the turn. */
+async function layaWarmCheckpoint(): Promise<void> {
+	if (!LAYA_API_KEY || checkpointWarmed) return;
+	try {
+		await layaFetch(JSON.stringify({ state: "warmup", questions: { warmup: { type: "noul", instructions: "Warmup." } } }), WARM_TIMEOUT_MS);
+		checkpointWarmed = true;
+	} catch {
+		// best-effort: leave the flag clear so a later call can retry the load
 	}
 }
 
@@ -179,15 +211,10 @@ export default function humminLaya(pi: ExtensionAPI): void {
 
 			let response: Response;
 			try {
-				response = await fetch(LAYA_URL, {
-					method: "POST",
-					headers: { "Content-Type": "application/json", Authorization: `Bearer ${LAYA_API_KEY}` },
-					body: JSON.stringify({ state: params.state.slice(0, MAX_STATE_CHARS), questions }),
-					signal: AbortSignal.timeout(TIMEOUT_MS),
-				});
+				response = await layaFetch(JSON.stringify({ state: params.state.slice(0, MAX_STATE_CHARS), questions }), TIMEOUT_MS);
 			} catch (err) {
 				const msg = err instanceof Error && /abort|timeout/i.test(err.message)
-					? `laya did not answer within ${TIMEOUT_MS / 1000}s`
+					? `laya did not answer within ${TIMEOUT_MS / 1000}s (cold checkpoint may still be loading)`
 					: `laya service unreachable at ${LAYA_URL}`;
 				return {
 					content: [{
@@ -231,6 +258,11 @@ export default function humminLaya(pi: ExtensionAPI): void {
 		},
 	});
 
+	// Prime the laya checkpoint once at startup so the first real call does not
+	// hit the cold prefill wall (which would exceed the request timeout). Fire
+	// and forget: a dead server never blocks process start.
+	layaWarmCheckpoint().catch(() => undefined);
+
 	// Per-turn steering: read the user prompt before the agent starts and, only
 	// when laya is confident the request involves destructive action, inject a
 	// quiet context message steering the model to verify and confirm first.
@@ -238,6 +270,7 @@ export default function humminLaya(pi: ExtensionAPI): void {
 		pi.on("before_agent_start", async (event) => {
 			const prompt = event.prompt.trim();
 			if (prompt.length < STEER_MIN_PROMPT_CHARS || prompt.startsWith("/")) return undefined;
+			await layaWarmCheckpoint();
 			const read = await layaNoul(
 				prompt.slice(0, 4000),
 				"destructive_intent",
