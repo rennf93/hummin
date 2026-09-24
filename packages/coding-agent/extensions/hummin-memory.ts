@@ -40,7 +40,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, appendFileSync, unlinkSync, writeFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { Type } from "typebox";
 import type { Model } from "@earendil-works/pi-ai";
 import { getAgentDir, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -320,36 +320,150 @@ function recencyBonus(record: { timestamp?: unknown }, now = Date.now()): number
 	return Math.max(0, RECENCY_BONUS_MAX * (1 - ageDays / RECENCY_WINDOW_DAYS));
 }
 
+/**
+ * A single lesson record, normalized from either the lessons.jsonl distillation
+ * store or the folded vault's processed/ directory. `lesson` is the lesson
+ * body; `cwd`/`project` name the originating repository; `timestamp` is an
+ * ISO date string for recency ranking; `fromVault` marks folded lessons so
+ * same-project matching can fall back to a repo-basename match.
+ */
+export interface LessonRecord {
+	lesson: string;
+	cwd: string;
+	project: string;
+	timestamp?: unknown;
+	fromVault?: boolean;
+}
+
+/** Remove a leading YAML frontmatter block (---\n...\n---) and return the body. */
+function stripFrontmatter(text: string): string {
+	const trimmed = text.replace(/^\uFEFF/, "");
+	const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(trimmed);
+	return m ? trimmed.slice(m[0].length) : trimmed;
+}
+
+/** The raw YAML block between the leading --- fences, or null if absent. */
+function frontmatterBlock(text: string): string | null {
+	const trimmed = text.replace(/^\uFEFF/, "");
+	const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(trimmed);
+	return m ? m[1] : null;
+}
+
+/** Value of a `key:` line inside the frontmatter block, or undefined. */
+function frontmatterValue(block: string | null, key: string): string | undefined {
+	if (!block) return undefined;
+	const m = new RegExp(`^${key}:\\s*(.*)$`, "m").exec(block);
+	return m ? m[1].trim() : undefined;
+}
+
+/**
+ * Folded lessons live in <vault>/processed/*.md with a `project:` frontmatter
+ * that is often a slug (e.g. "hummin-cli-release") rather than the absolute
+ * path the distillation store keeps. Match them by repo basename so a lesson
+ * folded from the hummin repo still counts as same-project when working in
+ * /Users/ren/of/Documents/GitHub/ZZZ/hummin.
+ */
+function sameProjectFor(record: Pick<LessonRecord, "cwd" | "fromVault">, project: string): boolean {
+	if (!record.fromVault) return resolve(record.cwd) === project;
+	const field = String(record.cwd).replace(/[^a-z0-9]/gi, "").toLowerCase();
+	if (!field) return false;
+	const base = basename(project).replace(/[^a-z0-9]/gi, "").toLowerCase();
+	if (!base) return false;
+	return field.includes(base);
+}
+
+/**
+ * Load every folded lesson from the vault's processed/ directory into the
+ * normalized record shape. The body is the file with its frontmatter stripped,
+ * which is exactly the distilled output the distillation worker stored in
+ * lessons.jsonl, so the two sources dedupe cleanly by body.
+ */
+export function loadVaultLessons(vaultDir: string): LessonRecord[] {
+	const processed = join(vaultDir, "processed");
+	if (!existsSync(processed)) return [];
+	const out: LessonRecord[] = [];
+	for (const f of readdirSync(processed)) {
+		if (!f.endsWith(".md")) continue;
+		try {
+			const text = readFileSync(join(processed, f), "utf8");
+			const project = frontmatterValue(frontmatterBlock(text), "project") || f.replace(/\.md$/, "");
+			out.push({
+				lesson: stripFrontmatter(text),
+				cwd: project,
+				project,
+				timestamp: frontmatterValue(frontmatterBlock(text), "date"),
+				fromVault: true,
+			});
+		} catch {
+			// skip unreadable
+		}
+	}
+	return out;
+}
+
+/**
+ * The retrieval corpus is the union of the distillation store (lessons.jsonl,
+ * which holds recent distillations not yet folded) and the folded vault
+ * (processed/, which is the complete archive). Dedup by trimmed lesson body so
+ * a lesson that was distilled into the store and then folded into the vault is
+ * counted once. lessons.jsonl is emitted first so its exact-path project match
+ * wins ties.
+ */
+export function unionLessonRecords(vaultDir?: string): LessonRecord[] {
+	const byBody = new Map<string, LessonRecord>();
+	const jsonl = join(memoryDir(), "lessons.jsonl");
+	if (existsSync(jsonl)) {
+		for (const line of readFileSync(jsonl, "utf8").split("\n")) {
+			if (!line.trim()) continue;
+			try {
+				const r = JSON.parse(line);
+				if (typeof r.lesson !== "string" || typeof r.cwd !== "string") continue;
+				const body = r.lesson.trim();
+				if (!byBody.has(body)) {
+					byBody.set(body, {
+						lesson: r.lesson,
+						cwd: r.cwd,
+						project: r.project ?? r.cwd,
+						timestamp: r.timestamp,
+					});
+				}
+			} catch {
+				// skip malformed
+			}
+		}
+	}
+	if (vaultDir) {
+		for (const r of loadVaultLessons(vaultDir)) {
+			const body = r.lesson.trim();
+			if (!byBody.has(body)) byBody.set(body, r);
+		}
+	}
+	return [...byBody.values()];
+}
+
 export function recallLessons(
 	cwd: string,
 	query: string,
 	limit = RETRIEVAL_MAX_LESSONS,
 	scope: "project" | "all" = "project",
 ): string[] {
-	const file = join(memoryDir(), "lessons.jsonl");
-	if (!existsSync(file)) return [];
 	const queryTerms = tokenize(query);
 	if (queryTerms.size === 0) return [];
 	const project = resolve(cwd);
-	// Pass 1: parse and index every lesson into the BM25 corpus.
+	// Pass 1: parse and index every lesson into the BM25 corpus. The corpus is
+	// the union of the distillation store and the folded vault, so lessons that
+	// were folded out of lessons.jsonl into processed/ stay retrievable.
 	const records: { lesson: string; doc: Bm25Doc; sameProject: boolean; timestamp?: unknown; index: number }[] = [];
 	let index = 0;
-	for (const line of readFileSync(file, "utf8").split("\n")) {
-		if (!line.trim()) continue;
+	for (const record of unionLessonRecords(vaultDir(cachedSettings))) {
 		index++;
-		try {
-			const record = JSON.parse(line);
-			if (typeof record.lesson !== "string" || typeof record.cwd !== "string") continue;
-			records.push({
-				lesson: record.lesson,
-				doc: bm25Doc(tokenizeList(record.lesson)),
-				sameProject: resolve(record.cwd) === project,
-				timestamp: record.timestamp,
-				index,
-			});
-		} catch {
-			// skip malformed
-		}
+		records.push({
+			lesson: record.lesson,
+			doc: bm25Doc(tokenizeList(record.lesson)),
+			sameProject: sameProjectFor(record, project),
+			timestamp: record.timestamp,
+			index,
+		});
 	}
 	if (records.length === 0) return [];
 	// Pass 2: BM25 relevance over the corpus, with phrase/recency as additive boosts.
@@ -416,13 +530,54 @@ function countVaultEntities(dir: string): number {
 }
 
 function countVaultLessons(): number {
-	const file = join(memoryDir(), "lessons.jsonl");
-	if (!existsSync(file)) return 0;
-	try {
-		return readFileSync(file, "utf8").split("\n").filter((line) => line.trim().length > 0).length;
-	} catch {
-		return 0;
+	// Count the retrieval corpus: the union of lessons.jsonl and the folded
+	// vault. Counting the store alone understated the vault (it only held
+	// distillations not yet folded, so folding silently shrank the report).
+	return unionLessonRecords(vaultDir(cachedSettings)).length;
+}
+
+/**
+ * One-time (or on-demand) corpus rebuild: append any folded vault lessons that
+ * are missing from lessons.jsonl so the distillation store matches the vault.
+ * Existing lines keep their order; only genuinely missing vault lessons are
+ * appended. Dedup by trimmed lesson body, which is identical across both
+ * sources (the vault body is the distilled output with frontmatter prepended).
+ */
+export function rebuildLessonsFromVault(): { added: number; total: number } {
+	const target = join(memoryDir(), "lessons.jsonl");
+	const seen = new Map<string, string>();
+	if (existsSync(target)) {
+		for (const line of readFileSync(target, "utf8").split("\n")) {
+			if (!line.trim()) continue;
+			try {
+				const r = JSON.parse(line);
+				if (typeof r.lesson === "string") seen.set(r.lesson.trim(), JSON.stringify(r));
+			} catch {
+				// drop the malformed line instead of carrying it forward
+			}
+		}
 	}
+	let added = 0;
+	for (const r of loadVaultLessons(vaultDir(cachedSettings))) {
+		const body = r.lesson.trim();
+		if (!seen.has(body)) {
+			const slug = String(r.project).replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^-+|-+$/g, "") || "lesson";
+			seen.set(body, JSON.stringify({
+				timestamp: r.timestamp ?? new Date().toISOString(),
+				cwd: r.cwd,
+				project: r.project,
+				session: slug,
+				sessionFile: slug,
+				lesson: r.lesson,
+			}));
+			added++;
+		}
+	}
+	const text = [...seen.values()].join("\n") + "\n";
+	writeFileSync(target + ".tmp", text);
+	// rename is atomic on POSIX; a crash leaves the original lessons.jsonl intact.
+	renameSync(target + ".tmp", target);
+	return { added, total: seen.size };
 }
 
 function searchEntities(query: string, limit: number): string[] {
