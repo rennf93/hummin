@@ -69,7 +69,10 @@ async function collectOutputProgression(): Promise<number[]> {
 	for await (const event of stream) {
 		const partial = (event as { partial?: { usage: { output: number } } }).partial;
 		if (partial) message = partial;
-		progression.push(message?.usage?.output ?? -1);
+		// Sample at delta events only: the leading `start` event may be consumed
+		// before the first provider chunk is processed, so its usage.output is
+		// still the initialized 0 and says nothing about the estimate.
+		if ((event as { type?: string }).type !== "start") progression.push(message?.usage?.output ?? -1);
 	}
 	return progression;
 }

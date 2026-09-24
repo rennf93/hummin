@@ -2,7 +2,13 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/zai-api.json" with { type: "json" };
-import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
+import { flattenChatModelCatalog, flattenClassifierModelCatalog, flattenImageModelCatalog, type ChatModelCatalog, type ClassifierModelCatalog, type ImageModelCatalog } from "../model-catalog.ts";
 
-export const ZAI_API_MODELS: ModelCatalog<typeof values, "zai-api"> =
-	flattenModelCatalog("zai-api", values);
+export const ZAI_API_MODELS: ChatModelCatalog<typeof values, "zai-api"> =
+	flattenChatModelCatalog("zai-api", values);
+
+export const ZAI_API_IMAGE_MODELS: ImageModelCatalog<typeof values, "zai-api"> =
+	flattenImageModelCatalog("zai-api", values);
+
+export const ZAI_API_CLASSIFIER_MODELS: ClassifierModelCatalog<typeof values, "zai-api"> =
+	flattenClassifierModelCatalog("zai-api", values);

@@ -1,4 +1,4 @@
-import type { Context, JsonValue } from "@earendil-works/chord";
+import type { Context, Draft, JsonValue } from "@earendil-works/chord";
 import type { Op } from "@earendil-works/chord/delta";
 import type { Message } from "@earendil-works/pi-ai";
 
@@ -13,6 +13,127 @@ export type Seq = number;
 
 /** The root conversation always uses this reserved ID. */
 export const ROOT_CONVERSATION_ID: Id = 1;
+
+/** Conversation document that retains only its current state. */
+export type LatestConversationSemantics = {
+	readonly scope: "conversation";
+	readonly history: "latest";
+	readonly fork: "current" | "initial";
+};
+
+/** Conversation document whose history remains addressable for as-of reads. */
+export type RewindableConversationSemantics = {
+	readonly scope: "conversation";
+	readonly history: "rewindable";
+	readonly fork: "asOf" | "current" | "initial";
+};
+
+/** Ownership and lifetime of a document; only conversation documents declare history and fork behavior. */
+export type DocumentSemantics =
+	| { readonly scope: "session"; readonly history?: never; readonly fork?: never }
+	| LatestConversationSemantics
+	| RewindableConversationSemantics
+	| { readonly scope: "task"; readonly history?: never; readonly fork?: never };
+
+/** Definition fields shared by singleton documents and document families. */
+export type CommonDocDefinition<T extends JsonObject> = {
+	/** Stable persisted kind; part of the public protocol. */
+	readonly kind: string;
+	/** Positive integer version of the stored value shape. */
+	readonly version: number;
+	initial(): T;
+	migrate?(value: JsonObject, fromVersion: number): T;
+	checkpointWhen?(value: Readonly<T>, ops: readonly Op[]): boolean;
+};
+
+/** Singleton document definition. */
+export type DocDefinition<T extends JsonObject> = CommonDocDefinition<T> & DocumentSemantics;
+
+/** Keyed document family definition; `initial(seed)` runs only when a member is absent. */
+export type DocFamilyDefinition<T extends JsonObject, I extends JsonValue> = Omit<CommonDocDefinition<T>, "initial"> &
+	DocumentSemantics & {
+		readonly family: true;
+		initial(seed: I): T;
+	};
+
+declare const docType: unique symbol;
+
+/** Typed singleton document token passed explicitly to typed access. */
+export interface DocToken<T extends JsonObject, D extends DocDefinition<T>> {
+	readonly definition: D;
+	readonly [docType]?: T;
+}
+
+/** Typed document family token passed explicitly to typed access. */
+export interface DocFamilyToken<T extends JsonObject, I extends JsonValue, D extends DocFamilyDefinition<T, I>> {
+	readonly definition: D;
+	readonly [docType]?: T;
+}
+
+export type SessionDocToken<T extends JsonObject> = DocToken<T, CommonDocDefinition<T> & { readonly scope: "session" }>;
+export type ConversationDocToken<T extends JsonObject> = DocToken<
+	T,
+	CommonDocDefinition<T> & (LatestConversationSemantics | RewindableConversationSemantics)
+>;
+export type RewindableConversationDocToken<T extends JsonObject> = DocToken<
+	T,
+	CommonDocDefinition<T> & RewindableConversationSemantics
+>;
+export type TaskDocToken<T extends JsonObject> = DocToken<T, CommonDocDefinition<T> & { readonly scope: "task" }>;
+
+export type SessionDocFamilyToken<T extends JsonObject, I extends JsonValue> = DocFamilyToken<
+	T,
+	I,
+	DocFamilyDefinition<T, I> & { readonly scope: "session" }
+>;
+export type ConversationDocFamilyToken<T extends JsonObject, I extends JsonValue> = DocFamilyToken<
+	T,
+	I,
+	DocFamilyDefinition<T, I> & (LatestConversationSemantics | RewindableConversationSemantics)
+>;
+export type RewindableConversationDocFamilyToken<T extends JsonObject, I extends JsonValue> = DocFamilyToken<
+	T,
+	I,
+	DocFamilyDefinition<T, I> & RewindableConversationSemantics
+>;
+export type TaskDocFamilyToken<T extends JsonObject, I extends JsonValue> = DocFamilyToken<
+	T,
+	I,
+	DocFamilyDefinition<T, I> & { readonly scope: "task" }
+>;
+
+declare const taskResultType: unique symbol;
+
+/** Task definition fields currently supported by Session task creation. */
+export type TaskDefinition<I, S extends { phase: string }, R, H extends object> = {
+	/** Registered task kind persisted in `TaskRecord.kind`. */
+	readonly name: string;
+	/** Definition version persisted with live input and checkpoints. */
+	readonly version: number;
+	/** First durable checkpoint for a newly created task. */
+	initial(input: I): S;
+	readonly hooks?: H;
+	/** Type-only result marker until phase handlers commit typed outcomes. */
+	readonly [taskResultType]?: R;
+};
+
+/** Typed executable task definition. */
+export interface Task<I, S extends { phase: string }, R, H extends object> {
+	readonly definition: TaskDefinition<I, S, R, H>;
+}
+
+/** Task ID carrying its result type for typed waits. */
+export type TaskRef<R> = { readonly id: Id; readonly [taskResultType]?: R };
+
+/** Creation options for a durable task. */
+export type TaskOptions = {
+	/** Owning conversation; required for Session commits that are not bound to a conversation. */
+	readonly conversationId?: Id;
+	/** Tasks that must be terminal before ordinary execution may begin. */
+	readonly after?: readonly Id[];
+	/** Excluded from ordinary idle waits and conversation aborts. */
+	readonly background?: boolean;
+};
 
 /** Immutable identity, history ancestry, and task ownership of a transcript scope. */
 export type ConversationRecord = {
@@ -380,6 +501,108 @@ export type StorageWrite =
 	| { readonly type: "document.retire"; readonly id: Id };
 
 /**
+ * Transaction surface of one Session commit callback.
+ * Table reads and creation results are trusted immutable values and may be shared with internal commit state.
+ */
+export interface Tx {
+	conversation(id: Id): Promise<ConversationRecord | undefined>;
+	entry(id: Id): Promise<EntryRecord | undefined>;
+	task(id: Id): Promise<TaskRecord<JsonValue, JsonValue, JsonValue> | undefined>;
+	scanConversations(limit: number, cursor?: Cursor): Promise<Page<ConversationRecord, Cursor>>;
+	scanEntries(query: EntryQuery, limit: number, cursor?: Cursor): Promise<Page<EntryRecord, Cursor>>;
+	scanTasks(
+		query: TaskQuery,
+		limit: number,
+		cursor?: Cursor,
+	): Promise<Page<TaskRecord<JsonValue, JsonValue, JsonValue>, Cursor>>;
+
+	/** Returned records are Session-owned immutable values and may be shared with commit listeners. */
+	createConversation(value: Omit<ConversationRecord, "id">): Promise<ConversationRecord>;
+	/** Returned records are Session-owned immutable values and may be shared with commit listeners. */
+	appendEntry(conversationId: Id, value: EntryDraft): Promise<EntryRecord>;
+	createTask<I, S extends { phase: string }, R, H extends object>(
+		task: Task<I, S, R, H>,
+		input: I,
+		options?: TaskOptions,
+	): Promise<TaskRef<R>>;
+	/** Replace one task record completely. */
+	setTask(value: TaskRecord<JsonValue, JsonValue, JsonValue>): void;
+
+	doc<T extends JsonObject>(token: SessionDocToken<T>): Promise<Draft<T>>;
+	doc<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: Id): Promise<Draft<T>>;
+	doc<T extends JsonObject>(token: TaskDocToken<T>, taskId: Id): Promise<Draft<T>>;
+	doc<T extends JsonObject, I extends JsonValue>(
+		token: SessionDocFamilyToken<T, I>,
+		key: string,
+		seed: I,
+	): Promise<Draft<T>>;
+	doc<T extends JsonObject, I extends JsonValue>(
+		token: ConversationDocFamilyToken<T, I>,
+		conversationId: Id,
+		key: string,
+		seed: I,
+	): Promise<Draft<T>>;
+	doc<T extends JsonObject, I extends JsonValue>(
+		token: TaskDocFamilyToken<T, I>,
+		taskId: Id,
+		key: string,
+		seed: I,
+	): Promise<Draft<T>>;
+
+	retireDoc<T extends JsonObject>(token: SessionDocToken<T>): Promise<void>;
+	retireDoc<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: Id): Promise<void>;
+	retireDoc<T extends JsonObject>(token: TaskDocToken<T>, taskId: Id): Promise<void>;
+	retireDoc<T extends JsonObject, I extends JsonValue>(token: SessionDocFamilyToken<T, I>, key: string): Promise<void>;
+	retireDoc<T extends JsonObject, I extends JsonValue>(
+		token: ConversationDocFamilyToken<T, I>,
+		conversationId: Id,
+		key: string,
+	): Promise<void>;
+	retireDoc<T extends JsonObject, I extends JsonValue>(
+		token: TaskDocFamilyToken<T, I>,
+		taskId: Id,
+		key: string,
+	): Promise<void>;
+}
+
+/** Owner of one mutation line, its records, and its tracked documents. */
+export interface Session {
+	/** Run one atomic transaction on the Session mutation line. */
+	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T>;
+	/** Seal admission, settle admitted commits, then close storage. */
+	close(context: Context): Promise<void>;
+
+	snapshot<T extends JsonObject>(token: SessionDocToken<T>, context: Context): Promise<Readonly<T> | undefined>;
+	snapshot<T extends JsonObject>(
+		token: ConversationDocToken<T>,
+		conversationId: Id,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
+	snapshot<T extends JsonObject>(
+		token: TaskDocToken<T>,
+		taskId: Id,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
+	snapshot<T extends JsonObject, I extends JsonValue>(
+		token: SessionDocFamilyToken<T, I>,
+		key: string,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
+	snapshot<T extends JsonObject, I extends JsonValue>(
+		token: ConversationDocFamilyToken<T, I>,
+		conversationId: Id,
+		key: string,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
+	snapshot<T extends JsonObject, I extends JsonValue>(
+		token: TaskDocFamilyToken<T, I>,
+		taskId: Id,
+		key: string,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
+}
+
+/**
  * Atomic persistence boundary for Session records.
  *
  * Storage trusts the owning Session to supply semantically valid records, references,
@@ -401,8 +624,8 @@ export interface Storage {
 
 	/** Scan conversations in ascending ID order. */
 	scanConversations(
-		cursor: Cursor | undefined,
 		limit: number,
+		cursor: Cursor | undefined,
 		context: Context,
 	): Promise<Page<ConversationRecord, Cursor>>;
 
@@ -422,8 +645,8 @@ export interface Storage {
 	/** Scan the inclusive visible range newest-first, returning at most `limit` entries. */
 	scanEntries(
 		query: EntryQuery,
-		cursor: Cursor | undefined,
 		limit: number,
+		cursor: Cursor | undefined,
 		context: Context,
 	): Promise<Page<EntryRecord, Cursor>>;
 
@@ -433,8 +656,8 @@ export interface Storage {
 	/** Scan task records matching every supplied filter. */
 	scanTasks(
 		query: TaskQuery,
-		cursor: Cursor | undefined,
 		limit: number,
+		cursor: Cursor | undefined,
 		context: Context,
 	): Promise<Page<TaskRecord<JsonValue, JsonValue, JsonValue>, Cursor>>;
 
@@ -453,8 +676,8 @@ export interface Storage {
 	/** Scan incarnations alive in one exact scope at the selected point. */
 	scanDocuments(
 		query: DocumentQuery,
-		cursor: Cursor | undefined,
 		limit: number,
+		cursor: Cursor | undefined,
 		context: Context,
 	): Promise<Page<DocumentRecord, Cursor>>;
 

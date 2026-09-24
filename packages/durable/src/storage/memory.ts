@@ -81,6 +81,12 @@ const clone = <T>(value: T): T => {
 	return result as T;
 };
 
+const freeze = <T>(value: T): T => {
+	if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
+	for (const child of Object.values(value)) freeze(child);
+	return Object.freeze(value);
+};
+
 const cursorId = (cursor: Readonly<Record<string, JsonValue>> | undefined): Id | undefined =>
 	cursor?.after as Id | undefined;
 
@@ -160,6 +166,14 @@ const page = <T extends { readonly id: Id }>(values: readonly T[], limit: number
 	return { items: clone(items), next: { after: items.at(-1)!.id } };
 };
 
+/** A fully validated, detached state mutation whose application performs no fallible preparation. */
+export interface PreparedMemoryCommit {
+	readonly seq: Seq;
+	/** Deeply frozen detached writes for persistence. */
+	readonly writes: readonly StorageWrite[];
+	apply(): Seq;
+}
+
 /**
  * Detached in-memory reference implementation of `Storage`.
  *
@@ -188,13 +202,38 @@ export class MemoryStorage implements Storage {
 	private closed = false;
 
 	async commit(writes: readonly StorageWrite[], _context: Context): Promise<Seq> {
-		this.assertOpen();
-		const prepared = writes.map((write) => clone(write));
-		const seq = this.nextSeq;
-		this.checkGlobalIds(prepared);
-		const documentActions = this.prepareDocumentActions(prepared);
-		this.checkDocumentActions(documentActions);
+		return this.prepareCommit(writes).apply();
+	}
 
+	/** Validate and detach one commit without changing observable state. */
+	prepareCommit(writes: readonly StorageWrite[], seq: Seq = this.nextSeq): PreparedMemoryCommit {
+		this.assertOpen();
+		if (!Number.isSafeInteger(seq) || seq < this.nextSeq) {
+			throw new Error(`Commit sequence ${seq} does not strictly increase`);
+		}
+		const detachedWrites = freeze(writes.map((write) => clone(write)));
+		this.checkGlobalIds(detachedWrites);
+		const documentActions = this.prepareDocumentActions(detachedWrites);
+		this.checkDocumentActions(documentActions);
+		let applied = false;
+		return {
+			seq,
+			writes: detachedWrites,
+			apply: () => {
+				if (!applied) {
+					applied = true;
+					this.applyPreparedCommit(detachedWrites, documentActions, seq);
+				}
+				return seq;
+			},
+		};
+	}
+
+	private applyPreparedCommit(
+		prepared: readonly StorageWrite[],
+		documentActions: ReadonlyMap<Id, DocumentAction>,
+		seq: Seq,
+	): Seq {
 		for (const write of prepared) {
 			switch (write.type) {
 				case "conversation":
@@ -264,7 +303,7 @@ export class MemoryStorage implements Storage {
 		}
 
 		this.applyDocumentActions(documentActions, seq);
-		this.nextSeq++;
+		this.nextSeq = seq + 1;
 		return seq;
 	}
 
@@ -281,8 +320,8 @@ export class MemoryStorage implements Storage {
 	}
 
 	async scanConversations(
-		cursor: Cursor | undefined,
 		limit: number,
+		cursor: Cursor | undefined,
 		_context: Context,
 	): Promise<Page<ConversationRecord, Cursor>> {
 		this.assertOpen();
@@ -331,8 +370,8 @@ export class MemoryStorage implements Storage {
 
 	async scanEntries(
 		query: EntryQuery,
-		cursor: Cursor | undefined,
 		limit: number,
+		cursor: Cursor | undefined,
 		_context: Context,
 	): Promise<Page<EntryRecord, Cursor>> {
 		this.assertOpen();
@@ -355,8 +394,8 @@ export class MemoryStorage implements Storage {
 
 	async scanTasks(
 		query: TaskQuery,
-		cursor: Cursor | undefined,
 		limit: number,
+		cursor: Cursor | undefined,
 		_context: Context,
 	): Promise<Page<StoredTask, Cursor>> {
 		this.assertOpen();
@@ -435,8 +474,8 @@ export class MemoryStorage implements Storage {
 
 	async scanDocuments(
 		query: DocumentQuery,
-		cursor: Cursor | undefined,
 		limit: number,
+		cursor: Cursor | undefined,
 		_context: Context,
 	): Promise<Page<DocumentRecord, Cursor>> {
 		this.assertOpen();
@@ -542,9 +581,6 @@ export class MemoryStorage implements Storage {
 			if (action.create === undefined && existing === undefined) throw new Error(`Unknown document: ${id}`);
 			if (action.create !== undefined && existing !== undefined) throw new Error(`Document ${id} already exists`);
 			if (existing?.record.retiredAt !== undefined) throw new Error(`Document ${id} is retired`);
-			if (action.create !== undefined && action.content?.kind !== "base") {
-				throw new Error(`Document ${id} creation requires a base`);
-			}
 			const previous = existing?.revisions.at(-1);
 			if (action.content?.kind === "delta") {
 				if (previous === undefined) throw new Error(`Document ${id} delta has no base`);

@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { JsonValue } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { afterEach, describe, expect, it, onTestFinished } from "vitest";
+import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
+import { afterEach, describe, expect, it } from "vitest";
 import type { SqliteStorage } from "../src/storage/sqlite/index.ts";
 import { type NodeSqliteStorageOptions, openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import type { DocumentCreate, EntryRecord, Seq, Storage, StorageWrite, TaskRecord } from "../src/types.ts";
 import { ROOT_CONVERSATION_ID } from "../src/types.ts";
-import { registerStorageConformance } from "./storage-conformance.ts";
 
 const context = BACKGROUND_CONTEXT;
 const openStorages = new Set<SqliteStorage>();
@@ -55,24 +55,24 @@ class ReopeningStorage implements Storage {
 
 	mintId: Storage["mintId"] = () => this.current.mintId();
 	conversation: Storage["conversation"] = (id, readContext) => this.current.conversation(id, readContext);
-	scanConversations: Storage["scanConversations"] = (cursor, limit, readContext) =>
-		this.current.scanConversations(cursor, limit, readContext);
+	scanConversations: Storage["scanConversations"] = (limit, cursor, readContext) =>
+		this.current.scanConversations(limit, cursor, readContext);
 	entry: Storage["entry"] = (id, readContext) => this.current.entry(id, readContext);
 	findLatestHeadMarker: Storage["findLatestHeadMarker"] = (conversationId, at, readContext) =>
 		this.current.findLatestHeadMarker(conversationId, at, readContext);
-	scanEntries: Storage["scanEntries"] = (query, cursor, limit, readContext) =>
-		this.current.scanEntries(query, cursor, limit, readContext);
+	scanEntries: Storage["scanEntries"] = (query, limit, cursor, readContext) =>
+		this.current.scanEntries(query, limit, cursor, readContext);
 	task: Storage["task"] = (id, readContext) => this.current.task(id, readContext);
-	scanTasks: Storage["scanTasks"] = (query, cursor, limit, readContext) =>
-		this.current.scanTasks(query, cursor, limit, readContext);
+	scanTasks: Storage["scanTasks"] = (query, limit, cursor, readContext) =>
+		this.current.scanTasks(query, limit, cursor, readContext);
 	submission: Storage["submission"] = (id, readContext) => this.current.submission(id, readContext);
 	submissionByRequest: Storage["submissionByRequest"] = (conversationId, requestId, readContext) =>
 		this.current.submissionByRequest(conversationId, requestId, readContext);
 	findDocument: Storage["findDocument"] = (address, at, readContext) =>
 		this.current.findDocument(address, at, readContext);
 	document: Storage["document"] = (id, at, readContext) => this.current.document(id, at, readContext);
-	scanDocuments: Storage["scanDocuments"] = (query, cursor, limit, readContext) =>
-		this.current.scanDocuments(query, cursor, limit, readContext);
+	scanDocuments: Storage["scanDocuments"] = (query, limit, cursor, readContext) =>
+		this.current.scanDocuments(query, limit, cursor, readContext);
 
 	async close(closeContext: Parameters<Storage["close"]>[0]): Promise<void> {
 		if (this.closed) return;
@@ -81,19 +81,22 @@ class ReopeningStorage implements Storage {
 	}
 }
 
-registerStorageConformance("Pico SqliteStorage conformance", async () => (await createSqliteStorage()).storage);
+registerStorageConformance({ describe, expect, it }, "SqliteStorage", async (use) =>
+	use((await createSqliteStorage()).storage),
+);
 
-registerStorageConformance("Pico SqliteStorage conformance across reopen", async () => {
+registerStorageConformance({ describe, expect, it }, "SqliteStorage across reopen", async (use) => {
 	const directory = await mkdtemp(join(tmpdir(), "pi-durable-sqlite-conformance-"));
 	const path = join(directory, "storage.sqlite");
 	const created = await openNodeSqliteStorage(path);
 	await created.close(context);
 	const storage = new ReopeningStorage(await openNodeSqliteStorage(path), path);
-	onTestFinished(async () => {
+	try {
+		await use(storage);
+	} finally {
 		await storage.close(context);
 		await rm(directory, { recursive: true, force: true });
-	});
-	return storage;
+	}
 });
 
 function entry(id: number, conversationId: number, data?: JsonValue): EntryRecord {

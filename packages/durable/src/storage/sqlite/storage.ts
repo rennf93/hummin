@@ -213,8 +213,8 @@ export class SqliteStorage implements Storage {
 	}
 
 	async scanConversations(
-		cursor: Cursor | undefined,
 		limit: number,
+		cursor: Cursor | undefined,
 		_context: Context,
 	): Promise<Page<ConversationRecord, Cursor>> {
 		this.assertOpen();
@@ -273,8 +273,8 @@ export class SqliteStorage implements Storage {
 
 	async scanEntries(
 		query: EntryQuery,
-		cursor: Cursor | undefined,
 		limit: number,
+		cursor: Cursor | undefined,
 		_context: Context,
 	): Promise<Page<EntryRecord, Cursor>> {
 		this.assertOpen();
@@ -317,8 +317,8 @@ export class SqliteStorage implements Storage {
 
 	async scanTasks(
 		query: TaskQuery,
-		cursor: Cursor | undefined,
 		limit: number,
+		cursor: Cursor | undefined,
 		_context: Context,
 	): Promise<Page<StoredTask, Cursor>> {
 		this.assertOpen();
@@ -433,8 +433,8 @@ export class SqliteStorage implements Storage {
 
 	async scanDocuments(
 		query: DocumentQuery,
-		cursor: Cursor | undefined,
 		limit: number,
+		cursor: Cursor | undefined,
 		_context: Context,
 	): Promise<Page<DocumentRecord, Cursor>> {
 		this.assertOpen();
@@ -544,9 +544,6 @@ export class SqliteStorage implements Storage {
 			if (action.create === undefined && existing === undefined) throw new Error(`Unknown document: ${id}`);
 			if (action.create !== undefined && existing !== undefined) throw new Error(`Document ${id} already exists`);
 			if (existing?.retiredAt !== undefined) throw new Error(`Document ${id} is retired`);
-			if (action.create !== undefined && action.content?.kind !== "base") {
-				throw new Error(`Document ${id} creation requires a base`);
-			}
 			if (action.content?.kind === "delta") {
 				const previous = getRow<{ readonly version: number }>(
 					this.db.prepare(

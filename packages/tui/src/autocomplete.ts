@@ -53,6 +53,9 @@ export function groupOrderedCommands<T extends GroupableCommand>(items: readonly
 	return [...items].sort((a, b) => (groupIndex.get(groupOf(a)) ?? 0) - (groupIndex.get(groupOf(b)) ?? 0));
 }
 
+// Opening wrappers that may precede a path in prose, mapped to their closing counterpart.
+const PATH_WRAPPERS: Record<string, string> = { "(": ")", "[": "]", "{": "}", "<": ">", "`": "`" };
+
 function toDisplayPath(value: string): string {
 	return value.replace(/\\/g, "/");
 }
@@ -101,6 +104,20 @@ function findLastDelimiter(text: string): number {
 	return lastDelimiter;
 }
 
+// Strip opening wrappers before a path, e.g. "(~/Dev" -> "~/Dev" or "`src/ma" -> "src/ma".
+// Keep a wrapper if the token also contains its closer, e.g. "app/[slug]/pa" or "(group)/pa".
+function stripLeadingWrappers(token: string): string {
+	let result = token;
+	while (result.length > 0) {
+		const closer = PATH_WRAPPERS[result[0]!];
+		if (!closer || result.includes(closer, 1)) {
+			break;
+		}
+		result = result.slice(1);
+	}
+	return result;
+}
+
 function findUnclosedQuoteStart(text: string): number | null {
 	let inQuotes = false;
 	let quoteStart = -1;
@@ -118,7 +135,11 @@ function findUnclosedQuoteStart(text: string): number | null {
 }
 
 function isTokenStart(text: string, index: number): boolean {
-	return PATH_DELIMITERS.has(text[index - 1] ?? "") || tokenStartRegex.test(text.slice(0, index));
+	let start = index;
+	while (start > 0 && PATH_WRAPPERS[text[start - 1]!]) {
+		start -= 1;
+	}
+	return PATH_DELIMITERS.has(text[start - 1] ?? "") || tokenStartRegex.test(text.slice(0, start));
 }
 
 function extractQuotedPrefix(text: string): string | null {
@@ -381,13 +402,16 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				});
 
 				const ordered = groupOrderedCommands(commandItems, prefix);
-				const filtered = fuzzyFilter(ordered, prefix, (item) =>
-					// #9120: rank skill commands by their bare name so typing "deploy"
-					// matches /skill:deploy unless the user is typing the full prefix.
-					!prefix.startsWith("skill:") && item.name.startsWith("skill:")
-						? item.name.slice("skill:".length)
-						: item.name,
-				).map((item) => ({
+				const bareNameMatches = fuzzyFilter(ordered, prefix, (item) =>
+					item.name.startsWith("skill:") ? item.name.slice("skill:".length) : item.name,
+				);
+				const bareNameMatchSet = new Set(bareNameMatches);
+				const fullNameOnlyMatches = fuzzyFilter(
+					ordered.filter((item) => item.name.startsWith("skill:") && !bareNameMatchSet.has(item)),
+					prefix,
+					(item) => item.name,
+				);
+				const filtered = [...bareNameMatches, ...fullNameOnlyMatches].map((item) => ({
 					value: item.name,
 					label: item.label,
 					...(item.description && { description: item.description }),
@@ -533,10 +557,10 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		}
 
 		const lastDelimiterIndex = findLastDelimiter(text);
-		const tokenStart = lastDelimiterIndex === -1 ? 0 : lastDelimiterIndex + 1;
+		const token = stripLeadingWrappers(lastDelimiterIndex === -1 ? text : text.slice(lastDelimiterIndex + 1));
 
-		if (text[tokenStart] === "@") {
-			return text.slice(tokenStart);
+		if (token.startsWith("@")) {
+			return token;
 		}
 
 		return null;
@@ -550,7 +574,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		}
 
 		const lastDelimiterIndex = findLastDelimiter(text);
-		const pathPrefix = lastDelimiterIndex === -1 ? text : text.slice(lastDelimiterIndex + 1);
+		const pathPrefix = stripLeadingWrappers(lastDelimiterIndex === -1 ? text : text.slice(lastDelimiterIndex + 1));
 
 		// For forced extraction (Tab key), always return something
 		if (forceExtract) {
