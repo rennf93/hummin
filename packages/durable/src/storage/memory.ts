@@ -1,5 +1,5 @@
 import type { Context, JsonValue } from "@earendil-works/chord";
-import { applyImmutable } from "@earendil-works/chord/delta";
+import { applyImmutableBatches, type Op } from "@earendil-works/chord/delta";
 import type {
 	ConversationRecord,
 	Cursor,
@@ -36,6 +36,21 @@ type DocumentAction = {
 	content?: DocumentContent;
 	retire: boolean;
 };
+
+function* documentDeltaBatches(
+	id: Id,
+	version: number,
+	revisions: readonly DocumentRevision[],
+	start: number,
+): Generator<readonly Op[]> {
+	for (let index = start; index < revisions.length; index++) {
+		const revision = revisions[index]!;
+		if (revision.kind !== "delta" || revision.version !== version) {
+			throw new Error(`Document ${id} crosses a stored version boundary without a base`);
+		}
+		yield revision.ops;
+	}
+}
 
 type DocumentAddressIndex = {
 	ids: Id[];
@@ -472,14 +487,10 @@ export class MemoryStorage implements Storage {
 		while (baseIndex >= 0 && revisions[baseIndex]!.kind !== "base") baseIndex--;
 		const base = revisions[baseIndex];
 		if (base?.kind !== "base") throw new Error(`Document ${id} is missing a required base`);
-		let value = base.value;
-		for (let index = baseIndex + 1; index < revisions.length; index++) {
-			const revision = revisions[index]!;
-			if (revision.kind !== "delta" || revision.version !== base.version) {
-				throw new Error(`Document ${id} crosses a stored version boundary without a base`);
-			}
-			value = applyImmutable(value, revision.ops) as JsonObject;
-		}
+		const value = applyImmutableBatches(
+			base.value,
+			documentDeltaBatches(id, base.version, revisions, baseIndex + 1),
+		) as JsonObject;
 		return { record: clone(stored.record), version: base.version, value: clone(value) };
 	}
 

@@ -7,7 +7,7 @@ Immutability is an ownership contract. Nothing is frozen or defensively copied,
 so an illegal mutation is not detected. It silently corrupts state.
 
 ```ts
-import { applyImmutable, track } from "@earendil-works/chord/delta";
+import { applyImmutable, applyImmutableBatches, track } from "@earendil-works/chord/delta";
 
 const initial = { output: "", entries: [] as { id: number }[] };
 const tracker = track(initial); // `initial` is transferred: never mutate it again
@@ -34,7 +34,7 @@ const replica = applyImmutable(prepared.base, prepared.ops);
 | External value after assigning or inserting it into a draft | Yes. The draft stored a validated clone. |
 | `tracker.value`, `prepared.base`, retained older revisions | No. |
 | `prepared.value`, `prepared.ops`, op tuples, paths, permutations, payloads | No. Payloads may be the same objects as parts of `prepared.value`. |
-| `applyImmutable()` inputs and result | No. The result shares containers with both inputs. |
+| `applyImmutable()` / `applyImmutableBatches()` inputs and result | No. The result shares containers with both inputs. |
 | Values from replicated state (`value`, listener values, loopback consumers) | No. In-process consumers may share the provider's containers. |
 | Mutable replica passed to `apply()` | Only through `apply()`, with batches it owns exclusively. Code that edits it between batches breaks convergence. |
 | Batch passed to `apply()` | Consumed. `apply()` adopts payload containers into the replica. Use a detached copy for exactly one replica and never touch it again. |
@@ -49,6 +49,20 @@ let replica = tracker.value; // shared with authority; never mutated
 // For each adopted batch, in order:
 replica = applyImmutable(replica, prepared.ops); // replica must equal prepared.base
 ```
+
+When only the final result of an ordered backlog is needed, replay its batches
+without concatenating their operations. One copy-on-write scope is shared across
+the complete call, so no intermediate revision is exposed or safe to retain:
+
+```ts
+replica = applyImmutableBatches(
+  replica,
+  queuedFrames.map((frame) => frame.ops),
+);
+```
+
+Use separate `applyImmutable()` calls when every intermediate revision is
+published or retained.
 
 Mutable replay needs a detached starting root and a detached copy of every batch
 for every replica. Never apply one in-memory batch to two mutable replicas:
@@ -155,8 +169,8 @@ and large edit sets may fold into a region splice, an ancestor `s`, or `r`.
 
 Reserved keys: the tracker never emits `__proto__`, `constructor`, or
 `prototype` as a path segment. A mutation at or below such a key is folded into a
-set of the nearest safe ancestor, or `r` at the root. `apply()`,
-`applyImmutable()`, and `decoder()` reject those segments with `UnsafePathError`.
+set of the nearest safe ancestor, or `r` at the root. `apply()`, `applyImmutable()`, `applyImmutableBatches()`, and `decoder()` reject
+those segments with `UnsafePathError`.
 The appliers write values as own data properties, never through a prototype setter.
 Appliers check op shape and path safety but not payload strictness. Chord's
 replicated-state replicas validate each resulting revision.

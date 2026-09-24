@@ -697,6 +697,99 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			expect((await storage.document(secondId, "current", context))?.value).toEqual({ items: ["new"] });
 		}),
 
+		createCase(options, "streams long document tails across root replacement deltas", async (storage) => {
+			const rootId = await createRoot(storage);
+			const id = await storage.mintId();
+			const record = {
+				id,
+				kind: "conversation.long-tail",
+				scope: { kind: "conversation", conversationId: rootId },
+				history: "rewindable",
+				fork: "asOf",
+			} satisfies DocumentCreate;
+			const initial = {
+				revision: 0,
+				rows: Array.from({ length: 512 }, (_, value) => ({ value, stable: `row-${value}` })),
+			};
+			const createdAt = await storage.commit(
+				[{ type: "document.create", record, content: { kind: "base", version: 1, value: initial } }],
+				context,
+			);
+			const beforeReplacement = structuredClone(initial);
+			let beforeReplacementAt = createdAt;
+			for (let revision = 1; revision <= 24; revision++) {
+				const index = (revision * 17) % beforeReplacement.rows.length;
+				beforeReplacement.rows[index]!.value = -revision;
+				beforeReplacement.revision = revision;
+				beforeReplacementAt = await storage.commit(
+					[
+						{
+							type: "document.change",
+							id,
+							content: {
+								kind: "delta",
+								version: 1,
+								ops: [
+									["s", ["rows", index, "value"], -revision],
+									["s", ["revision"], revision],
+								],
+							},
+						},
+					],
+					context,
+				);
+			}
+
+			const replacement = {
+				revision: 100,
+				rows: Array.from({ length: 512 }, (_, value) => ({ value: 10_000 + value, stable: `new-${value}` })),
+			};
+			const replacementSnapshot = structuredClone(replacement);
+			const replacementAt = await storage.commit(
+				[
+					{
+						type: "document.change",
+						id,
+						content: { kind: "delta", version: 1, ops: [["r", replacement]] },
+					},
+				],
+				context,
+			);
+			replacement.rows[0]!.value = -999;
+
+			const current = structuredClone(replacementSnapshot);
+			for (let revision = 101; revision <= 124; revision++) {
+				const index = (revision * 19) % current.rows.length;
+				current.rows[index]!.value = -revision;
+				current.revision = revision;
+				await storage.commit(
+					[
+						{
+							type: "document.change",
+							id,
+							content: {
+								kind: "delta",
+								version: 1,
+								ops: [
+									["s", ["rows", index, "value"], -revision],
+									["s", ["revision"], revision],
+								],
+							},
+						},
+					],
+					context,
+				);
+			}
+
+			expect((await storage.document(id, createdAt, context))?.value).toEqual(initial);
+			expect((await storage.document(id, beforeReplacementAt, context))?.value).toEqual(beforeReplacement);
+			expect((await storage.document(id, replacementAt, context))?.value).toEqual(replacementSnapshot);
+			const read = (await storage.document(id, "current", context))!;
+			expect(read.value).toEqual(current);
+			(read.value.rows as Array<{ value: number }>)[0]!.value = -1_000;
+			expect((await storage.document(id, "current", context))?.value).toEqual(current);
+		}),
+
 		createCase(
 			options,
 			"uses bases for version transitions and rejects historical reads of current-only documents",

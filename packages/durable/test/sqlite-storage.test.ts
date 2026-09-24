@@ -201,6 +201,82 @@ describe("Pico SqliteStorage", () => {
 		);
 	});
 
+	it("replays detached root replacements and follow-up edits while rejecting corrupt operations", async () => {
+		const { storage, path } = await createSqliteStorage();
+		await createRoot(storage);
+		const id = await storage.mintId();
+		await storage.commit(
+			[
+				{
+					type: "document.create",
+					record: { id, kind: "replay", scope: { kind: "session" } },
+					content: { kind: "base", version: 1, value: { nested: { value: 1 }, rows: [] } },
+				},
+			],
+			context,
+		);
+		await storage.commit(
+			[
+				{
+					type: "document.change",
+					id,
+					content: {
+						kind: "delta",
+						version: 1,
+						ops: [["r", { nested: { value: 2 }, rows: [{ id: 1 }] }]],
+					},
+				},
+			],
+			context,
+		);
+		await storage.commit(
+			[
+				{
+					type: "document.change",
+					id,
+					content: {
+						kind: "delta",
+						version: 1,
+						ops: [
+							["s", ["nested", "value"], 3],
+							["p", ["rows"], 1, 0, [{ id: 2 }]],
+							["m", ["rows"], [1, 0]],
+						],
+					},
+				},
+			],
+			context,
+		);
+		await storage.commit(
+			[
+				{
+					type: "document.change",
+					id,
+					content: { kind: "delta", version: 1, ops: [["s", ["nested", "value"], 4]] },
+				},
+			],
+			context,
+		);
+
+		const expected = { nested: { value: 4 }, rows: [{ id: 2 }, { id: 1 }] };
+		const first = (await storage.document(id, "current", context))!;
+		expect(first.value).toEqual(expected);
+		(first.value.nested as { value: number }).value = 99;
+		(first.value.rows as Array<{ id: number }>)[0]!.id = 99;
+		expect((await storage.document(id, "current", context))?.value).toEqual(expected);
+
+		const database = new DatabaseSync(path);
+		try {
+			database
+				.prepare(`UPDATE document_revisions SET content = ? WHERE document_id = ? AND seq =
+					(SELECT max(seq) FROM document_revisions WHERE document_id = ?)`)
+				.run('[["unknown"]]', id, id);
+		} finally {
+			database.close();
+		}
+		await expect(storage.document(id, "current", context)).rejects.toThrow("unknown op verb");
+	});
+
 	it("rolls SQL rows and sequence allocation back as one transaction", async () => {
 		const { storage, path } = await createSqliteStorage();
 		await createRoot(storage);
