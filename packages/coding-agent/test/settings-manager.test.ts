@@ -672,4 +672,31 @@ describe("SettingsManager", () => {
 			expect(manager.getShellPath()).toBe(homedir());
 		});
 	});
+
+	describe("hummin laya thresholds", () => {
+		it("defaults, stored settings, and out-of-range values are not trusted", () => {
+			expect(SettingsManager.inMemory().getLayaGateThreshold()).toBe(0.75);
+			expect(SettingsManager.inMemory().getLayaSteerThreshold()).toBe(0.7);
+			expect(SettingsManager.inMemory({ layaGateThreshold: 0.8 }).getLayaGateThreshold()).toBe(0.8);
+			expect(SettingsManager.inMemory({ layaSteerThreshold: 0.6 }).getLayaSteerThreshold()).toBe(0.6);
+			expect(SettingsManager.inMemory({ layaGateThreshold: 1.5 }).getLayaGateThreshold()).toBe(0.75);
+			expect(SettingsManager.inMemory({ layaSteerThreshold: -0.1 }).getLayaSteerThreshold()).toBe(0.7);
+		});
+
+		it("env overrides stored settings; invalid env falls back to the next layer", () => {
+			const saved = { gate: process.env.HUMMIN_LAYA_GATE_THRESHOLD, steer: process.env.HUMMIN_LAYA_STEER_THRESHOLD };
+			try {
+				process.env.HUMMIN_LAYA_GATE_THRESHOLD = "0.9";
+				process.env.HUMMIN_LAYA_STEER_THRESHOLD = "nonsense";
+				expect(SettingsManager.inMemory({ layaGateThreshold: 0.8 }).getLayaGateThreshold()).toBe(0.9);
+				// invalid env falls through to the stored setting, not the default
+				expect(SettingsManager.inMemory({ layaSteerThreshold: 0.6 }).getLayaSteerThreshold()).toBe(0.6);
+			} finally {
+				if (saved.gate === undefined) delete process.env.HUMMIN_LAYA_GATE_THRESHOLD;
+				else process.env.HUMMIN_LAYA_GATE_THRESHOLD = saved.gate;
+				if (saved.steer === undefined) delete process.env.HUMMIN_LAYA_STEER_THRESHOLD;
+				else process.env.HUMMIN_LAYA_STEER_THRESHOLD = saved.steer;
+			}
+		});
+	});
 });

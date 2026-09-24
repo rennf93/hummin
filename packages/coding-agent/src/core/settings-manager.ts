@@ -232,6 +232,10 @@ export interface Settings {
 	memoryProvider?: string;
 	/** hummin: model id for vault fold + distillation calls (env HUMMIN_MEMORY_MODEL_ID overrides) */
 	memoryModelId?: string;
+	/** hummin laya: bash gate block threshold, 0..1 (env HUMMIN_LAYA_GATE_THRESHOLD overrides) */
+	layaGateThreshold?: number;
+	/** hummin laya: per-turn destructive steer threshold, 0..1 (env HUMMIN_LAYA_STEER_THRESHOLD overrides) */
+	layaSteerThreshold?: number;
 	/** hummin: local inference server base URLs for the hummin provider (env HUMMIN_INSTANCES overrides) */
 	localInstances?: string[];
 	/** @deprecated pre-rename key, read as a fallback for localInstances */
@@ -316,6 +320,21 @@ function parseTimeoutSetting(value: unknown, settingName: string): number | unde
 		throw new Error(`Invalid ${settingName} setting: ${String(value)}`);
 	}
 	return undefined;
+}
+
+/** hummin laya thresholds: env string wins, then the stored setting, then the
+ * built-in default. Anything outside 0..1 (or unparseable) is ignored rather
+ * than trusted, so a typo can neither weld the gate shut nor open it. */
+function resolveLayaThreshold(envRaw: string | undefined, stored: number | undefined, fallback: number): number {
+	const clamp = (value: unknown): number | undefined => {
+		const n = typeof value === "number" ? value : Number(value);
+		return Number.isFinite(n) && n >= 0 && n <= 1 ? n : undefined;
+	};
+	if (envRaw !== undefined && envRaw.trim().length > 0) {
+		const fromEnv = clamp(envRaw);
+		if (fromEnv !== undefined) return fromEnv;
+	}
+	return clamp(stored) ?? fallback;
 }
 
 export type SettingsScope = "global" | "project";
@@ -1263,6 +1282,17 @@ export class SettingsManager {
 		const env = process.env.HUMMIN_MEMORY_MODEL_ID;
 		if (env && env.trim().length > 0) return env;
 		return this.settings.memoryModelId ?? "glm-5.3-flash";
+	}
+
+	/** hummin laya: destructive-intent thresholds. Env wins, then settings,
+	 * then the built-in default. A stored value outside 0..1 is ignored so a
+	 * typo can neither weld the gate shut nor silently open it. */
+	getLayaGateThreshold(): number {
+		return resolveLayaThreshold(process.env.HUMMIN_LAYA_GATE_THRESHOLD, this.settings.layaGateThreshold, 0.75);
+	}
+
+	getLayaSteerThreshold(): number {
+		return resolveLayaThreshold(process.env.HUMMIN_LAYA_STEER_THRESHOLD, this.settings.layaSteerThreshold, 0.7);
 	}
 
 	/** hummin: local inference server base URLs for the hummin provider.
