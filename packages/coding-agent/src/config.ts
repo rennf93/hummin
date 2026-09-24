@@ -476,6 +476,13 @@ export function getBundledInteractiveAssetPath(name: string): string {
 	return join(getInteractiveAssetsDir(), name);
 }
 
+/** Get path to the extensions shipped with the package. These are seeded into
+ * the user's agent dir on startup (see migrations.seedBundledExtensions) so
+ * every install starts with the full hummin extension set, editable in place. */
+export function getBundledExtensionsDir(): string {
+	return join(getPackageDir(), "extensions");
+}
+
 // =============================================================================
 // App Config (from package.json piConfig)
 // =============================================================================

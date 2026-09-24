@@ -41,6 +41,10 @@ const assetTrees = [
 	["dist/modes/interactive/theme", join(codingAgentDistDir, "modes", "interactive", "theme")],
 	["dist/modes/interactive/assets", join(codingAgentDistDir, "modes", "interactive", "assets")],
 	["dist/core/export-html", join(codingAgentDistDir, "core", "export-html")],
+	// The hummin extension set, seeded into the user's agent dir on startup
+	// (migrations.seedBundledExtensions). Without it, installs start with no
+	// extensions because upstream pi ships none and the agent dir is empty.
+	["extensions", join(codingAgentDir, "extensions")],
 ];
 
 const requiredInputs = [
@@ -61,6 +65,7 @@ const requiredStaged = [
 	"dist/modes/interactive/theme/light.json",
 	"dist/modes/interactive/theme/hummin-dark.json",
 	"dist/core/export-html/template.html",
+	"extensions/hummin-local.ts",
 ];
 
 const pack = process.argv.includes("--pack");
@@ -89,7 +94,7 @@ const manifest = {
 	version: pkg.version,
 	description: pkg.description,
 	bin: { hummin: "dist/bundle/cli.js" },
-	files: ["dist/bundle", "dist/modes", "dist/core", "CHANGELOG.md", "LICENSE", "README.md"],
+	files: ["dist/bundle", "dist/modes", "dist/core", "extensions", "CHANGELOG.md", "LICENSE", "README.md"],
 	license: pkg.license,
 	repository: pkg.repository,
 	engines: pkg.engines,

@@ -3,9 +3,10 @@
  */
 
 import chalk from "chalk";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
-import { CONFIG_DIR_NAME, getAgentDir, getBinDir } from "./config.ts";
+import { createHash } from "crypto";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { dirname, join, relative } from "path";
+import { CONFIG_DIR_NAME, getAgentDir, getBinDir, getBundledExtensionsDir, VERSION } from "./config.ts";
 import { migrateKeybindingsConfig } from "./core/keybindings.ts";
 import { stripBom } from "./utils/text.ts";
 
@@ -302,10 +303,73 @@ export async function showDeprecationWarnings(warnings: string[]): Promise<void>
  *
  * @returns Object with migration results and deprecation warnings
  */
+/**
+ * Seed the extensions shipped with the package into the user's agent dir, so a
+ * fresh install starts with the actual hummin extension set (editable in
+ * place, discovered by the normal extension loader).
+ *
+ * A manifest (extensions/.hummin-bundled.json) records the content hash of
+ * every file we seeded. On later startups a bundled file is copied over the
+ * target only when the target is missing or still matches the hash we last
+ * seeded, so user modifications are never overwritten. Nothing is deleted.
+ */
+const BUNDLED_EXTENSIONS_MANIFEST = ".hummin-bundled.json";
+
+function walkRelativeFiles(root: string, dir: string = root, out: string[] = []): string[] {
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		const full = join(dir, entry.name);
+		if (entry.isDirectory()) walkRelativeFiles(root, full, out);
+		else if (entry.isFile()) out.push(relative(root, full));
+	}
+	return out;
+}
+
+function sha256File(path: string): string {
+	return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+export function seedBundledExtensions(): void {
+	const bundledDir = getBundledExtensionsDir();
+	if (!existsSync(bundledDir)) return;
+	const targetDir = join(getAgentDir(), "extensions");
+	mkdirSync(targetDir, { recursive: true });
+	const manifestPath = join(targetDir, BUNDLED_EXTENSIONS_MANIFEST);
+	let seededFiles: Record<string, string> = {};
+	try {
+		seededFiles =
+			(JSON.parse(stripBom(readFileSync(manifestPath, "utf-8"))) as { files?: Record<string, string> }).files ?? {};
+	} catch {
+		// First run or corrupt manifest: treat every target as unmanaged.
+	}
+
+	for (const rel of walkRelativeFiles(bundledDir)) {
+		const bundledHash = sha256File(join(bundledDir, rel));
+		const target = join(targetDir, rel);
+		mkdirSync(dirname(target), { recursive: true });
+		if (!existsSync(target)) {
+			copyFileSync(join(bundledDir, rel), target);
+			seededFiles[rel] = bundledHash;
+			continue;
+		}
+		const targetHash = sha256File(target);
+		if (targetHash === bundledHash) {
+			seededFiles[rel] = bundledHash;
+		} else if (targetHash === seededFiles[rel]) {
+			// Seeded earlier and untouched by the user: safe to update.
+			copyFileSync(join(bundledDir, rel), target);
+			seededFiles[rel] = bundledHash;
+		}
+		// else: user-modified since seeding; leave it alone.
+	}
+
+	writeFileSync(manifestPath, `${JSON.stringify({ version: VERSION, files: seededFiles }, null, "\t")}\n`);
+}
+
 export function runMigrations(cwd: string): {
 	migratedAuthProviders: string[];
 	deprecationWarnings: string[];
 } {
+	seedBundledExtensions();
 	const migratedAuthProviders = migrateAuthToAuthJson();
 	migrateSessionsFromAgentRoot();
 	migrateToolsToBin();
