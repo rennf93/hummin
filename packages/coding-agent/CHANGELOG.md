@@ -4,7 +4,10 @@
 
 ### Added
 
-### Added
+- Upstream sync through pi 0.87.1: unified image/classifier model catalog with per-type model entries and pi.dev catalog version negotiation, `provider_stream_event` extension event, extension host-dependency warnings, TUI color values and theme styling, durable transactional sessions and documents, chord immutable delta tracker, and assorted tui/ai fixes.
+- Provider data JSONs (`packages/ai/src/providers/data/`) are now tracked, and CI regenerates them after build and fails with a reviewable diff when live models.dev/OpenRouter metadata drifts from the committed copy (previously such drift surfaced as a broken model-catalog test on main). Fix on drift: run `npm run generate:models` and commit the diff.
+- `/doctor`: new "memory config" section showing the effective vault dir, storage dir, provider, model id, and mode, so env-vs-settings override precedence is visible without reading the fork notes.
+- pi.dev user agent restored to the `pi/<version>` wire format: the model catalog protocol version-negotiates via the User-Agent, and a `hummin/` prefix silently opted out of versioned catalog shards.
 
 - Provider grouping headers in `/model`: rows are grouped under dim provider name headers (curated providers first, current model first within its group); headers are non-selectable and drop out while searching.
 - `/session` info is now rendered as aligned two-column tables per section (Session Info, Messages, Tokens, Cache Warming, Cost), matching the settings-view table style.

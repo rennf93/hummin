@@ -8,7 +8,8 @@ dist/
 packages/*/dist/
 packages/*/dist-chrome/
 packages/*/dist-firefox/
-packages/ai/src/providers/data/
+# packages/ai/src/providers/data/ is tracked in this fork: CI diffs regenerated
+# data against the committed copy so upstream metadata drift shows as a reviewable diff.
 packages/ai/src/providers/.model-generation-*/
 *.cpuprofile
 

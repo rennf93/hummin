@@ -43,6 +43,15 @@ jobs:
       - name: Build
         run: npm run build
 
+      # The build regenerates model data from live models.dev/OpenRouter metadata.
+      # Fail here, with the diff in the log, when upstream metadata drifted from the
+      # committed copy instead of failing later inside a model-catalog test.
+      # Fix: run `npm run generate:models` locally and commit the resulting diff.
+      - name: Model data drift
+        run: |
+          git diff --exit-code -- packages/ai/src/models.generated.ts 'packages/ai/src/providers/data/' ':(exclude)packages/ai/src/providers/data/.manifest.json' \
+            || { echo "::error::Generated model data drifted from the committed copy (upstream metadata changed). Run 'npm run generate:models' locally and commit the diff."; git diff --stat -- packages/ai/src/models.generated.ts 'packages/ai/src/providers/data/' ':(exclude)packages/ai/src/providers/data/.manifest.json'; exit 1; }
+
       - name: Check
         run: npm run check
 
