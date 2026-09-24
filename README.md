@@ -14,7 +14,7 @@ Why a fork: GLM is a first-class citizen here, not a compatibility mode. The pro
 
 Ornith 1.5 35B (local GGUF via llama.cpp) working through four upstream bugs in hummin's own source. Watch the footer: live **tok/s** next to the context bar - 31 tok/s from a model running on a Mac Mini.
 
-![hummin running Ornith 1.5 35B locally at 31 tok/s](docs/assets/demo-ornith.gif)
+![hummin running Ornith 1.5 35B locally at 31 tok/s](https://github.com/rennf93/hummin/blob/main/docs/assets/demo-ornith.gif)
 
 ## Install
 
@@ -127,7 +127,7 @@ hummin init --yes --memory vault --vault-dir ~/hummin-vault \
 
 Env vars (`HUMMIN_COLIBRI_INSTANCES`, `HUMMIN_MEMORY`, `HUMMIN_MEMORY_MODE`, `HUMMIN_MEMORY_VAULT_DIR`) still override stored settings when set.
 
-Then copy [SYSTEM.example.md](SYSTEM.example.md) to `~/.hummin/agent/SYSTEM.md` for the tuned operating rules, and `/model` to pick a default.
+Then copy [SYSTEM.example.md](https://github.com/rennf93/hummin/blob/main/SYSTEM.example.md) to `~/.hummin/agent/SYSTEM.md` for the tuned operating rules, and `/model` to pick a default.
 
 ## Differences from upstream pi
 
@@ -140,4 +140,4 @@ Everything else is upstream pi: sessions, extensions API, themes, tools, RPC/JSO
 
 ## Contributing
 
-This fork follows upstream's bar: understand your code, keep the core minimal, prefer extensions. See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) for the rules that apply to agent-written changes.
+This fork follows upstream's bar: understand your code, keep the core minimal, prefer extensions. See [CONTRIBUTING.md](https://github.com/rennf93/hummin/blob/main/CONTRIBUTING.md) and [AGENTS.md](https://github.com/rennf93/hummin/blob/main/AGENTS.md) for the rules that apply to agent-written changes.
