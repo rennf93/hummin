@@ -32,8 +32,9 @@ const codingAgentDistDir = join(codingAgentDir, "dist");
 const stageDir = join(repoRoot, ".artifacts", "hummin-cli");
 
 // Fork-internal workspace versions are not published to npm; extension loading
-// and the bundle resolve the published upstream line instead.
-const UPSTREAM_RANGE = "^0.85.1";
+// and the bundle resolve the published upstream line instead. Kept in sync with
+// the upstream release the fork sources were merged from (0.87.1 as of 2026-09-25).
+const UPSTREAM_RANGE = "^0.87.1";
 
 // Staged relative path -> source relative path inside packages/coding-agent (or repo root when absolute).
 const assetTrees = [
