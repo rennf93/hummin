@@ -21,6 +21,9 @@ export interface MemoryDistillJob {
 	vaultMode?: boolean;
 	vaultDir?: string;
 	pendingPath?: string;
+	/** Path to the shared laya-gate.log; the worker appends the intake read's
+	 * audit line directly (the worker has no agent-dir lookup). */
+	gateLog?: string;
 }
 
 export interface MemoryFoldJob {
@@ -41,6 +44,52 @@ export interface MemoryPruneJob {
 	vaultDir?: string;
 }
 
+/**
+ * Pure usage-aware decay policy for the lessons store. Given lessons.jsonl
+ * lines in file order (oldest first), returns the indices to KEEP. Under both
+ * caps everything is kept. Over a cap, records with no lastInjectedAt inside
+ * the pin window (missing or stale) drop oldest first; only if still over cap
+ * do the oldest pinned (recently injected) records drop.
+ *
+ * The detached worker is a dependency-free generated file, so its source is
+ * embedded verbatim into MEMORY_WORKER_SOURCE via Function.prototype.toString:
+ * this declaration is the single implementation. Keep it self-contained - no
+ * outer-scope references, no imports, no syntax the raw Node runtime lacks.
+ */
+export function decayKeepIndices(lines: string[], maxRecords: number, maxBytes: number, now: number, pinDays = 30): number[] {
+	const pinMs = pinDays * 86400000;
+	const entries = lines.map((line) => {
+		let pinned = false;
+		try {
+			const injected = JSON.parse(line).lastInjectedAt;
+			if (typeof injected === "string") {
+				const then = Date.parse(injected);
+				pinned = Number.isFinite(then) && now - then < pinMs;
+			}
+		} catch {
+			// unparseable line counts as never injected
+		}
+		return { pinned, bytes: Buffer.byteLength(line + "\n") };
+	});
+	let totalBytes = 0;
+	for (const entry of entries) totalBytes += entry.bytes;
+	if (entries.length <= maxRecords && totalBytes <= maxBytes) return entries.map((unused, index) => index);
+	const unpinned: number[] = [];
+	const pinned: number[] = [];
+	for (let index = 0; index < entries.length; index++) (entries[index].pinned ? pinned : unpinned).push(index);
+	const keep = new Set<number>();
+	for (let index = 0; index < entries.length; index++) keep.add(index);
+	let count = entries.length;
+	let bytes = totalBytes;
+	for (const index of unpinned.concat(pinned)) {
+		if (count <= maxRecords && bytes <= maxBytes) break;
+		keep.delete(index);
+		count -= 1;
+		bytes -= entries[index].bytes;
+	}
+	return [...keep].sort((a, b) => a - b);
+}
+
 /** A single source handles all modes so parent code only manages one file. */
 export const MEMORY_WORKER_SOURCE = String.raw`#!/usr/bin/env node
 // Machine-managed by hummin-memory. Do not edit.
@@ -56,6 +105,12 @@ const MAX_FOLD_LOG_BYTES = 1024 * 1024;
 const CHILD_MAX_BUFFER = 256 * 1024;
 const DISTILL_TIMEOUT_MS = 300000;
 const FOLD_TIMEOUT_MS = 900000;
+const INTAKE_TIMEOUT_MS = 6000;
+const INTAKE_THRESHOLD = 0.5;
+
+// Usage-aware decay policy, embedded verbatim from memory-workers.ts (single
+// implementation; see decayKeepIndices there).
+${decayKeepIndices}
 
 const mode = process.argv[2];
 const jobPath = process.argv[3];
@@ -188,18 +243,12 @@ function boundedLessons(memoryDir) {
 	} catch {
 		return;
 	}
-	lines = lines.slice(-LESSON_MAX_RECORDS);
-	const kept = [];
-	let bytes = 0;
-	for (let index = lines.length - 1; index >= 0; index--) {
-		const lineBytes = Buffer.byteLength(lines[index] + "\n");
-		if (lineBytes > MAX_STORE_BYTES || bytes + lineBytes > MAX_STORE_BYTES) break;
-		kept.push(lines[index]);
-		bytes += lineBytes;
-	}
-	kept.reverse();
-	const text = kept.length > 0 ? kept.join("\n") + "\n" : "";
-	if (Buffer.byteLength(text) !== statSync(path).size || lines.length !== kept.length) atomicWrite(path, text);
+	// Usage-aware decay: prefer dropping never-injected (or stale) records,
+	// oldest first; only then drop the oldest recently injected records.
+	const keep = new Set(decayKeepIndices(lines, LESSON_MAX_RECORDS, MAX_STORE_BYTES, Date.now()));
+	if (keep.size === lines.length) return;
+	const kept = lines.filter((line, index) => keep.has(index));
+	atomicWrite(path, kept.length > 0 ? kept.join("\n") + "\n" : "");
 }
 
 function boundedFoldLog(vaultDir, output) {
@@ -219,7 +268,50 @@ function removePending() {
 	try { rmSync(job.pendingPath, { force: true }); } catch {}
 }
 
-function distill() {
+// Every laya read is audited to the shared laya-gate.log; the worker appends
+// directly and never lets a logging failure break the run.
+function auditRead(gateLog, kind, p) {
+	if (typeof gateLog !== "string") return;
+	try { appendFileSync(gateLog, JSON.stringify({ ts: new Date().toISOString(), type: "read", kind, p }) + "\n"); } catch {}
+}
+
+// One laya read gating lesson intake: a score >= INTAKE_THRESHOLD stores the
+// lesson, below drops it exactly like a NONE reply. Any failure (missing key,
+// unreachable, timeout, parse) returns null and the lesson is stored - fail
+// open. HUMMIN_LAYA_INTAKE=off skips the read entirely.
+async function layaIntakeScore(lesson) {
+	if (String(process.env.HUMMIN_LAYA_INTAKE || "").trim().toLowerCase() === "off") return null;
+	const apiKey = String(process.env.COLI_API_KEY || "").trim();
+	if (!apiKey) return null;
+	const url = String(process.env.HUMMIN_LAYA_URL || "").trim() || "http://127.0.0.1:9989/v1/systemone";
+	const state = "A coding agent distilled the following lesson from a finished session in " + job.cwd + ". Decide whether it is durable project knowledge.\n\n" + lesson.slice(0, 4000);
+	try {
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+			body: JSON.stringify({
+				state,
+				questions: {
+					durable: {
+						type: "noul",
+						instructions: "Score the probability that this lesson is durable project knowledge a future session in this project would need, rather than session-specific noise. Trivial recounts of what was done, transient state, and one-off chores must score LOW.",
+					},
+				},
+			}),
+			signal: AbortSignal.timeout(INTAKE_TIMEOUT_MS),
+		});
+		if (!response.ok) return null;
+		const payload = await response.json();
+		const answer = payload && payload.answers && payload.answers.durable;
+		if (!answer || typeof answer.noul !== "number") return null;
+		auditRead(job.gateLog, "intake", answer.noul);
+		return answer.noul;
+	} catch {
+		return null;
+	}
+}
+
+async function distill() {
 	const memoryDir = job.memoryDir;
 	mkdirSync(memoryDir, { recursive: true, mode: 0o700 });
 	const sessionLock = join(memoryDir, ".locks", "distill-" + hash(String(job.sessionFile)) + ".lock");
@@ -255,6 +347,11 @@ function distill() {
 		const output = String(result.stdout || "").trim();
 		if (result.error || result.status !== 0 || !output) return 1;
 		if (/^NONE$/i.test(output.split("\n").at(-1)?.trim() || "")) {
+			removePending();
+			return 0;
+		}
+		const intake = await layaIntakeScore(output);
+		if (intake !== null && intake < INTAKE_THRESHOLD) {
 			removePending();
 			return 0;
 		}
@@ -359,7 +456,7 @@ function prune() {
 
 let exitCode = 2;
 try {
-	if (mode === "distill") exitCode = distill();
+	if (mode === "distill") exitCode = await distill();
 	else if (mode === "fold") exitCode = fold();
 	else if (mode === "prune") exitCode = prune();
 } catch (error) {

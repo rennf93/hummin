@@ -1,8 +1,16 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
-import { recallLessons } from "../extensions/hummin-memory.ts";
+import {
+	assembleBriefing,
+	injectedIdsFromEntries,
+	lessonIdOf,
+	markLessonsInjected,
+	recallLessons,
+	searchVault,
+	stampLessonLine,
+} from "../extensions/hummin-memory.ts";
 
 const createdDirs: string[] = [];
 let memoryDirOriginal: string | undefined;
@@ -144,4 +152,108 @@ test("recency bias ranks newer lessons above older ones on equal overlap", () =>
 	expect(lessons[0]).toBe("Gotcha: stale docker compose state needs --force-recreate after mem_limit changes");
 	// and the bias cannot drown relevance: the zero-overlap lesson never appears
 	expect(lessons).toHaveLength(2);
+});
+
+// --- Usage stamping (lastInjectedAt) ----------------------------------------
+
+const STAMP = "2026-09-24T00:00:00.000Z";
+
+test("stampLessonLine stamps only matching lesson bodies and preserves other fields", () => {
+	const line = JSON.stringify({ timestamp: "2026-01-01", cwd: PROJ, lesson: "Gotcha: docker compose", session: "s1" });
+	const stamped = stampLessonLine(line, new Set(["Gotcha: docker compose"]), STAMP);
+	const parsed = JSON.parse(stamped);
+	expect(parsed.lastInjectedAt).toBe(STAMP);
+	// every original field survives the rewrite
+	expect(parsed).toEqual({
+		timestamp: "2026-01-01",
+		cwd: PROJ,
+		lesson: "Gotcha: docker compose",
+		session: "s1",
+		lastInjectedAt: STAMP,
+	});
+});
+
+test("stampLessonLine passes through non-matching, malformed, and non-lesson lines byte-identical", () => {
+	const other = JSON.stringify({ cwd: PROJ, lesson: "unrelated lesson" });
+	expect(stampLessonLine(other, new Set(["Gotcha: docker compose"]), STAMP)).toBe(other);
+	expect(stampLessonLine("not json at all", new Set(["x"]), STAMP)).toBe("not json at all");
+	expect(stampLessonLine(JSON.stringify({ cwd: PROJ }), new Set(["x"]), STAMP)).toBe(JSON.stringify({ cwd: PROJ }));
+});
+
+test("stampLessonLine refreshes an existing stamp and matches on trimmed bodies", () => {
+	const line = JSON.stringify({ lesson: "Gotcha: docker compose", lastInjectedAt: "2020-01-01" });
+	expect(JSON.parse(stampLessonLine(line, new Set(["Gotcha: docker compose"]), STAMP)).lastInjectedAt).toBe(STAMP);
+	const padded = JSON.stringify({ lesson: "  Gotcha: docker compose  " });
+	expect(JSON.parse(stampLessonLine(padded, new Set(["Gotcha: docker compose"]), STAMP)).lastInjectedAt).toBe(STAMP);
+});
+
+test("markLessonsInjected rewrites the store only for matching records and tolerates old records", () => {
+	seedLessons([
+		{ cwd: PROJ, lesson: "Gotcha: docker compose needs --force-recreate" },
+		{ cwd: PROJ, lesson: "Gotcha: restart the hummin container" },
+	]);
+	markLessonsInjected(["Gotcha: docker compose needs --force-recreate"]);
+	const lines = readFileSync(join(process.env.HUMMIN_MEMORY_DIR!, "lessons.jsonl"), "utf8").trim().split("\n");
+	expect(JSON.parse(lines[0]).lastInjectedAt).toEqual(expect.any(String));
+	expect(JSON.parse(lines[1]).lastInjectedAt).toBeUndefined();
+});
+
+test("markLessonsInjected is a no-op on an empty body list or a missing store", () => {
+	expect(() => markLessonsInjected([])).not.toThrow();
+	process.env.HUMMIN_MEMORY_DIR = mkdtempSync(join(tmpdir(), "hummin-recall-empty-"));
+	createdDirs.push(process.env.HUMMIN_MEMORY_DIR);
+	expect(() => markLessonsInjected(["anything"])).not.toThrow();
+	expect(existsSync(join(process.env.HUMMIN_MEMORY_DIR!, "lessons.jsonl"))).toBe(false);
+});
+
+test("searchVault stamps the lessons it returns", () => {
+	seedLessons([{ cwd: PROJ, lesson: "Gotcha: docker compose needs --force-recreate after mem_limit changes" }]);
+	searchVault("docker compose force-recreate", PROJ);
+	const line = readFileSync(join(process.env.HUMMIN_MEMORY_DIR!, "lessons.jsonl"), "utf8").trim().split("\n")[0];
+	expect(JSON.parse(line).lastInjectedAt).toEqual(expect.any(String));
+});
+
+// --- Delta injection selection ----------------------------------------------
+
+test("lessonIdOf is stable per lesson body and insensitive to surrounding whitespace", () => {
+	expect(lessonIdOf("abc")).toBe(lessonIdOf("abc"));
+	expect(lessonIdOf("  abc ")).toBe(lessonIdOf("abc"));
+	expect(lessonIdOf("abc")).not.toBe(lessonIdOf("abd"));
+	expect(lessonIdOf("abc")).toMatch(/^[0-9a-f]{16}$/);
+});
+
+test("assembleBriefing keeps ranked order, drops already-injected ids, and enforces the char cap", () => {
+	const a = "short lesson a";
+	const b = "short lesson b";
+	const big = `huge lesson ${"x".repeat(300)}`;
+	const c = "short lesson c";
+	const injected = new Set([lessonIdOf(b)]);
+	// b is already injected: excluded. big would overflow (a + big > 100) but
+	// must not stop the smaller c from fitting.
+	const parts = assembleBriefing([a, b, big, c], injected, 100);
+	expect(parts.map((p) => p.lesson)).toEqual([a, c]);
+	expect(parts[0].id).toBe(lessonIdOf(a));
+});
+
+test("assembleBriefing returns nothing when every top hit was already injected", () => {
+	const a = "lesson about kubernetes";
+	expect(assembleBriefing([a], new Set([lessonIdOf(a)]), 2000)).toEqual([]);
+	expect(assembleBriefing([], new Set(), 2000)).toEqual([]);
+});
+
+test("injectedIdsFromEntries collects ids from recall message details only", () => {
+	const recall = (lessonIds: unknown, details?: unknown) => ({
+		type: "custom_message",
+		customType: "hummin-memory-recall",
+		details: details ?? { lessonIds },
+	});
+	const ids = injectedIdsFromEntries([
+		recall(["aaa", "bbb"]),
+		recall(["bbb", 42, null, "ccc"]), // non-string entries ignored
+		{ type: "custom_message", customType: "other", details: { lessonIds: ["ddd"] } },
+		{ type: "custom_message", customType: "hummin-memory-recall" }, // no details
+		recall("not-an-array"), // malformed details ignored
+		{ type: "message" }, // non-recall entry ignored
+	]);
+	expect([...ids].sort()).toEqual(["aaa", "bbb", "ccc"]);
 });

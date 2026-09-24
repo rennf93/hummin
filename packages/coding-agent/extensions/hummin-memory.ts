@@ -31,13 +31,18 @@
  * child (HUMMIN_MEMORY=0) writing to <vault>/fold.log, so neither startup,
  * turns, nor shutdown ever block on the fold.
  *
- * Retrieval: one relevance-floored injection on the session's first prompt
- * (never per turn - the briefing must not duplicate into session history),
- * plus a `vault` tool for on-demand search over lessons and vault entities.
- * Lessons are plain JSONL plus a human-readable markdown mirror.
+ * Retrieval: relevance-floored injection that follows the work. The top hits
+ * for the current prompt are injected when they contain lessons not yet
+ * injected this session (delta injection, so a lesson is never briefed twice
+ * into session history), plus a `vault` tool for on-demand search over
+ * lessons and vault entities. Every injected or searched lesson is stamped
+ * with lastInjectedAt in lessons.jsonl, which the store's decay policy uses
+ * to prefer keeping recently used lessons. Lessons are plain JSONL plus a
+ * human-readable markdown mirror.
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, appendFileSync, unlinkSync, writeFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -149,6 +154,7 @@ function enqueueDistill(sessionFile: string, cwd: string, vaultMode: boolean): v
 			session: sessionFile.split("/").pop(),
 			vaultMode,
 			vaultDir: vaultDir(cachedSettings),
+			gateLog: join(agentDir(), "laya-gate.log"),
 		}),
 		{ mode: 0o600 },
 	);
@@ -287,7 +293,60 @@ const PHRASE_BONUS = 2;
 /** Max bonus for newer lessons (linearly decaying over the past year). */
 const RECENCY_BONUS_MAX = 1;
 const RECENCY_WINDOW_DAYS = 365;
-const BRIEFING_CHECKED = "hummin-memory-briefing-checked";
+/** Custom message type carrying recall briefings; its details hold the ids of
+ * the lessons it injected, which is how sessions remember what was briefed. */
+const RECALL_MESSAGE_TYPE = "hummin-memory-recall";
+
+/**
+ * Stable identity for a lesson: a short hash of the trimmed body, the same
+ * body identity unionLessonRecords uses to dedupe the store against the
+ * folded vault. Ids (not bodies) go into recall message details to keep the
+ * persisted session small.
+ */
+export function lessonIdOf(lesson: string): string {
+	return createHash("sha256").update(lesson.trim()).digest("hex").slice(0, 16);
+}
+
+/** One injectable lesson: body plus its stable id. */
+export interface RecallPart {
+	id: string;
+	lesson: string;
+}
+
+/**
+ * Pure delta + char-cap selection for recall injection: drop lessons whose id
+ * was already injected this session, then pack the rest in rank order,
+ * skipping (not stopping at) any single lesson that would overflow the cap.
+ */
+export function assembleBriefing(lessons: string[], injectedIds: ReadonlySet<string>, maxChars: number): RecallPart[] {
+	const parts: RecallPart[] = [];
+	let total = 0;
+	for (const lesson of lessons) {
+		const id = lessonIdOf(lesson);
+		if (injectedIds.has(id)) continue;
+		if (total + lesson.length + 2 > maxChars) continue;
+		total += lesson.length + 2;
+		parts.push({ id, lesson });
+	}
+	return parts;
+}
+
+/**
+ * Pure: lesson ids already injected this session, read from the details of
+ * prior hummin-memory-recall custom messages. Entries persisted by older
+ * versions carry no details and contribute nothing (the in-process fallback
+ * set covers those while the process lives).
+ */
+export function injectedIdsFromEntries(entries: ReadonlyArray<{ type?: unknown; customType?: unknown; details?: unknown }>): Set<string> {
+	const ids = new Set<string>();
+	for (const entry of entries) {
+		if (entry.type !== "custom_message" || entry.customType !== RECALL_MESSAGE_TYPE) continue;
+		const lessonIds = (entry.details as { lessonIds?: unknown } | undefined)?.lessonIds;
+		if (!Array.isArray(lessonIds)) continue;
+		for (const id of lessonIds) if (typeof id === "string") ids.add(id);
+	}
+	return ids;
+}
 
 const STOPWORDS = new Set([
 	"that", "this", "with", "from", "have", "been", "were", "their", "there",
@@ -325,13 +384,16 @@ function recencyBonus(record: { timestamp?: unknown }, now = Date.now()): number
  * store or the folded vault's processed/ directory. `lesson` is the lesson
  * body; `cwd`/`project` name the originating repository; `timestamp` is an
  * ISO date string for recency ranking; `fromVault` marks folded lessons so
- * same-project matching can fall back to a repo-basename match.
+ * same-project matching can fall back to a repo-basename match. `lastInjectedAt`
+ * is the usage stamp written back to lessons.jsonl records when the lesson is
+ * briefed or searched (old records and vault files may lack it).
  */
 export interface LessonRecord {
 	lesson: string;
 	cwd: string;
 	project: string;
 	timestamp?: unknown;
+	lastInjectedAt?: unknown;
 	fromVault?: boolean;
 }
 
@@ -425,6 +487,7 @@ export function unionLessonRecords(vaultDir?: string): LessonRecord[] {
 						cwd: r.cwd,
 						project: r.project ?? r.cwd,
 						timestamp: r.timestamp,
+						lastInjectedAt: r.lastInjectedAt,
 					});
 				}
 			} catch {
@@ -493,6 +556,9 @@ export function recallLessons(
 export function searchVault(query: string, cwd: string): string {
 	const sections: string[] = [];
 	const lessons = recallLessons(cwd, query, 5, "all");
+	// Every search result counts as a use: stamp it so decay keeps lessons the
+	// agent actually consults.
+	markLessonsInjected(lessons);
 	if (lessons.length > 0) {
 		sections.push(`Lessons (${lessons.length}):\n${lessons.join("\n\n")}`);
 	}
@@ -578,6 +644,54 @@ export function rebuildLessonsFromVault(): { added: number; total: number } {
 	// rename is atomic on POSIX; a crash leaves the original lessons.jsonl intact.
 	renameSync(target + ".tmp", target);
 	return { added, total: seen.size };
+}
+
+/**
+ * Pure: one lessons.jsonl line re-stamped with lastInjectedAt when its lesson
+ * body is in `bodies`, otherwise returned unchanged. Malformed lines and
+ * non-lesson lines pass through byte-identical, and the round-trip of a
+ * record that already carries the stamp is the identical string, so callers
+ * can detect "nothing changed" by line equality.
+ */
+export function stampLessonLine(line: string, bodies: ReadonlySet<string>, now: string): string {
+	let record: Record<string, unknown>;
+	try {
+		record = JSON.parse(line);
+	} catch {
+		return line;
+	}
+	if (typeof record.lesson !== "string" || !bodies.has(record.lesson.trim())) return line;
+	return JSON.stringify({ ...record, lastInjectedAt: now });
+}
+
+/**
+ * Stamp lastInjectedAt on the lessons.jsonl records matching these lesson
+ * bodies. Used for usage-aware decay: the store's drop policy prefers keeping
+ * recently injected lessons. Cheap (one read; the atomic rewrite happens only
+ * when at least one record changed) and fail-open - usage tracking must never
+ * break recall or search. Vault-processed lessons are archived markdown and
+ * are deliberately not stamped.
+ */
+export function markLessonsInjected(bodies: string[], now = new Date().toISOString()): void {
+	if (bodies.length === 0) return;
+	const target = join(memoryDir(), "lessons.jsonl");
+	if (!existsSync(target)) return;
+	const wanted = new Set(bodies.map((body) => body.trim()));
+	try {
+		const lines = readFileSync(target, "utf8").split("\n");
+		let changed = false;
+		const next = lines.map((line) => {
+			if (!line.trim()) return line;
+			const stamped = stampLessonLine(line, wanted, now);
+			if (stamped !== line) changed = true;
+			return stamped;
+		});
+		if (!changed) return;
+		writeFileSync(target + ".tmp", next.join("\n"));
+		renameSync(target + ".tmp", target);
+	} catch {
+		// fail-open: usage tracking is best effort
+	}
 }
 
 function searchEntities(query: string, limit: number): string[] {
@@ -837,39 +951,39 @@ export default function humminMemory(pi: ExtensionAPI): void {
 		});
 	}
 
-	// Persist the attempt, including an empty result, outside the model context.
-	// Scan all entries so reloads, resumed sessions, and tree navigation cannot
-	// append another briefing. Later retrieval is explicit through the vault tool.
-	let briefingCheckedFor: string | undefined;
+	// Recall that follows the work: every prompt's top hits are injected when
+	// they contain lessons not yet injected this session. The injected set is
+	// derived from the persisted recall messages' details (survives reloads,
+	// resumed sessions, and tree navigation) plus a per-process fallback set
+	// for entries persisted without details. When nothing in the top-k is new,
+	// nothing is injected - later retrieval stays explicit through the vault
+	// tool. Non-command prompts only: command text is UI, not work to recall.
+	const injectedBySession = new Map<string, Set<string>>();
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		const prompt = event.prompt.trim();
+		if (prompt.startsWith("/")) return undefined;
+		const lessons = recallLessons(ctx.cwd, prompt);
+		if (lessons.length === 0) return undefined;
 		const sessionId = ctx.sessionManager.getSessionId();
-		if (briefingCheckedFor === sessionId) return;
-		briefingCheckedFor = sessionId;
-		if (ctx.sessionManager.getEntries().some((entry) =>
-			(entry.type === "custom" && entry.customType === BRIEFING_CHECKED) ||
-			(entry.type === "custom_message" && entry.customType === "hummin-memory-recall") ||
-			(entry.type === "message" && entry.message.role === "user")
-		)) return;
-		pi.appendEntry(BRIEFING_CHECKED, { version: 1 });
-		const lessons = recallLessons(ctx.cwd, event.prompt);
-		if (lessons.length === 0) return;
-		let briefing = "";
-		const parts: string[] = [];
-		for (const lesson of lessons) {
-			if (briefing.length + lesson.length + 2 > RETRIEVAL_MAX_CHARS) continue;
-			briefing += `\n\n${lesson}`;
-			parts.push(lesson);
-		}
-		if (parts.length === 0) return;
+		const injected = injectedIdsFromEntries(ctx.sessionManager.getEntries());
+		const fallback = injectedBySession.get(sessionId);
+		if (fallback) for (const id of fallback) injected.add(id);
+		const parts = assembleBriefing(lessons, injected, RETRIEVAL_MAX_CHARS);
+		if (parts.length === 0) return undefined;
+		if (!injectedBySession.has(sessionId)) injectedBySession.set(sessionId, new Set());
+		for (const part of parts) injectedBySession.get(sessionId)!.add(part.id);
+		// Stamp the store so usage-aware decay keeps these lessons.
+		markLessonsInjected(parts.map((part) => part.lesson));
 		if (ctx?.ui?.notify) {
 			ctx.ui.notify(`memory: ${parts.length} project lesson(s) applied to this session`, "info");
 		}
 		return {
 			message: {
-				customType: "hummin-memory-recall",
-				content: [{ type: "text", text: `Project memory (${parts.length} recent lesson(s) for this project):${briefing}` }] satisfies TextContent[],
+				customType: RECALL_MESSAGE_TYPE,
+				content: [{ type: "text", text: `Project memory (${parts.length} recent lesson(s) for this project):\n\n${parts.map((part) => part.lesson).join("\n\n")}` }] satisfies TextContent[],
 				display: false,
+				details: { lessonIds: parts.map((part) => part.id) },
 			},
 		};
 	});
@@ -952,6 +1066,10 @@ curator. Rules:
   file covering the same topic; extend it instead of creating a parallel
   entity, even if the existing one came from an earlier fold pass. Never
   invent facts that are not in an inbox lesson.
+- When an inbox lesson contradicts another lesson or an existing entity fact,
+  merge the conflicting sources into one surviving entity, keep the resolution
+  the newer lesson supports, and record it as a dated fact in both entities
+  ("resolved <topic>: <decision>, from [[lesson-slug]], YYYY-MM-DD").
 - After folding, list entities/ and verify every [[link]] you wrote resolves
   to an existing file and that no two entities cover the same topic.
 - One project entity per repository is the graph's hub (e.g. project/hummin);
