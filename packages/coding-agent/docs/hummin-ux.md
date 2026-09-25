@@ -104,6 +104,56 @@ cancellable. The lock uses the endpoint origin as its key: configure the same
 hostname consistently. Different machines and non-hummin clients still depend
 on server-side serialization. A crashed holder's lease expires after two minutes.
 
+### Laya child-dispatch review
+
+When enabled, Hummin reviews `task` and `cron_create` before the child starts.
+The review gives the Laya System-1 service the child prompt and the named
+provider/model/thinking configurations available from the real runtime catalog.
+Laya chooses one of those configurations using the profile description, speed,
+cost, and thinking depth. `fast`, `local`, and an omitted model resolve through
+the normal child-model selection rules; the review does not invent model IDs or
+cross providers to manufacture a recommendation.
+
+Each catalog entry is a real provider/model/thinking configuration. Profile
+metadata may describe a configuration without changing its identity:
+
+```json
+{
+  "provider": "zai",
+  "modelId": "glm-5.3",
+  "description": "strong reasoning for multi-step implementation",
+  "speed": "normal",
+  "cost": { "input": 1, "output": 4 },
+  "thinkingLevels": ["off", "low", "medium", "high"]
+}
+```
+
+The profile fields are descriptive metadata: `description`, `speed`, numeric
+`cost.input` and `cost.output`, and the supported `thinkingLevels`. They are
+matched by exact `provider` and `modelId`; the runtime catalog remains the
+source of truth and an unknown model is never fabricated. The settings key
+`layaRightSize.swingThreshold` (default `0.6`, global or project) controls when a
+mismatch blocks: the gate compares the confidence mass of Laya's pick against
+the requested configuration's mass (its margin) and blocks when the margin meets
+the threshold. With no per-label probabilities the margin degrades to absolute
+confidence. `/settings` exposes the gate under Fleet: enabled flag, swing
+threshold, and a profile editor (add, delete, and per-profile text/toggle
+fields). `HUMMIN_LAYA_RIGHTSIZE=off` and
+`HUMMIN_LAYA_RIGHTSIZE_SWING` override the setting for one process.
+
+The selected child thinking level is passed through to `hummin -p`. A review can
+therefore identify a thinking-level or model-profile mismatch.
+A high-confidence mismatch pauses dispatch and reports the suggested real
+configuration plus a review ID; the parent may continue only with an explicit
+override reason tied to that review. A lower-confidence mismatch is advisory
+and the child runs with the requested configuration. If Laya is disabled,
+unavailable, times out, or returns an unusable answer, the review fails open and
+the child proceeds. The audit is recorded in `laya-gate.log`.
+
+This is a Hummin feature. Pi is the upstream project Hummin is built on; Pi's
+own model-selection documentation does not define this Laya review or the
+Hummin fleet capability metadata.
+
 The `monitor` tool runs a shell watch and delivers output without model polling:
 
 ```json
@@ -221,7 +271,7 @@ Sessions on the same machine (any terminals, any projects) can message each othe
 
 - `/context` breaks down the current prompt: system prompt and tools (estimated), conversation tokens (exact), cache-hit ratio, remaining window, and the compaction trigger line.
 - `/cost` totals the session by model with a served-locally ($0) vs cloud split.
-- `ask_user` asks structured multiple-choice questions through the TUI; non-interactive sessions default to the first choice.
+- `ask_user` asks structured multiple-choice questions through the TUI: the marked choice renders as `(recommended)`, free text is always available (select Other... or press tab and type inline; esc returns to the list), and non-interactive sessions default to the recommended choice.
 - `/lsp` runs a TypeScript language server when available (`typescript-language-server` on PATH): `lsp_diagnostics`, `lsp_definition`, `lsp_references`, `lsp_hover` tools with 1-based coordinates. Requires a `tsconfig.json` or `jsconfig.json` in the project.
 - `/cron` schedules wake-ups: `cron_create` with a daily `HH:MM` or `every:<minutes>` schedule runs `hummin -p <prompt>` detached in the entry's project directory. `HUMMIN_CRON=0` disables.
 - `/fleet` lists configured inference servers with Start/Stop/Restart; selecting an offline fleet model in `/model` offers to start its server first (`fleet.autoStart: true` skips the prompt).

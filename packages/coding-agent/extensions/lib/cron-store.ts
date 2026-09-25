@@ -3,6 +3,7 @@
 // Scheduler lock: broker-style mkdir lock with PID liveness (stale = takeover).
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { DispatchReceipt } from "./child-dispatch-review.ts";
 
 // ============================================================================
 // Types
@@ -15,6 +16,10 @@ export interface CronEntry {
 	cwd: string;
 	prompt: string;
 	model?: string;
+	thinking?: string;
+	reviewId?: string;
+	heldReason?: string;
+	receipt?: DispatchReceipt;
 	createdAt: number;
 	/** Epoch ms of the last spawn. */
 	lastRun?: number;
@@ -132,7 +137,7 @@ export function clearStaleQueued(entry: CronEntry, nowMs: number): CronEntry {
 }
 
 /** argv for a detached run child. Kept pure for tests. */
-export function childCommand(entry: Pick<CronEntry, "prompt" | "cwd" | "model">): {
+export function childCommand(entry: Pick<CronEntry, "prompt" | "cwd" | "model" | "thinking">): {
 	command: string;
 	args: string[];
 	cwd: string;
@@ -141,6 +146,7 @@ export function childCommand(entry: Pick<CronEntry, "prompt" | "cwd" | "model">)
 	const command = process.env.HUMMIN_CRON_BIN || "hummin";
 	const args = ["-p", entry.prompt, "--session-dir", entry.cwd];
 	if (entry.model) args.push("--model", entry.model);
+	if (entry.thinking) args.push("--thinking", entry.thinking);
 	return { command, args, cwd: entry.cwd, env: { HUMMIN_MEMORY: "0" } };
 }
 

@@ -228,7 +228,7 @@ describe("childCommand", () => {
 		expect(child.env.HUMMIN_MEMORY).toBe("0");
 	});
 	it("appends --model when set", () => {
-		const child = childCommand({ prompt: "p", cwd: "/tmp", model: "fast" });
-		expect(child.args.slice(-2)).toEqual(["--model", "fast"]);
+		const child = childCommand({ prompt: "p", cwd: "/tmp", model: "zai/glm-5.3", thinking: "high" });
+		expect(child.args.slice(-4)).toEqual(["--model", "zai/glm-5.3", "--thinking", "high"]);
 	});
 });

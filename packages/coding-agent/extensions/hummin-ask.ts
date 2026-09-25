@@ -15,8 +15,9 @@ export const CHOICE_MAX = 80;
 export const CHOICES_MIN = 2;
 export const CHOICES_MAX = 6;
 export const FREE_TEXT_LABEL = "Other...";
-export const QUESTION_HINT = "↑/↓ navigate · enter select · escape cancel · tab free-text";
+export const QUESTION_HINT = "↑/↓ navigate · enter select · tab free-text · esc cancel";
 export const QUESTION_HINT_PLAIN = "↑/↓ navigate · enter select · escape cancel";
+export const INPUT_HINT = "enter submit · esc back";
 
 export interface AskUserResult {
 	choice: string;
@@ -52,11 +53,21 @@ export function buildOptions(choices: readonly string[], allowFreeText: boolean)
 }
 
 /** Validate params up front so bad calls fail before any UI is shown. */
-export function validateAskParams(params: { question: string; choices: string[]; allowFreeText?: boolean }): {
+export function validateAskParams(params: {
 	question: string;
 	choices: string[];
-} {
-	return { question: normalizeQuestion(params.question), choices: normalizeChoices(params.choices) };
+	allowFreeText?: boolean;
+	recommended?: number;
+}): { question: string; choices: string[]; recommended?: number } {
+	const question = normalizeQuestion(params.question);
+	const choices = normalizeChoices(params.choices);
+	if (
+		params.recommended !== undefined &&
+		(!Number.isInteger(params.recommended) || params.recommended < 0 || params.recommended >= choices.length)
+	) {
+		throw new Error("ask_user: recommended must be a 0-based index into choices");
+	}
+	return { question, choices, recommended: params.recommended };
 }
 
 function result(choice: string, cancelled: boolean, notice?: string): AskUserResult {
@@ -78,7 +89,10 @@ class AskUserCallComponent implements Component {
 	private collapsedLine = "";
 	private expandedLines: string[] = [];
 
-	setArgs(theme: Theme, args: { question?: string; choices?: string[]; allowFreeText?: boolean } | undefined): void {
+	setArgs(
+		theme: Theme,
+		args: { question?: string; choices?: string[]; allowFreeText?: boolean; recommended?: number } | undefined,
+	): void {
 		const label = theme.fg("toolTitle", theme.bold(ASK_USER_LABEL));
 		const question = typeof args?.question === "string" ? args.question.replace(/\s+/g, " ").trim() : "";
 		if (!question) {
@@ -90,7 +104,8 @@ class AskUserCallComponent implements Component {
 		const lines = [`${label}  ${theme.fg("text", theme.bold(question))}`];
 		const choices = Array.isArray(args?.choices) ? args!.choices!.filter((c) => typeof c === "string") : [];
 		choices.forEach((choice, index) => {
-			lines.push(`  ${theme.fg("dim", `${index + 1}.`)} ${theme.fg("muted", choice)}`);
+			const recommended = index === args?.recommended ? ` ${theme.fg("dim", "(recommended)")}` : "";
+			lines.push(`  ${theme.fg("dim", `${index + 1}.`)} ${theme.fg("muted", choice)}${recommended}`);
 		});
 		if (args?.allowFreeText) lines.push(`  ${theme.fg("dim", FREE_TEXT_LABEL)}`);
 		this.expandedLines = lines;
@@ -110,11 +125,14 @@ class AskUserCallComponent implements Component {
  */
 export class QuestionComponent implements Component {
 	private selected = 0;
+	private inputMode = false;
+	private buffer = "";
 	private disposed = false;
 	private readonly options: readonly string[];
 	private readonly onAbort: () => void;
 	private readonly question: string;
 	private readonly allowFreeText: boolean;
+	private readonly recommended: number | undefined;
 	private readonly done: (picked: string | undefined) => void;
 	private readonly tui: TUI;
 	private readonly theme: Theme;
@@ -130,6 +148,7 @@ export class QuestionComponent implements Component {
 		allowFreeText: boolean,
 		done: (picked: string | undefined) => void,
 		signal: AbortSignal | undefined,
+		recommended?: number,
 	) {
 		this.tui = tui;
 		this.theme = theme;
@@ -137,6 +156,7 @@ export class QuestionComponent implements Component {
 		this.question = question;
 		this.options = options;
 		this.allowFreeText = allowFreeText;
+		this.recommended = recommended;
 		this.done = done;
 		this.signal = signal;
 		this.onAbort = () => this.finish(undefined);
@@ -154,16 +174,42 @@ export class QuestionComponent implements Component {
 
 	handleInput(data: string): void {
 		if (this.disposed) return;
+		if (this.inputMode) {
+			// Inline free-text editing: typing happens in place, no second screen.
+			if (this.kb.matches(data, "tui.select.cancel")) {
+				this.inputMode = false;
+				this.buffer = "";
+			} else if (this.kb.matches(data, "tui.select.confirm")) {
+				const text = this.buffer.trim();
+				if (text) {
+					this.finish(text);
+					return;
+				}
+			} else if (data === "\x7f" || data === "\b") {
+				this.buffer = [...this.buffer].slice(0, -1).join("");
+			} else {
+				for (const ch of data) if (ch >= " " && ch !== "\x7f") this.buffer += ch;
+			}
+			this.tui.requestRender();
+			return;
+		}
 		if (this.kb.matches(data, "tui.select.cancel")) {
 			this.finish(undefined);
 			return;
 		}
-		if (this.kb.matches(data, "tui.select.up"))
+		if (data === "\t" && this.allowFreeText) {
+			this.inputMode = true;
+		} else if (this.kb.matches(data, "tui.select.up"))
 			this.selected = (this.selected + this.options.length - 1) % this.options.length;
 		else if (this.kb.matches(data, "tui.select.down")) this.selected = (this.selected + 1) % this.options.length;
 		else if (this.kb.matches(data, "tui.select.confirm")) {
-			this.finish(this.options[this.selected]);
-			return;
+			const picked = this.options[this.selected];
+			if (picked === FREE_TEXT_LABEL) {
+				this.inputMode = true;
+			} else {
+				this.finish(picked);
+				return;
+			}
 		}
 		this.tui.requestRender();
 	}
@@ -189,10 +235,18 @@ export class QuestionComponent implements Component {
 			this.padLine(this.theme.fg("accent", this.theme.bold(this.question)), width),
 			this.padLine("", width),
 		];
+		if (this.inputMode) {
+			const text = this.buffer || this.theme.fg("dim", "type your answer…");
+			const cursor = this.theme.fg("accent", "▊");
+			lines.push(this.padLine(`${this.theme.fg("accent", "▸")} ${this.theme.fg("dim", "❯")} ${text}${cursor}`, width));
+			lines.push(this.padLine("", width), this.padLine(this.theme.fg("dim", INPUT_HINT), width), bottom);
+			return lines;
+		}
 		for (const [index, option] of this.options.entries()) {
 			const marker = index === this.selected ? this.theme.fg("accent", "▸") : " ";
 			const number = this.theme.fg("dim", `${index + 1}.`);
-			lines.push(this.padLine(`${marker} ${number} ${option}`, width));
+			const recommended = index === this.recommended ? ` ${this.theme.fg("dim", "(recommended)")}` : "";
+			lines.push(this.padLine(`${marker} ${number} ${option}${recommended}`, width));
 		}
 		lines.push(
 			this.padLine("", width),
@@ -230,20 +284,18 @@ export async function askInteractive(
 	allowFreeText: boolean,
 	ctx: ExtensionContext,
 	signal: AbortSignal | undefined,
+	recommended?: number,
 ): Promise<AskUserResult> {
 	const options = buildOptions(choices, allowFreeText);
 	const picked = await withAbort(
 		ctx.ui.custom<string | undefined>(
-			(tui, theme, kb, done) => new QuestionComponent(tui, theme, kb, question, options, allowFreeText, done, signal),
+			(tui, theme, kb, done) =>
+				new QuestionComponent(tui, theme, kb, question, options, allowFreeText, done, signal, recommended),
 		),
 		signal,
 	);
-	if (signal?.aborted || picked === undefined) return result("", true);
-	if (picked !== FREE_TEXT_LABEL) return result(picked, false);
-	const text = await withAbort(ctx.ui.input(question, "Type your answer", { signal }), signal);
-	const trimmed = (text ?? "").trim();
-	if (signal?.aborted || !trimmed) return result("", true);
-	return result(trimmed, false);
+	if (signal?.aborted || picked === undefined || picked === FREE_TEXT_LABEL) return result("", true);
+	return result(picked, false);
 }
 
 export default function humminAsk(pi: ExtensionAPI): void {
@@ -251,7 +303,7 @@ export default function humminAsk(pi: ExtensionAPI): void {
 		name: "ask_user",
 		label: "Ask User",
 		description:
-			"Ask the user a question with 2-6 explicit choices and return the picked answer. Use when a decision is genuinely the user's to make (ambiguous scope, destructive action, missing requirement). Set allowFreeText to also offer an open-form answer. Cancelled means the user declined to answer.",
+			"Ask the user a question with 2-6 explicit choices and return the picked answer. Use when a decision is genuinely the user's to make (ambiguous scope, destructive action, missing requirement). Mark your preferred option with recommended (0-based index) so the UI labels it '(recommended)'. The user can always pick Other... and type inline; set allowFreeText false to remove that option. Cancelled means the user declined to answer.",
 		promptSnippet: "ask_user: ask the user a multiple-choice question and return the answer",
 		parameters: Type.Object({
 			question: Type.String({ minLength: 1, maxLength: QUESTION_MAX, description: "The question to ask" }),
@@ -260,17 +312,21 @@ export default function humminAsk(pi: ExtensionAPI): void {
 				{ minItems: CHOICES_MIN, maxItems: CHOICES_MAX, description: "The answer options" },
 			),
 			allowFreeText: Type.Optional(
-				Type.Boolean({ description: "Also offer a free-form 'Other...' answer (default false)" }),
+				Type.Boolean({ description: "Offer a free-form 'Other...' answer typed inline (default true)" }),
+			),
+			recommended: Type.Optional(
+				Type.Number({ description: "0-based index of the choice you recommend; shown as '(recommended)'" }),
 			),
 		}),
 		async execute(_id, params, signal, _update, ctx) {
-			const { question, choices } = validateAskParams(params);
-			const allowFreeText = params.allowFreeText ?? false;
+			const { question, choices, recommended } = validateAskParams(params);
+			const allowFreeText = params.allowFreeText ?? true;
 			signal?.throwIfAborted();
 			if (ctx.mode !== "tui") {
-				return toolResult(result(choices[0], false, "non-interactive: defaulted to first choice"));
+				const fallback = choices[recommended ?? 0];
+				return toolResult(result(fallback, false, "non-interactive: defaulted to recommended choice"));
 			}
-			return toolResult(await askInteractive(question, choices, allowFreeText, ctx, signal));
+			return toolResult(await askInteractive(question, choices, allowFreeText, ctx, signal, recommended));
 		},
 
 		renderCall(args, theme, context) {

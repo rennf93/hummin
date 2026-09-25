@@ -29,29 +29,12 @@ import {
 	backgroundPanelAction,
 	dismissProcessJob,
 } from "./lib/processes.ts";
+import { prepareChildDispatch, resolveChildModel, type ThinkingLevel } from "./lib/child-dispatch-review.ts";
 
-export function resolveTaskModel(
-	requested: string | undefined,
-	ctx: Pick<ExtensionContext, "modelRegistry">,
-): Model<Api> {
-	const models = ctx.modelRegistry.getAvailable();
-	const selection = requested?.trim() || "fast";
-	let model: Model<Api> | undefined;
-	if (selection === "local") {
-		model = models.find((entry) => "humminHost" in entry && !("humminOffline" in entry && entry.humminOffline));
-	} else if (selection === "fast") {
-		model = models.find((entry) => entry.provider === "zai" && entry.id === "glm-5.3-flash");
-	} else {
-		const slash = selection.indexOf("/");
-		if (slash < 1) throw new Error("Use 'fast', 'local', or an explicit provider/model ID");
-		model = models.find(
-			(entry) => entry.provider === selection.slice(0, slash) && entry.id === selection.slice(slash + 1),
-		);
-	}
-	if (!model) throw new Error(`No configured, available model for ${selection}. Select an explicit provider/model.`);
-	if ("humminOffline" in model && model.humminOffline)
-		throw new Error("Selected model is offline. Start its server first.");
-	return model;
+export function resolveTaskModel(requested: string | undefined, ctx: Pick<ExtensionContext, "modelRegistry">): Model<Api> {
+	const model = resolveChildModel(requested, ctx);
+	if (!model) throw new Error(`No configured, available model for ${requested ?? "fast"}`);
+	return model as Model<Api>;
 }
 
 // ============================================================================
@@ -445,6 +428,9 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 					description: "fast (cloud default), local (first online fleet model), or exact provider/model",
 				}),
 			),
+			thinking: Type.Optional(Type.String({ description: "Thinking level for the child (off, minimal, low, medium, high, xhigh, max)." })),
+			reviewId: Type.Optional(Type.String({ description: "Exact Laya dispatch review ID to accept." })),
+			overrideReason: Type.Optional(Type.String({ description: "Reasoned override for the exact Laya dispatch review." })),
 			timeout_sec: Type.Optional(Type.Number({ minimum: 1, maximum: 86400 })),
 			background: Type.Optional(Type.Boolean()),
 		}),
@@ -472,14 +458,26 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 			};
 		},
 		async execute(_id, params, signal, _update, ctx) {
-			const model = resolveTaskModel(params.model, ctx);
 			const cwd = resolve(ctx.cwd, params.cwd ?? ".");
 			if (!statSync(cwd).isDirectory()) throw new Error(`Not a directory: ${cwd}`);
+			const review = await prepareChildDispatch({
+				kind: "task",
+				prompt: params.prompt,
+				cwd,
+				model: params.model?.trim() || undefined,
+				thinking: params.thinking?.trim() as ThinkingLevel | undefined,
+				reviewId: params.reviewId,
+				overrideReason: params.overrideReason,
+			}, { modelRegistry: ctx.modelRegistry }, { agentDir: getAgentDir() });
+			if (review.action === "block") throw new Error(review.reason ?? `Dispatch held for review ${review.reviewId ?? "unknown"}`);
+			if (review.action === "advisory") ctx.ui?.notify?.(review.reason ?? "Laya dispatch advisory", "warning");
+			const model = resolveTaskModel(`${review.configuration.provider}/${review.configuration.modelId}`, ctx);
+			const thinking = review.configuration.thinking;
 			const summary = params.prompt.replace(/\s+/g, " ").trim();
 			const what = summary.length > 72 ? `${summary.slice(0, 72)}…` : summary || "(empty prompt)";
 			const job = manager.start({
 				command: "hummin",
-				args: ["-p", params.prompt, "--provider", model.provider, "--model", model.id, "--thinking", "off"],
+				args: ["-p", params.prompt, "--provider", model.provider, "--model", model.id, "--thinking", thinking],
 				cwd,
 				kind: "task",
 				label: `"${what}" · ${model.provider}/${model.id}`,

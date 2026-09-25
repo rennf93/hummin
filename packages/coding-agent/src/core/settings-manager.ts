@@ -130,8 +130,16 @@ export interface FleetServerSettings {
 	engine?: "colibri" | "llamacpp"; // colibri = the external container engine (github.com/JustVugg/colibri), like llamacpp
 	/** launchd service label, or docker compose service / container name */
 	target: string;
-	/** staged models this server serves (picker catalog fill-in while the server is off) */
-	models?: Array<{ id: string; contextWindow: number }>;
+	/** staged models this server serves (picker catalog fill-in while the server is off). `capability` tags the model on its provider's rung for the laya right-size gate (optional; untagged = the gate fails open) */
+	models?: Array<{
+		id: string;
+		contextWindow: number;
+		capability?: {
+			tier: "base" | "pro" | "max";
+			speed?: "fast" | "normal" | "slow";
+			thinking?: "off" | "limited" | "extended";
+		};
+	}>;
 }
 
 /** hummin: launchd control endpoints for kind "launchd" fleet servers */
@@ -198,6 +206,11 @@ export function parseStatuslineSegments(value: unknown): string[] {
 }
 
 export interface Settings {
+	layaRightSize?: {
+		enabled?: boolean;
+		swingThreshold?: number;
+		profiles?: Array<Record<string, unknown>>;
+	};
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
 	defaultModel?: string;
@@ -335,6 +348,49 @@ function resolveLayaThreshold(envRaw: string | undefined, stored: number | undef
 		if (fromEnv !== undefined) return fromEnv;
 	}
 	return clamp(stored) ?? fallback;
+}
+
+/**
+ * hummin laya: model right-size gate config. Env `HUMMIN_LAYA_RIGHTSIZE` (0 or
+ * off disables the gate) > `layaRightSize.swingThreshold` (project > global) >
+ * defaults (enabled: true, swing 0.6). The swing threshold is clamped
+ * to 0..1; the enabled flag accepts 0/"0"/off/false to disable.
+ */
+type LayaRightSizeSettings = NonNullable<Settings["layaRightSize"]>;
+
+function resolveLayaRightSizeConfig(
+	env: Readonly<Record<string, string | undefined>>,
+	globalRaw: unknown,
+	projectRaw: unknown,
+): { enabled: boolean; swingThreshold: number; profiles: Array<Record<string, unknown>> } {
+	const rawEnabled = env.HUMMIN_LAYA_RIGHTSIZE?.trim().toLowerCase();
+	const enabled = rawEnabled === undefined || !["0", "off", "false"].includes(rawEnabled);
+	const projectValue =
+		typeof projectRaw === "object" && projectRaw !== null
+			? (projectRaw as { layaRightSize?: { swingThreshold?: unknown } }).layaRightSize?.swingThreshold
+			: undefined;
+	const globalValue =
+		typeof globalRaw === "object" && globalRaw !== null
+			? (globalRaw as { layaRightSize?: { swingThreshold?: unknown } }).layaRightSize?.swingThreshold
+			: undefined;
+	// project > global, then env > effective value > default (0.6).
+	const swing = resolveLayaThreshold(
+		env.HUMMIN_LAYA_RIGHTSIZE_SWING,
+		(projectValue ?? globalValue) as number | undefined,
+		0.6,
+	);
+	const projectProfiles =
+		typeof projectRaw === "object" && projectRaw !== null
+			? (projectRaw as { layaRightSize?: { profiles?: unknown } }).layaRightSize?.profiles
+			: undefined;
+	const globalProfiles =
+		typeof globalRaw === "object" && globalRaw !== null
+			? (globalRaw as { layaRightSize?: { profiles?: unknown } }).layaRightSize?.profiles
+			: undefined;
+	const profiles = Array.isArray(projectProfiles ?? globalProfiles)
+		? ((projectProfiles ?? globalProfiles) as Array<Record<string, unknown>>)
+		: [];
+	return { enabled, swingThreshold: swing, profiles };
 }
 
 export type SettingsScope = "global" | "project";
@@ -1289,6 +1345,76 @@ export class SettingsManager {
 	 * typo can neither weld the gate shut nor silently open it. */
 	getLayaGateThreshold(): number {
 		return resolveLayaThreshold(process.env.HUMMIN_LAYA_GATE_THRESHOLD, this.settings.layaGateThreshold, 0.75);
+	}
+
+	/** hummin laya: model right-size gate config. Env > project > global > defaults. */
+	getLayaRightSizeConfig(): { enabled: boolean; swingThreshold: number; profiles: Array<Record<string, unknown>> } {
+		return resolveLayaRightSizeConfig(process.env, this.settings, this.projectSettings);
+	}
+
+	/** hummin laya: stored enabled flag (env may still override at gate time). */
+	getLayaRightSizeEnabled(): boolean {
+		return this.settings.layaRightSize?.enabled ?? true;
+	}
+
+	setLayaRightSizeEnabled(enabled: boolean, scope: "global" | "project" = "global"): void {
+		this.setLayaRightSize((settings) => {
+			settings.enabled = enabled;
+		}, scope);
+	}
+
+	/** hummin laya: stored swing threshold (env may still override at gate time). */
+	getLayaRightSizeSwingThreshold(): number {
+		const value = this.settings.layaRightSize?.swingThreshold;
+		return typeof value === "number" && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0.6;
+	}
+
+	setLayaRightSizeSwingThreshold(threshold: number, scope: "global" | "project" = "global"): void {
+		this.setLayaRightSize((settings) => {
+			settings.swingThreshold = threshold;
+		}, scope);
+	}
+
+	/** hummin laya: stored model profiles (descriptive metadata for the review). */
+	getLayaRightSizeProfiles(): Array<Record<string, unknown>> {
+		return Array.isArray(this.settings.layaRightSize?.profiles)
+			? (this.settings.layaRightSize.profiles as Array<Record<string, unknown>>)
+			: [];
+	}
+
+	/** hummin laya: replace the model profiles; validates the minimal shape. */
+	setLayaRightSizeProfiles(profiles: unknown, scope: "global" | "project" = "global"): void {
+		if (!Array.isArray(profiles)) throw new Error("profiles must be a JSON array");
+		for (const profile of profiles) {
+			const entry = profile as { provider?: unknown; modelId?: unknown } | null;
+			if (
+				typeof entry !== "object" ||
+				entry === null ||
+				typeof entry.provider !== "string" ||
+				!entry.provider.trim() ||
+				typeof entry.modelId !== "string" ||
+				!entry.modelId.trim()
+			) {
+				throw new Error("each profile needs non-empty provider and modelId strings");
+			}
+		}
+		this.setLayaRightSize((settings) => {
+			settings.profiles = profiles as Array<Record<string, unknown>>;
+		}, scope);
+	}
+
+	private setLayaRightSize(mutate: (settings: LayaRightSizeSettings) => void, scope: "global" | "project"): void {
+		if (scope === "project") {
+			this.updateProjectSettings("layaRightSize", (settings) => {
+				settings.layaRightSize ??= {};
+				mutate(settings.layaRightSize);
+			});
+			return;
+		}
+		this.globalSettings.layaRightSize ??= {};
+		mutate(this.globalSettings.layaRightSize);
+		this.markModified("layaRightSize");
+		this.save();
 	}
 
 	getLayaSteerThreshold(): number {

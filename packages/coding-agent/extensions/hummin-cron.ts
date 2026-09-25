@@ -4,7 +4,7 @@
 // with a notice.
 import { type ChildProcess, spawn } from "node:child_process";
 import { join } from "node:path";
-import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
 	acquireSchedulerLock,
@@ -22,6 +22,7 @@ import {
 	upsertEntry,
 	writeCronStore,
 } from "./lib/cron-store.ts";
+import { prepareChildDispatch, type ChildDispatchOptions, type ThinkingLevel } from "./lib/child-dispatch-review.ts";
 
 const DISABLED = process.env.HUMMIN_CRON === "0";
 const CRON_DISABLED_NOTICE = "cron is disabled (HUMMIN_CRON=0)";
@@ -62,14 +63,47 @@ export function formatCronTable(entries: readonly CronEntry[], nowMs: number): s
  * record lastRun/lastExit. Safe to call from any session; only the lock holder
  * acts, so one scheduler runs at a time across sessions.
  */
-export async function runSchedulerPass(dir: string, nowMs: number): Promise<string[]> {
+export interface SchedulerContext extends Pick<ExtensionContext, "modelRegistry"> {
+	notify?: (message: string, level?: "info" | "warning" | "error") => void;
+	reviewOptions?: ChildDispatchOptions;
+}
+
+export async function runSchedulerPass(dir: string, nowMs: number, context?: SchedulerContext): Promise<string[]> {
 	if (!acquireSchedulerLock(dir)) return [];
 	try {
 		const store = readCronStore(dir);
 		const spawned: string[] = [];
 		const children = new Map<number, ChildProcess>();
 		for (const entry of dueEntries(store.entries, nowMs)) {
-			const { command, args, cwd, env } = childCommand(entry);
+			let effective = entry;
+			if (context) {
+				const review = await prepareChildDispatch({
+					kind: "cron",
+					prompt: entry.prompt,
+					cwd: entry.cwd,
+					model: entry.model,
+					thinking: entry.thinking as ThinkingLevel | undefined,
+					reviewId: entry.reviewId,
+					receipt: entry.receipt,
+				}, context, context.reviewOptions);
+				if (review.action === "block") {
+					const held = { ...entry, heldReason: review.reason, reviewId: review.reviewId };
+					upsertEntry(dir, held);
+					const message = `${entry.name}: held for dispatch review ${review.reviewId ?? "unknown"}: ${review.reason ?? "review required"}`;
+					spawned.push(message);
+					context.notify?.(message, "warning");
+					continue;
+				}
+				effective = {
+					...entry,
+					model: `${review.configuration.provider}/${review.configuration.modelId}`,
+					thinking: review.configuration.thinking,
+					reviewId: review.reviewId,
+					receipt: review.receipt,
+					heldReason: undefined,
+				};
+			}
+			const { command, args, cwd, env } = childCommand(effective);
 			let child;
 			try {
 				child = spawn(command, args, { cwd, env: { ...process.env, ...env }, detached: true, stdio: "ignore" });
@@ -88,7 +122,7 @@ export async function runSchedulerPass(dir: string, nowMs: number): Promise<stri
 				children.delete(pid);
 				void recordExit(dir, entry.name, pid, code);
 			});
-			upsertEntry(dir, { ...entry, lastRun: nowMs, lastPid: pid, queuedSince: nowMs, lastExit: undefined });
+			upsertEntry(dir, { ...effective, lastRun: nowMs, lastPid: pid, queuedSince: nowMs, lastExit: undefined });
 			spawned.push(`${entry.name}: spawned pid ${pid}`);
 		}
 		return spawned;
@@ -117,10 +151,11 @@ export default function humminCron(pi: ExtensionAPI): void {
 	const dir = join(getAgentDir(), "cron");
 	let passInFlight = false;
 
-	const runPass = () => {
+	const runPass = (ctx?: ExtensionContext) => {
 		if (DISABLED || passInFlight) return;
 		passInFlight = true;
-		void runSchedulerPass(dir, Date.now())
+		const reviewContext = ctx ? { modelRegistry: ctx.modelRegistry, notify: (message: string, level?: "info" | "warning" | "error") => ctx.ui?.notify?.(message, level === "warning" ? "warning" : "info") } : undefined;
+		void runSchedulerPass(dir, Date.now(), reviewContext)
 			.catch(() => {
 				// scheduler failures must never break the session
 			})
@@ -129,8 +164,8 @@ export default function humminCron(pi: ExtensionAPI): void {
 			});
 	};
 
-	pi.on("session_start", () => runPass());
-	pi.on("agent_end", () => runPass());
+	pi.on("session_start", (_event, ctx) => runPass(ctx));
+	pi.on("agent_end", (_event, ctx) => runPass(ctx));
 
 	const disabledResult = () => ({
 		content: [{ type: "text" as const, text: CRON_DISABLED_NOTICE }],
@@ -149,18 +184,36 @@ export default function humminCron(pi: ExtensionAPI): void {
 			prompt: Type.String({ minLength: 1, maxLength: 2000 }),
 			cwd: Type.Optional(Type.String({ description: "Working directory for the run (default: current)" })),
 			model: Type.Optional(Type.String({ description: 'Model for the run (default "fast")' })),
+			thinking: Type.Optional(Type.String({ description: "Thinking level for the run." })),
+			reviewId: Type.Optional(Type.String({ description: "Exact Laya dispatch review ID to accept." })),
+			overrideReason: Type.Optional(Type.String({ description: "Reasoned override for the exact Laya dispatch review." })),
 		}),
 		async execute(_id, params, _signal, _update, ctx) {
 			if (DISABLED) return disabledResult();
 			if (!isValidCronName(params.name)) throw new Error("cron name must match [a-z0-9-] (1-64 chars)");
 			const schedule = parseSchedule(params.schedule); // throws actionable error
 			if (getEntry(dir, params.name)) throw new Error(`cron entry "${params.name}" already exists (cron_delete it first)`);
+			const cwd = params.cwd?.trim() || ctx.cwd;
+			const review = await prepareChildDispatch({
+				kind: "cron",
+				prompt: params.prompt,
+				cwd,
+				model: params.model?.trim() || undefined,
+				thinking: params.thinking?.trim() as ThinkingLevel | undefined,
+				reviewId: params.reviewId,
+				overrideReason: params.overrideReason,
+			}, { modelRegistry: ctx.modelRegistry }, { agentDir: getAgentDir() });
+			if (review.action === "block") throw new Error(review.reason ?? `Dispatch held for review ${review.reviewId ?? "unknown"}`);
+			if (review.action === "advisory") ctx.ui?.notify?.(review.reason ?? "Laya dispatch advisory", "warning");
 			const entry: CronEntry = {
 				name: params.name,
 				schedule: params.schedule.trim(),
-				cwd: params.cwd?.trim() || ctx.cwd,
+				cwd,
 				prompt: params.prompt,
-				model: params.model?.trim() || undefined,
+				model: `${review.configuration.provider}/${review.configuration.modelId}`,
+				thinking: review.configuration.thinking,
+				reviewId: review.reviewId,
+				receipt: review.receipt,
 				createdAt: Date.now(),
 			};
 			upsertEntry(dir, entry);

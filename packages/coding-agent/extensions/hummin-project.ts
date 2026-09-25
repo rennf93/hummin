@@ -130,6 +130,8 @@ const ENV_OVERRIDES: EnvOverride[] = [
 	{ name: "HUMMIN_LAYA_STEER_THRESHOLD", overrides: "laya steer threshold (settings layaSteerThreshold)" },
 	{ name: "HUMMIN_LAYA_TRIAGE", overrides: "laya test-failure triage switch" },
 	{ name: "HUMMIN_LAYA_INTAKE", overrides: "laya lesson-intake gate switch" },
+	{ name: "HUMMIN_LAYA_RIGHTSIZE", overrides: "laya model right-size gate switch (task/cron_create)" },
+	{ name: "HUMMIN_LAYA_RIGHTSIZE_SWING", overrides: "laya right-size swing threshold (settings layaRightSize.swingThreshold)" },
 	{ name: "COLI_API_KEY", overrides: "laya credential", secret: true },
 ];
 

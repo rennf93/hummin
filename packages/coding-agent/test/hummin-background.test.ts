@@ -35,7 +35,11 @@ function load(extension: (pi: ExtensionAPI) => void) {
 		cwd,
 		isProjectTrusted: () => true,
 		hasPendingMessages: () => false,
-		modelRegistry: { getAvailable: () => [{ provider: "fleet-host", id: "Org/Model" }] },
+		modelRegistry: {
+			getAvailable: () => [
+				{ provider: "fleet-host", id: "Org/Model", reasoning: true, thinkingLevelMap: { high: "high" } },
+			],
+		},
 	} as unknown as ExtensionContext;
 	return { cwd, tools, sendMessage, ctx, shutdown: () => shutdown() };
 }
@@ -69,12 +73,34 @@ it("routes an actual child tool invocation and delivers its captured completion"
 	vi.stubEnv("PATH", `${cwd}:${process.env.PATH}`);
 	const result = await tools
 		.get("task")!
-		.execute("child", { prompt: "test", model: "fleet-host/Org/Model", background: true }, undefined, undefined, ctx);
+		.execute(
+			"child",
+			{ prompt: "test", model: "fleet-host/Org/Model", thinking: "high", background: true },
+			undefined,
+			undefined,
+			ctx,
+		);
 	expect(result.details).toHaveProperty("taskId");
 	await expect.poll(() => sendMessage.mock.calls.length).toBe(1);
 	const content = sendMessage.mock.calls[0][0].content;
 	expect(content).toContain('"--provider","fleet-host","--model","Org/Model"');
+	expect(content).toContain('"--thinking","high"');
 	expect(content).toContain('"memory":"0"');
+});
+
+it("prevents a child launch when the requested thinking configuration is unavailable", async () => {
+	const { tools, ctx } = load(subagentExtension);
+	await expect(
+		tools
+			.get("task")!
+			.execute(
+				"unsupported",
+				{ prompt: "test", model: "fleet-host/Org/Model", thinking: "xhigh" },
+				undefined,
+				undefined,
+				ctx,
+			),
+	).rejects.toThrow(/Unsupported thinking level/);
 });
 
 it("does not send completion messages into a replacement session after shutdown", async () => {

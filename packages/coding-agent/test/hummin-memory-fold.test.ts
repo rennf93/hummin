@@ -13,6 +13,7 @@ let memoryDirOriginal: string | undefined;
 let vaultDirOriginal: string | undefined;
 let pathOriginal: string | undefined;
 let workDir: string;
+let lastHumminArgsPath: string | undefined;
 
 beforeEach(() => {
 	memoryDirOriginal = process.env.HUMMIN_MEMORY_DIR;
@@ -38,7 +39,8 @@ function stubHummin(output: string): void {
 	const bin = join(workDir, "bin");
 	mkdirSync(bin, { recursive: true });
 	const script = join(bin, "hummin");
-	writeFileSync(script, `#!/bin/sh\necho "${output}"\n`);
+	lastHumminArgsPath = join(workDir, "hummin-args");
+	writeFileSync(script, `#!/bin/sh\nprintf '%s\\n' "$@" > "${lastHumminArgsPath}"\necho "${output}"\n`);
 	chmodSync(script, 0o755);
 	process.env.PATH = `${bin}:${pathOriginal ?? ""}`;
 }
@@ -78,6 +80,7 @@ test("fold mode runs the stubbed model call, appends fold.log, releases the lock
 	expect(runWorker("fold", jobPath)).toBe(0);
 	const log = readFileSync(join(vault, "fold.log"), "utf8");
 	expect(log).toContain("fake fold output");
+	expect(readFileSync(lastHumminArgsPath!, "utf8").split("\n")).toEqual(expect.arrayContaining(["--thinking", "low"]));
 	expect(existsSync(join(vault, ".memory-fold.lock"))).toBe(false);
 	expect(existsSync(jobPath)).toBe(false);
 });

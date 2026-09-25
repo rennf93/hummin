@@ -161,6 +161,10 @@ export interface SettingsConfig {
 	memoryModelId: string;
 	localInstances: string[];
 	fleetAutoStart: boolean;
+	layaRightSizeEnabled: boolean;
+	layaRightSizeSwingThreshold: number;
+	layaRightSizeProfileCount: number;
+	layaRightSizeProfilesJson: string;
 	editorMode: "default" | "vim";
 	externalEditor: string;
 	websocketConnectTimeoutMs: number | undefined;
@@ -220,6 +224,9 @@ export interface SettingsCallbacks {
 	onMemoryModelIdChange: (modelId: string) => void;
 	onLocalInstancesChange: (instances: string[]) => void;
 	onFleetAutoStartChange: (enabled: boolean) => void;
+	onLayaRightSizeEnabledChange: (enabled: boolean) => void;
+	onLayaRightSizeSwingThresholdChange: (threshold: number) => void;
+	onLayaRightSizeProfilesChange: (profilesJson: string) => void;
 	onEditorModeChange: (mode: "default" | "vim") => void;
 	onExternalEditorChange: (command: string) => void;
 	onWebSocketConnectTimeoutMsChange: (timeoutMs: number | undefined) => void;
@@ -542,10 +549,12 @@ class ThemeSubmenu extends Container {
 
 /**
  * Free-text submenu: input pre-filled with the current value.
- * Enter saves, Esc cancels.
+ * Enter saves, Esc cancels. An optional validator keeps the submenu open with an
+ * inline error when the value is not saveable.
  */
 class TextInputSubmenu extends Container {
 	private input: Input;
+	private error: string | undefined;
 
 	constructor(
 		title: string,
@@ -554,6 +563,7 @@ class TextInputSubmenu extends Container {
 		placeholder: string,
 		onSave: (value: string) => void,
 		onCancel: () => void,
+		validate?: (value: string) => string | undefined,
 	) {
 		super();
 		this.addChild(new Text(theme.bold(theme.fg("accent", title)), 0, 0));
@@ -564,7 +574,16 @@ class TextInputSubmenu extends Container {
 		this.addChild(new Spacer(1));
 		this.input = new Input({ prompt: "> ", placeholder });
 		this.input.setValue(initialValue);
-		this.input.onSubmit = (value) => onSave(value.trim());
+		this.input.onSubmit = (value) => {
+			const trimmed = value.trim();
+			const problem = validate?.(trimmed);
+			if (problem) {
+				this.error = problem;
+				return;
+			}
+			this.error = undefined;
+			onSave(trimmed);
+		};
 		this.input.onEscape = () => onCancel();
 		this.addChild(this.input);
 		this.addChild(new Spacer(1));
@@ -573,6 +592,246 @@ class TextInputSubmenu extends Container {
 
 	handleInput(data: string): void {
 		this.input.handleInput(data);
+	}
+
+	render(width: number): string[] {
+		const lines = super.render(width);
+		if (this.error) lines.splice(lines.length - 1, 0, theme.fg("error", `  ${this.error}`));
+		return lines;
+	}
+}
+
+/** A laya right-size model profile: identity plus optional review metadata. */
+interface LayaProfile extends Record<string, unknown> {
+	provider: string;
+	modelId: string;
+	description?: string;
+	speed?: string;
+	thinkingLevels?: string[];
+	cost?: { input?: number; output?: number };
+}
+
+const LAYA_SPEED_VALUES = ["—", "fast", "normal", "slow"];
+const LAYA_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/** Parse and shape-check the stored profiles JSON. Throws with a user-facing message. */
+function parseLayaProfiles(json: string): LayaProfile[] {
+	const parsed: unknown = JSON.parse(json);
+	if (!Array.isArray(parsed)) throw new Error("profiles must be a JSON array");
+	return parsed.map((entry) => {
+		const profile = entry as LayaProfile;
+		if (
+			typeof profile?.provider !== "string" ||
+			!profile.provider.trim() ||
+			typeof profile?.modelId !== "string" ||
+			!profile.modelId.trim()
+		) {
+			throw new Error("each profile needs non-empty provider and modelId strings");
+		}
+		return profile;
+	});
+}
+
+/** Field editor for one profile: named rows, text or toggle, delete action. */
+class ProfileFieldsSubmenu extends Container {
+	private settingsList!: SettingsList;
+	private readonly profile: LayaProfile;
+	private readonly onChanged: () => void;
+	private readonly onDelete: () => void;
+	private readonly onBack: () => void;
+
+	constructor(profile: LayaProfile, onChanged: () => void, onDelete: () => void, onBack: () => void) {
+		super();
+		this.profile = profile;
+		this.onChanged = onChanged;
+		this.onDelete = onDelete;
+		this.onBack = onBack;
+		this.rebuild();
+	}
+
+	private rebuild(): void {
+		this.clear();
+		this.addChild(new Text(theme.bold(theme.fg("accent", `${this.profile.provider}/${this.profile.modelId}`)), 0, 0));
+		this.addChild(new Spacer(1));
+		const profile = this.profile;
+		const required = (value: string) => (value.trim() ? undefined : "required");
+		const nonNegativeNumber = (value: string) =>
+			value === "" || (Number.isFinite(Number(value)) && Number(value) >= 0) ? undefined : "non-negative number";
+		const textField = (
+			id: string,
+			label: string,
+			current: string,
+			validate: ((value: string) => string | undefined) | undefined,
+			save: (value: string) => void,
+		): SettingItem => ({
+			id,
+			label,
+			currentValue: current,
+			submenu: (_current: string, done: (selectedValue?: string) => void) =>
+				new TextInputSubmenu(
+					label,
+					"",
+					current,
+					"",
+					(value) => {
+						save(value);
+						this.onChanged();
+						done(value);
+					},
+					() => done(),
+					validate,
+				),
+		});
+		const setCost = (key: "input" | "output", value: string): void => {
+			profile.cost ??= {};
+			if (value === "") delete profile.cost[key];
+			else profile.cost[key] = Number(value);
+			if (profile.cost.input === undefined && profile.cost.output === undefined) delete profile.cost;
+		};
+		const items: SettingItem[] = [
+			textField("provider", "Provider", profile.provider, required, (value) => {
+				profile.provider = value;
+			}),
+			textField("modelId", "Model id", profile.modelId, required, (value) => {
+				profile.modelId = value;
+			}),
+			textField("description", "Description", profile.description ?? "", undefined, (value) => {
+				if (value) profile.description = value;
+				else delete profile.description;
+			}),
+			{
+				id: "speed",
+				label: "Speed",
+				description: "Serving-latency hint for the review (how fast the model answers), not thinking depth",
+				currentValue: profile.speed ?? "—",
+				values: LAYA_SPEED_VALUES,
+			},
+		];
+		items.push({ id: "thinking-heading", label: "Thinking levels", heading: true, currentValue: "" });
+		for (const level of LAYA_THINKING_LEVELS) {
+			items.push({
+				id: `thinking-${level}`,
+				label: level,
+				description: "Whether the review may recommend this thinking depth for this model",
+				currentValue: Array.isArray(profile.thinkingLevels) && profile.thinkingLevels.includes(level) ? "on" : "—",
+				values: ["—", "on"],
+			});
+		}
+		items.push({ id: "cost-heading", label: "Cost ($/M)", heading: true, currentValue: "" });
+		items.push(
+			textField("cost-input", "Cost input", profile.cost?.input?.toString() ?? "", nonNegativeNumber, (value) => {
+				setCost("input", value);
+			}),
+			textField("cost-output", "Cost output", profile.cost?.output?.toString() ?? "", nonNegativeNumber, (value) => {
+				setCost("output", value);
+			}),
+			{
+				id: "delete",
+				label: "Delete this profile",
+				description: "Remove it immediately and return to the profile list",
+				currentValue: "",
+				activate: () => this.onDelete(),
+			},
+		);
+		this.settingsList = new SettingsList(
+			items,
+			Math.min(items.length, 10),
+			getSettingsListTheme(),
+			(id, newValue) => {
+				if (id === "speed") {
+					if (newValue === "—") delete profile.speed;
+					else profile.speed = newValue;
+					this.onChanged();
+					return;
+				}
+				if (id.startsWith("thinking-")) {
+					const level = id.slice("thinking-".length);
+					const levels = Array.isArray(profile.thinkingLevels)
+						? new Set(profile.thinkingLevels)
+						: new Set<string>();
+					if (newValue === "on") levels.add(level);
+					else levels.delete(level);
+					if (levels.size === 0) delete profile.thinkingLevels;
+					else profile.thinkingLevels = LAYA_THINKING_LEVELS.filter((entry) => levels.has(entry));
+					this.onChanged();
+				}
+			},
+			this.onBack,
+		);
+		this.addChild(this.settingsList);
+		this.addChild(new Spacer(1));
+		this.addChild(new Text(theme.fg("dim", "  Enter edit · Esc back"), 0, 0));
+	}
+
+	handleInput(data: string): void {
+		this.settingsList.handleInput(data);
+	}
+}
+
+/** Profiles screen: one row per profile plus an add action; Esc returns. */
+class LayaProfilesSubmenu extends Container {
+	private settingsList!: SettingsList;
+	private readonly profiles: LayaProfile[];
+	private readonly persist: (profiles: LayaProfile[]) => void;
+	private readonly onCancel: () => void;
+
+	constructor(profiles: LayaProfile[], persist: (profiles: LayaProfile[]) => void, onCancel: () => void) {
+		super();
+		this.profiles = profiles;
+		this.persist = persist;
+		this.onCancel = onCancel;
+		this.rebuild();
+	}
+
+	private rebuild(): void {
+		this.clear();
+		this.addChild(new Text(theme.bold(theme.fg("accent", "Laya model profiles")), 0, 0));
+		this.addChild(new Text(theme.fg("muted", "What the right-size review knows about each model"), 0, 0));
+		this.addChild(new Spacer(1));
+		const items: SettingItem[] = this.profiles.map((profile) => ({
+			id: `profile-${profile.provider}/${profile.modelId}`,
+			label: `${profile.provider}/${profile.modelId}`,
+			description: typeof profile.description === "string" ? profile.description : undefined,
+			currentValue: typeof profile.speed === "string" ? profile.speed : "",
+			submenu: (_current: string, done: (selectedValue?: string) => void) =>
+				new ProfileFieldsSubmenu(
+					profile,
+					() => this.persist(this.profiles),
+					() => {
+						const index = this.profiles.indexOf(profile);
+						if (index !== -1) this.profiles.splice(index, 1);
+						this.persist(this.profiles);
+						done();
+						this.rebuild();
+					},
+					() => done(),
+				),
+		}));
+		items.push({
+			id: "add-profile",
+			label: "Add profile",
+			description: "Append a placeholder profile, then edit its fields",
+			currentValue: "",
+			activate: () => {
+				this.profiles.push({ provider: "provider", modelId: "model-id" });
+				this.persist(this.profiles);
+				this.rebuild();
+			},
+		});
+		this.settingsList = new SettingsList(
+			items,
+			Math.min(items.length, 10),
+			getSettingsListTheme(),
+			() => {},
+			this.onCancel,
+		);
+		this.addChild(this.settingsList);
+		this.addChild(new Spacer(1));
+		this.addChild(new Text(theme.fg("dim", "  Enter edit · Esc back"), 0, 0));
+	}
+
+	handleInput(data: string): void {
+		this.settingsList.handleInput(data);
 	}
 }
 
@@ -988,6 +1247,42 @@ export class SettingsSelectorComponent extends Container {
 				currentValue: config.fleetAutoStart ? "true" : "false",
 				values: ["true", "false"],
 			},
+			{
+				id: "laya-right-size",
+				label: "Laya right-size gate",
+				description:
+					"Laya reviews child dispatches (task, cron) against the model catalog and holds confident mismatches for review. HUMMIN_LAYA_RIGHTSIZE=off takes precedence.",
+				currentValue: config.layaRightSizeEnabled ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "laya-swing-threshold",
+				label: "Laya swing threshold",
+				description:
+					"Confidence margin between Laya's pick and the requested model that turns a mismatch into a dispatch hold. HUMMIN_LAYA_RIGHTSIZE_SWING takes precedence.",
+				currentValue: String(config.layaRightSizeSwingThreshold),
+				values: ["0.25", "0.3", "0.35", "0.4", "0.45", "0.5", "0.6"],
+			},
+			{
+				id: "laya-profiles",
+				label: "Laya model profiles",
+				description:
+					"Per-model description/speed/cost metadata the right-size review sees. Enter to open the profile editor.",
+				currentValue: `${config.layaRightSizeProfileCount} configured`,
+				submenu: (_current: string, done: (selectedValue?: string) => void) => {
+					let profiles: LayaProfile[];
+					try {
+						profiles = parseLayaProfiles(config.layaRightSizeProfilesJson);
+					} catch {
+						profiles = [];
+					}
+					return new LayaProfilesSubmenu(
+						profiles,
+						(updated) => callbacks.onLayaRightSizeProfilesChange(JSON.stringify(updated)),
+						() => done(),
+					);
+				},
+			},
 		];
 
 		const editor: SettingItem[] = [
@@ -1306,6 +1601,12 @@ export class SettingsSelectorComponent extends Container {
 					break;
 				case "fleet-auto-start":
 					callbacks.onFleetAutoStartChange(newValue === "true");
+					break;
+				case "laya-right-size":
+					callbacks.onLayaRightSizeEnabledChange(newValue === "true");
+					break;
+				case "laya-swing-threshold":
+					callbacks.onLayaRightSizeSwingThresholdChange(Number(newValue));
 					break;
 				case "editor-mode":
 					callbacks.onEditorModeChange(newValue as "default" | "vim");

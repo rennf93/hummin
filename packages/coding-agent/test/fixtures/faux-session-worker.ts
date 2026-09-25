@@ -2,7 +2,8 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createStaticFacetLoader, defineFacet } from "@earendil-works/chord";
 import { AgentHarness, BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { createFauxCore, createModels, createProvider, fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { registerApiProvider } from "@earendil-works/pi-ai/compat";
 import { consumeInternalProcessRole } from "../../src/experimental/process.ts";
 import { runSessionWorkerWithHarness } from "../../src/experimental/session-worker.ts";
 import { KeyedProbe } from "./keyed-service.ts";
@@ -14,10 +15,24 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
 		if (options.provider !== "anthropic" || options.model !== "claude-sonnet-4-5") {
 			throw new Error(`Unexpected faux worker model: ${options.provider}/${options.model}`);
 		}
-		const faux = fauxProvider();
+		// createFauxCore + explicit registry registration instead of
+		// fauxProvider(): the composer chat path resolves streaming through the
+		// compat registry (getApiProvider(model.api)), and a bare fauxProvider()
+		// stamps a random api id that is never registered there, so turn 1
+		// failed with "No API provider registered for api: faux:<random>".
+		const faux = createFauxCore({});
 		faux.setResponses([fauxAssistantMessage("deterministic remote answer", { timestamp: 20 })]);
+		registerApiProvider({ api: faux.api, stream: faux.stream, streamSimple: faux.streamSimple });
 		const models = createModels();
-		models.setProvider(faux.provider);
+		models.setProvider(
+			createProvider({
+				id: faux.provider,
+				name: "Faux",
+				auth: { apiKey: { name: "Faux", resolve: async () => ({ auth: {} }) } },
+				models: faux.models,
+				api: { stream: faux.stream, streamSimple: faux.streamSimple },
+			}),
+		);
 		const harness = (
 			await AgentHarness.create(
 				{

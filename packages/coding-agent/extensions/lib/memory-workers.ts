@@ -16,6 +16,10 @@ export interface MemoryDistillJob {
 	tail: string;
 	provider: string;
 	modelId: string;
+	thinking: string;
+	receipt?: unknown;
+	reviewId?: string;
+	dispatchReason?: string;
 	project: string;
 	session: string;
 	vaultMode?: boolean;
@@ -31,6 +35,10 @@ export interface MemoryFoldJob {
 	vaultDir: string;
 	provider: string;
 	modelId: string;
+	thinking: string;
+	receipt?: unknown;
+	reviewId?: string;
+	dispatchReason?: string;
 	threshold?: number;
 	force?: boolean;
 	label?: string;
@@ -338,7 +346,7 @@ async function distill() {
 			"Session transcript (tail):",
 			job.tail || "",
 		].join("\n");
-		const result = spawnSync("hummin", ["-p", prompt, "--provider", job.provider, "--model", job.modelId, "--thinking", "low"], {
+		const result = spawnSync("hummin", ["-p", prompt, "--provider", job.provider, "--model", job.modelId, "--thinking", job.thinking || "low"], {
 			encoding: "utf8",
 			timeout: DISTILL_TIMEOUT_MS,
 			maxBuffer: CHILD_MAX_BUFFER,
@@ -417,7 +425,7 @@ function fold() {
 		const threshold = job.force ? 1 : Math.max(1, Number(job.threshold || 3));
 		if (count < threshold) return 0;
 		const prompt = "Fold the inbox lessons into the entity graph now, following AGENTS.md exactly. Inbox has " + count + " lesson(s).";
-		const result = spawnSync("hummin", ["-p", prompt, "--provider", job.provider, "--model", job.modelId, "--thinking", "low"], {
+		const result = spawnSync("hummin", ["-p", prompt, "--provider", job.provider, "--model", job.modelId, "--thinking", job.thinking || "low"], {
 			cwd: vaultDir,
 			encoding: "utf8",
 			timeout: FOLD_TIMEOUT_MS,

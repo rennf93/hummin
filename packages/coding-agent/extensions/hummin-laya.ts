@@ -18,6 +18,7 @@ import type { TextContent } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readLayaGateLines } from "./lib/friction.ts";
+import { registerChildDispatchReviewTool } from "./lib/child-dispatch-review.ts";
 
 const LAYA_URL = process.env.HUMMIN_LAYA_URL?.trim() || "http://127.0.0.1:9989/v1/systemone";
 /** Shared fleet key from the environment (exported in ~/.zshrc, same source as
@@ -42,12 +43,12 @@ interface QuestionInput {
 interface Answer {
 	type?: string;
 	choice?: string;
+	answer_confidence?: number;
 	score?: number;
 	noul?: number;
 	probabilities?: Record<string, number>;
 	legend?: Record<string, string>;
 	confidence?: number;
-	answer_confidence?: number;
 }
 
 interface LayaResponse {
@@ -101,6 +102,7 @@ export function layaGateThreshold(): number {
 export function layaSteerThreshold(): number {
 	return resolveThreshold("HUMMIN_LAYA_STEER_THRESHOLD", (s) => s.getLayaSteerThreshold?.(), STEER_DESTRUCTIVE_THRESHOLD);
 }
+
 const READ_ONLY_BASH =
 	/^\s*(ls|pwd|cat|head|tail|grep|rg|find|which|type|file|stat|du|df|wc|date|whoami|id|uname|hostname|uptime|ps|sort|uniq|cut|tr|awk|sed -n|diff|basename|dirname|realpath|readlink|true|false|test|\[|sleep|wait|printf|echo|env|printenv|locale|tput|column|paste|comm|join|xargs(?! .*(rm|mv|cp|chmod|chown|kill|sh|bash|zsh))|seq|yes|md5|shasum|sha1sum|sha256sum|base64|xxd|od|hexdump|node --version|node -v|python3? --version|npm (ls|outdated|view|run (build|check|lint|typecheck)|test|prefix|root|bin|config get)|npx --version|git (status|log|diff|show|branch|remote|tag|rev-parse|describe|ls-files|blame|shortlog|config --get|stash list)|gh (api|run (view|list|watch)|pr (view|list|diff|checks)|issue (view|list)|release (view|list)|status|auth status|repo view|browse)|launchctl (list|print)|brew (list|info|search|outdated)|curl -[a-zA-Z]*[sI]|curl(?! .*(-X (POST|PUT|DELETE|PATCH)|-d |--data|-T |--upload-file))(?: |$))\b/;
 
@@ -326,6 +328,7 @@ function triageState(command: string, resultText: string): string {
 }
 
 export default function humminLaya(pi: ExtensionAPI): void {
+	registerChildDispatchReviewTool(pi);
 	pi.registerTool({
 		name: "laya_decide",
 		label: "Laya Decide",
@@ -548,4 +551,13 @@ export default function humminLaya(pi: ExtensionAPI): void {
 			}
 		});
 	}
+
+	// Model right-size gate: child dispatches (task, cron_create, scheduled cron
+	// runs, memory distill/fold) are reviewed by the single call-site authority
+	// prepareChildDispatch() in ./lib/child-dispatch-review.ts, which consults
+	// Laya against the live model registry, holds strong disagreements behind a
+	// review receipt, and registers the child_dispatch_review resolution tool
+	// (see registerChildDispatchReviewTool above). This extension intentionally
+	// has no parallel tool_call gate here: two gating authorities would issue
+	// competing review receipts for the same dispatch.
 }

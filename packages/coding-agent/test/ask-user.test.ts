@@ -6,10 +6,12 @@ import {
 	CHOICES_MAX,
 	CHOICES_MIN,
 	FREE_TEXT_LABEL,
+	INPUT_HINT,
 	normalizeChoices,
 	normalizeQuestion,
 	QUESTION_HINT,
 	QUESTION_MAX,
+	QuestionComponent,
 	validateAskParams,
 } from "../extensions/hummin-ask.ts";
 
@@ -56,6 +58,13 @@ describe("ask_user helpers", () => {
 		expect(() => validateAskParams({ question: "q", choices: ["a", "a"] })).toThrow();
 		expect(() => validateAskParams({ question: "", choices: ["a", "b"] })).toThrow();
 	});
+
+	it("validates the recommended index", () => {
+		expect(validateAskParams({ question: "q", choices: ["a", "b"], recommended: 1 }).recommended).toBe(1);
+		expect(() => validateAskParams({ question: "q", choices: ["a", "b"], recommended: 2 })).toThrow();
+		expect(() => validateAskParams({ question: "q", choices: ["a", "b"], recommended: -1 })).toThrow();
+		expect(() => validateAskParams({ question: "q", choices: ["a", "b"], recommended: 0.5 })).toThrow();
+	});
 });
 
 // Minimal fakes matching the shapes hummin-ask consumes from pi-tui / ctx.ui.
@@ -85,6 +94,109 @@ function mockUi() {
 }
 
 const ctx = (ui: unknown) => ({ mode: "tui" as const, ui });
+
+/** Keybindings fake that maps the real terminal sequences to select actions. */
+const keyKb = {
+	matches: (data: string, action: string) =>
+		(action === "tui.select.confirm" && data === "\r") ||
+		(action === "tui.select.cancel" && data === "\x1b") ||
+		(action === "tui.select.up" && data === "\x1b[A") ||
+		(action === "tui.select.down" && data === "\x1b[B"),
+};
+
+function question(allowFreeText: boolean, picked: (value: string | undefined) => void, recommended?: number) {
+	const renders: string[][] = [];
+	const renderNow = () => renders.push(component.render(80));
+	const tui = { requestRender: () => renderNow() };
+	const component = new QuestionComponent(
+		tui as never,
+		fakeTheme as never,
+		keyKb as never,
+		"Q",
+		buildOptions(["a", "b"], allowFreeText),
+		allowFreeText,
+		picked,
+		undefined,
+		recommended,
+	);
+	renderNow();
+	return { component, renders };
+}
+
+describe("ask_user inline free-text editing", () => {
+	it("tab enters inline input, typed keys land in place, enter submits", () => {
+		let picked: string | undefined;
+		const { component, renders } = question(true, (value) => {
+			picked = value;
+		});
+		component.handleInput("\t");
+		component.handleInput("h");
+		component.handleInput("i");
+		const frame = renders.at(-1)!.join("\n");
+		expect(frame).toContain("hi▊");
+		expect(frame).toContain(INPUT_HINT);
+		component.handleInput("\r");
+		expect(picked).toBe("hi");
+	});
+
+	it("backspace edits and escape returns to the list without resolving", () => {
+		let picked: string | undefined;
+		const { component, renders } = question(true, (value) => {
+			picked = value;
+		});
+		component.handleInput("\t");
+		component.handleInput("hi");
+		component.handleInput("\x7f");
+		expect(renders.at(-1)!.join("\n")).toContain("h▊");
+		component.handleInput("\x1b");
+		expect(picked).toBeUndefined();
+		const list = renders.at(-1)!.join("\n");
+		expect(list).toContain(FREE_TEXT_LABEL);
+		expect(list).toContain(QUESTION_HINT);
+		component.handleInput("\r"); // first option, list mode again
+		expect(picked).toBe("a");
+	});
+
+	it("confirming Other... switches to inline input instead of a second screen", () => {
+		let picked: string | undefined;
+		const { component, renders } = question(true, (value) => {
+			picked = value;
+		});
+		component.handleInput("\x1b[B"); // down to b
+		component.handleInput("\x1b[B"); // down to Other...
+		component.handleInput("\r");
+		expect(renders.at(-1)!.join("\n")).toContain("type your answer…");
+		component.handleInput("maybe b");
+		component.handleInput("\r");
+		expect(picked).toBe("maybe b");
+	});
+
+	it("empty inline input does not submit", () => {
+		let picked: string | undefined;
+		const { component } = question(true, (value) => {
+			picked = value;
+		});
+		component.handleInput("\t");
+		component.handleInput("\r");
+		expect(picked).toBeUndefined();
+	});
+
+	it("renders the recommended marker on the marked choice", () => {
+		const { renders } = question(true, () => {}, 1);
+		const frame = renders[0]!.join("\n");
+		expect(frame).toContain("b (recommended)");
+		expect(frame).not.toContain("a (recommended)");
+	});
+
+	it("escape in list mode cancels the whole question", () => {
+		let picked: string | undefined | "unset" = "unset";
+		const { component } = question(false, (value) => {
+			picked = value;
+		});
+		component.handleInput("\x1b");
+		expect(picked).toBeUndefined();
+	});
+});
 
 describe("ask_user lifecycle", () => {
 	it("renders a bordered fleet-style panel", () => {

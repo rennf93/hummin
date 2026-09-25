@@ -47,10 +47,11 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, 
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { Type } from "typebox";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { getAgentDir, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { MEMORY_WORKER_SOURCE, type MemoryFoldJob } from "./lib/memory-workers.ts";
+import { prepareChildDispatch, type DispatchReceipt } from "./lib/child-dispatch-review.ts";
 
 const LESSON_MAX_WORDS = 120;
 
@@ -134,11 +135,41 @@ function ensureDistillWorker(): string {
 }
 
 /** Queue distillation for this session and run it in a detached worker. */
-function enqueueDistill(sessionFile: string, cwd: string, vaultMode: boolean): void {
+type MemoryDispatchContext = {
+	modelRegistry: { getAvailable: () => readonly Model<Api>[] };
+	ui?: { notify?: (message: string, type?: "info" | "warning" | "error") => void };
+	dispatch?: typeof prepareChildDispatch;
+	agentDir?: string;
+};
+
+function prepareMemoryDispatch(input: Parameters<typeof prepareChildDispatch>[0], ctx: MemoryDispatchContext): ReturnType<typeof prepareChildDispatch> {
+	// Memory distill/fold are background hygiene, so the review wait is held to
+	// 1.5s (vs the interactive 4s default) and fails open on timeout.
+	return (ctx.dispatch ?? prepareChildDispatch)(input, ctx, { agentDir: ctx.agentDir ?? agentDir(), layaTimeoutMs: 1500 });
+}
+
+export async function enqueueDistill(sessionFile: string, cwd: string, vaultMode: boolean, ctx: MemoryDispatchContext): Promise<void> {
 	const tail = readTranscriptTail(sessionFile, Number(process.env.HUMMIN_MEMORY_MAX_CHARS ?? 12000));
 	if (tail.length < 120) return; // trivial session, nothing to distill
 
 	const dir = memoryDir();
+	const requested = memoryModel();
+	const dispatch = await prepareMemoryDispatch(
+		{
+			kind: "memory-distill",
+			prompt: "Distill the finished coding-agent session transcript into one reusable lesson, or return NONE when it contains no durable lesson.",
+			cwd,
+			model: `${requested.provider}/${requested.modelId}`,
+			thinking: "low",
+		},
+		ctx,
+	);
+	if (dispatch.action === "block") {
+		// Nothing consumes a held distill job later, so no pending file is
+		// written: the hold lives in child-dispatch-reviews.json and this notice.
+		ctx.ui?.notify?.(`memory distillation held for dispatch review ${dispatch.reviewId ?? "unknown"}: ${dispatch.reason ?? "review required"}`, "warning");
+		return;
+	}
 	mkdirSync(join(dir, "pending"), { recursive: true, mode: 0o700 });
 	const pendingPath = join(dir, "pending", `${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
 	writeFileSync(
@@ -148,8 +179,12 @@ function enqueueDistill(sessionFile: string, cwd: string, vaultMode: boolean): v
 			sessionFile,
 			cwd,
 			tail,
-			provider: memoryModel().provider,
-			modelId: memoryModel().modelId,
+			provider: dispatch.configuration.provider,
+			modelId: dispatch.configuration.modelId,
+			thinking: dispatch.configuration.thinking,
+			receipt: dispatch.receipt as DispatchReceipt | undefined,
+			reviewId: dispatch.reviewId,
+			dispatchReason: dispatch.reason,
 			project: projectKey(cwd),
 			session: sessionFile.split("/").pop(),
 			vaultMode,
@@ -815,7 +850,7 @@ let cachedSettings: SettingsManager | undefined; // set by the extension's defau
  * distillation calls follow it, so the vault is managed by the same
  * provider/model as the session; the zai/glm-5.3-flash defaults are the
  * fallback when no model is selected yet (and the env vars can pin either). */
-let sessionModel: Model<any> | undefined;
+let sessionModel: Model<Api> | undefined;
 
 function memoryModel(): { provider: string; modelId: string } {
 	if (sessionModel) return { provider: sessionModel.provider, modelId: sessionModel.id };
@@ -880,7 +915,7 @@ export default function humminMemory(pi: ExtensionAPI): void {
 			category: "Memory/Vault",
 			handler: async (_args, ctx) => {
 				try {
-					ctx.ui.notify(await vaultFold("command"), "info");
+					ctx.ui.notify(await vaultFold("command", ctx), "info");
 				} catch (error) {
 					ctx.ui.notify(`vault: fold failed (${error instanceof Error ? error.message : String(error)})`, "error");
 				}
@@ -898,10 +933,10 @@ export default function humminMemory(pi: ExtensionAPI): void {
 			if (pending > 0 && ctx?.ui?.notify) {
 				ctx.ui.notify(`vault: ${pending} lesson(s) waiting to fold`, "info");
 			}
-			triggerAutoFold(dir, "session start");
+			void triggerAutoFold(dir, "session start", ctx);
 		});
-		pi.on("agent_end", async () => {
-			triggerAutoFold(ensureVault(), "agent_end");
+		pi.on("agent_end", async (_event, ctx) => {
+			await triggerAutoFold(ensureVault(), "agent_end", ctx);
 		});
 		pi.registerCommand("vault-canvas", {
 			description: "Render the vault entity graph as graph.canvas",
@@ -995,8 +1030,10 @@ export default function humminMemory(pi: ExtensionAPI): void {
 			const sessionFile = ctx.sessionManager.getSessionFile();
 			if (!sessionFile || alreadyProcessed(sessionFile)) return;
 			// Distillation runs in a detached worker; shutdown never blocks on
-			// the model call (fail-open: memory must never break shutdown).
-			enqueueDistill(sessionFile, cwd, settings.getMemoryMode() === "vault");
+			// the model call (fail-open: memory must never break shutdown). The
+			// dispatch review before it adds a bounded, fail-open wait of at
+			// most ~1.5s (prepareMemoryDispatch's layaTimeoutMs).
+			await enqueueDistill(sessionFile, cwd, settings.getMemoryMode() === "vault", ctx);
 		} catch {
 			// fail-open: memory must never block shutdown
 		}
@@ -1019,26 +1056,63 @@ export default function humminMemory(pi: ExtensionAPI): void {
  * on the model call. HUMMIN_MEMORY=0 in the child env or its shutdown
  * handler distills again, recursing without bound.
  */
-function enqueueFold(dir: string, label: string): void {
+export async function enqueueFold(dir: string, label: string, ctx: MemoryDispatchContext): Promise<boolean> {
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	const jobPath = join(dir, ".fold-job.json");
-	const { provider, modelId } = memoryModel();
-	const job: MemoryFoldJob = { mode: "fold", vaultDir: dir, provider, modelId, threshold: 1, force: true, label, pendingPath: jobPath };
+	const requested = memoryModel();
+	const dispatch = await prepareMemoryDispatch(
+		{
+			kind: "memory-fold",
+			prompt: "Fold the inbox lessons into the entity graph now, following AGENTS.md exactly.",
+			cwd: dir,
+			model: `${requested.provider}/${requested.modelId}`,
+			thinking: "low",
+		},
+		ctx,
+	);
+	const job: MemoryFoldJob = {
+		mode: "fold",
+		vaultDir: dir,
+		provider: dispatch.configuration.provider,
+		modelId: dispatch.configuration.modelId,
+		thinking: dispatch.configuration.thinking,
+		receipt: dispatch.receipt as DispatchReceipt | undefined,
+		reviewId: dispatch.reviewId,
+		dispatchReason: dispatch.reason,
+		threshold: 1,
+		force: true,
+		label,
+		pendingPath: jobPath,
+	};
 	writeFileSync(jobPath, JSON.stringify(job, null, 1), { mode: 0o600 });
+	if (dispatch.action === "block") {
+		ctx.ui?.notify?.(`memory fold held for dispatch review ${dispatch.reviewId ?? "unknown"}: ${dispatch.reason ?? "review required"}`, "warning");
+		return false;
+	}
 	const child = spawn(process.execPath, [ensureMemoryWorker(), "fold", jobPath], {
 		detached: true,
 		stdio: "ignore",
 		env: { ...process.env, HUMMIN_MEMORY: "0" },
 	});
 	child.unref();
+	return true;
 }
 
-async function vaultFold(label: string): Promise<string> {
+async function vaultFold(label: string, ctx: MemoryDispatchContext): Promise<string> {
 	const dir = ensureVault();
 	const inboxCount = inboxLessonCount(dir);
 	if (inboxCount === 0) return "vault: inbox is empty, nothing to fold";
-	enqueueFold(dir, label);
-	return `vault: folding ${inboxCount} lesson(s) in background (${label}); progress in ${join(dir, "fold.log")}`;
+	const started = await enqueueFold(dir, label, ctx);
+	return started
+		? `vault: folding ${inboxCount} lesson(s) in background (${label}); progress in ${join(dir, "fold.log")}`
+		: (() => {
+			try {
+				const pending = JSON.parse(readFileSync(join(dir, ".fold-job.json"), "utf8")) as { reviewId?: string; dispatchReason?: string };
+				return `vault: fold held for dispatch review ${pending.reviewId ?? "unknown"}: ${pending.dispatchReason ?? "review required"}; pending job retained in ${join(dir, ".fold-job.json")}`;
+			} catch {
+				return `vault: fold held for dispatch review; pending job retained in ${join(dir, ".fold-job.json")}`;
+			}
+		})();
 }
 
 function vaultDir(settings: SettingsManager | undefined): string {
@@ -1228,16 +1302,30 @@ function inboxLessonCount(dir: string): number {
 }
 
 /** Launch a fold pass as a detached child; output lands in <vault>/fold.log. */
-function triggerAutoFold(dir: string, label: string): boolean {
+export async function triggerAutoFold(dir: string, label: string, ctx: MemoryDispatchContext): Promise<boolean> {
 	if (AUTO_FOLD_THRESHOLD <= 0) return false;
 	const count = inboxLessonCount(dir);
 	if (count < AUTO_FOLD_THRESHOLD) return false;
-	const { provider, modelId } = memoryModel();
+	const requested = memoryModel();
+	const dispatch = await prepareMemoryDispatch(
+		{
+			kind: "memory-fold",
+			prompt: "Fold the inbox lessons into the entity graph now, following AGENTS.md exactly.",
+			cwd: dir,
+			model: `${requested.provider}/${requested.modelId}`,
+			thinking: "low",
+		},
+		ctx,
+	);
+	if (dispatch.action === "block") {
+		ctx.ui?.notify?.(`memory auto-fold held for dispatch review ${dispatch.reviewId ?? "unknown"}: ${dispatch.reason ?? "review required"}`, "warning");
+		return false;
+	}
 	const out = openSync(join(dir, "fold.log"), "a");
 	try {
 		const child = spawn(
 			"hummin",
-			["-p", `Fold the inbox lessons into the entity graph now, following AGENTS.md exactly. Inbox has ${count} lesson(s).`, "--provider", provider, "--model", modelId, "--thinking", "low"],
+			["-p", `Fold the inbox lessons into the entity graph now, following AGENTS.md exactly. Inbox has ${count} lesson(s).`, "--provider", dispatch.configuration.provider, "--model", dispatch.configuration.modelId, "--thinking", dispatch.configuration.thinking],
 			{
 				cwd: dir,
 				detached: true,
@@ -1252,4 +1340,3 @@ function triggerAutoFold(dir: string, label: string): boolean {
 	console.log(`vault: auto-folding ${count} lesson(s) in background (${label}); progress in fold.log`);
 	return true;
 }
-

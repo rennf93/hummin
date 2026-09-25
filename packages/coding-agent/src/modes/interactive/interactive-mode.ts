@@ -5221,6 +5221,10 @@ export class InteractiveMode {
 					memoryModelId: this.settingsManager.getMemoryModelId(),
 					localInstances: this.settingsManager.getLocalInstances(),
 					fleetAutoStart: this.settingsManager.getFleetAutoStart(),
+					layaRightSizeEnabled: this.settingsManager.getLayaRightSizeEnabled(),
+					layaRightSizeSwingThreshold: this.settingsManager.getLayaRightSizeSwingThreshold(),
+					layaRightSizeProfileCount: this.settingsManager.getLayaRightSizeProfiles().length,
+					layaRightSizeProfilesJson: JSON.stringify(this.settingsManager.getLayaRightSizeProfiles()),
 					editorMode: this.settingsManager.getEditorMode(),
 					externalEditor: this.settingsManager.getExternalEditorCommand(),
 					websocketConnectTimeoutMs: this.settingsManager.getWebSocketConnectTimeoutMs(),
@@ -5461,6 +5465,24 @@ export class InteractiveMode {
 					},
 					onFleetAutoStartChange: (enabled) => {
 						this.settingsManager.setFleetAutoStart(enabled);
+					},
+					onLayaRightSizeEnabledChange: (enabled) => {
+						this.settingsManager.setLayaRightSizeEnabled(enabled);
+					},
+					onLayaRightSizeSwingThresholdChange: (threshold) => {
+						this.settingsManager.setLayaRightSizeSwingThreshold(threshold);
+					},
+					onLayaRightSizeProfilesChange: (profilesJson) => {
+						try {
+							this.settingsManager.setLayaRightSizeProfiles(JSON.parse(profilesJson));
+							this.showStatus(
+								`Laya profiles: ${this.settingsManager.getLayaRightSizeProfiles().length} configured`,
+							);
+						} catch (error) {
+							this.showStatus(
+								`Invalid Laya profiles (not saved): ${error instanceof Error ? error.message : String(error)}`,
+							);
+						}
 					},
 					onEditorModeChange: (mode) => {
 						this.settingsManager.setEditorMode(mode);

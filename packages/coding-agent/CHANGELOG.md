@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Laya child-dispatch review for Hummin `task` and `cron_create` calls: it chooses among real provider/model/thinking configurations using profile descriptions, speed, and numeric costs, then blocks high-confidence mismatches for a review-tied override or emits a lower-confidence advisory.
+- `ask_user` marks the model's preferred choice with a dim `(recommended)` label via the new `recommended` (0-based index) parameter.
+- Child dispatch review records and audit lines now include the Laya decision confidence for allowed and advisory dispatches, so the swing threshold can be tuned from data.
+
+### Changed
+
+- The Laya right-size gate now blocks on the confidence margin between its pick and the requested configuration (falling back to absolute confidence when per-label probabilities are absent), instead of absolute confidence alone.
+- `/settings` surfaces the Laya right-size gate under Fleet: enabled flag, swing threshold, and a full profile editor (per-profile provider, model id, description, speed, thinking-level toggles, cost fields; add and delete).
+
+- `ask_user` free text is now always offered and typed inline in the question box (select Other... or press tab; enter submits, esc returns to the list) instead of opening a second input screen; `allowFreeText` defaults to true and non-interactive sessions default to the recommended choice.
+
 ## [1.2.0] - 2026-09-25
 
 ### Added
