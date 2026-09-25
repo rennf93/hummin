@@ -15,6 +15,10 @@
 
 - `ask_user` free text is now always offered and typed inline in the question box (select Other... or press tab; enter submits, esc returns to the list) instead of opening a second input screen; `allowFreeText` defaults to true and non-interactive sessions default to the recommended choice.
 
+### Fixed
+
+- The Laya bash gate rubric now explicitly scores non-destructive git writes (`git add`, `git commit`, `git checkout -b`, plain `git push`) as LOW and judges chained commands by their worst segment, fixing false positives on branch-and-stage command bundles.
+
 ## [1.2.0] - 2026-09-25
 
 ### Added

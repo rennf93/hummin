@@ -494,7 +494,7 @@ export default function humminLaya(pi: ExtensionAPI): void {
 			const read = await layaNoul(
 				`A coding agent is about to run this bash command in the user's project directory:\n\n${trimmed.slice(0, 2000)}\n\nNotes: piping into head/tail/grep/sort only filters output. Reading files, git log/diff/show, and network read commands (gh api, gh run view, curl GET) inspect state and cannot destroy anything. Only writes, deletes, git history rewriting, and data dropping are destructive.`,
 				"destructive",
-				"If run as-is, this command would irreversibly destroy work that is not recoverable: overwriting or deleting user files, rewriting git history, dropping databases, or killing processes. Read-only inspection, version-control queries, and network reads must score LOW even if unfamiliar.",
+				"If run as-is, this command would irreversibly destroy work that is not recoverable: overwriting or deleting user files, rewriting git history (reset --hard, rebase, filter-branch, checkout -- <paths>, clean), force-pushing, deleting branches or stashes, dropping databases, or killing processes. Read-only inspection, version-control queries, and network reads must score LOW even if unfamiliar. Non-destructive git writes also score LOW: git add, git commit, git checkout -b / git switch -c, git tag, git branch (creating), and plain git push of new or fast-forward refs only add new objects and refs and recover nothing less. Long commands chained with && are judged by their worst single segment; a chain of adds, branches, and status checks is not destructive because one path looks unfamiliar.",
 			);
 			if (!read) return undefined;
 			auditRead("gate", read.noul);
