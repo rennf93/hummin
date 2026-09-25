@@ -154,6 +154,29 @@ This is a Hummin feature. Pi is the upstream project Hummin is built on; Pi's
 own model-selection documentation does not define this Laya review or the
 Hummin fleet capability metadata.
 
+### Laya bash gate
+
+Before a bash command runs, the gate classifies it in three tiers. Read-only
+allowlist commands (`ls`, `git log`, `curl` GET, `npm run check`, ...) pass
+without a read. Deterministic classifiers then handle the enumerable ends:
+additive writes (`git add`/`commit`, `git checkout -b`, plain `git push`,
+repo-relative `cp`/`rsync` installs, `rm -rf` of build/dist/node_modules/cache
+dirs) pass, while canonical discards (`git reset --hard`, `git clean -f`,
+`git checkout -- <paths>`, `git stash drop/clear`, `git branch -D`,
+`git push --force`, `DROP DATABASE/TABLE`, `mkfs`, `rm -rf` of home or glob
+targets) block without a read. Everything else - unfamiliar commands and mixed
+chains - is scored by a Laya yes/no read and blocked once at P >= 0.7
+(`layaGateThreshold` setting, `HUMMIN_LAYA_GATE_THRESHOLD` env). A block tells
+the model to confirm with the user or verify the target is backed up, then
+re-run with a `# laya-gate: confirmed` marker; confirmations are audited in
+`laya-gate.log`. All failure modes fail open: dead Laya never blocks.
+
+Measured constraint (laya 0.3.20): gate reads route to the english checkpoint
+(512-token context), so long rubrics truncate from the tail, and instruction
+edits past the head do not move scores. The deterministic classifiers, not the
+prompt, carry the precision; routing reads to the multilingual checkpoint
+saturates every command to P >= 0.87 and cannot discriminate.
+
 The `monitor` tool runs a shell watch and delivers output without model polling:
 
 ```json
