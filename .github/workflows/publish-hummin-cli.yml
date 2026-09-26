@@ -1,0 +1,68 @@
+name: Publish hummin-cli
+
+# Fork: publishes the slim hummin-cli npm package on release tags via npm
+# trusted publishing (GitHub Actions OIDC). Disabled until the trusted
+# publisher is registered for hummin-cli on npmjs.com (repository
+# rennf93/hummin, workflow file publish-hummin-cli.yml, no environment) and
+# the repo variable HUMMIN_CLI_TRUSTED_PUBLISH is set to true. Until then,
+# hummin-cli is published manually with a user token.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish-hummin-cli:
+    if: vars.HUMMIN_CLI_TRUSTED_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Upgrade npm for trusted publishing
+        run: |
+          npm install -g npm@11.16.0 --ignore-scripts
+          npm --version
+
+      - name: Build
+        run: npm run build
+
+      - name: Stage hummin-cli
+        run: npm run stage:hummin-cli
+
+      - name: Verify staged version matches tag
+        run: |
+          staged="$(node -p "require('./.artifacts/hummin-cli/package.json').version")"
+          expected="${GITHUB_REF_NAME#v}"
+          if [ "$staged" != "$expected" ]; then
+            echo "::error::Staged hummin-cli@$staged does not match tag ${GITHUB_REF_NAME} (expected $expected)"
+            exit 1
+          fi
+
+      - name: Publish hummin-cli
+        run: npm publish --provenance
+        working-directory: .artifacts/hummin-cli
