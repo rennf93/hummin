@@ -19,6 +19,13 @@ const MAX_IDLE_WARMING_AGE_MS = 30 * 60_000;
 /** A refresh is sent only when it is expected to save at least this many dollars. */
 const CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS = 0.05;
 /**
+ * Lifetime assumed for the prompt cache entry in "always" mode when the model
+ * has no promptCache metadata (local OpenAI-compatible servers, for example).
+ * Only used when caching is on; a request with `cacheRetention: "none"` never
+ * warms.
+ */
+const ALWAYS_MODE_TTL_MS = 10 * 60_000;
+/**
  * Chance that a real request arrives before the cache entry expires while the
  * agent sits idle. Measured from our own usage; per-session estimates were not
  * better than this constant.
@@ -99,9 +106,11 @@ export interface CacheWarmingDecision {
 	continuationProbability: number;
 	/** `continuationProbability * missCost - warmCost`. */
 	expectedSavings: number;
-	/** False when the prompt size or the model's prices are unknown. */
+	/** False when the prompt size or the model's prices are unknown. In "always" mode `action` can be warm while this is false. */
 	economicsAvailable: boolean;
-	/** Pi's decision: "warm" when `expectedSavings` is at least $0.05. */
+	/** True when the warming mode is "always": the savings floor is skipped. */
+	always: boolean;
+	/** Pi's decision: "warm" when `expectedSavings` is at least $0.05, or unconditionally in "always" mode. */
 	action: CacheWarmingAction;
 }
 
@@ -190,7 +199,9 @@ export class CacheWarmer {
 		if (!run.isCurrent()) return { state: "inactive", reason: "conversation context changed" };
 		const decision = this.evaluate(run);
 		const refreshing = run.timer === undefined;
-		if (!decision.economicsAvailable && !refreshing) {
+		// "always" warms without economics, so an unavailable economics answer
+		// is not a reason to report the run inactive when it decided to warm.
+		if (!decision.economicsAvailable && decision.action !== "warm" && !refreshing) {
 			return { state: "inactive", reason: "cache economics unavailable" };
 		}
 		return {
@@ -213,13 +224,14 @@ export class CacheWarmer {
 			this.stop("request cannot be replayed safely");
 			return;
 		}
-		const ttlMs = getPromptCacheTtlMs(request.model, request.options);
+		if (request.options.cacheRetention === "none") {
+			this.stop("request disabled prompt caching");
+			return;
+		}
+		const ttlMs =
+			getPromptCacheTtlMs(request.model, request.options) ?? (mode === "always" ? ALWAYS_MODE_TTL_MS : undefined);
 		if (ttlMs === undefined) {
-			this.stop(
-				request.options.cacheRetention === "none"
-					? "request disabled prompt caching"
-					: "cache lifetime unavailable",
-			);
+			this.stop("cache lifetime unavailable");
 			return;
 		}
 		const delayMs = getCacheWarmingDelayMs(ttlMs);
@@ -377,6 +389,7 @@ export class CacheWarmer {
 
 	private evaluate(run: ActiveRun): CacheWarmingDecision {
 		const model = run.model;
+		const always = this.getMode() === "always";
 		const promptTokens = lastPromptTokens(this.sessionManager.getBranch());
 		const cacheHitCost = price(model, { cacheRead: promptTokens });
 		const cacheMissCost = price(
@@ -395,7 +408,10 @@ export class CacheWarmer {
 			continuationProbability,
 			expectedSavings,
 			economicsAvailable,
-			action: expectedSavings >= CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS ? "warm" : "stop",
+			always,
+			// "always" keeps warming within the safety windows regardless of the
+			// economics; other modes require the expected savings floor.
+			action: always || expectedSavings >= CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS ? "warm" : "stop",
 		};
 	}
 }
@@ -405,6 +421,9 @@ function formatDollars(value: number): string {
 }
 
 function formatCacheWarmingEconomics(decision: CacheWarmingDecision): string {
+	// "always" skipped the floor, so quoting the $0.05 comparison would lie;
+	// say so instead, whether or not the economics were computable.
+	if (decision.always) return "always mode: warming regardless of economics";
 	if (!decision.economicsAvailable) return "cache economics unavailable";
 	const probability = Math.round(decision.continuationProbability * 100);
 	const probabilityText =

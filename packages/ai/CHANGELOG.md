@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Provider retry classification is structured-first: numeric `status`/`statusCode` (408/429/5xx retryable; 400/401/402/403/404/409/422 not) and errno-style `code` values (ECONNRESET, ETIMEDOUT, UND_ERR_*, etc.) are classified before the message-regex fallback, so new provider error wordings no longer silently become non-retryable. String-only errors classify exactly as before.
+
 ## [1.2.2] - 2026-09-26
 
 ## [1.2.1] - 2026-09-26

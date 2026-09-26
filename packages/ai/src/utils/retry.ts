@@ -23,6 +23,37 @@ const NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN = buildProviderErrorPattern([
 	"billing",
 ]);
 
+/**
+ * HTTP statuses with a fixed retry verdict, checked before any string matching.
+ * Transient load/timeout/server statuses retry; client errors (bad request, auth,
+ * payment required, forbidden, missing resource, conflict, validation) fail fast.
+ */
+const RETRYABLE_HTTP_STATUSES: ReadonlySet<number> = new Set([408, 429, 500, 502, 503, 504, 529]);
+const NON_RETRYABLE_HTTP_STATUSES: ReadonlySet<number> = new Set([400, 401, 402, 403, 404, 409, 422]);
+
+/**
+ * Transport-level error codes (Node `errno` style and undici `UND_ERR_*`) that
+ * indicate a transient connection or transfer failure worth retrying.
+ */
+const RETRYABLE_ERROR_CODES: ReadonlySet<string> = new Set([
+	"ECONNRESET",
+	"ECONNREFUSED",
+	"ETIMEDOUT",
+	"EPIPE",
+	"UND_ERR_SOCKET",
+	"UND_ERR_CONNECT_TIMEOUT",
+	"UND_ERR_HEADERS_TIMEOUT",
+	"UND_ERR_BODY_TIMEOUT",
+]);
+
+/** SDK/network error fields probed by {@link classifyProviderRetry} before string matching. */
+type StructuredErrorShape = {
+	status?: unknown;
+	statusCode?: unknown;
+	code?: unknown;
+	message?: unknown;
+};
+
 const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// Generic provider load, HTTP status, and server-side transient failures.
 	"overloaded",
@@ -155,6 +186,46 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 	});
 }
 
+/** Verdict of {@link classifyProviderRetry}. "unknown" means no rule matched. */
+export type ProviderRetryVerdict = "retryable" | "non-retryable" | "unknown";
+
+function classifyErrorMessage(message: string): ProviderRetryVerdict {
+	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(message)) return "non-retryable";
+	if (RETRYABLE_PROVIDER_ERROR_PATTERN.test(message)) return "retryable";
+	return "unknown";
+}
+
+/**
+ * Classify whether an error is worth retrying, structured fields first.
+ *
+ * Precedence:
+ * 1. Numeric `statusCode`/`status` on the error object (SDK HTTP errors): retryable for
+ *    408/429/5xx-class statuses, non-retryable for the fixed client-error statuses above.
+ * 2. String `code` (undici/network errors): retryable when it names a transient transport
+ *    failure in {@link RETRYABLE_ERROR_CODES}.
+ * 3. The error message (or the value itself for plain strings) against the provider error
+ *    regex patterns, unchanged: quota/billing exhaustion first, then transient wording.
+ *
+ * "unknown" means no rule produced a verdict; callers should treat it as non-retryable.
+ */
+export function classifyProviderRetry(error: unknown): ProviderRetryVerdict {
+	if (typeof error === "string") return classifyErrorMessage(error);
+	if (typeof error !== "object" || error === null) return classifyErrorMessage(String(error));
+	const shaped = error as StructuredErrorShape;
+	const status =
+		typeof shaped.statusCode === "number"
+			? shaped.statusCode
+			: typeof shaped.status === "number"
+				? shaped.status
+				: undefined;
+	if (status !== undefined) {
+		if (RETRYABLE_HTTP_STATUSES.has(status)) return "retryable";
+		if (NON_RETRYABLE_HTTP_STATUSES.has(status)) return "non-retryable";
+	}
+	if (typeof shaped.code === "string" && RETRYABLE_ERROR_CODES.has(shaped.code)) return "retryable";
+	return classifyErrorMessage(typeof shaped.message === "string" ? shaped.message : String(error));
+}
+
 /**
  * Run a single assistant-producing call with bounded retry on transient errors.
  *
@@ -199,7 +270,7 @@ export async function retryAssistantCall(
 		}
 
 		// Non-retryable, or budget exhausted: return the final error message.
-		if (attempt >= maxAttempts || !isRetryableAssistantError(response)) {
+		if (attempt >= maxAttempts || classifyProviderRetry(response.errorMessage ?? "") !== "retryable") {
 			if (lastRetry) await callbacks?.onRetryFinished?.(false, lastRetry.attempt, response.errorMessage);
 			return response;
 		}
@@ -228,7 +299,9 @@ export async function retryAssistantCall(
 /**
  * Classifies whether a failed assistant message looks like a transient provider
  * or transport error, so callers can decide if the last assistant turn should be
- * restarted.
+ * restarted. Delegates to {@link classifyProviderRetry}; the message only carries
+ * the error text, so the structured status/code probes apply to error objects
+ * passed to that function directly.
  *
  * This does not implement retry policy. Callers should first handle context
  * overflow separately, then apply their own retry budget, backoff, and reporting
@@ -236,7 +309,5 @@ export async function retryAssistantCall(
  */
 export function isRetryableAssistantError(message: AssistantMessage): boolean {
 	if (message.stopReason !== "error" || !message.errorMessage) return false;
-	const errorMessage = message.errorMessage;
-	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage)) return false;
-	return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);
+	return classifyProviderRetry(message.errorMessage) === "retryable";
 }

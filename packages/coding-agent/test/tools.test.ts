@@ -1417,6 +1417,158 @@ describe("edit tool fuzzy matching", () => {
 		expect(readFileSync(testFile, "utf-8")).toBe(expectedContent);
 		expect(result.details?.diff).toContain("SECOND");
 	});
+
+	it("should match oldText whose indentation differs and keep the file's indentation", async () => {
+		const testFile = join(testDir, "wrong-indent.txt");
+		writeFileSync(testFile, "function f() {\n    body();\n    more();\n}\n");
+
+		const result = await editTool.execute("test-fuzzy-indent", {
+			path: testFile,
+			edits: [{ oldText: "  body();\n  more();", newText: "  body(1);\n  more(2);" }],
+		});
+
+		expect(getTextOutput(result)).toContain("Successfully replaced");
+		// the replacement is re-anchored to the file's indentation: the model's
+		// relative offsets (uniform 2-space) shift onto the file's 4-space depth
+		expect(readFileSync(testFile, "utf-8")).toBe("function f() {\n    body(1);\n    more(2);\n}\n");
+	});
+
+	it("should keep the file's indentation for an unindented whole-line oldText", async () => {
+		const testFile = join(testDir, "sloppy-indent.txt");
+		// curly quotes force the fuzzy path; the model's oldText has no indent
+		writeFileSync(testFile, "function f() {\n    \u2018body\u2019();\n}\n");
+
+		await editTool.execute("test-fuzzy-sloppy", {
+			path: testFile,
+			edits: [{ oldText: "'body'();", newText: "'body'(1);" }],
+		});
+
+		expect(readFileSync(testFile, "utf-8")).toBe("function f() {\n    'body'(1);\n}\n");
+	});
+
+	it("should not double-indent when the model's oldText baseline already matches the file", async () => {
+		const testFile = join(testDir, "aligned-indent.txt");
+		writeFileSync(testFile, "function f() {\n    \u2018body\u2019();\n}\n");
+
+		await editTool.execute("test-fuzzy-aligned", {
+			path: testFile,
+			edits: [{ oldText: "    'body'();", newText: "    'body'(1);" }],
+		});
+
+		expect(readFileSync(testFile, "utf-8")).toBe("function f() {\n    'body'(1);\n}\n");
+	});
+
+	it("should dedent the replacement when the model is deeper than the file", async () => {
+		const testFile = join(testDir, "deeper-indent.txt");
+		writeFileSync(testFile, "if (a) {\n  go();  \n}\n");
+
+		await editTool.execute("test-fuzzy-dedent", {
+			path: testFile,
+			edits: [{ oldText: "    go();", newText: "    stop();" }],
+		});
+
+		expect(readFileSync(testFile, "utf-8")).toBe("if (a) {\n  stop();\n}\n");
+	});
+
+	it("should stay verbatim when the model deliberately re-indents (baseline changed)", async () => {
+		const testFile = join(testDir, "reindent.txt");
+		writeFileSync(testFile, "class A {\n  run() {\n    work();\n  }\n}\n");
+
+		// oldText baseline is column 0, newText baseline is 2 spaces: the model
+		// re-indents on purpose, so its newText is applied verbatim
+		await editTool.execute("test-fuzzy-reindent", {
+			path: testFile,
+			edits: [{ oldText: "run() {\n      work();\n    }", newText: "  run() {\n    work(1);\n  }" }],
+		});
+
+		expect(readFileSync(testFile, "utf-8")).toBe("class A {\n  run() {\n    work(1);\n  }\n}\n");
+	});
+
+	it("should map an oldText starting with an empty line to the newline anchor", async () => {
+		const testFile = join(testDir, "newline-anchor.txt");
+		// curly quotes force the fuzzy path; oldText's first line is empty, so the
+		// search-space match starts at the previous line's newline
+		writeFileSync(testFile, "if (x) {\n    return \u2018val\u2019;\n}\n");
+
+		const result = await editTool.execute("test-fuzzy-newline-anchor", {
+			path: testFile,
+			edits: [{ oldText: "\n\treturn 'val';", newText: "\n\treturn 'new';" }],
+		});
+
+		expect(getTextOutput(result)).toContain("Successfully replaced");
+		// tab vs spaces is ambiguous, so the replacement stays verbatim - but the
+		// region must start at the newline, not inside the file's indentation
+		expect(readFileSync(testFile, "utf-8")).toBe("if (x) {\n\treturn 'new';\n}\n");
+	});
+
+	it("should re-anchor a newline-anchored replacement with compatible indentation", async () => {
+		const testFile = join(testDir, "newline-anchor-shift.txt");
+		writeFileSync(testFile, "if (x) {\n      return \u2018val\u2019;\n}\n");
+
+		await editTool.execute("test-fuzzy-newline-anchor-shift", {
+			path: testFile,
+			edits: [{ oldText: "\n  return 'val';", newText: "\n  return 'new';" }],
+		});
+
+		expect(readFileSync(testFile, "utf-8")).toBe("if (x) {\n      return 'new';\n}\n");
+	});
+
+	it("should not pad blank lines in a re-anchored replacement", async () => {
+		const testFile = join(testDir, "blank-line-indent.txt");
+		writeFileSync(testFile, "    a();\n\n    b();  \n");
+
+		await editTool.execute("test-fuzzy-blank-line", {
+			path: testFile,
+			edits: [{ oldText: "a();\n\nb();", newText: "a(1);\n\nb(2);" }],
+		});
+
+		// blank middle line stays blank (never padded to the file's indent);
+		// trailing whitespace of touched lines is dropped by fuzzy normalization
+		expect(readFileSync(testFile, "utf-8")).toBe("    a(1);\n\n    b(2);\n");
+	});
+
+	it("should keep the line indentation for mid-line fuzzy matches", async () => {
+		const testFile = join(testDir, "midline-indent.txt");
+		// only the curly quotes force the fuzzy path; the match starts mid-line
+		writeFileSync(testFile, "    let x = \u2018val\u2019; doStuff();\n");
+
+		await editTool.execute("test-fuzzy-midline", {
+			path: testFile,
+			edits: [{ oldText: "let x = 'val'", newText: "let x = 'new'" }],
+		});
+
+		expect(readFileSync(testFile, "utf-8")).toBe("    let x = 'new'; doStuff();\n");
+	});
+
+	it("should preserve untouched lines and indentation in indentation-insensitive multi-edits", async () => {
+		const testFile = join(testDir, "fuzzy-indent-multi.txt");
+		writeFileSync(testFile, "class A {\n  run() {\n    work();\n  }\n  stop() {\n    halt();\n  }\n}\n");
+
+		const result = await editTool.execute("test-fuzzy-indent-multi", {
+			path: testFile,
+			edits: [
+				{ oldText: "run() {\n      work();\n    }", newText: "  run() {\n    work(1);\n  }" },
+				{ oldText: "stop() {\n        halt();\n      }", newText: "  stop() {\n    halt(1);\n  }" },
+			],
+		});
+
+		expect(getTextOutput(result)).toContain("Successfully replaced");
+		expect(readFileSync(testFile, "utf-8")).toBe(
+			"class A {\n  run() {\n    work(1);\n  }\n  stop() {\n    halt(1);\n  }\n}\n",
+		);
+	});
+
+	it("should detect duplicates whose indentation differs across occurrences", async () => {
+		const testFile = join(testDir, "indent-dups.txt");
+		writeFileSync(testFile, "if (a) {\n  go();\n}\nwhile (b) {\n      go();\n}\n");
+
+		await expect(
+			editTool.execute("test-fuzzy-indent-dups", {
+				path: testFile,
+				edits: [{ oldText: "    go();\n", newText: "gone();\n" }],
+			}),
+		).rejects.toThrow(/Found 2 occurrences/);
+	});
 });
 
 describe("edit tool CRLF handling", () => {

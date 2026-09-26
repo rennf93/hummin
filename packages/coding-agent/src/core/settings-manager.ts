@@ -78,8 +78,12 @@ export interface ThinkingBudgetsSettings {
 
 export type MermaidRenderingMode = "off" | "final" | "streaming";
 
-/** Cache-warming profile. "idle" also warms between agent runs. */
-export const CACHE_WARMING_MODES = ["off", "streaming", "idle"] as const;
+/**
+ * Cache-warming profile. "idle" also warms between agent runs. "always" also
+ * warms models without prompt-cache lifetime metadata (a 10-minute default
+ * TTL applies) and skips the expected-savings floor.
+ */
+export const CACHE_WARMING_MODES = ["off", "streaming", "idle", "always"] as const;
 export type CacheWarmingMode = (typeof CACHE_WARMING_MODES)[number];
 
 export interface MarkdownSettings {

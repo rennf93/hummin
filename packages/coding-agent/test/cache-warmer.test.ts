@@ -315,6 +315,7 @@ describe("cache warming", () => {
 			continuationProbability: 0.6,
 			expectedSavings: 0.36,
 			economicsAvailable: true,
+			always: false,
 			action: "warm",
 		};
 		expect(formatCacheWarmingStatus({ state: "scheduled", nextWarmAt: 222_000, decision }, 0)).toBe(
@@ -332,6 +333,76 @@ describe("cache warming", () => {
 			"extension override",
 		);
 		expect(formatCacheWarmingUsage(entry)).toBe("Cache warmed (extension override): $0.029497");
+	});
+});
+
+describe("cache warming in always mode", () => {
+	it("warms models without cache metadata using a default TTL, even without economics", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		// No promptCache metadata and no prompt tokens: streaming/idle stop here.
+		const always = fakeRuntime({ mode: "always", branch: branchWithPrompt(0) });
+		always.warmer.start(request(unknownModel), current);
+		expect(always.warmer.status).toMatchObject({
+			state: "scheduled",
+			decision: { always: true, economicsAvailable: false, action: "warm" },
+		});
+		expect(formatCacheWarmingStatus(always.warmer.status, 0)).toBe(
+			"Decision in 9m (always mode: warming regardless of economics -> warm)",
+		);
+		// 90% of the 10-minute fallback TTL.
+		await vi.advanceTimersByTimeAsync(540_000);
+		expect(always.calls).toHaveLength(1);
+		expect(always.calls[0].options?.maxTokens).toBe(1);
+		expect(always.warmedEntries).toHaveLength(1);
+		always.warmer.cancel();
+	});
+
+	it("keeps refusing requests that disabled caching", () => {
+		vi.useFakeTimers();
+		const none = fakeRuntime({ mode: "always" });
+		none.warmer.start(request(adaptiveModel, { cacheRetention: "none" }), current);
+		expect(none.warmer.status.reason).toBe("request disabled prompt caching");
+	});
+
+	it("still stops at the refresh deadline", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const { warmer, calls } = fakeRuntime({ mode: "always" });
+		warmer.start(request(unknownModel), current);
+		vi.clearAllTimers();
+		// Fallback TTL of 10 minutes schedules the refresh at 9m and keeps 30
+		// seconds of half the expiry margin; miss it and warming stops.
+		vi.setSystemTime(570_001);
+		const internal = warmer as unknown as { run: object | undefined; refresh: (run: object) => Promise<void> };
+		if (!internal.run) throw new Error("expected an active cache-warming run");
+		await internal.refresh(internal.run);
+		expect(calls).toHaveLength(0);
+		expect(warmer.status).toMatchObject({ state: "inactive", reason: "cache refresh deadline missed" });
+	});
+
+	it("keeps warming between agent runs within the idle safety window", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const settled = fakeRuntime({ mode: "always", branch: branchWithPrompt(0) });
+		settled.warmer.start(request(unknownModel), current);
+		settled.warmer.onAgentSettled();
+		expect(settled.warmer.status.state).toBe("scheduled");
+		expect(settled.warmer.status.decision?.phase).toBe("idle");
+		await vi.advanceTimersByTimeAsync(540_000);
+		expect(settled.calls).toHaveLength(1);
+		settled.warmer.cancel();
+	});
+
+	it("leaves off and streaming modes unchanged", () => {
+		vi.useFakeTimers();
+		const streaming = fakeRuntime({ mode: "streaming", branch: branchWithPrompt(0) });
+		streaming.warmer.start(request(adaptiveModel), current);
+		expect(streaming.warmer.status).toMatchObject({ state: "inactive", reason: "cache economics unavailable" });
+
+		const off = fakeRuntime({ mode: "off" });
+		off.warmer.start(request(unknownModel), current);
+		expect(off.warmer.status.reason).toBe("cache warming disabled");
 	});
 });
 

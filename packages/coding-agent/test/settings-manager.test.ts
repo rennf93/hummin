@@ -419,6 +419,16 @@ describe("SettingsManager", () => {
 			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("off");
 			expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"))).toEqual({ cacheWarming: "off" });
 		});
+
+		it("accepts the always mode from global settings", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "always" }));
+			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("always");
+
+			// project settings still cannot set it
+			writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ cacheWarming: "always" }));
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "bogus" }));
+			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("streaming");
+		});
 	});
 
 	describe("externalEditor", () => {

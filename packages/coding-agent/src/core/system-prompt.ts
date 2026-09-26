@@ -46,6 +46,23 @@ export type NormalizedBuildSystemPromptOptions = BuildSystemPromptOptions & {
 };
 
 /**
+ * Models whose context window is at or below this size build the system prompt (and tool
+ * descriptions) in compact mode automatically, even without the `compactPrompt` setting:
+ * fixed prompt overhead is proportionally most expensive for small-context models.
+ */
+export const AUTO_COMPACT_CONTEXT_WINDOW = 32768;
+
+/**
+ * Whether a model's context window triggers automatic compact prompt mode. `envValue` is
+ * the raw `HUMMIN_COMPACT_PROMPT_AUTO` value; the exact string "0" disables the automatic
+ * behavior. The explicit `compactPrompt` setting is decided separately and always wins.
+ */
+export function shouldAutoCompactPrompt(contextWindow: number | undefined, envValue: string | undefined): boolean {
+	if (envValue === "0") return false;
+	return typeof contextWindow === "number" && contextWindow <= AUTO_COMPACT_CONTEXT_WINDOW;
+}
+
+/**
  * Ordered system prompt sections, keyed by name. `preamble` is untagged text; every other
  * section is wrapped in a tag of the same name so the model can match later updates to it.
  * These become `SystemMessage.sections` in the transcript.

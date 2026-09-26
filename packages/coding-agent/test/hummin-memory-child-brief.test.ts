@@ -8,11 +8,16 @@ const createdDirs: string[] = [];
 let memoryOriginal: string | undefined;
 let vaultOriginal: string | undefined;
 let pathOriginal: string | undefined;
+let embedOriginal: string | undefined;
 
 beforeEach(() => {
 	memoryOriginal = process.env.HUMMIN_MEMORY_DIR;
 	vaultOriginal = process.env.HUMMIN_MEMORY_VAULT_DIR;
 	pathOriginal = process.env.PATH;
+	// Embeddings stay off: a developer-env HUMMIN_MEMORY_EMBED_URL must not
+	// turn the zero-network child-brief pins into network-dependent tests.
+	embedOriginal = process.env.HUMMIN_MEMORY_EMBED;
+	process.env.HUMMIN_MEMORY_EMBED = "0";
 	// Each test gets isolated temp dirs and enables memory via HUMMIN_MEMORY=1
 	// (the module's cachedSettings is undefined under test, so the env var is
 	// the enablement path the child-brief gate actually reads).
@@ -31,6 +36,8 @@ afterAll(() => {
 	else process.env.HUMMIN_MEMORY_VAULT_DIR = vaultOriginal;
 	if (pathOriginal === undefined) delete process.env.PATH;
 	else process.env.PATH = pathOriginal;
+	if (embedOriginal === undefined) delete process.env.HUMMIN_MEMORY_EMBED;
+	else process.env.HUMMIN_MEMORY_EMBED = embedOriginal;
 });
 
 // lessonsForChildBrief recalls for process.cwd(), so seed lessons with this cwd.

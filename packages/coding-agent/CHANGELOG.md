@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- Embeddings hybrid retrieval for memory: when an OpenAI-shaped `POST /v1/embeddings` endpoint resolves (`HUMMIN_MEMORY_EMBED_URL`, or the `memoryEmbedUrl` setting, or the first fleet server probed once with a 5s timeout), recall and vault search blend min-max-normalized BM25 with cosine similarity (`HYBRID_EMBED_ALPHA` 0.4; `HUMMIN_MEMORY_EMBED=0` or `memoryEmbed: false` disables). Child lesson briefs (`task`/cron inheritance) stay pure-lexical zero-network so dispatch latency never depends on the embeddings endpoint. Lesson vectors live in a sidecar `<memoryDir>/vectors.jsonl` (5MB cap, oldest lines drop first) and backfill lazily at most 64 lessons per retrieval pass; every failure fails open to BM25-only, and embedding bodies are never logged.
+- Checkpoint-fed distillation: the distill worker scans the session JSONL (streaming, bounded memory) for the last compaction entry and prepends its summary, truncated to 4000 chars and labeled "Earlier session checkpoint (from compaction):", to the transcript tail. Fail-open when the session has none.
+- Cron child lesson inheritance: due cron runs prepend the same bounded inherited-lessons block the `task` tool uses (strict no-op while memory is off; the stored entry prompt is never rewritten).
+- Read-only vault for children (`HUMMIN_MEMORY_TOOLS=1` alongside `HUMMIN_MEMORY=0`): `task` and cron children load the memory extension tools-only, so they can search the vault with the `vault` tool and see `/memory`, while recall injection, shutdown distillation, auto-fold, and fold stay unregistered.
+- Fold validation pass: after a fold child exits, the worker checks that the vault git worktree is clean, the inbox drained, and every moved lesson is cited by an entity file. A failing pass gets exactly one repair retry, then records `fold-validation failed` in `fold.log`; session start surfaces a failed final state once per process.
+- Memory telemetry events through the shared sink: `memory_lessons_injected` (count, first 10 lesson ids) on auto-briefing injection and `vault_searched` (result count) on vault tool searches.
+- `/stats` command: aggregates the telemetry log (last 30 files) into a per-day table plus totals: turns, output tokens, context size, duration p50/p95, compactions by trigger, retries, per-model token totals, and memory usage (lessons injected, vault searches). `HUMMIN_TELEMETRY_DIR` overrides the directory.
+- LSP diagnostics push: after a successful `edit` or `write` on a TypeScript/JavaScript file, the tool result gains a bounded diagnostics block from the language server (1.5s bound, 8 most severe lines, clean files report "none"); fail-open, never errors the tool, no-op when the server is offline.
+
+### Changed
+
+- `cacheWarming` gains `"always"`: warms prompts on a fixed 10-minute cycle without requiring cache-lifetime metadata or cost economics, so local fleet slots stay hot (warm replays hold the same per-endpoint inference lock as real traffic). Default stays `"streaming"`.
+- Edit fuzzy matching is now indentation-insensitive: an `oldText` whose leading whitespace differs from the file still matches. Replacements re-anchor to the file's indentation: mid-line matches keep the file's indentation; line-anchored matches shift the replacement onto the file's depth with the model's relative offsets preserved, unless the model deliberately re-indents (its newText baseline differs from its oldText baseline) or uses incompatible whitespace (tabs vs spaces), which stay verbatim; blank lines are never padded; indentation-differing duplicates are still rejected as ambiguous. A match whose `oldText` starts with an empty line now maps to the correct region (previously it could leave a stray whitespace-only line behind).
+- Automatic compact prompt: when the selected model's context window is at or below 32768 tokens, the system prompt and tool descriptions build in compact mode (same as `compactPrompt: true`). Reacts to mid-session model switches on the next request. `HUMMIN_COMPACT_PROMPT_AUTO=0` disables; an explicit `compactPrompt: true` always wins.
+
 ## [1.2.2] - 2026-09-26
 
 ### New Features

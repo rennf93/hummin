@@ -507,7 +507,7 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 		name: "task",
 		label: "Task (subagent)",
 		description:
-			"Run a bounded independent hummin session. Supply a complete brief: children cannot see this conversation. Unless inherit is \"none\", a bounded set of relevant lessons from the parent session's memory store is prepended to the brief. On completion the result carries the child's final report (bounded tail of its output; the full log path is included). Background completion is delivered automatically as a follow-up message with the same report. Children share the selected working directory; give concurrent writers separate directories.",
+			"Run a bounded independent hummin session. Supply a complete brief: children cannot see this conversation. Unless inherit is \"none\", a bounded set of relevant lessons from the parent session's memory store is prepended to the brief, and children run with read-only access to the memory vault: they can search it with the vault tool but cannot fold, distill, or write to it. On completion the result carries the child's final report (bounded tail of its output; the full log path is included). Background completion is delivered automatically as a follow-up message with the same report. Children share the selected working directory; give concurrent writers separate directories.",
 		promptSnippet: "task: delegate a bounded task to an independent session",
 		parameters: Type.Object({
 			prompt: Type.String({ minLength: 1 }),
@@ -579,6 +579,11 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 				kind: "task",
 				label: `"${what}" · ${model.provider}/${model.id}`,
 				timeoutMs: (params.timeout_sec ?? 600) * 1000,
+				// HUMMIN_MEMORY=0 (forced by ProcessManager) stops the child's own
+				// shutdown distillation (the recursion bug class); HUMMIN_MEMORY_TOOLS=1
+				// loads the memory extension tools-only, so the child can search the
+				// read-only vault without fold/distill/recall-injection writes.
+				env: { HUMMIN_MEMORY_TOOLS: "1" },
 				// Background tasks outlive the turn: they must NOT inherit the
 				// tool-call AbortSignal, or interrupting the agent (escape) would
 				// cancel every job spawned during the run. Only foreground tasks

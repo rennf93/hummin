@@ -77,6 +77,7 @@ hummin bundles extensions that register additional commands (details in the [hum
 | `/fleet` | Local inference fleet status, start/stop/restart |
 | `/status` | Model, context window, fleet health, memory, system-prompt section sizes, todo progress |
 | `/friction` | Laya gate stats and tool friction, including this session's tool error counts |
+| `/stats` | Turn tokens, latency percentiles, compactions, retries, and memory usage from the telemetry log |
 | `/memory` | Project memory lessons and vault status |
 | `/plan` | Plan mode |
 | `/todos` | Session todo list |
