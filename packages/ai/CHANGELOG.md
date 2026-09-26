@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Updated the OpenAI SDK to 7.19.0 ([#10044](https://github.com/earendil-works/pi/issues/10044)).
+
 ## [1.2.0] - 2026-09-25
 
 ### Breaking Changes

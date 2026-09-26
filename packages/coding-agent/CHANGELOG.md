@@ -19,6 +19,7 @@
 ### Fixed
 
 - The Laya bash gate no longer false-blocks routine branch-and-stage command bundles and repo-relative installs: read-only, additive-write, and canonical-destructive segments are now classified deterministically per chain segment (same pattern as the read-only allowlist), and only unfamiliar gray-zone commands pay the Laya read. The gray-zone block threshold drops to 0.7 to match the classifier-assisted operating point, deterministic blocks carry their rule in `laya-gate.log`, and `git status`/`git branch -D`-style segment confusion is covered by tests.
+- Fixed custom themes not being constructed with the terminal's detected color mode, so truecolor was not honored (terminal capability overrides now apply to theme construction too) (fixes #9973) ([#10039](https://github.com/earendil-works/pi/issues/10039)).
 
 ## [1.2.0] - 2026-09-25
 
