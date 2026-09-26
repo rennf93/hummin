@@ -375,19 +375,19 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(events).toEqual([{ type: "session_before_fork", entryId: "missing-entry", position: "at" }]);
 	});
 
-	it("reports why an unflushed session cannot be forked", async () => {
+	it("forks an unflushed session with the branched file durable from branch time", async () => {
 		const { runtime } = await createRuntimeForTest(() => {});
 		const sessionFile = runtime.session.sessionFile;
 		const leafId = runtime.session.sessionManager.getLeafId();
 		expect(sessionFile).toBeDefined();
-		// #9792: the header is durable from create() time; the session is still
-		// "unflushed" (no assistant response) so forking must be refused.
+		// #9792: the header is durable from create() time.
 		expect(existsSync(sessionFile!)).toBe(true);
 		expect(leafId).toBeTruthy();
 
-		await expect(runtime.fork(leafId!, { position: "at" })).rejects.toThrow(
-			"This session has not been saved yet. Wait for the first assistant response before cloning or forking it.",
-		);
+		// hummin divergence: forking an unflushed session is allowed - the
+		// branched session file is durable from branch time via the session
+		// manager's eager rewrite, so no refusal is needed.
+		await runtime.fork(leafId!, { position: "at" });
 	});
 
 	it("duplicates the current active branch when forking at the current position", async () => {

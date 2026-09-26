@@ -7,21 +7,28 @@ import {
 	checkRecordScope,
 	checkRecordVersion,
 	documentCreate,
+	materializeDocumentValue,
 	type ResolvedAddress,
 	resolveAddress,
 } from "../documents.ts";
+import { ReadAfterWrite } from "../errors.ts";
 import type {
 	ConversationDocFamilyToken,
 	ConversationDocToken,
+	ConversationId,
+	ConversationOwnership,
+	ConversationQuery,
 	ConversationRecord,
 	Cursor,
 	DocumentAddress,
+	DocumentCopySource,
 	DocumentCreate,
+	DocumentId,
 	DocumentRecord,
 	EntryDraft,
+	EntryId,
 	EntryQuery,
 	EntryRecord,
-	Id,
 	JsonObject,
 	Seq,
 	SessionDocFamilyToken,
@@ -31,12 +38,13 @@ import type {
 	Task,
 	TaskDocFamilyToken,
 	TaskDocToken,
+	TaskId,
 	TaskOptions,
 	TaskQuery,
 	TaskRecord,
-	TaskRef,
 	Tx,
 } from "../types.ts";
+import { prepareForkDocumentCopies } from "./forks.ts";
 
 type AnyTaskRecord = TaskRecord<JsonValue, JsonValue, JsonValue>;
 
@@ -44,25 +52,27 @@ const INTERNAL_SCAN_PAGE_SIZE = 256;
 const EMPTY_OPERATIONS: readonly Op[] = [];
 const TABLE_JSON_COPY_OPTIONS = { omitUndefinedProperties: true } as const;
 
-/** A transaction read a table after its first table write. Read every required row before writing. */
-export class ReadAfterWrite extends Error {
-	constructor(method: string) {
-		super(`Tx.${method}() cannot read tables after the first table write`);
-		this.name = "ReadAfterWrite";
-	}
-}
-
 /** Committed change of one document incarnation. */
-export type DocumentCommitChange = {
-	readonly type: "document";
-	readonly record: DocumentRecord;
-	/** Conversation owning the document; task documents derive it from their task record. */
-	readonly conversationId: Id | undefined;
-	/** Exact adopted immutable revision, or `null` when this commit retired the incarnation. */
-	readonly value: JsonObject | null;
-	/** Exact adopted operations for an ordinary update; empty for creation and retirement. */
-	readonly ops: readonly Op[];
-};
+export type DocumentCommitChange =
+	| {
+			readonly type: "document";
+			readonly record: DocumentRecord;
+			/** Conversation owning the document; task documents derive it from their task record. Undefined only for Session documents. */
+			readonly conversationId: ConversationId | undefined;
+			/** Definition version of `value`; absent when this commit retired the incarnation. */
+			readonly version: number | undefined;
+			/** Exact adopted immutable revision, or `null` when this commit retired the incarnation. */
+			readonly value: JsonObject | null;
+			/** Exact adopted operations for an ordinary update; empty for creation and retirement. */
+			readonly ops: readonly Op[];
+	  }
+	| {
+			/** Definition-free child initialization; consumers hydrate through a source or watch. */
+			readonly type: "document.copy";
+			readonly record: DocumentRecord;
+			readonly conversationId: ConversationId;
+			readonly source: DocumentCopySource;
+	  };
 
 /** One committed document incarnation owned by the Session tracker cache. */
 export type LoadedDocument = {
@@ -88,14 +98,14 @@ export interface TransactionHost {
 	/** Install a newly committed incarnation. */
 	install(document: LoadedDocument): void;
 	/** Remove a retired incarnation if it is still the cached occupant of its address. */
-	evict(addressId: string, recordId: Id): void;
+	evict(addressId: string, recordId: DocumentId): void;
 }
 
 /** Committed and candidate state for one task touched by this transaction. */
 type TransactionTask = {
 	committedRead?: Promise<AnyTaskRecord | undefined>;
 	write?: { readonly kind: "create" | "replace"; readonly record: AnyTaskRecord };
-	publicationConversationId?: Id;
+	publicationConversationId?: ConversationId;
 };
 
 /** Storage/cache provenance of one staged document incarnation. */
@@ -107,14 +117,19 @@ type DocumentTarget =
 			readonly version: number;
 			readonly tracker: Tracker<JsonObject>;
 	  }
+	| {
+			readonly kind: "fork-copy";
+			readonly record: DocumentCreate;
+			readonly source: DocumentCopySource;
+	  }
 	| { readonly kind: "retire-only"; readonly record: DocumentRecord };
 
 /** One document incarnation acquired, created, or retired by this transaction. */
 type DocumentEntry = {
 	readonly addressId: string;
 	readonly address: DocumentAddress;
-	/** Absent only for retirement entries discovered by a terminal-task scan. */
-	readonly definition?: AnyDocDefinition;
+	/** Absent for definition-free fork copies and retirement entries discovered by a terminal-task scan. */
+	definition?: AnyDocDefinition;
 	/** Memoized public acquisition; absent for metadata-only retirement. */
 	draftPromise?: Promise<Draft<JsonObject>>;
 	/** Set after acquisition or retirement lookup finds the affected incarnation. */
@@ -123,7 +138,7 @@ type DocumentEntry = {
 	prepared?: Prepared<JsonObject>;
 	retireOnCommit: boolean;
 	/** Resolved before Storage admission so adoption performs no reads. */
-	conversationId?: Id;
+	conversationId?: ConversationId;
 };
 
 /**
@@ -141,9 +156,11 @@ export class Transaction implements Tx {
 
 	/** Atomic batch; conversation and entry writes stage eagerly, while task and document writes assemble later. */
 	readonly #writes: StorageWrite[] = [];
-	readonly #createdConversationIds = new Set<Id>();
+	readonly #createdConversationIds = new Set<ConversationId>();
+	readonly #forkSourceConversationIds = new Set<ConversationId>();
+	readonly #forkSourceDocumentIds = new Set<DocumentId>();
 	/** One entry per task touched by a public read, candidate write, or document-owner lookup. */
-	readonly #tasksById = new Map<Id, TransactionTask>();
+	readonly #tasksById = new Map<TaskId, TransactionTask>();
 
 	/** Every document acquisition or retirement marker in staging order. */
 	readonly #documents: DocumentEntry[] = [];
@@ -157,20 +174,22 @@ export class Transaction implements Tx {
 
 	// ─── Table reads ────────────────────────────────────────────────────────
 
-	conversation(id: Id): Promise<ConversationRecord | undefined> {
+	conversation(id: ConversationId): Promise<ConversationRecord | undefined> {
 		return this.#read("conversation", () => this.#host.storage.conversation(id, this.#context));
 	}
 
-	entry(id: Id): Promise<EntryRecord | undefined> {
+	entry(id: EntryId): Promise<EntryRecord | undefined> {
 		return this.#read("entry", async () => (await this.#host.storage.entry(id, this.#context))?.entry);
 	}
 
-	task(id: Id): Promise<AnyTaskRecord | undefined> {
+	task(id: TaskId): Promise<AnyTaskRecord | undefined> {
 		return this.#read("task", () => this.#committedTask(id));
 	}
 
-	scanConversations(limit: number, cursor?: Cursor) {
-		return this.#read("scanConversations", () => this.#host.storage.scanConversations(limit, cursor, this.#context));
+	scanConversations(query: ConversationQuery, limit: number, cursor?: Cursor) {
+		return this.#read("scanConversations", () =>
+			this.#host.storage.scanConversations(query, limit, cursor, this.#context),
+		);
 	}
 
 	scanEntries(query: EntryQuery, limit: number, cursor?: Cursor) {
@@ -183,22 +202,66 @@ export class Transaction implements Tx {
 
 	// ─── Table writes ───────────────────────────────────────────────────────
 
-	createConversation(value: Omit<ConversationRecord, "id">): Promise<ConversationRecord> {
-		return this.#write(async () => {
-			const id = await this.#host.storage.mintId();
-			this.#assertOpen();
-			const record = copyJson({ ...value, id }, TABLE_JSON_COPY_OPTIONS) as ConversationRecord;
-			this.#createdConversationIds.add(id);
-			this.#writes.push({ type: "conversation", value: record });
-			return record;
-		});
+	createConversation(options: { readonly ownership: ConversationOwnership }): Promise<ConversationRecord> {
+		return this.#write(() => this.#stageConversation(undefined, options.ownership));
 	}
 
-	appendEntry(conversationId: Id, value: EntryDraft): Promise<EntryRecord> {
+	forkConversation(
+		parentConversationId: ConversationId,
+		at: EntryId,
+		options: { readonly ownership: ConversationOwnership },
+	): Promise<ConversationRecord> {
+		return this.#write(() =>
+			this.#stageConversation({ conversationId: parentConversationId, at }, options.ownership),
+		);
+	}
+
+	async #stageConversation(
+		parent: NonNullable<ConversationRecord["parent"]> | undefined,
+		ownership: ConversationOwnership,
+	): Promise<ConversationRecord> {
+		const ownerTaskId = ownership.kind === "task" ? ownership.taskId : undefined;
+		const id = await this.#host.storage.mintId<ConversationId>();
+		this.#assertOpen();
+		let owner: ConversationRecord["owner"];
+		if (ownerTaskId !== undefined) {
+			const task = await this.#currentTask(ownerTaskId);
+			this.#assertOpen();
+			if (task === undefined) throw new Error(`Conversation owner task ${ownerTaskId} does not exist`);
+			owner = { conversationId: task.conversationId, taskId: ownerTaskId };
+		}
+		const record: ConversationRecord = {
+			id,
+			...(parent === undefined ? {} : { parent }),
+			...(owner === undefined ? {} : { owner }),
+		};
+		const copies =
+			parent === undefined
+				? []
+				: await prepareForkDocumentCopies(this.#host.storage, parent.conversationId, parent.at, id, this.#context);
+		this.#assertOpen();
+		for (const copy of copies) {
+			this.#forkSourceDocumentIds.add(copy.source.id);
+			const entry: DocumentEntry = {
+				addressId: addressId(copy.record),
+				address: copy.record,
+				target: { kind: "fork-copy", ...copy },
+				retireOnCommit: false,
+			};
+			this.#documents.push(entry);
+			this.#latestDocumentByAddress.set(entry.addressId, entry);
+		}
+		if (parent !== undefined) this.#forkSourceConversationIds.add(parent.conversationId);
+		this.#createdConversationIds.add(id);
+		this.#writes.push({ type: "conversation", value: record });
+		return record;
+	}
+
+	appendEntry(conversationId: ConversationId, value: EntryDraft): Promise<EntryRecord> {
 		return this.#write(async () => {
 			await this.#requireConversation(conversationId);
 			this.#assertOpen();
-			const id = await this.#host.storage.mintId();
+			const id = await this.#host.storage.mintId<EntryId>();
 			this.#assertOpen();
 			const { head, ...rest } = value;
 			const record = copyJson(
@@ -216,7 +279,7 @@ export class Transaction implements Tx {
 		task: Task<I, S, R, H>,
 		input: I,
 		options?: TaskOptions,
-	): Promise<TaskRef<R>> {
+	): Promise<TaskId<R>> {
 		return this.#write(async () => {
 			const conversationId = options?.conversationId;
 			if (conversationId === undefined) throw new TypeError("Tx.createTask() requires options.conversationId");
@@ -224,7 +287,7 @@ export class Transaction implements Tx {
 			this.#assertOpen();
 			const definition = task.definition;
 			const checkpoint = definition.initial(input);
-			const id = await this.#host.storage.mintId();
+			const id = await this.#host.storage.mintId<TaskId<R>>();
 			this.#assertOpen();
 			const record = copyJson(
 				{
@@ -241,7 +304,7 @@ export class Transaction implements Tx {
 				TABLE_JSON_COPY_OPTIONS,
 			) as unknown as AnyTaskRecord;
 			this.#tasksById.set(id, { write: { kind: "create", record } });
-			return { id };
+			return id;
 		});
 	}
 
@@ -249,8 +312,12 @@ export class Transaction implements Tx {
 		this.#assertOpen();
 		this.#hasTableWrite = true;
 		const task = this.#taskEntry(value.id);
-		if (task.write?.record.state.status === "terminal") {
+		const candidate = task.write?.record;
+		if (candidate?.state.status === "terminal") {
 			throw new Error(`Task ${value.id} already has a terminal candidate`);
+		}
+		if (candidate !== undefined && candidate.conversationId !== value.conversationId) {
+			throw new Error(`Task ${value.id} cannot change conversations`);
 		}
 		task.write = {
 			kind: task.write?.kind === "create" ? "create" : "replace",
@@ -260,8 +327,8 @@ export class Transaction implements Tx {
 
 	// ─── Documents ──────────────────────────────────────────────────────────
 	doc<T extends JsonObject>(token: SessionDocToken<T>): Promise<Draft<T>>;
-	doc<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: Id): Promise<Draft<T>>;
-	doc<T extends JsonObject>(token: TaskDocToken<T>, taskId: Id): Promise<Draft<T>>;
+	doc<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: ConversationId): Promise<Draft<T>>;
+	doc<T extends JsonObject>(token: TaskDocToken<T>, taskId: TaskId): Promise<Draft<T>>;
 	doc<T extends JsonObject, I extends JsonValue>(
 		token: SessionDocFamilyToken<T, I>,
 		key: string,
@@ -269,13 +336,13 @@ export class Transaction implements Tx {
 	): Promise<Draft<T>>;
 	doc<T extends JsonObject, I extends JsonValue>(
 		token: ConversationDocFamilyToken<T, I>,
-		conversationId: Id,
+		conversationId: ConversationId,
 		key: string,
 		seed: I,
 	): Promise<Draft<T>>;
 	doc<T extends JsonObject, I extends JsonValue>(
 		token: TaskDocFamilyToken<T, I>,
-		taskId: Id,
+		taskId: TaskId,
 		key: string,
 		seed: I,
 	): Promise<Draft<T>>;
@@ -286,8 +353,12 @@ export class Transaction implements Tx {
 			const resolved = resolveAddress(definition, args);
 			this.#assertTaskDocumentsOpen(resolved);
 			const latest = this.#latestDocumentByAddress.get(resolved.id);
-			if (latest !== undefined && !latest.retireOnCommit && latest.draftPromise !== undefined) {
-				return latest.draftPromise;
+			if (latest !== undefined && !latest.retireOnCommit) {
+				if (latest.draftPromise !== undefined) return latest.draftPromise;
+				if (latest.target?.kind === "fork-copy") {
+					latest.draftPromise = this.#track(this.#acquireForkCopy(latest, definition, latest.target));
+					return latest.draftPromise;
+				}
 			}
 			const seed = definition.family === true ? copyJson(args[resolved.nextArgument]) : undefined;
 			const docEntry: DocumentEntry = {
@@ -307,17 +378,17 @@ export class Transaction implements Tx {
 	}
 
 	retireDoc<T extends JsonObject>(token: SessionDocToken<T>): Promise<void>;
-	retireDoc<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: Id): Promise<void>;
-	retireDoc<T extends JsonObject>(token: TaskDocToken<T>, taskId: Id): Promise<void>;
+	retireDoc<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: ConversationId): Promise<void>;
+	retireDoc<T extends JsonObject>(token: TaskDocToken<T>, taskId: TaskId): Promise<void>;
 	retireDoc<T extends JsonObject, I extends JsonValue>(token: SessionDocFamilyToken<T, I>, key: string): Promise<void>;
 	retireDoc<T extends JsonObject, I extends JsonValue>(
 		token: ConversationDocFamilyToken<T, I>,
-		conversationId: Id,
+		conversationId: ConversationId,
 		key: string,
 	): Promise<void>;
 	retireDoc<T extends JsonObject, I extends JsonValue>(
 		token: TaskDocFamilyToken<T, I>,
-		taskId: Id,
+		taskId: TaskId,
 		key: string,
 	): Promise<void>;
 	retireDoc(token: AnyDocToken, ...args: readonly unknown[]): Promise<void> {
@@ -327,6 +398,11 @@ export class Transaction implements Tx {
 			const resolved = resolveAddress(definition, args);
 			const latest = this.#latestDocumentByAddress.get(resolved.id);
 			if (latest?.retireOnCommit) return Promise.resolve();
+			if (latest?.target?.kind === "fork-copy") {
+				checkRecordScope(definition, latest.target.record);
+				latest.retireOnCommit = true;
+				return Promise.resolve();
+			}
 			if (latest?.draftPromise !== undefined) {
 				// Retirement of an acquired draft persists its final content before retirement.
 				latest.retireOnCommit = true;
@@ -370,7 +446,7 @@ export class Transaction implements Tx {
 		const value = copyJson(
 			definition.family === true ? definition.initial(seed) : definition.initial(),
 		) as JsonObject;
-		const id = await this.#host.storage.mintId();
+		const id = await this.#host.storage.mintId<DocumentId>();
 		this.#assertOpen();
 		const tracker = track(value);
 		entry.target = {
@@ -379,6 +455,33 @@ export class Transaction implements Tx {
 			version: definition.version,
 			tracker,
 		};
+		entry.change = tracker.beginChange();
+		return entry.change.state;
+	}
+
+	async #acquireForkCopy(
+		entry: DocumentEntry,
+		definition: AnyDocDefinition,
+		target: Extract<DocumentTarget, { readonly kind: "fork-copy" }>,
+	): Promise<Draft<JsonObject>> {
+		const stored = await this.#host.storage.document(target.source.id, target.source.at, this.#context);
+		this.#assertOpen();
+		if (stored === undefined) {
+			throw new Error(`Fork source document ${target.source.id} cannot be read`);
+		}
+		if (
+			stored.record.scope.kind !== "conversation" ||
+			stored.record.kind !== target.record.kind ||
+			stored.record.key !== target.record.key ||
+			stored.record.history !== target.record.history ||
+			stored.record.fork !== target.record.fork
+		) {
+			throw new Error(`Fork source document ${target.source.id} does not match the copied record`);
+		}
+		const value = materializeDocumentValue(definition, target.record, stored.version, stored.value);
+		const tracker = track(value);
+		entry.definition = definition;
+		entry.target = { kind: "created", record: target.record, version: definition.version, tracker };
 		entry.change = tracker.beginChange();
 		return entry.change.state;
 	}
@@ -456,9 +559,33 @@ export class Transaction implements Tx {
 						type: "document",
 						record,
 						conversationId: document.conversationId,
+						version: document.retireOnCommit ? undefined : target.version,
 						value: document.retireOnCommit ? null : prepared.value,
 						ops: EMPTY_OPERATIONS,
 					});
+					break;
+				}
+				case "fork-copy": {
+					const record: DocumentRecord = document.retireOnCommit
+						? { ...target.record, createdAt: seq, retiredAt: seq }
+						: { ...target.record, createdAt: seq };
+					if (document.retireOnCommit) {
+						publications.push({
+							type: "document",
+							record,
+							conversationId: document.conversationId,
+							version: undefined,
+							value: null,
+							ops: EMPTY_OPERATIONS,
+						});
+					} else {
+						publications.push({
+							type: "document.copy",
+							record,
+							conversationId: document.conversationId!,
+							source: target.source,
+						});
+					}
 					break;
 				}
 				case "loaded": {
@@ -479,6 +606,7 @@ export class Transaction implements Tx {
 							? { ...target.document.record, retiredAt: seq }
 							: target.document.record,
 						conversationId: document.conversationId,
+						version: document.retireOnCommit ? undefined : document.definition!.version,
 						value: document.retireOnCommit ? null : prepared.value,
 						ops: document.retireOnCommit ? EMPTY_OPERATIONS : prepared.ops,
 					});
@@ -490,6 +618,7 @@ export class Transaction implements Tx {
 						type: "document",
 						record: { ...target.record, retiredAt: seq },
 						conversationId: document.conversationId,
+						version: undefined,
 						value: null,
 						ops: EMPTY_OPERATIONS,
 					});
@@ -501,15 +630,20 @@ export class Transaction implements Tx {
 
 	async #assemble(): Promise<StorageWrite[]> {
 		const storage = this.#host.storage;
+		this.#rejectForkSourceWrites();
+		await this.#validateConversationOwners();
 		for (const [id, task] of this.#tasksById) {
 			if (task.write?.kind !== "replace") continue;
 			const committed = await this.#committedTask(id);
 			if (committed === undefined) throw new Error(`Task ${id} does not exist`);
 			if (committed.state.status === "terminal") throw new Error(`Task ${id} is already terminal`);
+			if (committed.conversationId !== task.write.record.conversationId) {
+				throw new Error(`Task ${id} cannot change conversations`);
+			}
 		}
 
 		// Terminal settlement retires every task document, including ones created by this transaction.
-		let terminalTaskIds: Set<Id> | undefined;
+		let terminalTaskIds: Set<TaskId> | undefined;
 		for (const task of this.#tasksById.values()) {
 			const candidate = task.write?.record;
 			if (candidate?.state.status !== "terminal") continue;
@@ -517,7 +651,7 @@ export class Transaction implements Tx {
 			terminalTaskIds.add(candidate.id);
 		}
 		if (terminalTaskIds !== undefined) {
-			const targetedDocumentIds = new Set<Id>();
+			const targetedDocumentIds = new Set<DocumentId>();
 			for (const document of this.#documents) {
 				const scope = document.address.scope;
 				if (scope.kind !== "task" || !terminalTaskIds.has(scope.taskId)) continue;
@@ -583,6 +717,10 @@ export class Transaction implements Tx {
 					});
 					if (document.retireOnCommit) writes.push({ type: "document.retire", id: target.record.id });
 					break;
+				case "fork-copy":
+					writes.push({ type: "document.copy", record: target.record, source: target.source });
+					if (document.retireOnCommit) writes.push({ type: "document.retire", id: target.record.id });
+					break;
 				case "loaded": {
 					const definition = document.definition!;
 					const prepared = document.prepared!;
@@ -616,6 +754,52 @@ export class Transaction implements Tx {
 	}
 
 	// ─── Helpers ────────────────────────────────────────────────────────────
+
+	async #validateConversationOwners(): Promise<void> {
+		for (const write of this.#writes) {
+			if (write.type !== "conversation" || write.value.owner === undefined) continue;
+			const owner = write.value.owner;
+			const task = await this.#currentTask(owner.taskId);
+			if (task === undefined) throw new Error(`Conversation owner task ${owner.taskId} does not exist`);
+			if (task.conversationId !== owner.conversationId) {
+				throw new Error(`Conversation owner task ${owner.taskId} changed conversations`);
+			}
+			if (task.state.status === "terminal") {
+				throw new Error(`Conversation owner task ${owner.taskId} is terminal`);
+			}
+			if (task.abortRequested) {
+				throw new Error(`Conversation owner task ${owner.taskId} is abort-marked`);
+			}
+		}
+	}
+
+	#rejectForkSourceWrites(): void {
+		for (const document of this.#documents) {
+			const target = document.target;
+			if (target === undefined) continue;
+			const writes =
+				target.kind !== "loaded" ||
+				document.retireOnCommit ||
+				target.document.storedVersion < document.definition!.version ||
+				document.prepared!.ops.length > 0;
+			if (!writes) continue;
+			const record = target.kind === "loaded" ? target.document.record : target.record;
+			if (this.#forkSourceDocumentIds.has(record.id)) {
+				throw new Error(`Cannot change fork source document ${record.id} in the fork transaction`);
+			}
+			const scope = document.address.scope;
+			if (
+				scope.kind === "conversation" &&
+				this.#forkSourceConversationIds.has(scope.conversationId) &&
+				record.scope.kind === "conversation" &&
+				record.fork === "current"
+			) {
+				throw new Error(
+					`Cannot fork conversation ${scope.conversationId} while changing its current-policy documents`,
+				);
+			}
+		}
+	}
 
 	#abortChanges(): void {
 		for (const document of this.#documents) document.change?.abort();
@@ -666,14 +850,14 @@ export class Transaction implements Tx {
 		}
 	}
 
-	async #requireConversation(id: Id): Promise<void> {
+	async #requireConversation(id: ConversationId): Promise<void> {
 		if (this.#createdConversationIds.has(id)) return;
 		if ((await this.#host.storage.conversation(id, this.#context)) === undefined) {
 			throw new Error(`Conversation ${id} does not exist`);
 		}
 	}
 
-	#taskEntry(id: Id): TransactionTask {
+	#taskEntry(id: TaskId): TransactionTask {
 		let task = this.#tasksById.get(id);
 		if (task === undefined) {
 			task = {};
@@ -683,11 +867,11 @@ export class Transaction implements Tx {
 	}
 
 	/** Latest candidate task record, falling back to committed state; not a caller table read. */
-	async #currentTask(id: Id): Promise<AnyTaskRecord | undefined> {
+	async #currentTask(id: TaskId): Promise<AnyTaskRecord | undefined> {
 		return this.#tasksById.get(id)?.write?.record ?? (await this.#committedTask(id));
 	}
 
-	#committedTask(id: Id): Promise<AnyTaskRecord | undefined> {
+	#committedTask(id: TaskId): Promise<AnyTaskRecord | undefined> {
 		const task = this.#taskEntry(id);
 		task.committedRead ??= this.#host.storage.task(id, this.#context);
 		return task.committedRead;

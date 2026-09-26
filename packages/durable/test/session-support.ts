@@ -1,7 +1,9 @@
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
+	type ConversationId,
 	type DocumentAddress,
+	type DocumentId,
 	type DocumentPoint,
 	type DocumentRecord,
 	type Id,
@@ -38,6 +40,7 @@ export class ControlledStorage extends MemoryStorage {
 	/** Detached batches for value assertions. */
 	readonly commits: (readonly StorageWrite[])[] = [];
 	mintCount = 0;
+	documentReadCount = 0;
 	#commitGate: { gate: Deferred; entered: Deferred } | undefined;
 	#findGate: { gate: Deferred; entered: Deferred } | undefined;
 	#commitFailure: Error | undefined;
@@ -80,9 +83,14 @@ export class ControlledStorage extends MemoryStorage {
 		return super.commit(writes, commitContext);
 	}
 
-	override mintId(): Promise<Id> {
+	override mintId<I extends Id<string>>(): Promise<I> {
 		this.mintCount++;
-		return super.mintId();
+		return super.mintId<I>();
+	}
+
+	override document(id: DocumentId, at: DocumentPoint, callContext: Context) {
+		this.documentReadCount++;
+		return super.document(id, at, callContext);
 	}
 
 	override async findDocument(
@@ -114,13 +122,26 @@ export function openTestSession(): {
 	return { storage, session, publications };
 }
 
-export function documentChanges(publication: CommitPublication): readonly DocumentCommitChange[] {
-	return publication.changes.filter((change): change is DocumentCommitChange => change.type === "document");
+export function documentChanges(
+	publication: CommitPublication,
+): readonly Extract<DocumentCommitChange, { readonly type: "document" }>[] {
+	return publication.changes.filter(
+		(change): change is Extract<DocumentCommitChange, { readonly type: "document" }> => change.type === "document",
+	);
+}
+
+export function documentCopyChanges(
+	publication: CommitPublication,
+): readonly Extract<DocumentCommitChange, { readonly type: "document.copy" }>[] {
+	return publication.changes.filter(
+		(change): change is Extract<DocumentCommitChange, { readonly type: "document.copy" }> =>
+			change.type === "document.copy",
+	);
 }
 
 /** Create one conversation and return its ID. */
-export async function createConversation(session: SessionKernel): Promise<Id> {
-	return session.commit(async (tx) => (await tx.createConversation({})).id, context);
+export async function createConversation(session: SessionKernel): Promise<ConversationId> {
+	return session.commit(async (tx) => (await tx.createConversation({ ownership: { kind: "ownerless" } })).id, context);
 }
 
 /** Resolve after pending microtasks and one macrotask turn. */
