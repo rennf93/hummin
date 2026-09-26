@@ -1,12 +1,15 @@
 export { defineDoc, defineDocFamily } from "./documents.ts";
+export { ReadAfterWrite, StorageRejected } from "./errors.ts";
 export { createSession } from "./session/session.ts";
-export { ReadAfterWrite } from "./session/transaction.ts";
 export { MemoryStorage } from "./storage/memory.ts";
 export type {
 	CommonDocDefinition,
 	ContextEdit,
 	ConversationDocFamilyToken,
 	ConversationDocToken,
+	ConversationId,
+	ConversationOwnership,
+	ConversationQuery,
 	ConversationRecord,
 	Cursor,
 	DocDefinition,
@@ -15,12 +18,15 @@ export type {
 	DocToken,
 	DocumentAddress,
 	DocumentContent,
+	DocumentCopySource,
 	DocumentCreate,
+	DocumentId,
 	DocumentPoint,
 	DocumentQuery,
 	DocumentRecord,
 	DocumentSemantics,
 	EntryDraft,
+	EntryId,
 	EntryQuery,
 	EntryRecord,
 	Id,
@@ -38,17 +44,18 @@ export type {
 	StorageWrite,
 	StoredDocument,
 	SubmissionCreate,
+	SubmissionId,
 	SubmissionRecord,
 	Task,
 	TaskDefinition,
 	TaskDocFamilyToken,
 	TaskDocToken,
+	TaskId,
 	TaskOptions,
 	TaskOutcome,
 	TaskOutcomeError,
 	TaskQuery,
 	TaskRecord,
-	TaskRef,
 	TaskState,
 	Tx,
 } from "./types.ts";
