@@ -18,7 +18,9 @@ test("additive git writes are safe", () => {
 	expect(gateSegmentVerdict("git tag v1.2.3")).toEqual({ kind: "safe" });
 	expect(gateSegmentVerdict("git checkout -b feat/laya-child-dispatch-review")).toEqual({ kind: "safe" });
 	expect(gateSegmentVerdict("git switch -c main-work")).toEqual({ kind: "safe" });
+	expect(gateSegmentVerdict("git switch main")).toEqual({ kind: "safe" });
 	expect(gateSegmentVerdict("git branch feat/x")).toEqual({ kind: "safe" });
+	expect(gateSegmentVerdict("git branch -d merged-branch")).toEqual({ kind: "safe" });
 	expect(gateSegmentVerdict("git push")).toEqual({ kind: "safe" });
 	expect(gateSegmentVerdict("git push origin feat/x")).toEqual({ kind: "safe" });
 	expect(gateSegmentVerdict("git push -u origin feat/x")).toEqual({ kind: "safe" });

@@ -274,8 +274,11 @@ export function gateSegmentVerdict(segment: string): GateSegmentVerdict {
 		return { kind: "review" };
 	}
 	// Additive writes and repo-relative installs are safe fast-path segments.
+	// git switch of a plain branch is safe too: it refuses to discard local
+	// changes and fails on conflict, unlike checkout which can take a bare
+	// pathspec.
 	if (
-		/^git (add|commit|tag \S+|checkout -b|switch -c|branch (?!-D)\S+|stash (list|show)|push(?!.*(\s-f(\s|$)|--force)))/.test(s) ||
+		/^git (add|commit|tag \S+|checkout -b|switch \S+|branch (?!-D)\S+|stash (list|show)|push(?!.*(\s-f(\s|$)|--force)))/.test(s) ||
 		/^(mkdir|touch)\b/.test(s) ||
 		/^(cp|rsync|ln)(\s+-[a-zA-Z]+)*\s+(\.\/)?[^/\s~][^\s]*/.test(s)
 	) {
