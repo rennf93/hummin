@@ -54,6 +54,168 @@ export function normalizeForFuzzyMatch(text: string): string {
 	);
 }
 
+/**
+ * Search-space normalization: normalizeForFuzzyMatch plus leading whitespace
+ * stripped from every line, so an oldText whose indentation differs from the
+ * file still matches. Used only to LOCATE match regions. Replacement content
+ * is built in normalizeForFuzzyMatch space with found ranges mapped back, and
+ * line-anchored replacements are re-anchored to the file's indentation (see
+ * adjustReplacementIndentation), so a whitespace-sloppy oldText can never
+ * impose its own indentation on the file.
+ */
+function normalizeForFuzzyMatchSearch(text: string): string {
+	return text
+		.split("\n")
+		.map((line) => line.replace(/^[ \t]+/, ""))
+		.join("\n");
+}
+
+/** One line of the search space with its position in replacement space. */
+interface SearchSpaceLine {
+	/** Line start offset in search space. */
+	searchStart: number;
+	/** Line start offset in replacement space. */
+	replacementStart: number;
+	/** Leading whitespace length in replacement space. */
+	leading: number;
+	/** Line content length in search space (leading whitespace already removed). */
+	searchLength: number;
+}
+
+/**
+ * Per-line coordinate table for mapping search-space offsets back to
+ * replacement space. Built from the replacement-space content: each of its
+ * lines maps to the same line in search space minus the leading whitespace.
+ */
+function buildSearchSpaceLines(replacementContent: string): SearchSpaceLine[] {
+	const lines: SearchSpaceLine[] = [];
+	let searchStart = 0;
+	let replacementStart = 0;
+	for (const line of replacementContent.split("\n")) {
+		const match = /^[ \t]*/.exec(line);
+		const leading = match ? match[0].length : 0;
+		lines.push({ searchStart, replacementStart, leading, searchLength: line.length - leading });
+		searchStart += line.length - leading + 1;
+		replacementStart += line.length + 1;
+	}
+	return lines;
+}
+
+/** Leading whitespace run of one line (empty for blank lines). */
+function leadingWhitespace(line: string): string {
+	return /^[ \t]*/.exec(line)?.[0] ?? "";
+}
+
+/**
+ * Map a match range found in search space back to replacement space
+ * (normalizeForFuzzyMatch output). A match starting mid-line keeps the
+ * touched line's leading indentation, since that indentation precedes the
+ * match. A match starting at a line start that consumes the whole first
+ * search line replaces the indentation too; callers re-anchor the replacement
+ * to the file's indentation (see adjustReplacementIndentation). A match
+ * starting at the previous line's newline (oldText whose first line is
+ * empty) anchors at that newline, so the touched line's indentation stays
+ * inside the replaced region.
+ */
+function mapSearchRangeToReplacementSpace(
+	lines: SearchSpaceLine[],
+	searchIndex: number,
+	searchLength: number,
+): { index: number; matchLength: number } {
+	const searchEnd = searchIndex + searchLength;
+	let index = -1;
+	let endIndex = -1;
+	for (const line of lines) {
+		const searchLineEnd = line.searchStart + line.searchLength;
+		if (index === -1 && searchIndex < searchLineEnd) {
+			if (searchIndex === line.searchStart - 1) {
+				// The match begins at the newline that terminates the previous line
+				// (oldText's first line is empty). That newline is one char before
+				// this line in both spaces; the leading whitespace of this line is
+				// part of the addressed line and must stay inside the region.
+				index = line.replacementStart - 1;
+			} else {
+				const atLineStart = searchIndex === line.searchStart;
+				const coversWholeLine = searchEnd >= searchLineEnd;
+				index =
+					line.replacementStart +
+					(atLineStart && coversWholeLine ? 0 : line.leading + (searchIndex - line.searchStart));
+			}
+		}
+		if (index !== -1 && searchEnd <= searchLineEnd) {
+			endIndex = line.replacementStart + line.leading + (searchEnd - line.searchStart);
+			break;
+		}
+	}
+	// Unreachable for ranges produced by indexOf over the same string; fall
+	// back to the identity mapping rather than corrupting the edit.
+	if (index === -1 || endIndex === -1) return { index: searchIndex, matchLength: searchLength };
+	return { index, matchLength: endIndex - index };
+}
+
+/**
+ * Re-anchor a fuzzy replacement's indentation to the file.
+ *
+ * A fuzzy match that starts at a line start (or at the previous line's newline)
+ * consumes the touched file line's leading whitespace. Inserting newText
+ * verbatim would then impose the model's indentation on the file even though
+ * the model's oldText demonstrably disagreed with the file about that
+ * indentation. When the model kept its own baseline (its newText first-line
+ * indent equals its oldText first-line indent), shift every newText line by
+ * the file's baseline instead: the replacement lands at the file's depth with
+ * the model's relative offsets preserved. When the model deliberately changed
+ * its baseline between oldText and newText, or uses incompatible whitespace
+ * (tabs vs spaces), leave newText verbatim. Mid-line matches never consume the
+ * file's indentation and are returned unchanged.
+ *
+ * Returns newText unchanged whenever the case is not clearly a
+ * wrong-baseline edit - the transformation must never make an edit worse.
+ */
+export function adjustReplacementIndentation(
+	baseContent: string,
+	matchIndex: number,
+	oldText: string,
+	newText: string,
+): string {
+	const oldLines = oldText.split("\n");
+	const newLines = newText.split("\n");
+	const atNewline = baseContent[matchIndex] === "\n";
+	const lineStart = atNewline ? matchIndex + 1 : Math.max(0, baseContent.lastIndexOf("\n", matchIndex - 1) + 1);
+	if (!atNewline && lineStart !== matchIndex) return newText; // mid-line: file indentation already preserved
+	// The oldText line aligned with the anchored file line: the first line,
+	// except for a newline-anchored match where oldText's first line is the
+	// empty line that produced the leading "\n" of the search text.
+	const aligned = atNewline ? 1 : 0;
+	if (atNewline && (oldLines.length < 2 || oldLines[0] !== "")) return newText;
+	if (aligned >= oldLines.length || aligned >= newLines.length) return newText;
+	const oldBaseline = leadingWhitespace(oldLines[aligned]);
+	const newBaseline = leadingWhitespace(newLines[aligned]);
+	// A different newText baseline means the model re-indents on purpose.
+	if (newBaseline !== oldBaseline) return newText;
+	const lineEnd = baseContent.indexOf("\n", lineStart);
+	const fileLine = baseContent.slice(lineStart, lineEnd === -1 ? baseContent.length : lineEnd);
+	const fileBaseline = leadingWhitespace(fileLine);
+	if (newBaseline === fileBaseline) return newText; // model already matches the file
+	let add = "";
+	let remove = 0;
+	if (fileBaseline.startsWith(newBaseline)) {
+		add = fileBaseline.slice(newBaseline.length);
+	} else if (newBaseline.startsWith(fileBaseline)) {
+		remove = newBaseline.length - fileBaseline.length;
+	} else {
+		return newText; // mixed tabs/spaces: inherently ambiguous, stay verbatim
+	}
+	return newLines
+		.map((line, i) => {
+			if (i < aligned) return line; // lines before the anchor (the empty "\n" line) stay verbatim
+			const leading = leadingWhitespace(line);
+			if (leading.length === line.length) return line; // blank line: never pad it
+			if (remove > 0) return leading.slice(Math.min(remove, leading.length)) + line.slice(leading.length);
+			return add + line;
+		})
+		.join("\n");
+}
+
 function splitLinesWithEndings(content: string): string[] {
 	return content.match(/[^\n]*\n|[^\n]+/g) ?? [];
 }
@@ -200,9 +362,13 @@ export interface AppliedEditsResult {
 
 /**
  * Find oldText in content, trying exact match first, then fuzzy match.
- * When fuzzy matching is used, the returned contentForReplacement is the
- * fuzzy-normalized version of the content (trailing whitespace stripped,
- * Unicode quotes/dashes normalized to ASCII).
+ * Fuzzy matching ignores per-line leading indentation on top of the
+ * normalizeForFuzzyMatch equivalences (trailing whitespace, Unicode
+ * quotes/dashes/spaces). When fuzzy matching is used, the returned
+ * contentForReplacement is the fuzzy-normalized version of the content and
+ * index/matchLength are offsets into it, with the found range mapped back
+ * from the indentation-insensitive search space so replacement keeps every
+ * byte outside the matched region verbatim.
  */
 export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResult {
 	// Try exact match first
@@ -217,12 +383,15 @@ export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResul
 		};
 	}
 
-	// Try fuzzy match - work entirely in normalized space
+	// Try fuzzy match: search in a space that also strips leading indentation
+	// per line, then map the found range back onto normalizeForFuzzyMatch
+	// space, which is what callers use to compute replacements.
 	const fuzzyContent = normalizeForFuzzyMatch(content);
-	const fuzzyOldText = normalizeForFuzzyMatch(oldText);
-	const fuzzyIndex = fuzzyContent.indexOf(fuzzyOldText);
+	const searchContent = normalizeForFuzzyMatchSearch(fuzzyContent);
+	const searchOldText = normalizeForFuzzyMatchSearch(normalizeForFuzzyMatch(oldText));
+	const searchIndex = searchContent.indexOf(searchOldText);
 
-	if (fuzzyIndex === -1) {
+	if (searchIndex === -1) {
 		return {
 			found: false,
 			index: -1,
@@ -235,19 +404,24 @@ export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResul
 	// When fuzzy matching, return offsets in normalized space. Callers can use
 	// the normalized content to compute replacements, then decide how much of
 	// that normalized output should be written back.
+	const mapped = mapSearchRangeToReplacementSpace(
+		buildSearchSpaceLines(fuzzyContent),
+		searchIndex,
+		searchOldText.length,
+	);
 	return {
 		found: true,
-		index: fuzzyIndex,
-		matchLength: fuzzyOldText.length,
+		index: mapped.index,
+		matchLength: mapped.matchLength,
 		usedFuzzyMatch: true,
 		contentForReplacement: fuzzyContent,
 	};
 }
 
 function countOccurrences(content: string, oldText: string): number {
-	const fuzzyContent = normalizeForFuzzyMatch(content);
-	const fuzzyOldText = normalizeForFuzzyMatch(oldText);
-	return fuzzyContent.split(fuzzyOldText).length - 1;
+	const searchContent = normalizeForFuzzyMatchSearch(normalizeForFuzzyMatch(content));
+	const searchOldText = normalizeForFuzzyMatchSearch(normalizeForFuzzyMatch(oldText));
+	return searchContent.split(searchOldText).length - 1;
 }
 
 const NEAR_MISS_CONTEXT_LINES = 3;
@@ -399,7 +573,12 @@ export function applyEditsToNormalizedContent(
 			editIndex: i,
 			matchIndex: matchResult.index,
 			matchLength: matchResult.matchLength,
-			newText: edit.newText,
+			// Fuzzy matches that consume a file line's indentation re-anchor the
+			// replacement to the file's baseline (see adjustReplacementIndentation);
+			// exact matches stay verbatim by contract.
+			newText: matchResult.usedFuzzyMatch
+				? adjustReplacementIndentation(replacementBaseContent, matchResult.index, edit.oldText, edit.newText)
+				: edit.newText,
 		});
 	}
 

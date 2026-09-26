@@ -16,9 +16,9 @@ This reference lists user-configurable settings, their types, defaults, and purp
 | `enabledModels` | `string[]` | All available models | Model patterns used for startup selection and model cycling. Uses the same format as `--models`. |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in the transcript. |
 | `showCacheMissNotices` | boolean | `false` | Show notices for significant cache misses, successful cache warming, compaction usage, and provider recovery. |
-| `cacheWarming` | `"off" \| "streaming" \| "idle"` | `"streaming"` | Keep eligible provider prompt caches warm during active runs or, with `"idle"`, between runs. Global setting only. |
+| `cacheWarming` | `"off" \| "streaming" \| "idle" \| "always"` | `"streaming"` | Keep eligible provider prompt caches warm during active runs or, with `"idle"`, between runs. `"always"` also warms models with no cache-lifetime metadata (local fleet slots) regardless of cost economics. Global setting only. |
 
-Cache warming runs only when the model declares a cache lifetime and Pi estimates at least $0.05 in avoided cache-miss cost. Refresh usage counts toward session totals but does not enter model context. `/session` shows the next decision; extensions can override it with `cache_warming_decision`. See [Prompt Cache Lifetimes](models.md#prompt-cache-lifetimes).
+Cache warming runs only when the model declares a cache lifetime and Pi estimates at least $0.05 in avoided cache-miss cost; `"always"` instead warms on a fixed 10-minute cycle and skips the economics check. Refresh usage counts toward session totals but does not enter model context. `/session` shows the next decision; extensions can override it with `cache_warming_decision`. See [Prompt Cache Lifetimes](models.md#prompt-cache-lifetimes).
 
 See [Choose a Model](models.md) for model selection and thinking controls.
 
@@ -167,6 +167,8 @@ Session distillation into lessons and the knowledge-graph vault. See `/memory`.
 | `memoryProvider` | string | `"zai"` | Provider for the no-model-selected fallback of fold/distill/expansion calls. `HUMMIN_MEMORY_PROVIDER` overrides. The session's selected model wins when one is selected |
 | `memoryModelId` | string | `"glm-5.3-flash"` | Model id for the same fallback. `HUMMIN_MEMORY_MODEL_ID` overrides |
 | `memoryQueryExpand` | boolean | `true` | Model-assisted query expansion in memory recall and vault search. `HUMMIN_MEMORY_QUERY_EXPAND=0` overrides |
+| `memoryEmbed` | boolean | `true` | Embeddings hybrid retrieval (cosine blended with BM25) when an embeddings endpoint resolves. `HUMMIN_MEMORY_EMBED=0` overrides |
+| `memoryEmbedUrl` | string | - | OpenAI-shaped embeddings endpoint for hybrid recall. `HUMMIN_MEMORY_EMBED_URL` overrides; unset probes the first fleet server |
 
 Spawned distill/fold children always run with `HUMMIN_MEMORY=0` so the shutdown handler cannot recurse.
 

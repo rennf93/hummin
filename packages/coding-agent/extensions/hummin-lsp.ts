@@ -13,12 +13,20 @@
  * message (the harness has no unregister API; this mirrors hummin-mcp).
  * Offline stub calls are appended to the friction log (lib/friction.ts).
  * One-time notify on crash via a followUp session message.
+ *
+ * Push channel: after a successful edit or write to a TS/JS file, the tool
+ * result gets the file's diagnostics appended (bounded wait, never errors).
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+	SettingsManager,
+	type ExtensionAPI,
+	type ToolResultEvent,
+	type ToolResultEventResult,
+} from "@earendil-works/pi-coding-agent";
 import { Type, type TSchema } from "typebox";
 import { appendFriction } from "./lib/friction.ts";
 import {
@@ -80,6 +88,68 @@ async function probeBinary(command: string): Promise<boolean> {
 
 const INSTALL_HINT = "npm i -g typescript typescript-language-server";
 
+/** File extensions whose edit/write results get diagnostics appended. */
+const DIAGNOSTICS_PUSH_EXTENSIONS = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/i;
+/** Total budget for the wait on a publishDiagnostics push after an edit or write. */
+export const DIAGNOSTICS_PUSH_WAIT_MS = 1_500;
+/** Most severe diagnostics appended to a tool result; the rest collapse into a hint line. */
+export const DIAGNOSTICS_PUSH_MAX_LINES = 8;
+
+/** The slice of LspClient the push channel relies on (fakes provide this in tests). */
+type DiagnosticsPushClient = Pick<LspClient, "state" | "syncOpen" | "waitForDiagnostics">;
+
+/**
+ * tool_result push channel: after a successful edit or write to a TS/JS file,
+ * didOpen the file (fresh read from disk, so post-edit content) and wait a
+ * bounded time for the language server to publish diagnostics, then append
+ * them to the tool result. Errors are listed before warnings and the list is
+ * capped at DIAGNOSTICS_PUSH_MAX_LINES. A URI with no entry after the wait
+ * means the server did not report (e.g. a cold project still loading), which
+ * is reported as such instead of being confused with a clean file. Never
+ * modifies the result on any failure: not a TS/JS path, server not ready,
+ * syncOpen throws, or the wait times out all return undefined.
+ */
+export function createDiagnosticsPushHandler(deps: {
+	getClient: () => DiagnosticsPushClient | undefined;
+	cwd: string;
+	waitMs?: number;
+}): (event: ToolResultEvent) => Promise<ToolResultEventResult | undefined> {
+	const waitMs = deps.waitMs ?? DIAGNOSTICS_PUSH_WAIT_MS;
+	return async (event) => {
+		try {
+			if (event.toolName !== "edit" && event.toolName !== "write") return undefined;
+			if (event.isError) return undefined;
+			const rawPath = event.input.path;
+			if (typeof rawPath !== "string" || !DIAGNOSTICS_PUSH_EXTENSIONS.test(rawPath)) return undefined;
+			const client = deps.getClient();
+			if (!client || client.state !== "ready") return undefined;
+			const filePath = rawPath.startsWith("/") ? rawPath : resolve(deps.cwd, rawPath);
+			client.syncOpen(filePath);
+			const diagnostics = await client.waitForDiagnostics(pathToUri(filePath), waitMs);
+			const block = (text: string): NonNullable<ToolResultEventResult["content"]>[number] => ({
+				type: "text",
+				text,
+			});
+			if (!diagnostics) {
+				return {
+					content: [...event.content, block(`LSP diagnostics for ${rawPath}: unavailable (server did not report)`)],
+				};
+			}
+			if (diagnostics.length === 0) {
+				return { content: [...event.content, block(`LSP diagnostics for ${rawPath}: none`)] };
+			}
+			const ordered = [...diagnostics].sort((a, b) => a.severity - b.severity);
+			const lines = formatDiagLines(ordered.slice(0, DIAGNOSTICS_PUSH_MAX_LINES));
+			if (ordered.length > DIAGNOSTICS_PUSH_MAX_LINES) {
+				lines.push(`+${ordered.length - DIAGNOSTICS_PUSH_MAX_LINES} more (lsp_diagnostics for all)`);
+			}
+			return { content: [...event.content, block([`LSP diagnostics for ${rawPath}:`, ...lines].join("\n"))] };
+		} catch {
+			return undefined;
+		}
+	};
+}
+
 /** One language-server connection plus its registered tool names. */
 interface LspEntry {
 	client: LspClient;
@@ -138,7 +208,7 @@ export default function humminLsp(pi: ExtensionAPI): void {
 			current.client.syncOpen(filePath);
 			return { filePath };
 		};
-		const finish = (text: string) => ({ content: [{ type: "text", text }], details: {} });
+		const finish = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
 		const locationsText = (label: string, locations: LspLocation[]): string => {
 			if (locations.length === 0) return `${label}: no results`;
 			return [
@@ -152,7 +222,10 @@ export default function humminLsp(pi: ExtensionAPI): void {
 			name: string;
 			description: string;
 			parameters: TSchema;
-			execute: (params: Record<string, unknown>, signal: AbortSignal | undefined) => Promise<{ content: Array<{ type: string; text: string }>; details: Record<string, never> }>;
+			execute: (
+				params: Record<string, unknown>,
+				signal: AbortSignal | undefined,
+			) => Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, never> }>;
 		}
 
 		const specs: ToolSpec[] = [
@@ -255,7 +328,7 @@ export default function humminLsp(pi: ExtensionAPI): void {
 		}
 	};
 
-	function positionParams(): TSchema {
+	function positionParams() {
 		return Type.Object({
 			path: Type.String({ description: "File path (absolute or project-relative)" }),
 			line: Type.Integer({ description: "1-based line number" }),
@@ -319,6 +392,11 @@ export default function humminLsp(pi: ExtensionAPI): void {
 			}
 		},
 	});
+
+	// Diagnostics push: while the server is ready, successful edit/write
+	// results on TS/JS files carry the file's fresh diagnostics (bounded).
+	const pushDiagnostics = createDiagnosticsPushHandler({ getClient: () => entry?.client, cwd });
+	pi.on("tool_result", (event) => pushDiagnostics(event));
 
 	if (!enabled || !isTsProject) return;
 

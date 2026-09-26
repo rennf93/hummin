@@ -132,6 +132,7 @@ import {
 	diffSystemPromptSections,
 	type NormalizedBuildSystemPromptOptions,
 	normalizeBuildSystemPromptOptions,
+	shouldAutoCompactPrompt,
 } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions, DEFAULT_SELECTED_TOOLS } from "./tools/index.ts";
@@ -1301,7 +1302,7 @@ export class AgentSession {
 	setActiveToolsByName(toolNames: string[]): void {
 		const tools: AgentTool[] = [];
 		const validToolNames: string[] = [];
-		const compact = this.settingsManager.getCompactPrompt();
+		const compact = this._effectiveCompactPrompt();
 		for (const name of toolNames) {
 			const tool = this._toolRegistry.get(name);
 			if (tool) {
@@ -1404,6 +1405,20 @@ export class AgentSession {
 		};
 	}
 
+	/**
+	 * Effective compactPrompt mode: the explicit `compactPrompt` setting wins; otherwise
+	 * small-context models build compact prompts automatically unless
+	 * `HUMMIN_COMPACT_PROMPT_AUTO=0`. Re-evaluated per turn, so switching to a
+	 * small-context model mid-session flips prompt and tool compaction on the next
+	 * request; the changed prompt sections reach the model as a system-message diff
+	 * (`diffSystemPromptSections`), so the transition costs one re-embed of the diffed
+	 * sections, which is acceptable.
+	 */
+	private _effectiveCompactPrompt(): boolean {
+		if (this.settingsManager.getCompactPrompt()) return true;
+		return shouldAutoCompactPrompt(this.model?.contextWindow, process.env.HUMMIN_COMPACT_PROMPT_AUTO);
+	}
+
 	private _rebuildSystemPrompt(toolNames: string[]): void {
 		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
 		const toolSnippets: Record<string, string> = {};
@@ -1427,7 +1442,7 @@ export class AgentSession {
 			selectedTools: validToolNames,
 			toolSnippets,
 			toolGuidelines: Object.fromEntries(this._toolPromptGuidelines),
-			compact: this.settingsManager.getCompactPrompt(),
+			compact: this._effectiveCompactPrompt(),
 		});
 	}
 
@@ -1446,7 +1461,10 @@ export class AgentSession {
 		messages: AgentMessage[] = this.agent.state.messages,
 	): SystemMessage | undefined {
 		options.selectedTools = [...new Set(options.selectedTools)].filter((name) => this._toolRegistry.has(name));
-		const compact = this.settingsManager.getCompactPrompt();
+		// Compact mode is re-decided per turn so a mid-session model switch takes effect on
+		// the next request; the section diff below carries the prompt change to the model.
+		const compact = this._effectiveCompactPrompt();
+		options.compact = compact;
 		this.agent.state.tools = options.selectedTools.flatMap((name) => {
 			const tool = this._toolRegistry.get(name);
 			return tool ? [compact ? this._compactTool(tool) : tool] : [];

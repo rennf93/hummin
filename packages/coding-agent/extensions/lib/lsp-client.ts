@@ -142,6 +142,8 @@ export class LspClient {
 	private readonly openUris = new Set<string>();
 	/** Latest publishDiagnostics per URI. */
 	private readonly diagnosticsByUri = new Map<string, LspDiagnostic[]>();
+	/** Waiters parked in waitForDiagnostics, resolved by the next publish for their URI. */
+	private readonly diagnosticsWaiters = new Map<string, Array<(diagnostics: LspDiagnostic[] | undefined) => void>>();
 
 	constructor(name: string, config: LspServerConfig, options: LspClientOptions = {}) {
 		this.name = name;
@@ -163,6 +165,55 @@ export class LspClient {
 			return new Map(found ? [[uri, found]] : []);
 		}
 		return new Map(this.diagnosticsByUri);
+	}
+
+	/**
+	 * Wait for the next `textDocument/publishDiagnostics` notification for
+	 * `uri` after this call. Resolves with the published diagnostics array
+	 * (possibly empty), or undefined after `timeoutMs` or when the server
+	 * stops/crashes. Lets callers race a bounded wait against the push
+	 * instead of polling the snapshot, which could return stale entries from
+	 * an earlier didOpen.
+	 */
+	waitForDiagnostics(uri: string, timeoutMs: number): Promise<LspDiagnostic[] | undefined> {
+		return new Promise((resolve) => {
+			let timer: NodeJS.Timeout | undefined;
+			const waiter = (diagnostics: LspDiagnostic[] | undefined) => {
+				if (timer) clearTimeout(timer);
+				resolve(diagnostics);
+			};
+			timer = setTimeout(() => {
+				this.removeDiagnosticsWaiter(uri, waiter);
+				resolve(undefined);
+			}, timeoutMs);
+			timer.unref?.();
+			const waiters = this.diagnosticsWaiters.get(uri) ?? [];
+			waiters.push(waiter);
+			this.diagnosticsWaiters.set(uri, waiters);
+		});
+	}
+
+	private removeDiagnosticsWaiter(uri: string, waiter: (diagnostics: LspDiagnostic[] | undefined) => void): void {
+		const waiters = this.diagnosticsWaiters.get(uri);
+		if (!waiters) return;
+		const index = waiters.indexOf(waiter);
+		if (index !== -1) waiters.splice(index, 1);
+		if (waiters.length === 0) this.diagnosticsWaiters.delete(uri);
+	}
+
+	/** Settle every waiter for a URI (diagnostics) or all URIs (undefined). */
+	private settleDiagnosticsWaiters(uri: string | undefined, diagnostics: LspDiagnostic[] | undefined): void {
+		const drain = (waiterUri: string) => {
+			const waiters = this.diagnosticsWaiters.get(waiterUri);
+			if (!waiters) return;
+			this.diagnosticsWaiters.delete(waiterUri);
+			for (const waiter of waiters) waiter(diagnostics);
+		};
+		if (uri === undefined) {
+			for (const waiterUri of [...this.diagnosticsWaiters.keys()]) drain(waiterUri);
+			return;
+		}
+		drain(uri);
 	}
 
 	/** Connect (initialize handshake). Idempotent: repeat calls share one handshake. */
@@ -290,6 +341,7 @@ export class LspClient {
 		this.rejectAll("stopped");
 		this.openUris.clear();
 		this.diagnosticsByUri.clear();
+		this.settleDiagnosticsWaiters(undefined, undefined);
 		this.setState("stopped");
 		if (child && child.exitCode === null && child.signalCode === null) {
 			child.kill("SIGTERM");
@@ -312,6 +364,7 @@ export class LspClient {
 		this.rejectAll(message);
 		this.openUris.clear();
 		this.diagnosticsByUri.clear();
+		this.settleDiagnosticsWaiters(undefined, undefined);
 		this.setState("crashed", message);
 	}
 
@@ -427,6 +480,7 @@ export class LspClient {
 						};
 					});
 					this.diagnosticsByUri.set(diagUri, diagnostics);
+					this.settleDiagnosticsWaiters(diagUri, diagnostics);
 					try {
 						this.onDiagnostics?.(diagUri, diagnostics);
 					} catch {

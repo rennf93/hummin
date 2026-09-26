@@ -23,9 +23,27 @@ import {
 	writeCronStore,
 } from "./lib/cron-store.ts";
 import { prepareChildDispatch, type ChildDispatchOptions, type ThinkingLevel } from "./lib/child-dispatch-review.ts";
+import { lessonsForChildBrief } from "./hummin-memory.ts";
+import { withInheritedLessons } from "./hummin-subagents.ts";
 
 const DISABLED = process.env.HUMMIN_CRON === "0";
 const CRON_DISABLED_NOTICE = "cron is disabled (HUMMIN_CRON=0)";
+
+/**
+ * Prepend the bounded inherited-lessons block (the same format the task tool
+ * uses) to a cron child prompt when the parent's memory store is enabled.
+ * Strict no-op when memory is off: the prompt bytes stay identical, so the
+ * dispatch-review fingerprint and the child argv are unchanged. Never fails
+ * the dispatch: any error falls back to the bare prompt.
+ */
+async function cronChildPrompt(prompt: string): Promise<string> {
+	if (process.env.HUMMIN_MEMORY === "0") return prompt;
+	try {
+		return withInheritedLessons(prompt, await lessonsForChildBrief(prompt));
+	} catch {
+		return prompt;
+	}
+}
 
 function formatTime(ms: number | undefined): string {
 	if (ms === undefined) return "never";
@@ -103,10 +121,16 @@ export async function runSchedulerPass(dir: string, nowMs: number, context?: Sch
 					heldReason: undefined,
 				};
 			}
-			const { command, args, cwd, env } = childCommand(effective);
+			// Inherited lessons go in after the review so the review fingerprint
+			// keeps matching the stored entry prompt; the stored prompt itself is
+			// never rewritten (each run re-recalls against its own lesson store).
+			const { command, args, cwd, env } = childCommand({ ...effective, prompt: await cronChildPrompt(effective.prompt) });
 			let child;
 			try {
-				child = spawn(command, args, { cwd, env: { ...process.env, ...env }, detached: true, stdio: "ignore" });
+				// HUMMIN_MEMORY=0 comes from childCommand's env; HUMMIN_MEMORY_TOOLS=1
+				// lets the child consult the vault read-only (search only, no fold,
+				// no distill, no recall injection - nothing that can recurse).
+				child = spawn(command, args, { cwd, env: { ...process.env, ...env, HUMMIN_MEMORY_TOOLS: "1" }, detached: true, stdio: "ignore" });
 			} catch (error) {
 				spawned.push(`${entry.name}: spawn failed: ${error instanceof Error ? error.message : String(error)}`);
 				continue;

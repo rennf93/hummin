@@ -16,6 +16,7 @@ const createdDirs: string[] = [];
 let memoryDirOriginal: string | undefined;
 let vaultDirOriginal: string | undefined;
 let expandOriginal: string | undefined;
+let embedOriginal: string | undefined;
 
 beforeAll(() => {
 	memoryDirOriginal = process.env.HUMMIN_MEMORY_DIR;
@@ -24,6 +25,10 @@ beforeAll(() => {
 	// the plain-lexical ranking behavior.
 	expandOriginal = process.env.HUMMIN_MEMORY_QUERY_EXPAND;
 	process.env.HUMMIN_MEMORY_QUERY_EXPAND = "0";
+	// Embeddings stay off too: a developer-env HUMMIN_MEMORY_EMBED_URL must not
+	// turn these lexical-ranking pins into network-dependent tests.
+	embedOriginal = process.env.HUMMIN_MEMORY_EMBED;
+	process.env.HUMMIN_MEMORY_EMBED = "0";
 });
 
 // Isolate each test's memory and vault dirs: the module reads both env vars
@@ -43,6 +48,8 @@ afterAll(() => {
 	else process.env.HUMMIN_MEMORY_VAULT_DIR = vaultDirOriginal;
 	if (expandOriginal === undefined) delete process.env.HUMMIN_MEMORY_QUERY_EXPAND;
 	else process.env.HUMMIN_MEMORY_QUERY_EXPAND = expandOriginal;
+	if (embedOriginal === undefined) delete process.env.HUMMIN_MEMORY_EMBED;
+	else process.env.HUMMIN_MEMORY_EMBED = embedOriginal;
 });
 
 const PROJ = "/Users/renzof/work/alpha";

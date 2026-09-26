@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "../src/providers/faux.ts";
-import { isRetryableAssistantError, type RetryPolicy, retryAssistantCall, retryDelayMs } from "../src/utils/retry.ts";
+import {
+	classifyProviderRetry,
+	isRetryableAssistantError,
+	type RetryPolicy,
+	retryAssistantCall,
+	retryDelayMs,
+} from "../src/utils/retry.ts";
 
 const openAIExplicitRetryMessage =
 	"An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID req_******** in your message.";
@@ -101,6 +107,65 @@ describe("provider retry classification", () => {
 			),
 		).toBe(true);
 		expect(isRetryableAssistantError(fauxAssistantMessage("not an error"))).toBe(false);
+	});
+});
+
+describe("classifyProviderRetry", () => {
+	it("classifies transient HTTP statuses as retryable", () => {
+		for (const status of [408, 429, 500, 502, 503, 504, 529]) {
+			expect(classifyProviderRetry({ status, message: "ignored message" })).toBe("retryable");
+			expect(classifyProviderRetry({ statusCode: status, message: "ignored message" })).toBe("retryable");
+			const error = Object.assign(new Error("ignored message"), { status });
+			expect(classifyProviderRetry(error)).toBe("retryable");
+		}
+	});
+
+	it("classifies fixed client-error statuses as non-retryable", () => {
+		for (const status of [400, 401, 402, 403, 404, 409, 422]) {
+			expect(classifyProviderRetry({ status, message: "overloaded" })).toBe("non-retryable");
+			expect(classifyProviderRetry({ statusCode: status })).toBe("non-retryable");
+		}
+	});
+
+	it("leaves statuses without a fixed verdict to the later rules", () => {
+		expect(classifyProviderRetry({ status: 418, code: "ECONNRESET" })).toBe("retryable");
+		expect(classifyProviderRetry({ status: 418, message: "overloaded" })).toBe("retryable");
+		expect(classifyProviderRetry({ status: 418, message: "nothing matches this" })).toBe("unknown");
+		expect(classifyProviderRetry({ status: 418 })).toBe("unknown");
+	});
+
+	it("classifies transient transport error codes as retryable", () => {
+		for (const code of [
+			"ECONNRESET",
+			"ECONNREFUSED",
+			"ETIMEDOUT",
+			"EPIPE",
+			"UND_ERR_SOCKET",
+			"UND_ERR_CONNECT_TIMEOUT",
+			"UND_ERR_HEADERS_TIMEOUT",
+			"UND_ERR_BODY_TIMEOUT",
+		]) {
+			expect(classifyProviderRetry({ code })).toBe("retryable");
+		}
+		expect(classifyProviderRetry({ code: "ENOTFOUND" })).toBe("unknown");
+	});
+
+	it("falls back to the provider error patterns for plain strings, unchanged", () => {
+		expect(classifyProviderRetry("429 quota exceeded")).toBe("non-retryable");
+		expect(classifyProviderRetry("terminated")).toBe("retryable");
+		expect(classifyProviderRetry("nothing matches this")).toBe("unknown");
+	});
+
+	it("falls back to error.message against the patterns when status and code yield no verdict", () => {
+		expect(classifyProviderRetry(new Error("overloaded_error"))).toBe("retryable");
+		expect(classifyProviderRetry(new Error("insufficient_quota"))).toBe("non-retryable");
+		expect(classifyProviderRetry(new Error("nothing matches this"))).toBe("unknown");
+	});
+
+	it("prefers status over code, and status over the message patterns", () => {
+		expect(classifyProviderRetry({ status: 401, code: "ECONNRESET", message: "overloaded" })).toBe("non-retryable");
+		expect(classifyProviderRetry({ status: 500, code: undefined, message: "quota exceeded" })).toBe("retryable");
+		expect(classifyProviderRetry({ code: "ECONNRESET", message: "nothing matches this" })).toBe("retryable");
 	});
 });
 

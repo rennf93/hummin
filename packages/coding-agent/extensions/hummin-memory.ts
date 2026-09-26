@@ -28,6 +28,18 @@
  *                              expansion in recall and vault search
  *   HUMMIN_MEMORY_AUTO_FOLD_THRESHOLD  inbox lesson count that triggers an
  *                              automatic fold pass (default 3; 0 disables)
+ *   HUMMIN_MEMORY_EMBED=0      (or memoryEmbed=false in settings) disables
+ *                              embeddings hybrid retrieval; recall falls back
+ *                              to BM25-only. HUMMIN_MEMORY_EMBED_URL (or the
+ *                              memoryEmbedUrl setting, or the first fleet
+ *                              server, probed once) names the OpenAI-shaped
+ *                              POST /v1/embeddings endpoint.
+ *   HUMMIN_MEMORY_TOOLS=1      with HUMMIN_MEMORY=0: tools-only mode. Loads
+ *                              the vault search tool and /memory dashboard
+ *                              without any write or distillation path (used
+ *                              for child sessions so they can consult the
+ *                              read-only vault without being able to fold,
+ *                              distill, or recurse).
  *
  * In vault mode the fold pass also runs automatically: at session start, on
  * agent_end, and after shutdown distillation, whenever the inbox holds at
@@ -52,8 +64,14 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { Type } from "typebox";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { getAgentDir, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+	emitTelemetryEvent,
+	getAgentDir,
+	SettingsManager,
+	type ExtensionAPI,
+} from "@earendil-works/pi-coding-agent";
 import type { TextContent } from "@earendil-works/pi-ai";
+import { appendVectorRecords, cosineSimilarity, embedInputs, loadVectorIndex, roundVector } from "./lib/embeddings-client.ts";
 import { MEMORY_WORKER_SOURCE, type MemoryDistillJob, type MemoryFoldJob } from "./lib/memory-workers.ts";
 import { prepareChildDispatch, type DispatchReceipt } from "./lib/child-dispatch-review.ts";
 
@@ -690,6 +708,7 @@ export function recallLessons(
 	limit = RETRIEVAL_MAX_LESSONS,
 	scope: "project" | "all" = "project",
 	extraTerms: readonly string[] = [],
+	similarity?: ReadonlyMap<string, number>,
 ): string[] {
 	const queryTerms = tokenize(query);
 	for (const term of tokenizeList(extraTerms.join(" "))) queryTerms.add(term);
@@ -739,6 +758,32 @@ export function recallLessons(
 		const score = bm25Score(queryTerms, record.doc, df, avgLen, records.length) + phrase + recencyBonus({ timestamp: record.timestamp });
 		scored.push({ lesson: record.lesson, score, sameProject: record.sameProject, index: record.index });
 	}
+	// Pass 3 (hybrid): when embedding similarities are supplied, blend them
+	// into the ranking. Final formula, documented:
+	//
+	//   final = minmax(bm25 + phraseBonus + recencyBonus) + HYBRID_EMBED_ALPHA * cosine(query, lesson)
+	//
+	// The BM25-side score is min-max normalized WITHIN the candidate set (the
+	// lessons that passed the relevance floor), then the similarity term is
+	// added, so a paraphrase lesson with no shared vocabulary can still rise.
+	// With no similarity data (embeddings off, no endpoint, no stored vectors,
+	// or a dimension mismatch) the cosine term is 0 for every candidate, the
+	// normalization is monotonic, and the plain BM25 order is byte-for-byte
+	// the ranking this function has always returned. The relevance floors and
+	// the project-identity/index tie-breaks below are unchanged.
+	if (scored.length > 0 && similarity && similarity.size > 0) {
+		let min = Infinity;
+		let max = -Infinity;
+		for (const entry of scored) {
+			if (entry.score < min) min = entry.score;
+			if (entry.score > max) max = entry.score;
+		}
+		const span = max - min;
+		for (const entry of scored) {
+			const normalized = span > 0 ? (entry.score - min) / span : 0;
+			entry.score = normalized + HYBRID_EMBED_ALPHA * (similarity.get(entry.lesson) ?? 0);
+		}
+	}
 	scored.sort((a, b) => b.score - a.score || Number(b.sameProject) - Number(a.sameProject) || b.index - a.index);
 	return scored.slice(0, limit).map((entry) => entry.lesson);
 }
@@ -747,10 +792,12 @@ export function recallLessons(
  * Compact lesson briefing for child sessions (imported by other extensions,
  * e.g. the subagent dispatcher, as `import { lessonsForChildBrief } from
  * "./hummin-memory.ts"`). Plain lexical BM25 over the union lesson corpus with
- * the task prompt as query: no model call, no query expansion, project scope
- * only (same-project bias). Returns null when memory is disabled or nothing
- * matches. Safe against circular imports: this module imports no other
- * extension entry point.
+ * the task prompt as query: no model call, no query expansion, NO embeddings
+ * lookup, project scope only (same-project bias). Deliberately zero-network:
+ * it runs in dispatch paths (the task tool and the cron scheduler pass) where
+ * an endpoint stall would delay every dispatch, and the brief is advisory.
+ * Returns null when memory is disabled or nothing matches. Safe against
+ * circular imports: this module imports no other extension entry point.
  *
  * Side-effect contract: lastInjectedAt is NOT stamped. A child briefing is
  * advisory, not a session injection, so it must not count as use in the
@@ -765,6 +812,8 @@ export async function lessonsForChildBrief(query: string, maxChars = 1200): Prom
 	if (!enabled) return null;
 	const trimmed = query.trim();
 	if (!trimmed) return null;
+	// Purely lexical on purpose (see doc comment above): no embeddings probe,
+	// no network, so dispatch latency never depends on the embeddings endpoint.
 	const lessons = recallLessons(process.cwd(), trimmed, 2);
 	if (lessons.length === 0) return null;
 	const header = "Relevant lessons from prior work:";
@@ -799,7 +848,7 @@ export async function searchVault(query: string, cwd: string): Promise<string> {
 	const dir = vaultDir(cachedSettings);
 	const hasCorpus = unionLessonRecords(dir).length > 0 || countVaultEntities(dir) > 0;
 	const extra = hasCorpus ? await expandQueryTerms(query) : [];
-	const lessons = recallLessons(cwd, query, 5, "all", extra);
+	const lessons = hasCorpus ? await recallLessonsHybrid(cwd, query, 5, "all", extra) : [];
 	// Every search result counts as a use: stamp it so decay keeps lessons the
 	// agent actually consults.
 	markLessonsInjected(lessons);
@@ -809,6 +858,14 @@ export async function searchVault(query: string, cwd: string): Promise<string> {
 	const entities = searchEntities(query, 3);
 	if (entities.length > 0) {
 		sections.push(`Vault entities:\n${entities.join("\n")}`);
+	}
+	// Telemetry for the /stats consumer: how much the vault tool is used and
+	// whether it returns anything. Wrapped so telemetry can never break search;
+	// emitTelemetryEvent itself is already fail-open (no-op without a sink).
+	try {
+		emitTelemetryEvent("vault_searched", { results: lessons.length + entities.length });
+	} catch {
+		// telemetry must never break search
 	}
 	if (sections.length === 0) sections.push(`no lessons or entities match "${query}".`);
 	// Header names the vault actually searched: HUMMIN_MEMORY_VAULT_DIR can
@@ -1158,37 +1215,237 @@ export async function expandQueryTerms(query: string): Promise<string[]> {
 	return terms;
 }
 
-export default function humminMemory(pi: ExtensionAPI): void {
-	const settings = SettingsManager.create(process.cwd());
-	cachedSettings = settings;
-	pi.registerCommand("memory", {
-		description: "Show memory and vault status",
-		category: "Memory/Vault",
-		handler: async (_args, ctx) => {
-			try {
-				ctx.ui.notify(dashboardText(getMemoryDashboard(settings)), "info");
-			} catch (error) {
-				ctx.ui.notify(`memory: unable to read dashboard (${error instanceof Error ? error.message : String(error)})`, "error");
-			}
-		},
-	});
-	if (!settings.getMemoryEnabled()) return;
+// =============================================================================
+// Embeddings hybrid retrieval: blend vector similarity into the BM25 ranking.
+// The endpoint is resolved once per process (env, settings, then the first
+// fleet server, probed) and every failure fails open to BM25-only. Vectors
+// live in a sidecar next to lessons.jsonl and are backfilled lazily, at most
+// EMBED_BACKFILL_MAX lessons per retrieval pass, so recall never stalls on a
+// cold or slow endpoint. The scoring formula itself lives in recallLessons
+// (pass 3 there): minmax(bm25 + phrase + recency) + HYBRID_EMBED_ALPHA * cos.
+// =============================================================================
 
-	pi.on("model_select", (event) => {
-		sessionModel = event.model;
-	});
+/** Weight of the cosine term in the hybrid score. Small on purpose: it can
+ * reorder near-ties and surface paraphrases, never drown lexical relevance. */
+export const HYBRID_EMBED_ALPHA = 0.4;
+/** Timeout for the one-time endpoint probe (and for batch input embedding). */
+const EMBED_TIMEOUT_MS = 5000;
+/** Upper bound on lessons embedded per retrieval pass (lazy backfill). */
+const EMBED_BACKFILL_MAX = 64;
+/** Sidecar size cap; the oldest lines drop first when it is exceeded. */
+const EMBED_SIDECAR_MAX_BYTES = 5 * 1024 * 1024;
+/** Upper bound so a long-lived process cannot grow the caches unbounded. */
+const EMBED_CACHE_MAX = 200;
 
-	// Held distillation sweep: once per real startup (not reload/resume/fork,
-	// where the shutdown that follows would re-enqueue anyway). Fail-open.
-	pi.on("session_start", async (event, ctx) => {
-		if (event.reason !== "startup") return;
-		try {
-			await retryHeldDistills(ctx);
-		} catch {
-			// fail-open: a held-job retry must never break startup
+interface EmbedSettings {
+	memoryEmbed?: unknown;
+	memoryEmbedUrl?: unknown;
+}
+
+/** Env gate first (HUMMIN_MEMORY_EMBED=0/false/off), then the settings key
+ * memoryEmbed=false (project settings override global). Default on; with no
+ * resolvable endpoint the feature is inert either way (fail-open). */
+function embeddingsEnabled(): boolean {
+	const env = process.env.HUMMIN_MEMORY_EMBED?.trim();
+	if (env && /^(0|false|off)$/i.test(env)) return false;
+	if (!cachedSettings) return true;
+	try {
+		const global = cachedSettings.getGlobalSettings() as EmbedSettings;
+		const project = cachedSettings.getProjectSettings() as EmbedSettings;
+		return { ...global, ...project }.memoryEmbed !== false;
+	} catch {
+		return true;
+	}
+}
+
+/** Explicit endpoint from settings (memoryEmbedUrl, project over global). */
+function settingsEmbedUrl(): string | undefined {
+	try {
+		const global = cachedSettings?.getGlobalSettings() as EmbedSettings | undefined;
+		const project = cachedSettings?.getProjectSettings() as EmbedSettings | undefined;
+		const merged = { ...global, ...project }.memoryEmbedUrl;
+		return typeof merged === "string" && merged.trim().length > 0 ? merged.trim() : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Resolved endpoint: undefined = not resolved yet, null = resolved to none
+ * (probe failed or nothing configured) and stays that way for the process
+ * lifetime, so a dead server costs one probe and no repeated timeouts. */
+let resolvedEmbedEndpoint: string | null | undefined;
+
+/**
+ * Resolve the embeddings endpoint, in order: HUMMIN_MEMORY_EMBED_URL, the
+ * memoryEmbedUrl setting, then the first fleet server's
+ * http://<hostIp>:<port>/v1/embeddings (the llama.cpp OpenAI shape), probed
+ * once with a 5s timeout. The probe result is cached for the process
+ * lifetime. Returns null when nothing resolves: callers fall back to
+ * BM25-only ranking.
+ */
+async function resolveEmbedEndpoint(): Promise<string | null> {
+	if (resolvedEmbedEndpoint !== undefined) return resolvedEmbedEndpoint;
+	let endpoint = process.env.HUMMIN_MEMORY_EMBED_URL?.trim() || settingsEmbedUrl() || undefined;
+	if (!endpoint) {
+		const server = cachedSettings?.getFleetServers() ?? [];
+		if (server.length > 0) endpoint = `http://${server[0].hostIp}:${server[0].port}/v1/embeddings`;
+	}
+	if (!endpoint) {
+		resolvedEmbedEndpoint = null;
+		return null;
+	}
+	// The probe IS an embeddings call: a valid OpenAI-shaped answer proves the
+	// endpoint serves this exact route.
+	const probed = await embedInputs(["hummin memory endpoint probe"], endpoint, EMBED_TIMEOUT_MS);
+	resolvedEmbedEndpoint = probed ? endpoint : null;
+	return resolvedEmbedEndpoint;
+}
+
+/** Query embeddings, LRU-capped per process like query expansion (only
+ * successful embeddings are cached; Map iteration order is recency order). */
+const queryEmbeddingCache = new Map<string, number[]>();
+
+async function queryEmbedding(query: string): Promise<number[] | null> {
+	if (!embeddingsEnabled()) return null;
+	const trimmed = query.trim();
+	if (!trimmed) return null;
+	const cached = queryEmbeddingCache.get(trimmed);
+	if (cached) {
+		// Re-insert to refresh recency, so eviction drops the least recently
+		// USED entry rather than the first-inserted one.
+		queryEmbeddingCache.delete(trimmed);
+		queryEmbeddingCache.set(trimmed, cached);
+		return cached;
+	}
+	const endpoint = await resolveEmbedEndpoint();
+	if (!endpoint) return null;
+	const vectors = await embedInputs([trimmed], endpoint, EMBED_TIMEOUT_MS);
+	const vector = vectors?.[0];
+	if (!vector || vector.length === 0) return null;
+	if (queryEmbeddingCache.size >= EMBED_CACHE_MAX) {
+		const oldest = queryEmbeddingCache.keys().next();
+		if (!oldest.done) queryEmbeddingCache.delete(oldest.value);
+	}
+	queryEmbeddingCache.set(trimmed, vector);
+	return vector;
+}
+
+function vectorSidecarPath(): string {
+	return join(memoryDir(), "vectors.jsonl");
+}
+
+interface VectorIndexCache {
+	path: string;
+	mtimeMs: number;
+	index: Map<string, number[]>;
+}
+
+let vectorIndexCache: VectorIndexCache | undefined;
+
+/** The sidecar index, re-read only when the file changed (mtime check), so a
+ * retrieval pass pays one small read instead of one per record. */
+function vectorIndex(): Map<string, number[]> {
+	const path = vectorSidecarPath();
+	try {
+		const mtimeMs = statSync(path).mtimeMs;
+		if (vectorIndexCache && vectorIndexCache.path === path && vectorIndexCache.mtimeMs === mtimeMs) {
+			return vectorIndexCache.index;
 		}
-	});
+		const index = loadVectorIndex(path);
+		vectorIndexCache = { path, mtimeMs, index };
+		return index;
+	} catch {
+		return new Map(); // missing sidecar: nothing embedded yet
+	}
+}
 
+/**
+ * Embed the corpus lessons that have no stored vector yet, at most
+ * EMBED_BACKFILL_MAX per call, and append them to the sidecar. Fail-open: any
+ * error leaves the sidecar unchanged and this pass scores BM25-only.
+ */
+async function backfillVectors(records: LessonRecord[], endpoint: string): Promise<void> {
+	const index = vectorIndex();
+	const seen = new Set<string>();
+	const missing: { key: string; body: string }[] = [];
+	for (const record of records) {
+		const body = record.lesson.trim();
+		if (seen.has(body)) continue;
+		seen.add(body);
+		const key = lessonIdOf(body);
+		if (!index.has(key)) missing.push({ key, body });
+	}
+	if (missing.length === 0) return;
+	const batch = missing.slice(0, EMBED_BACKFILL_MAX);
+	const vectors = await embedInputs(batch.map((entry) => entry.body), endpoint, EMBED_TIMEOUT_MS);
+	if (!vectors) return;
+	const at = new Date().toISOString();
+	const stored = batch.map((entry, i) => ({ key: entry.key, vec: roundVector(vectors[i], 4), dim: vectors[i].length, at }));
+	try {
+		appendVectorRecords(vectorSidecarPath(), stored, EMBED_SIDECAR_MAX_BYTES);
+		vectorIndexCache = undefined; // next vectorIndex() re-reads the file
+	} catch {
+		// fail-open: a broken sidecar must never break recall
+	}
+}
+
+/**
+ * Hybrid recall: BM25 ranking blended with embeddings cosine similarity (see
+ * recallLessons pass 3) whenever an embeddings endpoint resolves. Any failure
+ * on the embedding side degrades to plain BM25. This is the entry the
+ * auto-briefing path, the vault tool, and child briefs all use.
+ */
+export async function recallLessonsHybrid(
+	cwd: string,
+	query: string,
+	limit = RETRIEVAL_MAX_LESSONS,
+	scope: "project" | "all" = "project",
+	extraTerms: readonly string[] = [],
+): Promise<string[]> {
+	const similarity = await hybridSimilarity(query);
+	return recallLessons(cwd, query, limit, scope, extraTerms, similarity);
+}
+
+/**
+ * Cosine similarity of the query against every corpus record that has a
+ * stored vector of matching dimension, as a map keyed by lesson body. Empty
+ * map when embeddings are disabled, unresolvable, or failing: the caller then
+ * ranks plain-BM25. Never throws.
+ */
+async function hybridSimilarity(query: string): Promise<Map<string, number>> {
+	const similarity = new Map<string, number>();
+	try {
+		const queryVector = await queryEmbedding(query);
+		if (!queryVector) return similarity;
+		const endpoint = await resolveEmbedEndpoint();
+		if (!endpoint) return similarity;
+		const records = unionLessonRecords(vaultDir(cachedSettings));
+		await backfillVectors(records, endpoint);
+		const index = vectorIndex();
+		for (const record of records) {
+			const vector = index.get(lessonIdOf(record.lesson.trim()));
+			if (!vector || vector.length !== queryVector.length) continue; // dim mismatch: skip
+			similarity.set(record.lesson, cosineSimilarity(queryVector, vector));
+		}
+	} catch {
+		// fail-open: embeddings must never break recall
+	}
+	return similarity;
+}
+
+/** Test hook: clear the process-lifetime embed caches (endpoint probe, query
+ * embeddings, sidecar index) so tests can re-point the endpoint. */
+export function resetEmbedCachesForTests(): void {
+	resolvedEmbedEndpoint = undefined;
+	queryEmbeddingCache.clear();
+	vectorIndexCache = undefined;
+}
+
+/** The read-only vault search tool: on-demand retrieval over lessons and
+ * entity files. Registered both in full memory mode and in tools-only mode
+ * (HUMMIN_MEMORY=0 + HUMMIN_MEMORY_TOOLS=1); it writes nothing except the
+ * lastInjectedAt usage stamp that decay relies on. */
+function registerVaultSearchTool(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "vault",
 		label: "Vault Search",
@@ -1204,6 +1461,52 @@ export default function humminMemory(pi: ExtensionAPI): void {
 			return { content: [{ type: "text" as const, text: await searchVault(query, ctx.cwd) }], details: {} };
 		},
 	});
+}
+
+export default function humminMemory(pi: ExtensionAPI): void {
+	const settings = SettingsManager.create(process.cwd());
+	cachedSettings = settings;
+	pi.registerCommand("memory", {
+		description: "Show memory and vault status",
+		category: "Memory/Vault",
+		handler: async (_args, ctx) => {
+			try {
+				ctx.ui.notify(dashboardText(getMemoryDashboard(settings)), "info");
+			} catch (error) {
+				ctx.ui.notify(`memory: unable to read dashboard (${error instanceof Error ? error.message : String(error)})`, "error");
+			}
+		},
+	});
+	if (!settings.getMemoryEnabled()) {
+		// Tools-only mode (HUMMIN_MEMORY=0 + HUMMIN_MEMORY_TOOLS=1): the caller
+		// wants the vault searchable but not writable. Register the read-only
+		// vault tool and nothing else - no recall injection, no shutdown
+		// distillation, no auto-fold, no fold. The recursion bug class lives in
+		// the write/shutdown path, and tools-only registers none of it.
+		if (process.env.HUMMIN_MEMORY === "0" && process.env.HUMMIN_MEMORY_TOOLS === "1") {
+			registerVaultSearchTool(pi);
+		}
+		return;
+	}
+
+	pi.on("model_select", (event) => {
+		sessionModel = event.model;
+	});
+
+	// Held distillation sweep: once per real startup (not reload/resume/fork,
+	// where the shutdown that follows would re-enqueue anyway). Fail-open. Also
+	// surfaces the last fold validation state, once per process.
+	pi.on("session_start", async (event, ctx) => {
+		if (event.reason !== "startup") return;
+		try {
+			await retryHeldDistills(ctx);
+		} catch {
+			// fail-open: a held-job retry must never break startup
+		}
+		notifyFoldValidationOnce(ctx);
+	});
+
+	registerVaultSearchTool(pi);
 
 	pi.on("input", async (event, ctx) => {
 		if (!event.text.startsWith("# ")) return { action: "continue" as const };
@@ -1311,9 +1614,10 @@ export default function humminMemory(pi: ExtensionAPI): void {
 		// ranking pass so the first prompt of a fresh install stays instant.
 		if (unionLessonRecords(vaultDir(cachedSettings)).length === 0) return undefined;
 		// Expand before ranking: one cheap model call, fail-open to the raw
-		// query (see expandQueryTerms).
+		// query (see expandQueryTerms). Embedding similarity is blended into
+		// the ranking when an endpoint is configured (fail-open to BM25-only).
 		const extra = await expandQueryTerms(prompt);
-		const lessons = recallLessons(ctx.cwd, prompt, RETRIEVAL_MAX_LESSONS, "project", extra);
+		const lessons = await recallLessonsHybrid(ctx.cwd, prompt, RETRIEVAL_MAX_LESSONS, "project", extra);
 		if (lessons.length === 0) return undefined;
 		const sessionId = ctx.sessionManager.getSessionId();
 		const injected = injectedIdsFromEntries(ctx.sessionManager.getEntries());
@@ -1325,6 +1629,13 @@ export default function humminMemory(pi: ExtensionAPI): void {
 		for (const part of parts) injectedBySession.get(sessionId)!.add(part.id);
 		// Stamp the store so usage-aware decay keeps these lessons.
 		markLessonsInjected(parts.map((part) => part.lesson));
+		// Telemetry for the /stats consumer. Wrapped so telemetry can never
+		// break recall; emitTelemetryEvent is already fail-open without a sink.
+		try {
+			emitTelemetryEvent("memory_lessons_injected", { count: parts.length, ids: parts.slice(0, 10).map((part) => part.id) });
+		} catch {
+			// telemetry must never break recall
+		}
 		if (ctx?.ui?.notify) {
 			ctx.ui.notify(`memory: ${parts.length} project lesson(s) applied to this session`, "info");
 		}
@@ -1435,6 +1746,58 @@ function vaultDir(settings: SettingsManager | undefined): string {
 	const env = process.env.HUMMIN_MEMORY_VAULT_DIR;
 	if (env && env.trim().length > 0) return env;
 	return join(getAgentDir(), "vault");
+}
+
+/** Marker prefix the fold worker appends to fold.log after each validation
+ * pass; a final failure is the bare token "fold-validation failed". */
+const FOLD_VALIDATION_PREFIX = "fold-validation";
+
+/**
+ * The last recorded fold validation outcome from <vault>/fold.log, or null
+ * when none exists. Reads only the marker lines, so worker output mixed into
+ * the log cannot confuse it. The bare "fold-validation failed" line (written
+ * after the one repair retry also failed) and a JSON payload with
+ * ok=false both report as not-ok.
+ */
+export function lastFoldValidation(foldLog: string): { ok: boolean; failed: string[] } | null {
+	let text: string;
+	try {
+		text = readFileSync(foldLog, "utf8");
+	} catch {
+		return null; // no fold log yet
+	}
+	for (const line of text.split("\n").reverse()) {
+		const trimmed = line.trim();
+		if (!trimmed.startsWith(FOLD_VALIDATION_PREFIX)) continue;
+		const rest = trimmed.slice(FOLD_VALIDATION_PREFIX.length).trim();
+		if (rest === "failed") return { ok: false, failed: [] };
+		try {
+			const parsed = JSON.parse(rest) as { ok?: unknown; failed?: unknown };
+			return {
+				ok: parsed.ok === true,
+				failed: Array.isArray(parsed.failed) ? parsed.failed.map((entry) => String(entry)) : [],
+			};
+		} catch {
+			return null; // unrecognized marker shape
+		}
+	}
+	return null;
+}
+
+let foldValidationNotified = false;
+
+/**
+ * Surface state: on session start, notify once per process when the last fold
+ * validation failed. The worker has already run its single repair retry, so
+ * this only informs - it never re-triggers anything. Fail-open.
+ */
+function notifyFoldValidationOnce(ctx: Pick<MemoryDispatchContext, "ui"> | undefined): void {
+	if (foldValidationNotified) return;
+	const outcome = lastFoldValidation(join(vaultDir(cachedSettings), "fold.log"));
+	if (!outcome || outcome.ok) return;
+	foldValidationNotified = true;
+	const detail = outcome.failed.length > 0 ? ` (${outcome.failed.join("; ")})` : "";
+	ctx?.ui?.notify?.(`memory: last fold failed validation${detail}; see fold.log`, "warning");
 }
 
 function vaultContract(): string {

@@ -9,12 +9,17 @@ let memoryDirOriginal: string | undefined;
 let vaultDirOriginal: string | undefined;
 let expandOriginal: string | undefined;
 let pathOriginal: string | undefined;
+let embedOriginal: string | undefined;
 
 beforeEach(() => {
 	memoryDirOriginal = process.env.HUMMIN_MEMORY_DIR;
 	vaultDirOriginal = process.env.HUMMIN_MEMORY_VAULT_DIR;
 	expandOriginal = process.env.HUMMIN_MEMORY_QUERY_EXPAND;
 	pathOriginal = process.env.PATH;
+	// Embeddings stay off: a developer-env HUMMIN_MEMORY_EMBED_URL must not
+	// reach the network from these expansion tests.
+	embedOriginal = process.env.HUMMIN_MEMORY_EMBED;
+	process.env.HUMMIN_MEMORY_EMBED = "0";
 	// Expansion on for this suite; each test seeds its own temp dirs so
 	// concurrently running files never leak into these calls.
 	process.env.HUMMIN_MEMORY_QUERY_EXPAND = "1";
@@ -36,6 +41,8 @@ afterAll(() => {
 	else process.env.HUMMIN_MEMORY_VAULT_DIR = vaultDirOriginal;
 	if (expandOriginal === undefined) delete process.env.HUMMIN_MEMORY_QUERY_EXPAND;
 	else process.env.HUMMIN_MEMORY_QUERY_EXPAND = expandOriginal;
+	if (embedOriginal === undefined) delete process.env.HUMMIN_MEMORY_EMBED;
+	else process.env.HUMMIN_MEMORY_EMBED = embedOriginal;
 });
 
 /** Mock `hummin` on PATH: appends its argv to the args file (one line per

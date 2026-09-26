@@ -5,6 +5,7 @@
  * writes this source into its memory directory and invokes it with
  * `node worker.mjs <mode> <job.json>`.
  */
+import { closeSync, openSync, readSync } from "node:fs";
 
 export type MemoryWorkerMode = "distill" | "fold" | "prune";
 
@@ -181,10 +182,135 @@ export function parseDistilledLessons(output: string, maxLessons = 3): string[] 
 	return unique.slice(0, maxLessons);
 }
 
+/** The fs primitives the checkpoint scan needs, injected so the scanning core
+ * stays self-contained (embedded verbatim into MEMORY_WORKER_SOURCE - the
+ * worker supplies its own real fs wiring). */
+export interface CompactionScanIo {
+	open(path: string): number;
+	read(fd: number, buffer: Buffer): number;
+	close(fd: number): void;
+}
+
+/**
+ * Streaming scan for the LAST session entry with type "compaction", returning
+ * its summary truncated to maxSummaryChars, or null when the file has none or
+ * cannot be read - fail open. Embedded verbatim into MEMORY_WORKER_SOURCE like
+ * decayKeepIndices: keep it self-contained - no outer-scope references beyond
+ * its parameters, no syntax the raw Node runtime lacks.
+ *
+ * Session files can be tens of MB, so the file is never loaded whole: it is
+ * read in fixed-size chunks and split on newline bytes (0x0A never occurs
+ * inside a multi-byte UTF-8 sequence, so byte-boundary splitting is safe),
+ * keeping only the last matching line.
+ */
+export function lastCompactionSummaryVia(io: CompactionScanIo, path: string, maxSummaryChars = 4000): string | null {
+	const CHUNK_BYTES = 256 * 1024;
+	let fd: number;
+	try {
+		fd = io.open(path);
+	} catch {
+		return null;
+	}
+	try {
+		const state: { last: string | null } = { last: null };
+		const handleLine = (line: string): void => {
+			const trimmed = line.trim();
+			if (!trimmed) return;
+			try {
+				const entry = JSON.parse(trimmed) as { type?: unknown; summary?: unknown };
+				if (entry && entry.type === "compaction" && typeof entry.summary === "string" && entry.summary.length > 0) {
+					state.last = entry.summary.slice(0, maxSummaryChars);
+				}
+			} catch {
+				// skip unparseable line
+			}
+		};
+		const buffer = Buffer.alloc(CHUNK_BYTES);
+		let pending = "";
+		for (;;) {
+			const read = io.read(fd, buffer);
+			if (read <= 0) break;
+			const text = pending + buffer.toString("utf8", 0, read);
+			const lines = text.split("\n");
+			pending = lines.pop() ?? "";
+			for (const line of lines) handleLine(line);
+		}
+		if (pending.length > 0) handleLine(pending);
+		return state.last;
+	} catch {
+		return null;
+	} finally {
+		try {
+			io.close(fd);
+		} catch {
+			// already closed
+		}
+	}
+}
+
+/** Parent-side wrapper: the same scan over the real fs primitives. */
+export function lastCompactionSummary(path: string, maxSummaryChars = 4000): string | null {
+	return lastCompactionSummaryVia(
+		{ open: (p) => openSync(p, "r"), read: (fd, buffer) => readSync(fd, buffer, 0, buffer.length, null), close: closeSync },
+		path,
+		maxSummaryChars,
+	);
+}
+
+/** Inputs to one fold validation pass, gathered by the worker around the fold
+ * child run: git status output, inbox counts, what moved, and what cites it. */
+export interface FoldValidationInput {
+	/** Output of `git -C <vault> status --porcelain` after the fold child exits. */
+	porcelain: string;
+	/** Inbox lesson count captured BEFORE the fold child ran. */
+	inboxBefore: number;
+	/** Inbox lesson count after the fold child exited. */
+	inboxAfter: number;
+	/** Filenames (with .md) now in processed/ that were not there before. */
+	movedSlugs: string[];
+	/** Contents of every entity file under entities/. */
+	entityBodies: string[];
+}
+
+/**
+ * Pure validation for one fold pass (embedded verbatim into
+ * MEMORY_WORKER_SOURCE like decayKeepIndices: self-contained). Checks:
+ * (a) the vault's git worktree is clean - a fold must commit;
+ * (b) the inbox lesson count decreased versus the pre-fold count;
+ * (c) every lesson moved from inbox/ to processed/ is cited by at least one
+ * entity file ([[slug]] wikilink, case-insensitive; alias and anchor suffixes
+ * like [[slug|text]] or [[slug#anchor]] count).
+ * Returns the failed check descriptions; empty means the fold validated.
+ */
+export function foldValidationFailures(input: FoldValidationInput): string[] {
+	function referencesSlug(body: string, stem: string): boolean {
+		const lower = body.toLowerCase();
+		const needle = "[[" + stem;
+		let at = lower.indexOf(needle);
+		while (at !== -1) {
+			const next = lower.charAt(at + needle.length);
+			if (next === "]" || next === "|" || next === "#") return true;
+			at = lower.indexOf(needle, at + 1);
+		}
+		return false;
+	}
+	const failures: string[] = [];
+	if (input.porcelain.trim().length > 0) failures.push("git worktree dirty after fold");
+	if (input.inboxAfter >= input.inboxBefore) {
+		failures.push(`inbox count did not decrease (${input.inboxBefore} -> ${input.inboxAfter})`);
+	}
+	for (const slug of input.movedSlugs) {
+		const stem = slug.replace(/\.md$/, "").toLowerCase();
+		if (input.entityBodies.some((body) => referencesSlug(body, stem))) continue;
+		failures.push(`no entity references moved lesson ${stem}`);
+	}
+	return failures;
+}
+
 /** A single source handles all modes so parent code only manages one file. */
 export const MEMORY_WORKER_SOURCE = String.raw`#!/usr/bin/env node
 // Machine-managed by hummin-memory. Do not edit.
-import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -207,6 +333,24 @@ ${decayKeepIndices}
 // Distill reply parser ("up to N lessons" shapes), embedded verbatim from
 // memory-workers.ts (single implementation; see parseDistilledLessons there).
 ${parseDistilledLessons}
+
+// Compaction checkpoint scan (streaming, last type:"compaction" entry),
+// embedded verbatim from memory-workers.ts (single implementation; see
+// lastCompactionSummaryVia there) plus its fs wiring.
+${lastCompactionSummaryVia}
+
+function lastCompactionSummary(path, maxSummaryChars) {
+	return lastCompactionSummaryVia(
+		{ open: (p) => openSync(p, "r"), read: (fd, buffer) => readSync(fd, buffer, 0, buffer.length, null), close: closeSync },
+		path,
+		maxSummaryChars,
+	);
+}
+
+// Fold pass validation (clean worktree, inbox drained, moved lessons cited),
+// embedded verbatim from memory-workers.ts (single implementation; see
+// foldValidationFailures there).
+${foldValidationFailures}
 
 const mode = process.argv[2];
 const jobPath = process.argv[3];
@@ -418,6 +562,11 @@ async function distill() {
 			removePending();
 			return 0;
 		}
+		// Checkpoint-fed distillation: if the session was compacted, the LAST
+		// compaction summary carries the earlier half of the session the tail
+		// no longer covers. Prepend it, truncated and clearly labeled; a scan
+		// failure (missing file, no compaction) contributes nothing - fail open.
+		const checkpoint = typeof job.sessionFile === "string" ? lastCompactionSummary(job.sessionFile) : null;
 		const prompt = [
 			"You are distilling a coding-agent session into up to " + MAX_LESSONS_PER_SESSION + " distinct reusable lessons.",
 			"",
@@ -432,6 +581,7 @@ async function distill() {
 			"- If there is no real lesson worth keeping, reply with exactly: NONE",
 			"",
 			"Working directory: " + job.cwd,
+			...(checkpoint ? ["", "Earlier session checkpoint (from compaction):", checkpoint] : []),
 			"",
 			"Session transcript (tail):",
 			job.tail || "",
@@ -524,24 +674,96 @@ function inboxCount(vaultDir) {
 	try { return readdirSync(join(vaultDir, "inbox")).filter((entry) => entry.endsWith(".md")).length; } catch { return 0; }
 }
 
+function processedSlugs(vaultDir) {
+	try { return readdirSync(join(vaultDir, "processed")).filter((entry) => entry.endsWith(".md")); } catch { return []; }
+}
+
+function entityBodies(vaultDir) {
+	const bodies = [];
+	const walk = (dir) => {
+		let entries;
+		try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+		for (const entry of entries) {
+			const full = join(dir, entry.name);
+			if (entry.isDirectory()) walk(full);
+			else if (entry.isFile() && entry.name.endsWith(".md")) {
+				try { bodies.push(readFileSync(full, "utf8")); } catch {}
+			}
+		}
+	};
+	walk(join(vaultDir, "entities"));
+	return bodies;
+}
+
+function runFoldChild(vaultDir, count, repair) {
+	const prompt = "Fold the inbox lessons into the entity graph now, following AGENTS.md exactly. Inbox has " + count + " lesson(s)."
+		+ (repair ? " This is a repair pass: the previous fold did not validate. Complete the fold per AGENTS.md and make sure everything is committed." : "");
+	return spawnSync("hummin", ["-p", prompt, "--provider", job.provider, "--model", job.modelId, "--thinking", job.thinking || "low"], {
+		cwd: vaultDir,
+		encoding: "utf8",
+		timeout: FOLD_TIMEOUT_MS,
+		maxBuffer: CHILD_MAX_BUFFER,
+		env: { ...process.env, HUMMIN_MEMORY: "0" },
+	});
+}
+
+function appendFoldChildOutput(vaultDir, result) {
+	const output = String(result.stdout || "") + String(result.stderr || "") + (result.error ? "\n" + String(result.error) : "");
+	boundedFoldLog(vaultDir, output);
+}
+
+function appendFoldValidation(vaultDir, payload) {
+	boundedFoldLog(vaultDir, "fold-validation " + JSON.stringify(payload) + "\n");
+}
+
+// Validation for one fold pass against the pre-fold state; pure checks live
+// in foldValidationFailures (embedded above).
+function validateFold(vaultDir, inboxBefore, processedBefore) {
+	let porcelain = "";
+	try {
+		const git = spawnSync("git", ["status", "--porcelain"], { cwd: vaultDir, encoding: "utf8", maxBuffer: CHILD_MAX_BUFFER });
+		porcelain = String(git.stdout || "");
+	} catch {}
+	const movedSlugs = processedSlugs(vaultDir).filter((slug) => !processedBefore.includes(slug));
+	return foldValidationFailures({
+		porcelain: porcelain,
+		inboxBefore: inboxBefore,
+		inboxAfter: inboxCount(vaultDir),
+		movedSlugs: movedSlugs,
+		entityBodies: entityBodies(vaultDir),
+	});
+}
+
 function fold() {
 	const vaultDir = job.vaultDir;
 	const lockPath = join(vaultDir, ".memory-fold.lock");
 	if (!acquireLock(lockPath)) return 0;
 	try {
-		const count = inboxCount(vaultDir);
+		const inboxBefore = inboxCount(vaultDir);
 		const threshold = job.force ? 1 : Math.max(1, Number(job.threshold || 3));
-		if (count < threshold) return 0;
-		const prompt = "Fold the inbox lessons into the entity graph now, following AGENTS.md exactly. Inbox has " + count + " lesson(s).";
-		const result = spawnSync("hummin", ["-p", prompt, "--provider", job.provider, "--model", job.modelId, "--thinking", job.thinking || "low"], {
-			cwd: vaultDir,
-			encoding: "utf8",
-			timeout: FOLD_TIMEOUT_MS,
-			maxBuffer: CHILD_MAX_BUFFER,
-			env: { ...process.env, HUMMIN_MEMORY: "0" },
-		});
-		const output = String(result.stdout || "") + String(result.stderr || "") + (result.error ? "\n" + String(result.error) : "");
-		boundedFoldLog(vaultDir, output);
+		if (inboxBefore < threshold) return 0;
+		const processedBefore = processedSlugs(vaultDir);
+		// Validation runs BEFORE this pass's output is appended to fold.log:
+		// the log lives inside the vault, so anything written to it first would
+		// make the porcelain status report a dirty worktree forever.
+		let result = runFoldChild(vaultDir, inboxBefore, false);
+		let failures = validateFold(vaultDir, inboxBefore, processedBefore);
+		let attempt = 1;
+		appendFoldChildOutput(vaultDir, result);
+		appendFoldValidation(vaultDir, { ts: new Date().toISOString(), attempt: attempt, ok: failures.length === 0, failed: failures });
+		if (failures.length > 0) {
+			// Exactly ONE repair retry, marked in the log, then the pass stops
+			// (a final failure records "fold-validation failed"; no loops).
+			attempt = 2;
+			boundedFoldLog(vaultDir, "fold-repair " + JSON.stringify({ ts: new Date().toISOString(), attempt: attempt }) + "\n");
+			result = runFoldChild(vaultDir, inboxCount(vaultDir), true);
+			failures = validateFold(vaultDir, inboxBefore, processedBefore);
+			appendFoldChildOutput(vaultDir, result);
+			appendFoldValidation(vaultDir, { ts: new Date().toISOString(), attempt: attempt, ok: failures.length === 0, failed: failures });
+		}
+		if (failures.length > 0) {
+			boundedFoldLog(vaultDir, "fold-validation failed\n");
+		}
 		return result.error || result.status !== 0 ? 1 : 0;
 	} finally {
 		releaseLock(lockPath);

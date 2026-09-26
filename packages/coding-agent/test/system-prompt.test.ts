@@ -2,9 +2,11 @@ import { describe, expect, test } from "vitest";
 import type { Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 import {
+	AUTO_COMPACT_CONTEXT_WINDOW,
 	buildSystemPrompt,
 	buildSystemPromptSections,
 	estimateSystemPromptSectionTokens,
+	shouldAutoCompactPrompt,
 } from "../src/core/system-prompt.ts";
 
 const testSkill: Skill = {
@@ -15,6 +17,26 @@ const testSkill: Skill = {
 	sourceInfo: createSyntheticSourceInfo("/skills/test-skill/SKILL.md", { source: "test" }),
 	disableModelInvocation: false,
 };
+
+describe("shouldAutoCompactPrompt", () => {
+	test("auto-compacts at and below the threshold, not above", () => {
+		expect(AUTO_COMPACT_CONTEXT_WINDOW).toBe(32768);
+		expect(shouldAutoCompactPrompt(32768, undefined)).toBe(true);
+		expect(shouldAutoCompactPrompt(16384, undefined)).toBe(true);
+		expect(shouldAutoCompactPrompt(32769, undefined)).toBe(false);
+		expect(shouldAutoCompactPrompt(200000, undefined)).toBe(false);
+	});
+
+	test("requires a numeric context window", () => {
+		expect(shouldAutoCompactPrompt(undefined, undefined)).toBe(false);
+	});
+
+	test("HUMMIN_COMPACT_PROMPT_AUTO=0 disables the automatic behavior", () => {
+		expect(shouldAutoCompactPrompt(16384, "0")).toBe(false);
+		expect(shouldAutoCompactPrompt(16384, "1")).toBe(true);
+		expect(shouldAutoCompactPrompt(16384, "")).toBe(true);
+	});
+});
 
 describe("buildSystemPrompt", () => {
 	describe("empty tools", () => {

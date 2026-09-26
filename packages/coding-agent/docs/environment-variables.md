@@ -114,6 +114,9 @@ These fork-specific variables are read by hummin and its bundled extensions. Whe
 | `HUMMIN_MEMORY_PROVIDER` | Provider for the no-model-selected fallback of fold/distill/expansion calls; overrides `memoryProvider` (default `zai`). The session's selected model wins when one is selected |
 | `HUMMIN_MEMORY_MODEL_ID` | Model id for the same fallback; overrides `memoryModelId` (default `glm-5.3-flash`) |
 | `HUMMIN_MEMORY_QUERY_EXPAND` | `0` disables model-assisted query expansion in memory recall and vault search |
+| `HUMMIN_MEMORY_EMBED` | `0` disables embeddings hybrid retrieval (`memoryEmbed: false` is equivalent) |
+| `HUMMIN_MEMORY_EMBED_URL` | OpenAI-shaped embeddings endpoint for hybrid recall; overrides `memoryEmbedUrl`. Unset: the first fleet server is probed once for `/v1/embeddings` |
+| `HUMMIN_MEMORY_TOOLS` | `1` loads the memory extension tools-only (vault search + `/memory`, no recall injection, no distill/fold) even though `HUMMIN_MEMORY=0`; set for spawned `task` and cron children |
 | `HUMMIN_MEMORY_AUTO_FOLD_THRESHOLD` | Inbox lesson count that triggers an automatic fold pass; default `3`, `0` disables |
 | `HUMMIN_MEMORY_MAX_CHARS` | Transcript tail (characters) passed to the distiller; default `12000` |
 
@@ -170,4 +173,5 @@ Disabled by default; opt in by setting `HUMMIN_BUDGET_TOOL_CALL_HALT_AT`.
 | `HUMMIN_VIM` | TUI editor | `1` selects vim modal editing (same as `editorMode: "vim"`) |
 | `HUMMIN_CODING_AGENT` | Set to `true` by hummin entry points; child-process marker |
 | `HUMMIN_SHARE_VIEWER_URL` | Override the base URL used by `/share` |
+| `HUMMIN_COMPACT_PROMPT_AUTO` | `0` disables automatic compact prompt mode for models with a context window at or below 32768 tokens |
 | `AI_AGENT` | Generic agent marker set to `hummin` for child processes |
