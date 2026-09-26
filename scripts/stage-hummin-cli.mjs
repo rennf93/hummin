@@ -98,7 +98,10 @@ const manifest = {
 	files: ["dist/bundle", "dist/modes", "dist/core", "extensions", "CHANGELOG.md", "LICENSE", "README.md"],
 	type: pkg.type,
 	license: pkg.license,
-	repository: pkg.repository,
+	// npm provenance validation requires the published repository to match the
+	// repo that produced the sigstore bundle (rennf93/hummin); the internal
+	// coding-agent manifest still points at upstream for cheap merges.
+	repository: { type: "git", url: "git+https://github.com/rennf93/hummin.git" },
 	engines: pkg.engines,
 	keywords: pkg.keywords,
 	dependencies,
