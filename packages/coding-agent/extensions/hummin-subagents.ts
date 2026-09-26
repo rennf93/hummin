@@ -58,9 +58,12 @@ export function taskCallDetail(prompt: string, model: string): string {
  * width, with a suffix that is always kept visible (bash renderer pattern).
  */
 export function buildCollapsedRow(width: number, label: string, detail: string, suffix: string): string {
-	const prefixWidth = visibleWidth(label) + 1;
+	// Two spaces after the label, matching the built-in tool call rows (Bash,
+	// Read, ...) so extension rows align with them instead of carrying their
+	// own fixed-width label padding.
+	const prefixWidth = visibleWidth(label) + 2;
 	const budget = Math.max(0, width - prefixWidth - visibleWidth(suffix));
-	return `${label} ${truncateToWidth(detail, budget, "…")}${suffix}`;
+	return `${label}  ${truncateToWidth(detail, budget, "…")}${suffix}`;
 }
 
 /** Structured info carried by hummin-task completion messages. */
@@ -330,7 +333,7 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 		const text = messageText(message);
 		const info = parseTaskCompletion(text, message.details);
 		const color = info.state === "completed" ? "success" : info.state === "running" ? "accent" : "error";
-		const label = theme.fg("toolTitle", theme.bold("Task completed".padEnd(12)));
+		const label = theme.fg("toolTitle", theme.bold("Task completed"));
 		const glyph = theme.fg(color, stateGlyph(info.state as ProcessJob["state"]));
 		const detail = info.model ? `${info.label} · ${info.model}` : info.label;
 		const suffix = `  ${theme.fg("muted", `· exit ${info.exitCode ?? "none"}${info.durationMs === null ? "" : ` · ${formatDuration(info.durationMs)}`}`)}`;
@@ -348,7 +351,7 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 	pi.registerMessageRenderer?.("hummin-monitor", (message, options, theme) => {
 		const text = messageText(message);
 		const info = parseMonitorNotice(text);
-		const label = theme.fg("toolTitle", theme.bold("Monitor".padEnd(12)));
+		const label = theme.fg("toolTitle", theme.bold("Monitor"));
 		const detail = info.kind === "output" ? `${info.detail} · ${info.lines ?? 0} lines` : info.detail;
 		const suffix = info.state ? `  ${theme.fg("muted", `· ${info.state}`)}` : "";
 		const component = new NoticeComponent((width: number) => buildCollapsedRow(width, label, detail, suffix), text);
@@ -438,14 +441,14 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 		// label + model trimmed to the viewport, and a state suffix.
 		renderCall(args, toolTheme, context) {
 			const model = args?.model?.trim() || "fast";
-			const label = toolTheme.fg("toolTitle", toolTheme.bold("Task".padEnd(12)));
+			const label = toolTheme.fg("toolTitle", toolTheme.bold("Task"));
 			const detail = taskCallDetail(args?.prompt ?? "", model);
 			// No "running" suffix here: renderCall components are not rebuilt when
 			// the call settles, so a cached suffix would claim "running" forever.
 			// Live state lives in /background, the footer segment, and the
 			// collapsible completion message.
 			const suffix = "";
-			const expandedText = new Text(`${label} ${args?.prompt ?? ""}`, 0, 0);
+			const expandedText = new Text(`${label}  ${args?.prompt ?? ""}`, 0, 0);
 			const expanded = context.expanded;
 			return {
 				render(width: number): string[] {

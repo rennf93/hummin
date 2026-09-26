@@ -120,8 +120,20 @@ describe("model right-size catalog and decisions", () => {
 			),
 		).toBe(true);
 		expect(catalog.models.some((entry) => entry.modelId === MAX && entry.thinking === "xhigh")).toBe(true);
-		expect(catalog.models.some((entry) => entry.provider === "hummin" && entry.thinking === "off")).toBe(true);
 		expect(resolveRequestedModel(`zai/${PRO}`, catalog).matched).toBe(true);
+	});
+
+	it("configured profiles act as an allowlist: unprofiled models are not offered", () => {
+		// Regression: laya picked superseded models (e.g. glm-5-turbo) because
+		// the catalog offered every registry model. When the user maintains
+		// profiles, only profiled models are candidates.
+		expect(catalog.models.some((entry) => entry.provider === "hummin")).toBe(false);
+	});
+
+	it("without profiles the full registry is offered", () => {
+		const full = buildCatalog(runtimeModels, []);
+		expect(full.models.some((entry) => entry.provider === "hummin" && entry.thinking === "off")).toBe(true);
+		expect(full.models.some((entry) => entry.modelId === MAX && entry.thinking === "xhigh")).toBe(true);
 	});
 
 	it("aliases and unresolved defaults do not fabricate registry models", () => {

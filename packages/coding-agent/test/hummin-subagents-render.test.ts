@@ -54,16 +54,23 @@ describe("taskCallDetail", () => {
 });
 
 describe("buildCollapsedRow", () => {
-	it("keeps label and suffix, trimming the detail to width", () => {
-		const row = buildCollapsedRow(40, "Task      ", '"x"', "  · running");
-		expect(row.startsWith("Task       ")).toBe(true);
+	it("joins label and detail with two spaces, matching built-in tool rows", () => {
+		const row = buildCollapsedRow(40, "Task", '"x"', "  · running");
+		expect(row.startsWith('Task  "x"')).toBe(true);
 		expect(row.endsWith("· running")).toBe(true);
 		const visible = row.replace(/\x1b\[[0-9;]*m/g, "");
 		expect(visible.length).toBeLessThanOrEqual(40);
 	});
 
+	it("does not pad the label to a fixed width", () => {
+		// Regression: the Task row used padEnd(12), leaving a wide gap before
+		// the detail compared with the built-in Bash row.
+		const row = buildCollapsedRow(80, "Task", '"x"', "");
+		expect(row.startsWith('Task  "x"')).toBe(true);
+	});
+
 	it("truncates with an ellipsis when the detail overflows", () => {
-		const row = buildCollapsedRow(20, "Task      ", `"${"y".repeat(60)}"`, "");
+		const row = buildCollapsedRow(20, "Task", `"${"y".repeat(60)}"`, "");
 		const plain = row.replace(/\x1b\[[0-9;]*m/g, "");
 		expect(plain.length).toBe(20);
 		expect(plain.endsWith("…")).toBe(true);

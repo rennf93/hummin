@@ -29,6 +29,11 @@ export function buildCatalog(models: readonly ModelLike[], profiles: readonly Mo
  for (const model of models) {
   if (!model.provider || !model.id) continue;
   const profile = byKey.get(`${model.provider}/${model.id}`);
+  // Profiles are curation, not decoration: when the user maintains any
+  // profile, unprofiled models stay out of the catalog so laya chooses
+  // among the models the user actually endorses (keeps superseded models
+  // from winning picks). Without profiles the full registry is offered.
+  if (profiles.length > 0 && !profile) continue;
  const thinking = profile?.thinkingLevels ?? model.thinkingLevels ?? supportedThinking(model);
   for (const level of thinking) candidates.push({
    provider: model.provider, modelId: model.id, thinking: level, description: profile?.description,
