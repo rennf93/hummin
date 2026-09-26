@@ -247,6 +247,13 @@ export interface Settings {
 	memoryModelId?: string;
 	/** hummin laya: bash gate block threshold, 0..1 (env HUMMIN_LAYA_GATE_THRESHOLD overrides) */
 	layaGateThreshold?: number;
+	/** hummin laya: bash gate extra classifier patterns (regex strings, applied per
+	 * chain segment in addition to the built-in lists; invalid regexes are
+	 * skipped fail-open). extraSafe segments fast-pass, extraDestructive block. */
+	layaGate?: {
+		extraSafe?: string[];
+		extraDestructive?: string[];
+	};
 	/** hummin laya: per-turn destructive steer threshold, 0..1 (env HUMMIN_LAYA_STEER_THRESHOLD overrides) */
 	layaSteerThreshold?: number;
 	/** hummin: local inference server base URLs for the hummin provider (env HUMMIN_INSTANCES overrides) */
@@ -1345,6 +1352,30 @@ export class SettingsManager {
 	 * typo can neither weld the gate shut nor silently open it. */
 	getLayaGateThreshold(): number {
 		return resolveLayaThreshold(process.env.HUMMIN_LAYA_GATE_THRESHOLD, this.settings.layaGateThreshold, 0.75);
+	}
+
+	/** hummin laya: bash gate extra classifier patterns. Compiled per read so
+	 * /settings edits apply without a restart; invalid regex strings are
+	 * skipped fail-open. */
+	getLayaGateExtraPatterns(): { safe: RegExp[]; destructive: RegExp[] } {
+		const compile = (raw: unknown): RegExp[] => {
+			if (!Array.isArray(raw)) return [];
+			const out: RegExp[] = [];
+			for (const entry of raw) {
+				if (typeof entry !== "string" || entry.trim() === "") continue;
+				try {
+					out.push(new RegExp(entry));
+				} catch {
+					// invalid pattern: skip, never break the gate
+				}
+			}
+			return out;
+		};
+		const ns = this.settings.layaGate;
+		return {
+			safe: compile(ns?.extraSafe),
+			destructive: compile(ns?.extraDestructive),
+		};
 	}
 
 	/** hummin laya: model right-size gate config. Env > project > global > defaults. */

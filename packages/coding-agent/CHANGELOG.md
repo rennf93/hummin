@@ -14,10 +14,7 @@
 - `/settings` surfaces the Laya right-size gate under Fleet: enabled flag, swing threshold, and a full profile editor (per-profile provider, model id, description, speed, thinking-level toggles, cost fields; add and delete).
 
 - `ask_user` free text is now always offered and typed inline in the question box (select Other... or press tab; enter submits, esc returns to the list) instead of opening a second input screen; `allowFreeText` defaults to true and non-interactive sessions default to the recommended choice.
-
-### Fixed
-
-- The Laya bash gate rubric now explicitly scores non-destructive git writes (`git add`, `git commit`, `git checkout -b`, plain `git push`) as LOW and judges chained commands by their worst segment, fixing false positives on branch-and-stage command bundles.
+- The Laya bash gate deterministic layer now covers the git-only blind spots: data-store drops (redis `FLUSHALL`/`FLUSHDB`, `gh repo delete`, `aws s3 rb`), infrastructure teardown (`docker system/volume prune`, `docker volume rm`, `kubectl delete namespace`, `terraform`/`pulumi destroy`), recursive `chmod`/`chown` on system roots, and `sudo`-prefixed commands (never fast-passed; destructive inner commands still block). Write redirects (`>`, `>>` to anything but `/dev/null`) downgrade safe verdicts so `echo x > file` cannot hide behind `echo`. Gate reads include the working directory in the laya state, and `layaGate.extraSafe` / `layaGate.extraDestructive` settings accept regex strings to extend both classifier lists per installation.
 
 ### Fixed
 

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { gateSegmentVerdict, gateVerdict, splitSegments } from "../extensions/hummin-laya.ts";
+import { gateSegmentVerdict, gateVerdict, hasWriteRedirect, splitSegments } from "../extensions/hummin-laya.ts";
 
 // Pure classifier coverage for the laya bash gate's deterministic verdict
 // layer. The live laya read is exercised only through the handler's fail-open
@@ -81,6 +81,29 @@ test("canonical filesystem discards are destructive", () => {
 	expect(gateSegmentVerdict("rm -rf *")).toMatchObject({ kind: "destructive" });
 });
 
+test("infra and data-store destruction is deterministic", () => {
+	expect(gateSegmentVerdict("docker system prune -af --volumes")).toMatchObject({ kind: "destructive" });
+	expect(gateSegmentVerdict("docker volume prune")).toMatchObject({ kind: "destructive" });
+	expect(gateSegmentVerdict("docker volume rm hummin-data")).toMatchObject({ kind: "destructive" });
+	expect(gateSegmentVerdict("kubectl delete namespace production")).toMatchObject({ kind: "destructive" });
+	expect(gateSegmentVerdict("terraform destroy -auto-approve")).toMatchObject({ kind: "destructive" });
+	expect(gateSegmentVerdict("pulumi destroy --yes")).toMatchObject({ kind: "destructive" });
+	expect(gateSegmentVerdict("gh repo delete rennf93/hummin --yes")).toMatchObject({ kind: "destructive" });
+	expect(gateSegmentVerdict("redis-cli FLUSHALL")).toMatchObject({ kind: "destructive" });
+	expect(gateSegmentVerdict("redis-cli flushdb")).toMatchObject({ kind: "destructive" });
+	expect(gateSegmentVerdict("aws s3 rb s3://old-bucket")).toMatchObject({ kind: "destructive" });
+	expect(gateSegmentVerdict("chmod -R 777 /")).toMatchObject({ kind: "destructive" });
+	expect(gateSegmentVerdict("chown -R user /etc")).toMatchObject({ kind: "destructive" });
+});
+
+test("routine container and permission work stays out of the destructive list", () => {
+	// Removing a specific stopped container and restarting a service are
+	// routine; only prune/volume/namespace-class destruction is unambiguous.
+	expect(gateSegmentVerdict("docker rm hummin-laya")).toEqual({ kind: "review" });
+	expect(gateSegmentVerdict("kubectl delete pod web-1")).toEqual({ kind: "review" });
+	expect(gateSegmentVerdict("chmod -R 755 ./build")).toEqual({ kind: "review" });
+});
+
 // --- gateSegmentVerdict: gray zone --------------------------------------------
 
 test("unfamiliar commands stay in the laya review zone", () => {
@@ -95,6 +118,51 @@ test("unfamiliar commands stay in the laya review zone", () => {
 
 test("restore --staged stays in review, not destructive", () => {
 	expect(gateSegmentVerdict("git restore --staged src/foo.ts")).toEqual({ kind: "review" });
+});
+
+// --- sudo ---------------------------------------------------------------------
+
+test("sudo never fast-passes and keeps inner destructive detection", () => {
+	expect(gateSegmentVerdict("sudo rm -rf /tmp/x")).toMatchObject({ kind: "destructive" });
+	expect(gateSegmentVerdict("sudo git push --force origin main")).toMatchObject({ kind: "destructive" });
+	expect(gateSegmentVerdict("sudo npm install -g something")).toEqual({ kind: "review" });
+	expect(gateSegmentVerdict("sudo git add file.ts")).toEqual({ kind: "review" });
+	expect(gateSegmentVerdict("launchctl kickstart -k gui/501/x")).toEqual({ kind: "review" });
+});
+
+// --- write redirects ----------------------------------------------------------
+
+test("write redirects are detected, fd dups and /dev/null are not", () => {
+	expect(hasWriteRedirect("npm run check > build.log")).toBe(true);
+	expect(hasWriteRedirect("echo hi >> session-notes.md")).toBe(true);
+	expect(hasWriteRedirect("make 2>err.log")).toBe(true);
+	expect(hasWriteRedirect("&>everything.txt")).toBe(true);
+	expect(hasWriteRedirect("cmd 2>&1 | tail -3")).toBe(false);
+	expect(hasWriteRedirect("curl -sS https://x >/dev/null")).toBe(false);
+	expect(hasWriteRedirect("make 2>/dev/null")).toBe(false);
+	expect(hasWriteRedirect('echo "a > b"')).toBe(false);
+	expect(hasWriteRedirect("git log | head -5")).toBe(false);
+});
+
+test("a safe chain with a write redirect is downgraded to review", () => {
+	const command = "git status && echo done > notes.md";
+	// The tool_call handler applies this downgrade (gateVerdict stays pure and
+	// redirect-blind because splitSegments strips redirects).
+	const verdict = gateVerdict(splitSegments(command));
+	const final = verdict.kind === "safe" && hasWriteRedirect(command) ? { kind: "review" } : verdict;
+	expect(final).toEqual({ kind: "review" });
+});
+
+// --- settings extras ----------------------------------------------------------
+
+test("settings extra patterns extend both verdict lists", () => {
+	const extra = { safe: [/^mytool\s+sync/], destructive: [/^mytool\s+nuke/] };
+	expect(gateSegmentVerdict("mytool sync --all", extra)).toEqual({ kind: "safe" });
+	expect(gateSegmentVerdict("mytool nuke --everything", extra)).toMatchObject({
+		kind: "destructive",
+		rule: "settings pattern: ^mytool\\s+nuke",
+	});
+	expect(gateSegmentVerdict("mytool sync --all")).toEqual({ kind: "review" });
 });
 
 // --- gateVerdict over whole commands ------------------------------------------

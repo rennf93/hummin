@@ -159,17 +159,41 @@ Hummin fleet capability metadata.
 Before a bash command runs, the gate classifies it in three tiers. Read-only
 allowlist commands (`ls`, `git log`, `curl` GET, `npm run check`, ...) pass
 without a read. Deterministic classifiers then handle the enumerable ends:
-additive writes (`git add`/`commit`, `git checkout -b`, plain `git push`,
-repo-relative `cp`/`rsync` installs, `rm -rf` of build/dist/node_modules/cache
-dirs) pass, while canonical discards (`git reset --hard`, `git clean -f`,
+additive writes (`git add`/`commit`, `git checkout -b`/`switch`, plain
+`git push`, repo-relative `cp`/`rsync` installs, `rm -rf` of
+dist/node_modules/cache dirs) pass, while canonical discards block without a
+read: git discard verbs (`git reset --hard`, `git clean -f`,
 `git checkout -- <paths>`, `git stash drop/clear`, `git branch -D`,
-`git push --force`, `DROP DATABASE/TABLE`, `mkfs`, `rm -rf` of home or glob
-targets) block without a read. Everything else - unfamiliar commands and mixed
-chains - is scored by a Laya yes/no read and blocked once at P >= 0.7
-(`layaGateThreshold` setting, `HUMMIN_LAYA_GATE_THRESHOLD` env). A block tells
-the model to confirm with the user or verify the target is backed up, then
-re-run with a `# laya-gate: confirmed` marker; confirmations are audited in
+`git push --force`), data-store drops (`DROP DATABASE/TABLE`, redis
+`FLUSHALL`/`FLUSHDB`, `gh repo delete`, `aws s3 rb`), infrastructure teardown
+(`docker system/volume prune`, `docker volume rm`, `kubectl delete namespace`,
+`terraform`/`pulumi destroy`), disk-level writes (`mkfs`, `dd` to a device),
+recursive `chmod`/`chown` on system roots, and `rm -rf` outside disposable
+dirs. `sudo`-prefixed commands never fast-pass; they block when their inner
+command is destructive and otherwise go to laya. Commands with a `>` or `>>`
+write redirect (to anything but `/dev/null`) are never fast-passed either -
+`echo x > important.txt` cannot hide behind `echo`'s read-only listing.
+
+Everything else - unfamiliar commands and mixed chains - is scored by a Laya
+yes/no read and blocked once at P >= 0.7 (`layaGateThreshold` setting,
+`HUMMIN_LAYA_GATE_THRESHOLD` env). The read state includes the working
+directory. A block tells the model to confirm with the user or verify the
+target is backed up, then re-run with a `# laya-gate: confirmed` marker;
+confirmations and rule-tagged deterministic blocks are audited in
 `laya-gate.log`. All failure modes fail open: dead Laya never blocks.
+
+Installations can extend both classifier lists without forking:
+`layaGate.extraSafe` and `layaGate.extraDestructive` in settings take regex
+strings applied per chain segment (invalid patterns are skipped). For example:
+
+```json
+{
+  "layaGate": {
+    "extraSafe": ["^mytool\\s+sync"],
+    "extraDestructive": ["^mytool\\s+nuke"]
+  }
+}
+```
 
 Measured constraint (laya 0.3.20): gate reads route to the english checkpoint
 (512-token context), so long rubrics truncate from the tail, and instruction

@@ -107,7 +107,7 @@ export function layaSteerThreshold(): number {
 }
 
 const READ_ONLY_BASH =
-	/^\s*(ls|pwd|cat|head|tail|grep|rg|find|which|type|file|stat|du|df|wc|date|whoami|id|uname|hostname|uptime|ps|sort|uniq|cut|tr|awk|sed -n|diff|basename|dirname|realpath|readlink|true|false|test|\[|sleep|wait|printf|echo|env|printenv|locale|tput|column|paste|comm|join|xargs(?! .*(rm|mv|cp|chmod|chown|kill|sh|bash|zsh))|seq|yes|md5|shasum|sha1sum|sha256sum|base64|xxd|od|hexdump|node --version|node -v|python3? --version|npm (ls|outdated|view|run (build|check|lint|typecheck)|test|prefix|root|bin|config get)|npx --version|git (status|log|diff|show|branch|remote|tag|rev-parse|describe|ls-files|blame|shortlog|config --get|stash list)|gh (api|run (view|list|watch)|pr (view|list|diff|checks)|issue (view|list)|release (view|list)|status|auth status|repo view|browse)|launchctl (list|print)|brew (list|info|search|outdated)|curl -[a-zA-Z]*[sI]|curl(?! .*(-X (POST|PUT|DELETE|PATCH)|-d |--data|-T |--upload-file))(?: |$))\b/;
+	/^\s*(ls|pwd|cat|head|tail|grep|rg|find|tree|which|type|file|stat|du|df|wc|date|whoami|id|uname|hostname|uptime|ps|lsof|netstat|sort|uniq|cut|tr|awk|sed -n|diff|cmp|basename|dirname|realpath|readlink|true|false|test|\[|sleep|wait|printf|echo|env|printenv|locale|tput|column|paste|comm|join|jq|xargs(?! .*(rm|mv|cp|chmod|chown|kill|sh|bash|zsh))|seq|yes|md5|shasum|sha1sum|sha256sum|base64|xxd|od|hexdump|node --version|node -v|python3? --version|npm (ls|outdated|view|run (build|check|lint|typecheck)|test|prefix|root|bin|config get)|npx --version|git (status|log|diff|show|branch|remote|tag|rev-parse|describe|ls-files|blame|shortlog|config --get|stash list)|gh (api|run (view|list|watch)|pr (view|list|diff|checks)|issue (view|list)|release (view|list)|status|auth status|repo view|browse)|launchctl (list|print)|brew (list|info|search|outdated)|curl -[a-zA-Z]*[sI]|curl(?! .*(-X (POST|PUT|DELETE|PATCH)|-d |--data|-T |--upload-file))(?: |$))\b/;
 
 /** Split a command into pipeline segments the way bash sees them: on ;, &&,
  * ||, and | that are OUTSIDE quotes. The naive `split(/\|/)` broke allowlist
@@ -232,31 +232,99 @@ const DESTRUCTIVE_SEGMENT: readonly { rule: string; re: RegExp }[] = [
 	{ rule: "git stash drop/clear", re: /\bgit stash\s+(drop|clear)\b/ },
 	{ rule: "git branch -D", re: /\bgit branch\s+-D\b/ },
 	{ rule: "git push --force", re: /\bgit push\b[^|;&]*(--force(?!-with-lease)|\s-f(\s|$))/ },
+	{ rule: "gh repo delete", re: /\bgh\s+repo\s+delete\b/ },
 	{ rule: "DROP DATABASE/TABLE", re: /\bdrop\s+(database|table)\b/i },
+	{ rule: "redis FLUSHALL/FLUSHDB", re: /\bflush(all|db)\b/i },
+	{ rule: "docker volume delete", re: /\bdocker\s+volume\s+(rm|prune)\b/ },
+	{ rule: "docker prune", re: /\bdocker\s+(system|image|container|builder)\s+prune\b/ },
+	{ rule: "kubectl delete namespace", re: /\bkubectl\s+delete\b[^|;&]*\snamespace\b/ },
+	{ rule: "terraform/pulumi destroy", re: /\b(terraform|pulumi)\s+destroy\b/ },
+	{ rule: "aws s3 bucket delete", re: /\baws\s+s3\s+rb\b/ },
 	{ rule: "mkfs", re: /\bmkfs/ },
 	{ rule: "dd to device", re: /\bdd\b[^|;&]*of=\/dev\// },
 ];
 
-/** Build, dependency, and output directories that tooling regenerates on
- * demand. rm -rf of these (only) is routine, not destructive. */
-const DISPOSABLE_DIR = /^(?:\.\/)?(?:build|dist|node_modules|coverage|out|tmp|temp|\.next|\.nuxt|\.turbo|\.cache|target)(?:\/|$)/;
+/** System roots where a recursive chmod/chown can break the machine. Token
+ * scan: `chmod -R 755 ./build` stays routine, `chmod -R 777 /` does not. */
+const SYSTEM_ROOTS = new Set(["/", "~", "/etc", "/usr", "/var", "/bin", "/sbin", "/Library", "/System", "/Applications"]);
 
-/** Verdict for a single pipeline segment. Order: destructive regexes, then
- * rm -rf target analysis, then the additive-write fast path. */
-export function gateSegmentVerdict(segment: string): GateSegmentVerdict {
+function recursiveChmodOnSystemRoot(tokens: readonly string[]): boolean {
+	if (tokens[0] !== "chmod" && tokens[0] !== "chown") return false;
+	if (!tokens.some((t) => t === "-R" || t === "--recursive")) return false;
+	return tokens.some((t) => {
+		if (SYSTEM_ROOTS.has(t)) return true;
+		return (t.startsWith("/etc") || t.startsWith("/usr") || t.startsWith("/var") || t.startsWith("~/")) && t !== "~/";
+	});
+}
+
+/** True when the command contains a `>` or `>>` redirect (outside quotes) to
+ * a real file. splitSegments strips redirects from segments, so without this
+ * check `echo x > important.txt` would fast-pass as read-only while clobbering
+ * the target. fd dups (2>&1) and /dev/null are not writes. */
+export function hasWriteRedirect(command: string): boolean {
+	let quote: string | undefined;
+	for (let i = 0; i < command.length; i++) {
+		const ch = command[i];
+		if (quote) {
+			if (ch === quote) quote = undefined;
+			continue;
+		}
+		if (ch === '"' || ch === "'") {
+			quote = ch;
+			continue;
+		}
+		if (ch === "\\") {
+			i++;
+			continue;
+		}
+		if (ch !== ">") continue;
+		// Absorb an optional leading fd number belonging to this operator
+		// (e.g. the 2 in 2>/dev/null). Dup forms (2>&1, >&2) match BEFORE the
+		// plain operator so ">&1" is not read as "> file &1".
+		const rest = command.slice(i);
+		const m = rest.match(/^\d?>&\d|^>&\d|^\d?>/);
+		if (!m) continue;
+		const op = m[0];
+		if (op.includes("&")) {
+			i += op.length - 1;
+			continue;
+		}
+		const targetMatch = rest.slice(op.length).match(/^\s*([^\s|;&]*)/);
+		const target = targetMatch ? targetMatch[1] : "";
+		if (target === "/dev/null") {
+			i += op.length + (targetMatch ? targetMatch[0].length : 0) - 1;
+			continue;
+		}
+		return true;
+	}
+	return false;
+}
+
+/** Extra per-installation classifier patterns from settings
+ * (layaGate.extraSafe / layaGate.extraDestructive regex strings). */
+export interface ExtraGatePatterns {
+	safe: RegExp[];
+	destructive: RegExp[];
+}
+
+/** Verdict for a single pipeline segment. Order: sudo demotion, destructive
+ * regexes (built-ins then settings extras), the read-only allowlist, the rm
+ * target analysis, then the additive-write fast path with settings extras. */
+export function gateSegmentVerdict(segment: string, extra: ExtraGatePatterns = { safe: [], destructive: [] }): GateSegmentVerdict {
 	const s = segment.trim();
 	if (!s) return { kind: "safe" };
-	// Destructive patterns outrank the read-only allowlist: READ_ONLY_BASH
-	// matches `git branch` for any subcommand, so `git branch -D` would slip
-	// through if the allowlist ran first.
+	// A privileged command is never fast-passed: `sudo npm install` may be
+	// routine, but deciding that deterministically is not the gate's job.
+	const privileged = /^sudo\s+/.test(s);
+	const inner = privileged ? s.replace(/^sudo\s+/, "") : s;
 	for (const { rule, re } of DESTRUCTIVE_SEGMENT) {
-		if (re.test(s)) return { kind: "destructive", rule };
+		if (re.test(inner)) return { kind: "destructive", rule };
 	}
-	// Read-only segments are already vetted by the READ_ONLY_BASH allowlist.
-	// This matters inside chains: `git add x && git status` was blocked because
-	// only whole-command read-only checks ran before laya.
-	if (READ_ONLY_BASH.test(s)) return { kind: "safe" };
-	const tokens = s.split(/\s+/);
+	for (const re of extra.destructive) {
+		if (re.test(inner)) return { kind: "destructive", rule: `settings pattern: ${re.source}` };
+	}
+	const tokens = inner.split(/\s+/);
+	if (recursiveChmodOnSystemRoot(tokens)) return { kind: "destructive", rule: "recursive chmod/chown on a system root" };
 	if (tokens[0] === "rm") {
 		const flags: string[] = [];
 		const targets: string[] = [];
@@ -266,13 +334,18 @@ export function gateSegmentVerdict(segment: string): GateSegmentVerdict {
 		}
 		const joined = flags.join("");
 		if (joined.includes("r") && joined.includes("f") && targets.length > 0) {
-			if (targets.every((t) => DISPOSABLE_DIR.test(t))) return { kind: "safe" };
+			if (targets.every((t) => DISPOSABLE_DIR.test(t))) return privileged ? { kind: "review" } : { kind: "safe" };
 			if (targets.some((t) => t.startsWith("~") || t.startsWith("/") || t.startsWith("$") || t.includes("*"))) {
 				return { kind: "destructive", rule: "rm -rf outside disposable build/output dirs" };
 			}
 		}
 		return { kind: "review" };
 	}
+	if (privileged) return { kind: "review" };
+	// Read-only segments are already vetted by the READ_ONLY_BASH allowlist.
+	// This matters inside chains: `git add x && git status` was blocked because
+	// only whole-command read-only checks ran before laya.
+	if (READ_ONLY_BASH.test(s)) return { kind: "safe" };
 	// Additive writes and repo-relative installs are safe fast-path segments.
 	// git switch of a plain branch is safe too: it refuses to discard local
 	// changes and fails on conflict, unlike checkout which can take a bare
@@ -284,20 +357,28 @@ export function gateSegmentVerdict(segment: string): GateSegmentVerdict {
 	) {
 		return { kind: "safe" };
 	}
+	for (const re of extra.safe) {
+		if (re.test(s)) return { kind: "safe" };
+	}
 	return { kind: "review" };
 }
 
 /** Whole-command verdict: destructive if any segment is, safe only when every
  * segment is, otherwise the command goes to laya for scoring. */
-export function gateVerdict(segments: readonly string[]): GateSegmentVerdict {
+export function gateVerdict(segments: readonly string[], extra: ExtraGatePatterns = { safe: [], destructive: [] }): GateSegmentVerdict {
 	let allSafe = true;
 	for (const segment of segments) {
-		const v = gateSegmentVerdict(segment);
+		const v = gateSegmentVerdict(segment, extra);
 		if (v.kind === "destructive") return v;
 		if (v.kind !== "safe") allSafe = false;
 	}
 	return allSafe ? { kind: "safe" } : { kind: "review" };
 }
+
+/** Build, dependency, and output directories that tooling regenerates on
+ * demand. rm -rf of these (only) is routine, not destructive. */
+const DISPOSABLE_DIR = /^(?:\.\/)?(?:build|dist|node_modules|coverage|out|tmp|temp|\.next|\.nuxt|\.turbo|\.cache|target)(?:\/|$)/;
+
 
 /** One-question noul read from laya; null on any failure or timeout. */
 async function layaNoul(state: string, name: string, instructions: string): Promise<{ noul: number } | null> {
@@ -635,8 +716,20 @@ export default function humminLaya(pi: ExtensionAPI): void {
 			if (segments.length > 0 && segments.every((s) => READ_ONLY_BASH.test(s))) return undefined;
 			// Deterministic verdicts first: canonical destructive commands block
 			// without a laya read; fully additive commands pass without one. Only
-			// the gray zone pays the laya latency.
-			const verdict = gateVerdict(segments);
+			// the gray zone pays the laya latency. Settings extras
+			// (layaGate.extraSafe / layaGate.extraDestructive regex strings) are
+			// re-read per command so /settings edits apply without a restart.
+			let extra: ExtraGatePatterns = { safe: [], destructive: [] };
+			try {
+				extra = SettingsManager.create(process.cwd()).getLayaGateExtraPatterns();
+			} catch {
+				// unreadable settings: built-in lists only
+			}
+			let verdict = gateVerdict(segments, extra);
+			// splitSegments strips redirects, so a write redirect hides from the
+			// segment classifiers: `echo x > important.txt` looks read-only.
+			// Downgrade safe verdicts to review so laya sees the redirect.
+			if (verdict.kind === "safe" && hasWriteRedirect(trimmed)) verdict = { kind: "review" };
 			if (verdict.kind === "destructive") {
 				const repeat = blockedOnce.has(trimmed);
 				blockedOnce.add(trimmed);
@@ -655,7 +748,7 @@ export default function humminLaya(pi: ExtensionAPI): void {
 				return undefined;
 			}
 			const read = await layaNoul(
-				`${GATE_STATE_PREFIX}${trimmed.slice(0, 2000)}`,
+				`${GATE_STATE_PREFIX}cwd: ${process.cwd()}\n\n${trimmed.slice(0, 1800)}`,
 				"destructive",
 				GATE_INSTRUCTIONS,
 			);
