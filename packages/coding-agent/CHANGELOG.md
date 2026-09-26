@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-09-26
+
 ### Added
 
 - Added Laya child-dispatch review for Hummin `task` and `cron_create` calls: it chooses among real provider/model/thinking configurations using profile descriptions, speed, and numeric costs, then blocks high-confidence mismatches for a review-tied override or emits a lower-confidence advisory.
