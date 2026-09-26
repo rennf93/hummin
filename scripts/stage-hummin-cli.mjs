@@ -96,6 +96,7 @@ const manifest = {
 	description: pkg.description,
 	bin: { hummin: "dist/bundle/cli.js" },
 	files: ["dist/bundle", "dist/modes", "dist/core", "extensions", "CHANGELOG.md", "LICENSE", "README.md"],
+	type: pkg.type,
 	license: pkg.license,
 	repository: pkg.repository,
 	engines: pkg.engines,

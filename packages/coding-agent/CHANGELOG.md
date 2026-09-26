@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### New Features
+
+- Session telemetry: the `hummin-telemetry` extension records turn completion (tokens, duration), compaction, and auto-retries to `<agentDir>/telemetry/<session-id>.jsonl`, with size-capped rotation (`HUMMIN_TELEMETRY=0` or `telemetryEnabled: false` disables; see [docs/environment-variables.md](docs/environment-variables.md)).
+- Verification nudge: when code files were edited but nothing verified the result, the next turn receives a one-time hidden reminder and an advisory lands in `friction.log`.
+- Session friction tracking: `/friction` shows this-session tool error/rejection counts, and one source crossing 3 errors in a session sends a one-time hidden steer toward a different approach.
+- Memory quality: up to three distilled lessons per session, model-assisted query expansion (`HUMMIN_MEMORY_QUERY_EXPAND=0` disables), entity-title recall in vault search, and automatic memory inheritance for `task` child briefs (`inherit: "none"` opts out).
+- `task` results now carry the child's bounded final report with the full log path instead of a truncated status tail.
+- `grep` joins the default tool loadout (`read`, `bash`, `edit`, `write`, `grep`) as the default search path.
+- Richer tool feedback: `write` overwrites return a bounded diff, `edit` failures include the nearest matching region, and `/status` shows per-section prompt token estimates with bloat warnings (see [docs/slash-commands.md](docs/slash-commands.md)).
+- Fleet health persistence: downed local servers keep last-known-good models and measured context windows for 7 days instead of falling back to `HUMMIN_CTX`.
+
 ### Added
 
 - Core session telemetry events, emitted through the `@earendil-works/pi-telemetry` event sink when one is installed: `assistant_turn_completed` (model, context/output/total tokens, duration), `compaction_completed` (trigger and tokens before/after), and `auto_retry_scheduled` (attempt, delay, error truncated to 200 chars). The sink API (`emitTelemetryEvent`, `setTelemetryEventSink`, `FileTelemetryEventSink`) is re-exported from the package barrel so extensions can install it.
@@ -26,6 +37,7 @@
 
 - A failed extension load no longer exits the process: the diagnostics are reported loudly in both interactive and print modes (interactive mode also shows them in the TUI), the remaining extensions keep working, and the `hummin -ne` hint is preserved. All other fatal runtime errors still exit 1.
 - Shutdown distillation never ran: the spawned worker was started without its `distill` mode argument and exited immediately, leaving every pending job unconsumed. Jobs now dispatch correctly, and jobs held by child-dispatch review persist with a held marker and are retried once at the next startup (24h window) instead of being dropped.
+- The staged `hummin-cli` npm package now declares `"type": "module"` (inherited from the coding-agent manifest), removing the per-startup `MODULE_TYPELESS_PACKAGE_JSON` reparsing warning from the published CLI.
 
 ## [1.2.1] - 2026-09-26
 
