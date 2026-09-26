@@ -262,7 +262,10 @@ console.log();
 console.log("Committing and tagging...");
 stageChangedFiles();
 run(`git commit -m "Release v${version}"`);
-run(`git tag v${version}`);
+// -m keeps this non-interactive: with tag.gpgsign=true git converts the
+// lightweight tag into an annotated signed tag, which without -m opens
+// $EDITOR for a message - a release run in a headless shell wedges there.
+run(`git tag -m "Release v${version}" v${version}`);
 console.log();
 
 // 8. Add new [Unreleased] sections
