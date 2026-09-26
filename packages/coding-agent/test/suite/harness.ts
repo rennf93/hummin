@@ -98,6 +98,14 @@ function createTempDir(): string {
 }
 
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
+	// Suite fixtures use small context windows (sometimes 2k) to exercise
+	// compaction and prompt mechanics; the automatic compact-prompt behavior
+	// (models with a context window <= 32768) would shrink the prompt enough
+	// to change those mechanics mid-test. Pin it off for the harness lifetime;
+	// restore in cleanup() (suites pop harnesses LIFO, so nesting stacks
+	// correctly). The dedicated auto-compact tests manage the env themselves.
+	const compactPromptAutoOriginal = process.env.HUMMIN_COMPACT_PROMPT_AUTO;
+	process.env.HUMMIN_COMPACT_PROMPT_AUTO = "0";
 	const tempDir = createTempDir();
 	const fauxProvider: FauxProviderRegistration = registerFauxProvider({
 		models: options.models,
@@ -217,6 +225,8 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		cleanup() {
 			session.dispose();
 			fauxProvider.unregister();
+			if (compactPromptAutoOriginal === undefined) delete process.env.HUMMIN_COMPACT_PROMPT_AUTO;
+			else process.env.HUMMIN_COMPACT_PROMPT_AUTO = compactPromptAutoOriginal;
 			if (existsSync(tempDir)) {
 				rmSync(tempDir, { recursive: true });
 			}
