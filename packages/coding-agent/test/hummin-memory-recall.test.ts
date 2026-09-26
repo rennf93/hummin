@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
@@ -15,10 +15,15 @@ import {
 const createdDirs: string[] = [];
 let memoryDirOriginal: string | undefined;
 let vaultDirOriginal: string | undefined;
+let expandOriginal: string | undefined;
 
 beforeAll(() => {
 	memoryDirOriginal = process.env.HUMMIN_MEMORY_DIR;
 	vaultDirOriginal = process.env.HUMMIN_MEMORY_VAULT_DIR;
+	// Query expansion (a model call) stays off in retrieval tests: they pin
+	// the plain-lexical ranking behavior.
+	expandOriginal = process.env.HUMMIN_MEMORY_QUERY_EXPAND;
+	process.env.HUMMIN_MEMORY_QUERY_EXPAND = "0";
 });
 
 // Isolate each test's memory and vault dirs: the module reads both env vars
@@ -36,6 +41,8 @@ afterAll(() => {
 	else process.env.HUMMIN_MEMORY_DIR = memoryDirOriginal;
 	if (vaultDirOriginal === undefined) delete process.env.HUMMIN_MEMORY_VAULT_DIR;
 	else process.env.HUMMIN_MEMORY_VAULT_DIR = vaultDirOriginal;
+	if (expandOriginal === undefined) delete process.env.HUMMIN_MEMORY_QUERY_EXPAND;
+	else process.env.HUMMIN_MEMORY_QUERY_EXPAND = expandOriginal;
 });
 
 const PROJ = "/Users/renzof/work/alpha";
@@ -154,6 +161,39 @@ test("recency bias ranks newer lessons above older ones on equal overlap", () =>
 	expect(lessons).toHaveLength(2);
 });
 
+// --- Entity-linkage augmentation ---------------------------------------------
+
+test("vault lessons are reachable through the titles of entities that cite them", () => {
+	const vault = process.env.HUMMIN_MEMORY_VAULT_DIR!;
+	mkdirSync(join(vault, "processed"), { recursive: true });
+	mkdirSync(join(vault, "entities", "concept"), { recursive: true });
+	writeFileSync(
+		join(vault, "processed", "lesson-2026-09-18T10-00-00.md"),
+		[
+			"---",
+			"type: lesson",
+			"date: 2026-09-18",
+			"project: alpha",
+			"---",
+			"",
+			"Problem: ingest stalls under load.",
+			"Approach: bounded queues between parser and sink.",
+			"Gotcha: the sink drops batches silently when the channel is full.",
+			"",
+		].join("\n"),
+	);
+	// The entity cites the lesson by its slug, as the fold contract requires.
+	writeFileSync(
+		join(vault, "entities", "concept", "backpressure.md"),
+		"# Backpressure\n\n- the ingest sink drops batches (from [[lesson-2026-09-18T10-00-00]], 2026-09-18)\n",
+	);
+	// The query shares no vocabulary with the lesson body: only the citing
+	// entity's title terms can bridge the paraphrase gap.
+	const lessons = recallLessons(PROJ, "backpressure handling", 3);
+	expect(lessons).toHaveLength(1);
+	expect(lessons[0]).toContain("ingest stalls under load");
+});
+
 // --- Usage stamping (lastInjectedAt) ----------------------------------------
 
 const STAMP = "2026-09-24T00:00:00.000Z";
@@ -206,9 +246,9 @@ test("markLessonsInjected is a no-op on an empty body list or a missing store", 
 	expect(existsSync(join(process.env.HUMMIN_MEMORY_DIR!, "lessons.jsonl"))).toBe(false);
 });
 
-test("searchVault stamps the lessons it returns", () => {
+test("searchVault stamps the lessons it returns", async () => {
 	seedLessons([{ cwd: PROJ, lesson: "Gotcha: docker compose needs --force-recreate after mem_limit changes" }]);
-	searchVault("docker compose force-recreate", PROJ);
+	await searchVault("docker compose force-recreate", PROJ);
 	const line = readFileSync(join(process.env.HUMMIN_MEMORY_DIR!, "lessons.jsonl"), "utf8").trim().split("\n")[0];
 	expect(JSON.parse(line).lastInjectedAt).toEqual(expect.any(String));
 });

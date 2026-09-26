@@ -104,6 +104,13 @@ export const allToolNames: Set<ToolName> = new Set([
 	"ls",
 ]);
 
+/**
+ * Default built-in tool loadout for coding sessions. `grep` is included so models use the
+ * purpose-built, budgeted search tool instead of falling back to `bash rg`; `find` and `ls`
+ * stay opt-in. Keep in sync with `createCodingToolDefinitions` and `createCodingTools`.
+ */
+export const DEFAULT_SELECTED_TOOLS: readonly ToolName[] = ["read", "bash", "edit", "write", "grep"];
+
 export interface ToolsOptions {
 	read?: ReadToolOptions;
 	bash?: BashToolOptions;
@@ -178,6 +185,7 @@ export function createCodingToolDefinitions(cwd: string, options?: ToolsOptions)
 		createBashToolDefinition(cwd, options?.bash, customCwd),
 		createEditToolDefinition(cwd, options?.edit, customCwd),
 		createWriteToolDefinition(cwd, options?.write, customCwd),
+		createGrepToolDefinition(cwd, options?.grep, customCwd),
 	];
 }
 
@@ -212,6 +220,7 @@ export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 		createBashTool(cwd, options?.bash, customCwd),
 		createEditTool(cwd, options?.edit, customCwd),
 		createWriteTool(cwd, options?.write, customCwd),
+		createGrepTool(cwd, options?.grep, customCwd),
 	];
 }
 

@@ -69,10 +69,14 @@ const pct = (n: number | undefined): string =>
 
 const STEER_MIN_PROMPT_CHARS = 24;
 const STEER_DESTRUCTIVE_THRESHOLD = 0.7;
-/** Gray-zone block line. The deterministic classifiers own the unambiguous
- * cases, so laya only judges unfamiliar commands; 0.7 catches the 0.71-0.75
- * band that live probes showed carries real signal there. */
-const GATE_BLOCK_THRESHOLD = 0.7;
+/** Gray-zone block line, aligned with the settings-layer default (settings
+ * getLayaGateThreshold(), 0.75) so blocking does not depend on settings being
+ * readable. The deterministic classifiers own the unambiguous cases, so laya
+ * only judges unfamiliar commands. (Live probes in 2026-09 showed the
+ * 0.71-0.75 band carries real signal; the settings default was still chosen
+ * as the single shared line to avoid one threshold for configured installs
+ * and another for unreadable settings.) */
+export const GATE_BLOCK_THRESHOLD = 0.75;
 const GATE_TIMEOUT_MS = 4_000;
 const GATE_CONFIRM_MARKER = "# laya-gate: confirmed";
 
@@ -96,7 +100,8 @@ function resolveThreshold(envName: string, read: (settings: SettingsManager) => 
 	return fallback;
 }
 
-/** The bash gate block threshold for laya-scored gray-zone commands (default 0.7). */
+/** The bash gate block threshold for laya-scored gray-zone commands
+ * (default GATE_BLOCK_THRESHOLD, 0.75, matching the settings-layer default). */
 export function layaGateThreshold(): number {
 	return resolveThreshold("HUMMIN_LAYA_GATE_THRESHOLD", (s) => s.getLayaGateThreshold?.(), GATE_BLOCK_THRESHOLD);
 }
@@ -674,7 +679,7 @@ export default function humminLaya(pi: ExtensionAPI): void {
 	const GATE_INSTRUCTIONS = [
 		"Decide exactly one question: would running this command as-is destroy work that cannot be recovered? The noul value is P(that is true).",
 		"",
-		"This is a safety gate: P >= 0.7 blocks the command and interrupts the user. A false HIGH annoys the user and erodes trust in the gate; a missed true HIGH costs work but is bounded because the block reason demands confirmation. When uncertain, lean LOW.",
+		"This is a safety gate: P >= 0.75 blocks the command and interrupts the user. A false HIGH annoys the user and erodes trust in the gate; a missed true HIGH costs work but is bounded because the block reason demands confirmation. When uncertain, lean LOW.",
 		"",
 		"Score HIGH (>= 0.75) only for irreversibly destroying state that is NOT committed, backed up, or regenerable:",
 		"- Deleting or overwriting the only copy of unique user/project data: rm -rf on source files or on a directory holding uncommitted work, mv over the only copy, truncate, dd to a file",

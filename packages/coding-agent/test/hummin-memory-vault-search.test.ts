@@ -7,10 +7,16 @@ import { searchVault } from "../extensions/hummin-memory.ts";
 const createdDirs: string[] = [];
 let memoryDirOriginal: string | undefined;
 let vaultDirOriginal: string | undefined;
+let expandOriginal: string | undefined;
 
 beforeAll(() => {
 	memoryDirOriginal = process.env.HUMMIN_MEMORY_DIR;
 	vaultDirOriginal = process.env.HUMMIN_MEMORY_VAULT_DIR;
+	// Query expansion (a model call) stays off here: these tests pin the
+	// plain-lexical search behavior. Expansion itself is covered in
+	// hummin-memory-query-expand.test.ts.
+	expandOriginal = process.env.HUMMIN_MEMORY_QUERY_EXPAND;
+	process.env.HUMMIN_MEMORY_QUERY_EXPAND = "0";
 });
 
 // Isolate each test's temp dirs: the module reads both env vars at call time,
@@ -28,6 +34,8 @@ afterAll(() => {
 	else process.env.HUMMIN_MEMORY_DIR = memoryDirOriginal;
 	if (vaultDirOriginal === undefined) delete process.env.HUMMIN_MEMORY_VAULT_DIR;
 	else process.env.HUMMIN_MEMORY_VAULT_DIR = vaultDirOriginal;
+	if (expandOriginal === undefined) delete process.env.HUMMIN_MEMORY_QUERY_EXPAND;
+	else process.env.HUMMIN_MEMORY_QUERY_EXPAND = expandOriginal;
 });
 
 const PROJ = "/Users/renzof/work/alpha";
@@ -45,7 +53,7 @@ function seedEntity(rel: string, content: string): void {
 	writeFileSync(path, content);
 }
 
-test("searches all projects' lessons and vault entities, labeled by section", () => {
+test("searches all projects' lessons and vault entities, labeled by section", async () => {
 	seedLesson({
 		cwd: PROJ,
 		lesson:
@@ -61,7 +69,7 @@ test("searches all projects' lessons and vault entities, labeled by section", ()
 	);
 	seedEntity("decision/unrelated.md", "# Unrelated\n\n- something about typography and spacing\n");
 
-	const result = searchVault("docker dataset quotas volume", PROJ);
+	const result = await searchVault("docker dataset quotas volume", PROJ);
 	expect(result).toContain("Lessons (");
 	expect(result).toContain("Vault entities:");
 	expect(result).toContain("dataset quotas silently cap");
@@ -71,15 +79,15 @@ test("searches all projects' lessons and vault entities, labeled by section", ()
 	expect(result).not.toContain("decision/unrelated.md");
 });
 
-test("reports no matches when nothing overlaps", () => {
+test("reports no matches when nothing overlaps", async () => {
 	seedLesson({ cwd: PROJ, lesson: "Gotcha: docker compose needs --force-recreate after mem_limit changes to apply" });
 	seedEntity("gotcha/docker-quotas.md", "# Docker quotas\n\n- dataset quotas stall docker volume writes\n");
-	const result = searchVault("quantum chromodynamics lattice", PROJ);
+	const result = await searchVault("quantum chromodynamics lattice", PROJ);
 	expect(result).toContain("no lessons or entities match");
 });
 
-test("works with an empty vault and no lessons", () => {
+test("works with an empty vault and no lessons", async () => {
 	// beforeEach already gave this test fresh empty memory + vault dirs.
-	const result = searchVault("docker dataset quotas", PROJ);
+	const result = await searchVault("docker dataset quotas", PROJ);
 	expect(result).toContain("no lessons or entities match");
 });

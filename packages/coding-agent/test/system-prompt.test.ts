@@ -1,7 +1,11 @@
 import { describe, expect, test } from "vitest";
 import type { Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
-import { buildSystemPrompt } from "../src/core/system-prompt.ts";
+import {
+	buildSystemPrompt,
+	buildSystemPromptSections,
+	estimateSystemPromptSectionTokens,
+} from "../src/core/system-prompt.ts";
 
 const testSkill: Skill = {
 	name: "test-skill",
@@ -79,13 +83,14 @@ describe("buildSystemPrompt", () => {
 	});
 
 	describe("default tools", () => {
-		test("includes all default tools when snippets are provided", () => {
+		test("includes all default tools, including grep, when snippets are provided", () => {
 			const prompt = buildSystemPrompt({
 				toolSnippets: {
 					read: "Read file contents",
 					bash: "Execute bash commands",
 					edit: "Make surgical edits",
 					write: "Create or overwrite files",
+					grep: "Search file contents",
 				},
 				contextFiles: [],
 				skills: [],
@@ -96,9 +101,17 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).toContain("- bash:");
 			expect(prompt).toContain("- edit:");
 			expect(prompt).toContain("- write:");
+			expect(prompt).toContain("- grep:");
+		});
+
+		test("with grep in the default loadout, drops the bash-for-file-operations rule", () => {
+			const prompt = buildSystemPrompt({ contextFiles: [], skills: [], cwd: process.cwd() });
+
+			expect(prompt).not.toContain("Use bash for file operations like ls, rg, find");
 		});
 
 		test.each([
+			[["bash"], "Use bash for file operations"],
 			[["powershell"], "Use PowerShell for file operations"],
 			[["bash", "powershell"], "Use bash or PowerShell for file operations"],
 		] as const)("uses shell-specific guidance for %j", (selectedTools, expected) => {
@@ -123,6 +136,67 @@ describe("buildSystemPrompt", () => {
 				"- When reading hummin docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory",
 			);
 			expect(prompt).toContain("environment variables (docs/environment-variables.md)");
+		});
+	});
+
+	describe("section ordering", () => {
+		test("keeps known sections in fixed order before alphabetically sorted extension sections", () => {
+			const sections = buildSystemPromptSections({
+				appendSystemPrompt: "Additional instructions.",
+				contextFiles: [{ path: "/tmp/AGENTS.md", content: "Project instructions." }],
+				skills: [testSkill],
+				sections: { zulu: "z", alpha: "a", mike: "m" },
+				cwd: "/tmp",
+			});
+
+			expect(Object.keys(sections)).toEqual([
+				"preamble",
+				"tools",
+				"rules",
+				"docs",
+				"addendum",
+				"project_context",
+				"skills",
+				"cwd",
+				"alpha",
+				"mike",
+				"zulu",
+			]);
+		});
+
+		test("produces identical section order regardless of extension section insertion order", () => {
+			const first = buildSystemPromptSections({ cwd: "/tmp", sections: { zulu: "z", alpha: "a", mike: "m" } });
+			const second = buildSystemPromptSections({ cwd: "/tmp", sections: { mike: "m", zulu: "z", alpha: "a" } });
+
+			expect(Object.keys(second)).toEqual(Object.keys(first));
+			expect(Object.keys(second)).toEqual(["preamble", "tools", "rules", "docs", "cwd", "alpha", "mike", "zulu"]);
+		});
+	});
+
+	describe("estimateSystemPromptSectionTokens", () => {
+		test("estimates chars/4 per section in prompt order", () => {
+			const options = { cwd: "/tmp", sections: { alpha: "12345678" } };
+			const estimates = estimateSystemPromptSectionTokens(options);
+			const sections = buildSystemPromptSections(options);
+
+			expect(estimates).not.toBeNull();
+			expect(Object.keys(estimates!)).toEqual(Object.keys(sections));
+			for (const [name, tokens] of Object.entries(estimates!)) {
+				expect(tokens).toBe(Math.ceil(sections[name]!.length / 4));
+			}
+			expect(estimates!.alpha).toBe(Math.ceil("<alpha>\n12345678\n</alpha>".length / 4));
+		});
+
+		test("omits sections with empty content", () => {
+			const estimates = estimateSystemPromptSectionTokens({ cwd: "/tmp", sections: { empty: "" } });
+
+			expect(estimates).not.toBeNull();
+			expect(estimates!.empty).toBeUndefined();
+			expect(estimates!.cwd).toBe(Math.ceil("<cwd>\n/tmp\n</cwd>".length / 4));
+		});
+
+		test("returns null for a forced prompt", () => {
+			expect(estimateSystemPromptSectionTokens({ cwd: "/tmp", forceSystemPrompt: "exact" })).toBeNull();
 		});
 	});
 

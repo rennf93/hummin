@@ -28,6 +28,14 @@ export interface MemoryDistillJob {
 	/** Path to the shared laya-gate.log; the worker appends the intake read's
 	 * audit line directly (the worker has no agent-dir lookup). */
 	gateLog?: string;
+	/** Present only while a dispatch hold keeps the job from running. A held
+	 * job is retried once by the parent's startup sweep (retryHeldDistills),
+	 * which clears these fields when the retry is allowed and deletes the job
+	 * otherwise. */
+	held?: boolean;
+	heldReason?: string;
+	heldAt?: string;
+	heldRetries?: number;
 }
 
 export interface MemoryFoldJob {
@@ -98,6 +106,81 @@ export function decayKeepIndices(lines: string[], maxRecords: number, maxBytes: 
 	return [...keep].sort((a, b) => a - b);
 }
 
+/**
+ * Pure parser for the distill worker's reply, embedded verbatim into
+ * MEMORY_WORKER_SOURCE like decayKeepIndices: keep it self-contained - no
+ * outer-scope references, no imports, no syntax the raw Node runtime lacks.
+ *
+ * Accepts "up to N lessons" replies in sloppy shapes: markdown fences, bold
+ * markers, standalone "Lesson 2:" title lines, and 1. / 1) / - numbering.
+ * Each lesson starts at a Problem: line, at a numbered or bulleted shape line,
+ * or at a title line; an unnumbered indented Approach:/Gotcha: line continues
+ * the lesson it sits under (the prompt's own multi-line shape) instead of
+ * splitting it into fragments. Title/numbering before a body is dropped.
+ * Exact duplicates collapse; output is capped at maxLessons. Returns [] for
+ * NONE replies and for replies without any lesson shape (the worker then
+ * stores the raw output, preserving the old single-lesson fallback).
+ */
+export function parseDistilledLessons(output: string, maxLessons = 3): string[] {
+	// Strip numbering, bullets, and bold markers from a lesson's first line
+	// ("1. **Problem:** x" -> "Problem: x") so stored bodies keep the
+	// canonical Problem:/Approach:/Gotcha: shape.
+	function cleanFirstLessonLine(line: string): string {
+		return line
+			.replace(/^[ \t]*(?:\d{1,2}[.)][ \t]+)?/, "")
+			.replace(/^(?:[-*+][ \t]+)?/, "")
+			.replace(/\*+(?=[ \t]*(?:problem|approach|gotcha)[ \t]*:)/i, "")
+			.replace(/^((?:problem|approach|gotcha)[ \t]*:[ \t]*)\*+/i, "$1");
+	}
+	const text = output.replace(/\r\n/g, "\n").trim();
+	if (!text) return [];
+	const firstLine = text.split("\n").map((line) => line.trim()).find((line) => line.length > 0) ?? "";
+	if (/^none\b/i.test(firstLine)) return [];
+	// Fenced blocks win when they carry lesson bodies (models often wrap the
+	// whole reply in fences); otherwise fence markers stay and the line
+	// patterns below simply ignore them.
+	const fenced = [...text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((match) => match[1]).join("\n");
+	const source = /\b(?:problem|approach|gotcha)\s*:/i.test(fenced) ? fenced : text;
+	// A lesson starts at a "Problem:" line, at an explicitly delimited shape
+	// line ("1. Approach:", "- Gotcha:"), or at a "Lesson 2:" title. A bare
+	// indented "Approach:"/"Gotcha:" line continues the currently open lesson
+	// (the prompt's shape indents them under their Problem: line) and only
+	// starts a lesson when none is open. Numbered/bulleted shape lines must
+	// start a lesson: they are list separators even for Gotcha-only replies.
+	const shapeLine = /^[\s>#]*(?:[*-]\s*)?(?:\d{1,2}[.)]\s*)?(?:\*\*)?(?:lesson\s*\d{1,2}\s*[:.)-]?\s*)?(?:\*\*)?\s*(?:problem|approach|gotcha)\s*:/i;
+	const problemLine = /^[\s>#]*(?:\*\*)?\s*problem\s*:/i;
+	const delimitedLine = /^[\s>#]*(?:\d{1,2}[.)]|[*+-])\s+(?:\*\*)?\s*(?:problem|approach|gotcha)\s*:/i;
+	const title = /^[\s>#*-]*(?:\*\*)?lesson\s*\d{1,2}\s*[:.)-]?\s*(?:\*\*)?$/i;
+	const chunks: string[][] = [];
+	for (const line of source.split("\n")) {
+		if (title.test(line) || problemLine.test(line) || delimitedLine.test(line) || (chunks.length === 0 && shapeLine.test(line))) chunks.push([]);
+		chunks[chunks.length - 1]?.push(line);
+	}
+	const lessons: string[] = [];
+	for (const chunk of chunks) {
+		// Skip a "Lesson N" title and any numbering/blank lines before the
+		// first shape line so titles never leak into the stored body.
+		const start = chunk.findIndex((line) => /^\s*[\s>#]*(?:[*-]\s*)?(?:\d{1,2}[.)]\s*)?(?:\*\*)?\s*(?:problem|approach|gotcha)\s*:/i.test(line));
+		if (start === -1) continue;
+		const body = chunk
+			.slice(start)
+			.map((line, i) => (i === 0 ? cleanFirstLessonLine(line) : line))
+			.join("\n")
+			.replace(/\n-{3,}\s*$/, "")
+			.trim();
+		if (body) lessons.push(body);
+	}
+	const seen = new Set<string>();
+	const unique: string[] = [];
+	for (const lesson of lessons) {
+		const key = lesson.replace(/\s+/g, " ").trim().toLowerCase();
+		if (seen.has(key)) continue;
+		seen.add(key);
+		unique.push(lesson);
+	}
+	return unique.slice(0, maxLessons);
+}
+
 /** A single source handles all modes so parent code only manages one file. */
 export const MEMORY_WORKER_SOURCE = String.raw`#!/usr/bin/env node
 // Machine-managed by hummin-memory. Do not edit.
@@ -107,6 +190,7 @@ import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 
 const LESSON_MAX_WORDS = 120;
+const MAX_LESSONS_PER_SESSION = 3;
 const LESSON_MAX_RECORDS = 1000;
 const MAX_STORE_BYTES = 1024 * 1024;
 const MAX_FOLD_LOG_BYTES = 1024 * 1024;
@@ -119,6 +203,10 @@ const INTAKE_THRESHOLD = 0.5;
 // Usage-aware decay policy, embedded verbatim from memory-workers.ts (single
 // implementation; see decayKeepIndices there).
 ${decayKeepIndices}
+
+// Distill reply parser ("up to N lessons" shapes), embedded verbatim from
+// memory-workers.ts (single implementation; see parseDistilledLessons there).
+${parseDistilledLessons}
 
 const mode = process.argv[2];
 const jobPath = process.argv[3];
@@ -331,14 +419,16 @@ async function distill() {
 			return 0;
 		}
 		const prompt = [
-			"You are distilling a coding-agent session into exactly one reusable lesson.",
+			"You are distilling a coding-agent session into up to " + MAX_LESSONS_PER_SESSION + " distinct reusable lessons.",
 			"",
 			"Rules:",
-			"- Reply with ONLY the lesson in this exact shape:",
-			"Problem: <what the session was trying to do>",
-			"Approach: <what actually worked>",
-			"Gotcha: <the non-obvious thing a future session would need>",
-			"- Max " + LESSON_MAX_WORDS + " words total.",
+			"- Reply with ONLY the lessons, numbered, each in this exact shape:",
+			"1. Problem: <what the session was trying to do>",
+			"   Approach: <what actually worked>",
+			"   Gotcha: <the non-obvious thing a future session would need>",
+			"2. Problem: ...",
+			"- At most " + MAX_LESSONS_PER_SESSION + " lessons; each lesson max " + LESSON_MAX_WORDS + " words.",
+			"- Only genuinely distinct, durable lessons: a single-lesson session replies with one, and quality beats quantity.",
 			"- If there is no real lesson worth keeping, reply with exactly: NONE",
 			"",
 			"Working directory: " + job.cwd,
@@ -358,8 +448,20 @@ async function distill() {
 			removePending();
 			return 0;
 		}
-		const intake = await layaIntakeScore(output);
-		if (intake !== null && intake < INTAKE_THRESHOLD) {
+		// One reply may carry up to MAX_LESSONS_PER_SESSION lessons; a reply
+		// without any parsable lesson shape falls back to the raw output
+		// (old single-lesson behavior, so nothing distillable is lost).
+		const parsed = parseDistilledLessons(output, MAX_LESSONS_PER_SESSION);
+		const toStore = parsed.length > 0 ? parsed : [output];
+		// Per-lesson intake gate: drop only the gated-out lessons. A null
+		// score (gate unavailable) stores that lesson - fail open per lesson.
+		const kept = [];
+		for (const lesson of toStore) {
+			const intake = await layaIntakeScore(lesson);
+			if (intake !== null && intake < INTAKE_THRESHOLD) continue;
+			kept.push(lesson);
+		}
+		if (kept.length === 0) {
 			removePending();
 			return 0;
 		}
@@ -384,11 +486,15 @@ async function distill() {
 			} catch {}
 			mkdirSync(memoryDir, { recursive: true, mode: 0o700 });
 			const now = new Date().toISOString();
-			const record = { timestamp: now, cwd: job.cwd, project: job.project, session: job.session, sessionFile: job.sessionFile, lesson: output };
-			appendFileSync(join(memoryDir, "lessons.jsonl"), JSON.stringify(record) + "\n");
+			for (const lesson of kept) {
+				const record = { timestamp: now, cwd: job.cwd, project: job.project, session: job.session, sessionFile: job.sessionFile, lesson: lesson };
+				appendFileSync(join(memoryDir, "lessons.jsonl"), JSON.stringify(record) + "\n");
+			}
 			const markdownPath = join(memoryDir, String(job.project).replace(/[^a-zA-Z0-9._-]/g, "-") + ".lessons.md");
 			if (!existsSync(markdownPath)) writeFileSync(markdownPath, "# Lessons - " + job.cwd + "\n\n");
-			appendFileSync(markdownPath, "## " + now + "\n\n" + output + "\n\n");
+			// One mirror section per lesson keeps the "one record = one section"
+			// shape of the human-readable view.
+			for (const lesson of kept) appendFileSync(markdownPath, "## " + now + "\n\n" + lesson + "\n\n");
 			state.processed = state.processed || {};
 			state.processed[job.sessionFile] = now;
 			atomicWrite(join(memoryDir, "state.json"), JSON.stringify(state, null, 1));
@@ -397,10 +503,12 @@ async function distill() {
 				const inbox = join(job.vaultDir, "inbox");
 				mkdirSync(inbox, { recursive: true });
 				const base = "lesson-" + now.replace(/[:.]/g, "-");
-				let inboxPath = join(inbox, base + ".md");
-				let suffix = 0;
-				while (existsSync(inboxPath)) inboxPath = join(inbox, base + "-" + (++suffix) + ".md");
-				writeFileSync(inboxPath, ["---", "type: lesson", "date: " + now.slice(0, 10), "project: " + job.cwd, "session: " + (job.session || "unknown"), "---", "", output, ""].join("\n"));
+				for (const lesson of kept) {
+					let inboxPath = join(inbox, base + ".md");
+					let suffix = 0;
+					while (existsSync(inboxPath)) inboxPath = join(inbox, base + "-" + (++suffix) + ".md");
+					writeFileSync(inboxPath, ["---", "type: lesson", "date: " + now.slice(0, 10), "project: " + job.cwd, "session: " + (job.session || "unknown"), "---", "", lesson, ""].join("\n"));
+				}
 			}
 			return true;
 		});

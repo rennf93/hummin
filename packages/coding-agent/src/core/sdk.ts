@@ -29,6 +29,7 @@ import {
 	createReadOnlyTools,
 	createReadTool,
 	createWriteTool,
+	DEFAULT_SELECTED_TOOLS,
 	type ToolName,
 	withFileMutationQueue,
 } from "./tools/index.ts";
@@ -255,7 +256,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingLevel = clampThinkingLevel(model, thinkingLevel) as ThinkingLevel;
 	}
 
-	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write"];
+	const defaultActiveToolNames: ToolName[] = [...DEFAULT_SELECTED_TOOLS];
 	const configuredDefaultToolNames = settingsManager.getDefaultTools();
 	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
 	const excludedToolNames = options.excludeTools;

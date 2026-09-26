@@ -75,7 +75,8 @@ hummin bundles extensions that register additional commands (details in the [hum
 | `/sandbox` | Sandboxed bash status and mode toggle |
 | `/bashguard` | Bash command guard status and toggles |
 | `/fleet` | Local inference fleet status, start/stop/restart |
-| `/status` | Model, context window, fleet health, memory, todo progress |
+| `/status` | Model, context window, fleet health, memory, system-prompt section sizes, todo progress |
+| `/friction` | Laya gate stats and tool friction, including this session's tool error counts |
 | `/memory` | Project memory lessons and vault status |
 | `/plan` | Plan mode |
 | `/todos` | Session todo list |

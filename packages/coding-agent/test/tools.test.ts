@@ -255,8 +255,9 @@ describe("Coding Agent Tools", () => {
 
 			const result = await writeTool.execute("test-call-3", { path: testFile, content });
 
-			expect(getTextOutput(result)).toBe(`Successfully wrote to ${testFile}`);
-			// New file: details carries diff counts used by the footer and tool header
+			// New file: counts only (the model just authored the content), no diff
+			expect(getTextOutput(result)).toBe(`Successfully wrote to ${testFile} (1 line, 12B)`);
+			// Details carries diff counts used by the footer and tool header
 			expect(result.details).toEqual({ added: 1, removed: 0 });
 		});
 
@@ -267,6 +268,53 @@ describe("Coding Agent Tools", () => {
 			const result = await writeTool.execute("test-call-4", { path: testFile, content });
 
 			expect(getTextOutput(result)).toContain("Successfully wrote");
+		});
+
+		it("should include a unified diff when overwriting an existing file", async () => {
+			const testFile = join(testDir, "write-overwrite.txt");
+			writeFileSync(testFile, "one\ntwo\nthree\n");
+
+			const result = await writeTool.execute("test-call-4b", {
+				path: testFile,
+				content: "one\nTWO\nthree\n",
+			});
+
+			const output = getTextOutput(result);
+			// First line keeps the success shape plus final line/byte counts
+			expect(output.split("\n")[0]).toBe(`Successfully wrote to ${testFile} (3 lines, 14B)`);
+			expect(output).toContain("-two");
+			expect(output).toContain("+TWO");
+			expect(output).toContain("@@ -1,3 +1,3 @@");
+		});
+
+		it("should omit the diff when the overwrite is identical", async () => {
+			const testFile = join(testDir, "write-identical.txt");
+			writeFileSync(testFile, "same\n");
+
+			const result = await writeTool.execute("test-call-4c", { path: testFile, content: "same\n" });
+
+			expect(getTextOutput(result)).toBe(`Successfully wrote to ${testFile} (1 line, 5B)`);
+		});
+
+		it("should truncate large overwrite diffs with a notice", async () => {
+			const testFile = join(testDir, "write-overwrite-large.txt");
+			const oldLines = Array.from({ length: 80 }, (_, i) => `old ${i}`);
+			const newLines = Array.from({ length: 80 }, (_, i) => `new ${i}`);
+			writeFileSync(testFile, `${oldLines.join("\n")}\n`);
+
+			const result = await writeTool.execute("test-call-4d", {
+				path: testFile,
+				content: `${newLines.join("\n")}\n`,
+			});
+
+			const output = getTextOutput(result);
+			const diffLines = output.split("\n\n").slice(1).join("\n\n").split("\n");
+			// 60 kept lines plus the explicit truncation notice
+			expect(diffLines.length).toBe(61);
+			expect(diffLines[diffLines.length - 1]).toMatch(/^\[diff truncated, \d+ more lines\]$/);
+			expect(output).toContain("-old 56");
+			expect(output).not.toContain("-old 57");
+			expect(output).not.toContain("+new");
 		});
 	});
 
@@ -425,6 +473,53 @@ describe("Coding Agent Tools", () => {
 			).rejects.toThrow(/Could not find/);
 
 			expect(readFileSync(testFile, "utf-8")).toBe(originalContent);
+		});
+
+		it("should include near-miss context when a multi-edit fails to match", async () => {
+			const testFile = join(testDir, "edit-near-miss.txt");
+			const originalContent = "alpha\nbeta\ngamma\ndelta\n";
+			writeFileSync(testFile, originalContent);
+
+			let message = "";
+			try {
+				await editTool.execute("test-call-15", {
+					path: testFile,
+					edits: [
+						{ oldText: "alpha\n", newText: "ALPHA\n" },
+						{ oldText: "beta\ngamna\n", newText: "BETA\nGAMMA\n" },
+					],
+				});
+			} catch (error) {
+				message = error instanceof Error ? error.message : String(error);
+			}
+
+			expect(message).toContain("Could not find edits[1]");
+			expect(message).toContain("Closest match in the file:");
+			expect(message).toContain(`${testFile}:1: alpha`);
+			expect(message).toContain(`${testFile}:2: beta`);
+			expect(message).toContain(`${testFile}:3: gamma`);
+			// Atomicity is unchanged: the successful first edit must not land
+			expect(readFileSync(testFile, "utf-8")).toBe(originalContent);
+		});
+
+		it("should include the first occurrence region when an edit is ambiguous", async () => {
+			const testFile = join(testDir, "edit-ambiguous.txt");
+			writeFileSync(testFile, "intro\nfoo bar\nmid\nfoo bar\nend\n");
+
+			let message = "";
+			try {
+				await editTool.execute("test-call-15b", {
+					path: testFile,
+					edits: [{ oldText: "foo bar", newText: "baz" }],
+				});
+			} catch (error) {
+				message = error instanceof Error ? error.message : String(error);
+			}
+
+			expect(message).toContain("Found 2 occurrences of the text");
+			expect(message).toContain("Please provide more context to make it unique.");
+			expect(message).toContain("First occurrence:");
+			expect(message).toContain(`${testFile}:2: foo bar`);
 		});
 
 		it("should include EACCES for read-only files", async () => {

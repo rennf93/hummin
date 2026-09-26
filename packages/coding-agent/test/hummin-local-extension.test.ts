@@ -1,6 +1,9 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type * as PiAi from "@earendil-works/pi-ai";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import humminLocalExtension, { DISCOVERY_TTL_MS } from "../extensions/hummin-local.ts";
 import type { ExtensionAPI } from "../src/core/extensions/types.ts";
 
@@ -34,6 +37,12 @@ afterEach(() => {
 	vi.restoreAllMocks();
 	vi.unstubAllGlobals();
 	vi.unstubAllEnvs();
+});
+
+beforeEach(() => {
+	// Fleet health must never touch the real agent dir: point every test at a
+	// fresh temp file so persisted state from one test cannot leak into another.
+	vi.stubEnv("HUMMIN_FLEET_HEALTH_FILE", join(mkdtempSync(join(tmpdir(), "hummin-fleet-test-")), "fleet-health.json"));
 });
 
 describe("hummin local provider fleet discovery", () => {

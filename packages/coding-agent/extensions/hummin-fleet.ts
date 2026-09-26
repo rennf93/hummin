@@ -1,7 +1,14 @@
 /** Fleet health and controls for hummin's local inference servers. */
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { SettingsManager, type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
+import {
+	estimateSystemPromptSectionTokens,
+	SettingsManager,
+	type BuildSystemPromptOptions,
+	type ExtensionAPI,
+	type ExtensionContext,
+	type Theme,
+} from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, type KeybindingsManager, type TUI } from "@earendil-works/pi-tui";
 import {
 	fleetControls,
@@ -162,6 +169,37 @@ function statusText(ctx: ExtensionContext, servers: readonly FleetServer[], stat
 	].join("\n");
 }
 
+/** Warn when a single section or the prompt total grows past these estimated token budgets. */
+export const PROMPT_SECTION_WARN_TOKENS = 4000;
+export const PROMPT_TOTAL_WARN_TOKENS = 20000;
+
+/**
+ * Per-section token estimates for the standing system prompt, from the base prompt options
+ * (ctx.getSystemPromptOptions). Sections added by before_agent_start handlers are per-run and
+ * not part of the base options, so they are not listed here.
+ */
+export function promptSectionLines(options: BuildSystemPromptOptions): string[] {
+	const estimates = estimateSystemPromptSectionTokens(options);
+	if (!estimates) {
+		const tokens = Math.ceil((options.forceSystemPrompt?.length ?? 0) / 4);
+		return [`prompt: forced, ~${tokens.toLocaleString()} tokens (est.), sections not shown`];
+	}
+	const entries = Object.entries(estimates);
+	const total = entries.reduce((sum, [, tokens]) => sum + tokens, 0);
+	const lines = [
+		"prompt sections (est. tokens):",
+		...entries.map(([name, tokens]) => `  ${name}: ${tokens.toLocaleString()}`),
+		`  total: ~${total.toLocaleString()}`,
+	];
+	for (const [name, tokens] of entries.filter(([, tokens]) => tokens > PROMPT_SECTION_WARN_TOKENS)) {
+		lines.push(`warning: prompt section ${name} over ${PROMPT_SECTION_WARN_TOKENS.toLocaleString()} tokens (~${tokens.toLocaleString()})`);
+	}
+	if (total > PROMPT_TOTAL_WARN_TOKENS) {
+		lines.push(`warning: prompt total over ${PROMPT_TOTAL_WARN_TOKENS.toLocaleString()} tokens (~${total.toLocaleString()})`);
+	}
+	return lines;
+}
+
 /** Result contract for the /model picker's offline-server start flow. Kept
  * structural so the picker (core) and this extension stay decoupled. */
 interface PickerStartResult {
@@ -221,11 +259,17 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 	pi.registerCommand("status", {
-		description: "Show hummin status and fleet health",
+		description: "Show hummin status: model, fleet, memory, and system prompt section sizes",
 		handler: async (_args, ctx) => {
 			const servers = serversFor(ctx);
 			const states = await probeFleet(servers, ctx);
-			ctx.ui.notify(statusText(ctx, servers, states), "info");
+			let promptLines: string[];
+			try {
+				promptLines = promptSectionLines(ctx.getSystemPromptOptions());
+			} catch (error) {
+				promptLines = [`prompt sections: unavailable (${error instanceof Error ? error.message : String(error)})`];
+			}
+			ctx.ui.notify([statusText(ctx, servers, states), ...promptLines].join("\n"), "info");
 		},
 	});
 

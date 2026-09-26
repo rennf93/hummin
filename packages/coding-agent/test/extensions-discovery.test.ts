@@ -381,6 +381,20 @@ describe("extensions discovery", () => {
 		expect(result.extensions).toHaveLength(0);
 	});
 
+	it("keeps loading later extensions after a broken one", async () => {
+		// A failed extension is collected as an error and must not stop the
+		// loader; main() reports the diagnostics without exiting.
+		fs.writeFileSync(path.join(extensionsDir, "broken.ts"), "this is not valid typescript export");
+		fs.writeFileSync(path.join(extensionsDir, "good.ts"), extensionCode);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.errors).toHaveLength(1);
+		expect(result.errors[0].path).toContain("broken.ts");
+		expect(result.extensions).toHaveLength(1);
+		expect(result.extensions[0].path).toContain("good.ts");
+	});
+
 	it("handles explicitly configured paths", async () => {
 		const customPath = path.join(tempDir, "custom-location", "my-ext.ts");
 		fs.mkdirSync(path.dirname(customPath), { recursive: true });

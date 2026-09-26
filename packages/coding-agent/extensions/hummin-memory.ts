@@ -1,27 +1,31 @@
 /**
  * hummin-memory: session distillation (spec 13.2, lesson mode).
  *
- * On session shutdown, the session is queued for distillation into ONE lesson
- * in a fixed shape (Problem: / Approach: / Gotcha:, max 120 words). A detached
- * worker makes the one-shot print-mode hummin call and appends the lesson to
- * the project's lessons file, so shutdown never blocks on the model call. If there is no
- * real lesson, the model replies NONE and nothing is stored - the store never
- * fills with junk (RoboCo memory_distiller gate).
+ * On session shutdown, the session is queued for distillation into up to three
+ * distinct lessons, each in a fixed shape (Problem: / Approach: / Gotcha:, max
+ * 120 words). A detached worker makes the one-shot print-mode hummin call and
+ * appends each lesson to the project's lessons file, so shutdown never blocks
+ * on the model call. If there is no real lesson, the model replies NONE and
+ * nothing is stored - the store never fills with junk (RoboCo memory_distiller
+ * gate).
  *
- * Idempotency: one lesson per session id; a state file marks processed
- * sessions so a re-shutdown cannot duplicate. Failures are skipped (record
- * nothing rather than storing junk).
+ * Idempotency: one distillation pass per session id (yielding up to three
+ * lessons); a state file marks processed sessions so a re-shutdown cannot
+ * duplicate. Failures are skipped (record nothing rather than storing junk).
  *
  * Config (all optional):
  *   HUMMIN_MEMORY=1            enable (default off - experimental)
- *   HUMMIN_MEMORY_PROVIDER     provider for fold/distill calls; overrides the
- *                              session's selected model (default: the model
- *                              selected in the session, falling back to zai)
- *   HUMMIN_MEMORY_MODEL_ID     model id for fold/distill calls (default: the
- *                              session's selected model, falling back to
+ *   HUMMIN_MEMORY_PROVIDER     provider for the no-model-selected fallback of
+ *                              fold/distill/expansion calls (default: zai).
+ *                              The session's selected model wins when one is
+ *                              selected; this only pins the fallback.
+ *   HUMMIN_MEMORY_MODEL_ID     model id for the same fallback (default:
  *                              glm-5.3-flash)
  *   HUMMIN_MEMORY_DIR          storage dir (default: <agentDir>/memory)
  *   HUMMIN_MEMORY_MAX_CHARS    transcript tail passed to the distiller (default: 12000)
+ *   HUMMIN_MEMORY_QUERY_EXPAND set to 0 (or memoryQueryExpand=false in
+ *                              settings) to disable model-assisted query
+ *                              expansion in recall and vault search
  *   HUMMIN_MEMORY_AUTO_FOLD_THRESHOLD  inbox lesson count that triggers an
  *                              automatic fold pass (default 3; 0 disables)
  *
@@ -41,7 +45,7 @@
  * human-readable markdown mirror.
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, appendFileSync, unlinkSync, writeFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
@@ -50,7 +54,7 @@ import { Type } from "typebox";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getAgentDir, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { TextContent } from "@earendil-works/pi-ai";
-import { MEMORY_WORKER_SOURCE, type MemoryFoldJob } from "./lib/memory-workers.ts";
+import { MEMORY_WORKER_SOURCE, type MemoryDistillJob, type MemoryFoldJob } from "./lib/memory-workers.ts";
 import { prepareChildDispatch, type DispatchReceipt } from "./lib/child-dispatch-review.ts";
 
 const LESSON_MAX_WORDS = 120;
@@ -67,22 +71,6 @@ function memoryDir(): string {
 
 function projectKey(cwd: string): string {
 	return cwd.replace(/[^a-zA-Z0-9]/g, "-").replace(/^-+|-+$/g, "") || "root";
-}
-
-function sessionDirFor(cwd: string): string {
-	return join(agentDir(), "sessions", `--${projectKey(cwd)}--`);
-}
-
-function newestSessionFile(cwd: string): string | undefined {
-	const dir = sessionDirFor(cwd);
-	if (!existsSync(dir)) return undefined;
-	const files = readdirSync(dir)
-		.filter((f) => f.endsWith(".jsonl"))
-		.map((f) => ({ f, mtime: existsSync(join(dir, f)) ? 0 : 0 }));
-	// newest by name (timestamp prefix) - session names sort chronologically
-	files.sort((a, b) => b.f.localeCompare(a.f));
-	const newest = files[0]?.f;
-	return newest ? join(dir, newest) : undefined;
 }
 
 function readTranscriptTail(path: string, maxChars: number): string {
@@ -148,6 +136,49 @@ function prepareMemoryDispatch(input: Parameters<typeof prepareChildDispatch>[0]
 	return (ctx.dispatch ?? prepareChildDispatch)(input, ctx, { agentDir: ctx.agentDir ?? agentDir(), layaTimeoutMs: 1500 });
 }
 
+/** Review-fingerprint prompt for distill dispatches (both fresh and held
+ * retries must present the identical prompt or the review store blocks). */
+const DISTILL_DISPATCH_PROMPT =
+	"Distill the finished coding-agent session transcript into up to three reusable lessons, or return NONE when it contains no durable lesson.";
+
+/** Fields the pending job file carries only while a dispatch hold keeps it
+ * from running (declared on MemoryDistillJob in lib/memory-workers.ts). */
+type DistillJobFile = MemoryDistillJob;
+
+function spawnDistillWorker(pendingPath: string): void {
+	// HUMMIN_MEMORY=0 or the child's own shutdown handler distills again,
+	// recursing without bound. The worker's argv is <mode> <job.json>, matching
+	// the fold invocation in enqueueFold.
+	const child = spawn(process.execPath, [ensureDistillWorker(), "distill", pendingPath], {
+		detached: true,
+		stdio: "ignore",
+		env: { ...process.env, HUMMIN_MEMORY: "0" },
+	});
+	child.unref();
+}
+
+function buildDistillJob(sessionFile: string, cwd: string, tail: string, dir: string, pendingPath: string, vaultMode: boolean, dispatch: Awaited<ReturnType<typeof prepareChildDispatch>>): DistillJobFile {
+	return {
+		mode: "distill",
+		memoryDir: dir,
+		sessionFile,
+		cwd,
+		tail,
+		provider: dispatch.configuration.provider,
+		modelId: dispatch.configuration.modelId,
+		thinking: dispatch.configuration.thinking,
+		receipt: dispatch.receipt as DispatchReceipt | undefined,
+		reviewId: dispatch.reviewId,
+		dispatchReason: dispatch.reason,
+		pendingPath,
+		project: projectKey(cwd),
+		session: basename(sessionFile),
+		vaultMode,
+		vaultDir: vaultDir(cachedSettings),
+		gateLog: join(agentDir(), "laya-gate.log"),
+	};
+}
+
 export async function enqueueDistill(sessionFile: string, cwd: string, vaultMode: boolean, ctx: MemoryDispatchContext): Promise<void> {
 	const tail = readTranscriptTail(sessionFile, Number(process.env.HUMMIN_MEMORY_MAX_CHARS ?? 12000));
 	if (tail.length < 120) return; // trivial session, nothing to distill
@@ -157,42 +188,30 @@ export async function enqueueDistill(sessionFile: string, cwd: string, vaultMode
 	const dispatch = await prepareMemoryDispatch(
 		{
 			kind: "memory-distill",
-			prompt: "Distill the finished coding-agent session transcript into one reusable lesson, or return NONE when it contains no durable lesson.",
+			prompt: DISTILL_DISPATCH_PROMPT,
 			cwd,
 			model: `${requested.provider}/${requested.modelId}`,
 			thinking: "low",
 		},
 		ctx,
 	);
-	if (dispatch.action === "block") {
-		// Nothing consumes a held distill job later, so no pending file is
-		// written: the hold lives in child-dispatch-reviews.json and this notice.
-		ctx.ui?.notify?.(`memory distillation held for dispatch review ${dispatch.reviewId ?? "unknown"}: ${dispatch.reason ?? "review required"}`, "warning");
-		return;
-	}
 	mkdirSync(join(dir, "pending"), { recursive: true, mode: 0o700 });
 	const pendingPath = join(dir, "pending", `${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
-	writeFileSync(
-		pendingPath,
-		JSON.stringify({
-			memoryDir: dir,
-			sessionFile,
-			cwd,
-			tail,
-			provider: dispatch.configuration.provider,
-			modelId: dispatch.configuration.modelId,
-			thinking: dispatch.configuration.thinking,
-			receipt: dispatch.receipt as DispatchReceipt | undefined,
-			reviewId: dispatch.reviewId,
-			dispatchReason: dispatch.reason,
-			project: projectKey(cwd),
-			session: sessionFile.split("/").pop(),
-			vaultMode,
-			vaultDir: vaultDir(cachedSettings),
-			gateLog: join(agentDir(), "laya-gate.log"),
-		}),
-		{ mode: 0o600 },
-	);
+	if (dispatch.action === "block") {
+		// Held, not dropped: persist the job with a held marker so the next
+		// session start retries it once (retryHeldDistills). The hold itself
+		// lives in child-dispatch-reviews.json and this notice.
+		const job: DistillJobFile = {
+			...buildDistillJob(sessionFile, cwd, tail, dir, pendingPath, vaultMode, dispatch),
+			held: true,
+			heldReason: dispatch.reason ?? "review required",
+			heldAt: new Date().toISOString(),
+		};
+		writeFileSync(pendingPath, JSON.stringify(job), { mode: 0o600 });
+		ctx.ui?.notify?.(`memory distillation held for dispatch review ${dispatch.reviewId ?? "unknown"}: ${dispatch.reason ?? "review required"}; queued for one retry at next startup`, "warning");
+		return;
+	}
+	writeFileSync(pendingPath, JSON.stringify(buildDistillJob(sessionFile, cwd, tail, dir, pendingPath, vaultMode, dispatch)), { mode: 0o600 });
 
 	// Prune pending jobs older than 7 days (crashed workers, abandoned jobs).
 	try {
@@ -208,12 +227,87 @@ export async function enqueueDistill(sessionFile: string, cwd: string, vaultMode
 		// pruning is best effort
 	}
 
-	const child = spawn(process.execPath, [ensureDistillWorker(), pendingPath], {
-		detached: true,
-		stdio: "ignore",
-		env: { ...process.env, HUMMIN_MEMORY: "0" },
-	});
-	child.unref();
+	spawnDistillWorker(pendingPath);
+}
+
+const HELD_DISTILL_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const HELD_DISTILL_MAX_RETRIES = 1;
+
+/**
+ * Sweep held distillation jobs: each is retried at most once and only while
+ * younger than 24h, then deleted, so holds can never respawn unboundedly. A
+ * retry re-presents the original review id, so a review accepted in the
+ * meantime allows the dispatch; a still-pending (or pruned) review blocks
+ * again and the job is dropped for good. Called once per session startup, so
+ * the sweep itself does not loop. Returns the number of jobs re-spawned.
+ */
+export async function retryHeldDistills(ctx: MemoryDispatchContext): Promise<number> {
+	const pendingDir = join(memoryDir(), "pending");
+	if (!existsSync(pendingDir)) return 0;
+	let retried = 0;
+	for (const file of readdirSync(pendingDir)) {
+		if (!file.endsWith(".json")) continue;
+		const path = join(pendingDir, file);
+		let job: DistillJobFile;
+		try {
+			job = JSON.parse(readFileSync(path, "utf8")) as DistillJobFile;
+		} catch {
+			continue;
+		}
+		if (!job.held) continue;
+		const drop = (message: string): void => {
+			try {
+				unlinkSync(path);
+			} catch {
+				// best effort
+			}
+			ctx.ui?.notify?.(message, "warning");
+		};
+		const heldAt = Date.parse(job.heldAt ?? "");
+		if (!Number.isFinite(heldAt) || Date.now() - heldAt > HELD_DISTILL_MAX_AGE_MS) {
+			drop("memory: dropped distillation held for over 24h (or carrying no hold timestamp)");
+			continue;
+		}
+		if ((job.heldRetries ?? 0) >= HELD_DISTILL_MAX_RETRIES) {
+			drop("memory: dropped distillation whose retry was already spent");
+			continue;
+		}
+		const dispatch = await prepareMemoryDispatch(
+			{
+				kind: "memory-distill",
+				prompt: DISTILL_DISPATCH_PROMPT,
+				cwd: job.cwd,
+				model: job.provider ? `${job.provider}/${job.modelId}` : undefined,
+				thinking: "low",
+				reviewId: job.reviewId,
+			},
+			ctx,
+		);
+		if (dispatch.action === "block") {
+			// The one retry is spent: delete the job rather than leaving it to
+			// pile up (its review stays resolvable in child-dispatch-reviews).
+			drop(`memory distillation retry held again (${dispatch.reason ?? "review required"}); job dropped`);
+			continue;
+		}
+		// Rewrite with the allowed configuration and clear the held marker
+		// (undefined fields vanish from the JSON), then run the worker.
+		const next: DistillJobFile = {
+			...job,
+			provider: dispatch.configuration.provider,
+			modelId: dispatch.configuration.modelId,
+			thinking: dispatch.configuration.thinking,
+			receipt: dispatch.receipt as DispatchReceipt | undefined,
+			reviewId: dispatch.reviewId,
+			dispatchReason: dispatch.reason,
+			held: undefined,
+			heldReason: undefined,
+			heldAt: undefined,
+		};
+		writeFileSync(path, JSON.stringify(next), { mode: 0o600 });
+		spawnDistillWorker(path);
+		retried++;
+	}
+	return retried;
 }
 
 function statePath(): string {
@@ -430,6 +524,9 @@ export interface LessonRecord {
 	timestamp?: unknown;
 	lastInjectedAt?: unknown;
 	fromVault?: boolean;
+	/** For vault-processed lessons: the file stem (the slug entities reference
+	 * as [[slug]]). Absent for lessons.jsonl records. */
+	slug?: string;
 }
 
 /** Remove a leading YAML frontmatter block (---\n...\n---) and return the body. */
@@ -490,6 +587,7 @@ export function loadVaultLessons(vaultDir: string): LessonRecord[] {
 				project,
 				timestamp: frontmatterValue(frontmatterBlock(text), "date"),
 				fromVault: true,
+				slug: f.replace(/\.md$/, ""),
 			});
 		} catch {
 			// skip unreadable
@@ -539,25 +637,87 @@ export function unionLessonRecords(vaultDir?: string): LessonRecord[] {
 	return [...byBody.values()];
 }
 
+/**
+ * Map lesson slug -> titles of vault entities that reference it via
+ * [[wikilink]]. Choice of linkage mechanism for entity recall: the vault
+ * contract makes every fold record lesson provenance inside the entity files
+ * ("(from [[lesson-slug]], YYYY-MM-DD)"), so the lesson-to-entity edges are
+ * cheaply derivable with one scan of entities/ - no fold-output parsing, no
+ * index to invalidate. Returns an empty map when no entity references any of
+ * the slugs. Slugs are matched lowercase on both sides (lesson file stems
+ * carry the ISO timestamp's capital T/Z, wikilinks may not).
+ */
+function lessonEntityTitles(vaultDir: string, slugs: ReadonlySet<string>): Map<string, string[]> {
+	const map = new Map<string, string[]>();
+	if (slugs.size === 0) return map;
+	const entitiesDir = join(vaultDir, "entities");
+	if (!existsSync(entitiesDir)) return map;
+	const walk = (dir: string): void => {
+		for (const entry of readdirSync(dir, { withFileTypes: true })) {
+			const full = join(dir, entry.name);
+			if (entry.isDirectory()) {
+				walk(full);
+				continue;
+			}
+			if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+			try {
+				const title = entry.name.slice(0, -3);
+				for (const match of readFileSync(full, "utf8").matchAll(/\[\[([^\]|#]+)/g)) {
+					const target = match[1].trim().toLowerCase();
+					if (!slugs.has(target)) continue;
+					const titles = map.get(target) ?? [];
+					if (!titles.includes(title)) titles.push(title);
+					map.set(target, titles);
+				}
+			} catch {
+				// skip unreadable
+			}
+		}
+	};
+	walk(entitiesDir);
+	return map;
+}
+
+/** Entity titles as extra BM25 terms: the kebab slug itself plus its
+ * hyphen-split words, so "build-cache" matches both spellings. */
+function entityTitleTerms(title: string): string[] {
+	return [...tokenizeList(title), ...tokenizeList(title.replace(/[-_]+/g, " "))];
+}
+
 export function recallLessons(
 	cwd: string,
 	query: string,
 	limit = RETRIEVAL_MAX_LESSONS,
 	scope: "project" | "all" = "project",
+	extraTerms: readonly string[] = [],
 ): string[] {
 	const queryTerms = tokenize(query);
+	for (const term of tokenizeList(extraTerms.join(" "))) queryTerms.add(term);
 	if (queryTerms.size === 0) return [];
 	const project = resolve(cwd);
+	const dir = vaultDir(cachedSettings);
 	// Pass 1: parse and index every lesson into the BM25 corpus. The corpus is
 	// the union of the distillation store and the folded vault, so lessons that
 	// were folded out of lessons.jsonl into processed/ stay retrievable.
+	const allRecords = unionLessonRecords(dir);
+	// Entity-linkage augmentation: fold the titles of entities that cite a
+	// vault lesson ([[slug]] wikilinks, see lessonEntityTitles) into that
+	// lesson's BM25 terms. A paraphrase query can then reach the lesson through
+	// its entity names, and the extra terms also count toward the relevance
+	// floor below. Applied at index time only; stored lesson bodies are never
+	// rewritten, so dedup and briefing output stay byte-identical.
+	const slugs = new Set(
+		allRecords.flatMap((r) => (typeof r.slug === "string" ? [r.slug.toLowerCase()] : [])),
+	);
+	const linkedEntities = lessonEntityTitles(dir, slugs);
 	const records: { lesson: string; doc: Bm25Doc; sameProject: boolean; timestamp?: unknown; index: number }[] = [];
 	let index = 0;
-	for (const record of unionLessonRecords(vaultDir(cachedSettings))) {
+	for (const record of allRecords) {
 		index++;
+		const augment = record.slug ? (linkedEntities.get(record.slug.toLowerCase()) ?? []).flatMap(entityTitleTerms) : [];
 		records.push({
 			lesson: record.lesson,
-			doc: bm25Doc(tokenizeList(record.lesson)),
+			doc: bm25Doc([...tokenizeList(record.lesson), ...augment]),
 			sameProject: sameProjectFor(record, project),
 			timestamp: record.timestamp,
 			index,
@@ -584,13 +744,62 @@ export function recallLessons(
 }
 
 /**
+ * Compact lesson briefing for child sessions (imported by other extensions,
+ * e.g. the subagent dispatcher, as `import { lessonsForChildBrief } from
+ * "./hummin-memory.ts"`). Plain lexical BM25 over the union lesson corpus with
+ * the task prompt as query: no model call, no query expansion, project scope
+ * only (same-project bias). Returns null when memory is disabled or nothing
+ * matches. Safe against circular imports: this module imports no other
+ * extension entry point.
+ *
+ * Side-effect contract: lastInjectedAt is NOT stamped. A child briefing is
+ * advisory, not a session injection, so it must not count as use in the
+ * store's usage-aware decay; only session briefings and explicit vault
+ * searches stamp the store.
+ *
+ * The block carries no cwd/date context lines: lesson bodies already embed
+ * their context, and the char budget is better spent on content.
+ */
+export async function lessonsForChildBrief(query: string, maxChars = 1200): Promise<string | null> {
+	const enabled = cachedSettings ? cachedSettings.getMemoryEnabled() : process.env.HUMMIN_MEMORY === "1";
+	if (!enabled) return null;
+	const trimmed = query.trim();
+	if (!trimmed) return null;
+	const lessons = recallLessons(process.cwd(), trimmed, 2);
+	if (lessons.length === 0) return null;
+	const header = "Relevant lessons from prior work:";
+	const lines: string[] = [];
+	let total = header.length;
+	for (const lesson of lessons) {
+		if (total + lesson.length + 3 > maxChars) {
+			// Prefer a truncated first lesson over returning nothing.
+			if (lines.length === 0) {
+				const budget = Math.max(0, maxChars - header.length - 8);
+				lines.push(`- ${lesson.slice(0, budget)}...`);
+			}
+			break;
+		}
+		lines.push(`- ${lesson}`);
+		total += lesson.length + 3;
+	}
+	if (lines.length === 0) return null;
+	return `${header}\n${lines.join("\n")}`;
+}
+
+/**
  * On-demand search for the `vault` tool: project lessons (cross-project
  * included by the relevance floor) plus vault entity files, both scored by
- * plain term overlap. Returns a short briefing string, capped.
+ * plain term overlap. The query is expanded first (one cheap model call,
+ * fail-open, see expandQueryTerms) unless the whole corpus is empty - nothing
+ * can match either way, so fresh installs pay zero latency. Returns a short
+ * briefing string, capped.
  */
-export function searchVault(query: string, cwd: string): string {
+export async function searchVault(query: string, cwd: string): Promise<string> {
 	const sections: string[] = [];
-	const lessons = recallLessons(cwd, query, 5, "all");
+	const dir = vaultDir(cachedSettings);
+	const hasCorpus = unionLessonRecords(dir).length > 0 || countVaultEntities(dir) > 0;
+	const extra = hasCorpus ? await expandQueryTerms(query) : [];
+	const lessons = recallLessons(cwd, query, 5, "all", extra);
 	// Every search result counts as a use: stamp it so decay keeps lessons the
 	// agent actually consults.
 	markLessonsInjected(lessons);
@@ -605,7 +814,6 @@ export function searchVault(query: string, cwd: string): string {
 	// Header names the vault actually searched: HUMMIN_MEMORY_VAULT_DIR can
 	// point sessions at a different vault than the default dir, and raw file
 	// inspection of the default dir has produced duplicate graphs before.
-	const dir = vaultDir(cachedSettings);
 	return `vault: ${dir} · ${countVaultEntities(dir)} entities · ${countVaultLessons()} lessons\n\n${sections.join("\n\n")}`.slice(0, 4200);
 }
 
@@ -860,6 +1068,96 @@ function memoryModel(): { provider: string; modelId: string } {
 	};
 }
 
+// =============================================================================
+// Query expansion (retrieval quality): one cheap print-mode call that turns a
+// prompt into extra search keywords, so paraphrase queries still hit lessons
+// written with different vocabulary. Purely additive: the extra terms are
+// unioned into the BM25 query terms; the raw query keeps driving the phrase
+// bonus and the relevance floor still applies. Used by the auto-briefing path
+// and the vault tool; lessonsForChildBrief deliberately does NOT expand (it
+// must stay model-free).
+// =============================================================================
+
+const QUERY_EXPAND_TIMEOUT_MS = 2000;
+const QUERY_EXPAND_MAX_KEYWORDS = 8;
+/** Upper bound so a long-lived process cannot grow the cache unbounded. */
+const QUERY_EXPAND_CACHE_MAX = 200;
+const QUERY_EXPANSION_PROMPT =
+	"Return up to 8 extra lowercase search keywords (comma-separated, keywords only, no explanations, no numbering) that would help retrieve prior lessons and notes about the following task: ";
+
+interface QueryExpandSettings {
+	memoryQueryExpand?: unknown;
+}
+
+/** Env gate first (HUMMIN_MEMORY_QUERY_EXPAND=0/false/off), then the settings
+ * key memoryQueryExpand=false (project settings override global). Default on. */
+function queryExpansionEnabled(): boolean {
+	const env = process.env.HUMMIN_MEMORY_QUERY_EXPAND?.trim();
+	if (env && /^(0|false|off)$/i.test(env)) return false;
+	if (!cachedSettings) return true;
+	try {
+		const global = cachedSettings.getGlobalSettings() as QueryExpandSettings;
+		const project = cachedSettings.getProjectSettings() as QueryExpandSettings;
+		return { ...global, ...project }.memoryQueryExpand !== false;
+	} catch {
+		return true;
+	}
+}
+
+/** One print-mode hummin call; resolves "" on any failure including timeout
+ * (execFile kills the child and errors). HUMMIN_MEMORY=0 in the child env:
+ * the child's own shutdown handler must never distill again. */
+function runMemoryPrint(prompt: string, provider: string, modelId: string, thinking: string, timeoutMs: number): Promise<string> {
+	return new Promise((resolvePrint) => {
+		execFile(
+			"hummin",
+			["-p", prompt, "--provider", provider, "--model", modelId, "--thinking", thinking],
+			{ timeout: timeoutMs, maxBuffer: 256 * 1024, env: { ...process.env, HUMMIN_MEMORY: "0" } },
+			(error, stdout) => resolvePrint(error ? "" : String(stdout)),
+		);
+	});
+}
+
+/** Pure: keyword list from raw model output. Comma- or whitespace-separated,
+ * single tokens only (3-30 chars of [a-z0-9_./-]), deduped, capped. Models
+ * ignore the comma instruction often enough that space separation must parse. */
+export function parseExpansionKeywords(output: string): string[] {
+	const seen = new Set<string>();
+	for (const raw of output.split(/[\s,]+/)) {
+		const keyword = raw.trim().toLowerCase();
+		if (!/^[a-z0-9][a-z0-9_./-]{2,29}$/.test(keyword)) continue;
+		seen.add(keyword);
+	}
+	return [...seen].slice(0, QUERY_EXPAND_MAX_KEYWORDS);
+}
+
+const queryExpansionCache = new Map<string, string[]>();
+
+/**
+ * Extra retrieval keywords for a query, via one cheap memoryModel() call
+ * (thinking low). Fail-open to [] when disabled by gate, on timeout or error,
+ * or when the reply parses to nothing. Only successful expansions are cached,
+ * per query, for process lifetime: a transient failure should get another
+ * chance rather than permanently downgrade that query's retrieval.
+ */
+export async function expandQueryTerms(query: string): Promise<string[]> {
+	const trimmed = query.trim();
+	if (!trimmed || tokenize(trimmed).size === 0) return [];
+	if (!queryExpansionEnabled()) return [];
+	const cached = queryExpansionCache.get(trimmed);
+	if (cached) return cached;
+	const requested = memoryModel();
+	const output = await runMemoryPrint(QUERY_EXPANSION_PROMPT + trimmed, requested.provider, requested.modelId, "low", QUERY_EXPAND_TIMEOUT_MS);
+	const terms = parseExpansionKeywords(output);
+	if (terms.length === 0) return [];
+	if (queryExpansionCache.size >= QUERY_EXPAND_CACHE_MAX) {
+		const oldest = queryExpansionCache.keys().next();
+		if (!oldest.done) queryExpansionCache.delete(oldest.value);
+	}
+	queryExpansionCache.set(trimmed, terms);
+	return terms;
+}
+
 export default function humminMemory(pi: ExtensionAPI): void {
 	const settings = SettingsManager.create(process.cwd());
 	cachedSettings = settings;
@@ -880,6 +1178,17 @@ export default function humminMemory(pi: ExtensionAPI): void {
 		sessionModel = event.model;
 	});
 
+	// Held distillation sweep: once per real startup (not reload/resume/fork,
+	// where the shutdown that follows would re-enqueue anyway). Fail-open.
+	pi.on("session_start", async (event, ctx) => {
+		if (event.reason !== "startup") return;
+		try {
+			await retryHeldDistills(ctx);
+		} catch {
+			// fail-open: a held-job retry must never break startup
+		}
+	});
+
 	pi.registerTool({
 		name: "vault",
 		label: "Vault Search",
@@ -892,7 +1201,7 @@ export default function humminMemory(pi: ExtensionAPI): void {
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const query = params.query.trim();
 			if (!query) return { content: [{ type: "text" as const, text: "Error: empty query" }], details: {}, isError: true };
-			return { content: [{ type: "text" as const, text: searchVault(query, ctx.cwd) }], details: {} };
+			return { content: [{ type: "text" as const, text: await searchVault(query, ctx.cwd) }], details: {} };
 		},
 	});
 
@@ -998,7 +1307,13 @@ export default function humminMemory(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", async (event, ctx) => {
 		const prompt = event.prompt.trim();
 		if (prompt.startsWith("/")) return undefined;
-		const lessons = recallLessons(ctx.cwd, prompt);
+		// Empty corpus: nothing can match, skip both the expansion call and the
+		// ranking pass so the first prompt of a fresh install stays instant.
+		if (unionLessonRecords(vaultDir(cachedSettings)).length === 0) return undefined;
+		// Expand before ranking: one cheap model call, fail-open to the raw
+		// query (see expandQueryTerms).
+		const extra = await expandQueryTerms(prompt);
+		const lessons = recallLessons(ctx.cwd, prompt, RETRIEVAL_MAX_LESSONS, "project", extra);
 		if (lessons.length === 0) return undefined;
 		const sessionId = ctx.sessionManager.getSessionId();
 		const injected = injectedIdsFromEntries(ctx.sessionManager.getEntries());

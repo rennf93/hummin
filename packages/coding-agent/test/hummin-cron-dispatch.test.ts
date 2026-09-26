@@ -52,7 +52,14 @@ describe("cron child dispatch review", () => {
 					: never
 				: never,
 			notify,
-			reviewOptions: { agentDir: dir, laya: async () => [{ answer: "fixture/cheap [thinking=off]", p: 0.99 }] },
+			// Hermetic: without explicit profiles the review falls back to the
+			// machine's global settings, whose layaRightSize.profiles would drop
+			// the fixture models from the catalog and skip the review entirely.
+			reviewOptions: {
+				agentDir: dir,
+				profiles: [],
+				laya: async () => [{ answer: "fixture/cheap [thinking=off]", p: 0.99 }],
+			},
 		});
 		expect(result[0]).toMatch(/held for dispatch review/);
 		expect(notify).toHaveBeenCalled();
@@ -92,13 +99,24 @@ describe("cron child dispatch review", () => {
 				: never,
 			reviewOptions: {
 				agentDir: dir,
+				profiles: [],
 				laya: async () => [{ answer: "fixture/cheap [thinking=low]", p: 0.55 }],
 				config: { enabled: true, swingThreshold: 0.6 },
 			},
 		});
 		expect(spawned[0]).toMatch(/spawned pid/);
-		await new Promise((resolve) => setTimeout(resolve, 500));
-		expect(JSON.parse(readFileSync(output, "utf8"))).toEqual([
+		// The detached child writes argv.json on its own schedule; poll instead
+		// of a fixed sleep so a loaded machine does not flake the assertion.
+		let argv: unknown;
+		for (let i = 0; i < 100; i++) {
+			try {
+				argv = JSON.parse(readFileSync(output, "utf8"));
+				break;
+			} catch {
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			}
+		}
+		expect(argv).toEqual([
 			"-p",
 			"format this file",
 			"--session-dir",

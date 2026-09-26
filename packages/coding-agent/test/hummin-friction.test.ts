@@ -3,16 +3,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import humminFriction, { FRICTION_REPORT_DAYS, renderFrictionReport } from "../extensions/hummin-friction.ts";
+import humminFriction, {
+	FRICTION_REPORT_DAYS,
+	renderFrictionReport,
+	sessionSectionRows,
+} from "../extensions/hummin-friction.ts";
 import {
 	appendFriction,
 	boundDetail,
 	FRICTION_LOG_MAX_BYTES,
+	FRICTION_SESSION_STEER_AT,
 	type FrictionEvent,
 	parseFrictionLine,
 	parseLayaGateEntry,
 	readFrictionEvents,
 	readLayaGateLines,
+	resetSessionFrictionTally,
+	SessionFrictionTally,
+	sessionFrictionTally,
 	summarizeFriction,
 	summarizeLayaCalibration,
 	summarizeLayaGate,
@@ -22,6 +30,8 @@ import { ENV_AGENT_DIR } from "../src/config.ts";
 let directory: string;
 beforeEach(() => {
 	directory = mkdtempSync(join(tmpdir(), "hummin-friction-"));
+	// The session tally lives on globalThis; keep tests isolated.
+	resetSessionFrictionTally();
 });
 afterEach(() => {
 	rmSync(directory, { recursive: true, force: true });
@@ -326,6 +336,136 @@ describe("summarizeLayaCalibration", () => {
 	});
 });
 
+describe("SessionFrictionTally", () => {
+	it("counts tool_error and tool_rejected per source and keeps insertion order", () => {
+		const tally = new SessionFrictionTally();
+		tally.record("tool_error", "guardrails", "bash");
+		tally.record("tool_error", "guardrails", "edit");
+		tally.record("tool_rejected", "guardrails");
+		tally.record("tool_error", "other");
+		tally.record("advisory", "bashguard");
+		expect(tally.snapshot()).toEqual([
+			{ source: "guardrails", toolErrors: 2, toolRejections: 1 },
+			{ source: "other", toolErrors: 1, toolRejections: 0 },
+		]);
+	});
+
+	it("ignores uncounted kinds entirely: no entry, no totals, no crossing", () => {
+		const tally = new SessionFrictionTally();
+		tally.record("tool_error", "guardrails", "bash");
+		const ignored = tally.record("advisory", "bashguard", "notice");
+		expect(ignored.crossed).toBe(false);
+		expect(tally.snapshot()).toEqual([{ source: "guardrails", toolErrors: 1, toolRejections: 0 }]);
+		// a counted record without detail keeps the source's last detail
+		expect(tally.record("tool_error", "guardrails").lastDetail).toBe("bash");
+	});
+
+	it("crosses exactly at the steer threshold, once per source, latched", () => {
+		const tally = new SessionFrictionTally();
+		const records = [
+			tally.record("tool_error", "guardrails"),
+			tally.record("tool_error", "guardrails"),
+			tally.record("tool_error", "guardrails"),
+		];
+		expect(records.map((record) => record.crossed)).toEqual([false, false, true]);
+		expect(records[2]?.total).toBe(FRICTION_SESSION_STEER_AT);
+		tally.markSteered("guardrails");
+		const after = tally.record("tool_error", "guardrails");
+		expect(after.crossed).toBe(false);
+		expect(after.steered).toBe(true);
+		expect(after.total).toBe(FRICTION_SESSION_STEER_AT + 1);
+	});
+
+	it("counts both kinds towards the threshold and steers per source", () => {
+		const tally = new SessionFrictionTally();
+		tally.record("tool_rejected", "guardrails");
+		tally.record("tool_rejected", "guardrails");
+		const third = tally.record("tool_error", "guardrails");
+		expect(third.crossed).toBe(true);
+		// a different source starts from zero
+		expect(tally.record("tool_error", "lsp").crossed).toBe(false);
+	});
+
+	it("isEmpty mirrors the snapshot", () => {
+		const tally = new SessionFrictionTally();
+		expect(tally.isEmpty()).toBe(true);
+		tally.record("tool_error", "guardrails");
+		expect(tally.isEmpty()).toBe(false);
+	});
+});
+
+describe("sessionFrictionTally", () => {
+	it("returns the same shared instance until reset", () => {
+		const first = sessionFrictionTally();
+		expect(sessionFrictionTally()).toBe(first);
+		first.record("tool_error", "guardrails");
+		const fresh = resetSessionFrictionTally();
+		expect(sessionFrictionTally()).toBe(fresh);
+		expect(fresh.isEmpty()).toBe(true);
+		expect(sessionFrictionTally()).not.toBe(first);
+	});
+});
+
+describe("session section rendering", () => {
+	it("renders one row per source with only the nonzero kinds", () => {
+		expect(
+			sessionSectionRows([
+				{ source: "guardrails", toolErrors: 2, toolRejections: 1 },
+				{ source: "lsp", toolErrors: 0, toolRejections: 1 },
+			]),
+		).toEqual([
+			["guardrails", "tool_error 2, tool_rejected 1"],
+			["lsp", "tool_rejected 1"],
+		]);
+	});
+
+	it("lists the session counts above the historical digest", () => {
+		const friction = summarizeFriction([{ ts: iso(NOW), kind: "tool_error", source: "guardrails" }], {
+			nowMs: NOW,
+			days: FRICTION_REPORT_DAYS,
+		});
+		const text = renderFrictionReport(friction, { block: 0, confirmed: 0, read: 0 }, undefined, [
+			{ source: "guardrails", toolErrors: 3, toolRejections: 0 },
+		]);
+		const sessionAt = text.indexOf("this session");
+		const digestAt = text.indexOf(`Friction, last ${FRICTION_REPORT_DAYS} days`);
+		expect(sessionAt).toBeGreaterThanOrEqual(0);
+		expect(sessionAt).toBeLessThan(digestAt);
+		expect(text).toContain("tool_error 3");
+	});
+
+	it("omits the section when the session has no counts and keeps the empty state", () => {
+		const text = renderFrictionReport(summarizeFriction([], { nowMs: NOW, days: FRICTION_REPORT_DAYS }), {
+			block: 0,
+			confirmed: 0,
+			read: 0,
+		});
+		expect(text).not.toContain("this session");
+		expect(
+			renderFrictionReport(summarizeFriction([], { nowMs: NOW, days: FRICTION_REPORT_DAYS }), {
+				block: 0,
+				confirmed: 0,
+				read: 0,
+			}),
+		).toBe(`No friction recorded in the last ${FRICTION_REPORT_DAYS} days.`);
+	});
+
+	it("renders the session section alone when there is no history at all", () => {
+		const text = renderFrictionReport(
+			summarizeFriction([], { nowMs: NOW, days: FRICTION_REPORT_DAYS }),
+			{
+				block: 0,
+				confirmed: 0,
+				read: 0,
+			},
+			undefined,
+			[{ source: "guardrails", toolErrors: 1, toolRejections: 0 }],
+		);
+		expect(text).toContain("this session");
+		expect(text).toContain("total 0");
+	});
+});
+
 describe("/friction command", () => {
 	function fakePi(): {
 		api: ExtensionAPI;
@@ -381,5 +521,21 @@ describe("/friction command", () => {
 		const notified: string[] = [];
 		await command.handler("", fakeCtx(notified));
 		expect(notified).toEqual([`No friction recorded in the last ${FRICTION_REPORT_DAYS} days.`]);
+	});
+
+	it("includes the live session counts above the historical digest", async () => {
+		vi.stubEnv(ENV_AGENT_DIR, join(directory, "absent"));
+		const { api, commands } = fakePi();
+		humminFriction(api);
+		const command = commands.get("friction");
+		if (!command) throw new Error("friction command not registered");
+		sessionFrictionTally().record("tool_error", "guardrails", "bash");
+		const notified: string[] = [];
+		await command.handler("", fakeCtx(notified));
+		expect(notified).toHaveLength(1);
+		const text = notified[0] ?? "";
+		expect(text).toContain("this session");
+		expect(text).toContain("tool_error 1");
+		expect(text.indexOf("this session")).toBeLessThan(text.indexOf(`Friction, last ${FRICTION_REPORT_DAYS} days`));
 	});
 });

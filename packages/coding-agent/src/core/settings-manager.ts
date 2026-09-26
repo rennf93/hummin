@@ -256,6 +256,9 @@ export interface Settings {
 	};
 	/** hummin laya: per-turn destructive steer threshold, 0..1 (env HUMMIN_LAYA_STEER_THRESHOLD overrides) */
 	layaSteerThreshold?: number;
+	/** hummin guardrails: nudge at agent end when code files were edited but no
+	 * verification command (tests, typecheck) ran after the last edit. Default true. */
+	verifyNudge?: boolean;
 	/** hummin: local inference server base URLs for the hummin provider (env HUMMIN_INSTANCES overrides) */
 	localInstances?: string[];
 	/** @deprecated pre-rename key, read as a fallback for localInstances */
@@ -1450,6 +1453,11 @@ export class SettingsManager {
 
 	getLayaSteerThreshold(): number {
 		return resolveLayaThreshold(process.env.HUMMIN_LAYA_STEER_THRESHOLD, this.settings.layaSteerThreshold, 0.7);
+	}
+
+	/** hummin guardrails: verify-nudge enabled (default true). */
+	getVerifyNudge(): boolean {
+		return this.settings.verifyNudge ?? true;
 	}
 
 	/** hummin: local inference server base URLs for the hummin provider.

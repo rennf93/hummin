@@ -164,8 +164,9 @@ Session distillation into lessons and the knowledge-graph vault. See `/memory`.
 | `memoryEnabled` | boolean | `false` | Enable project-memory distillation (experimental). `HUMMIN_MEMORY=1`/`0` overrides |
 | `memoryMode` | string | `"lesson"` | `"lesson"` (per-session lessons) or `"vault"` (knowledge-graph vault). `HUMMIN_MEMORY_MODE` overrides |
 | `memoryVaultDir` | string | `~/.hummin/agent/vault` | Where the vault lives. `HUMMIN_MEMORY_VAULT_DIR` overrides |
-| `memoryProvider` | string | `"zai"` | Provider for vault fold + distillation calls. `HUMMIN_MEMORY_PROVIDER` overrides |
-| `memoryModelId` | string | `"glm-5.3-flash"` | Model id for vault fold + distillation calls. `HUMMIN_MEMORY_MODEL_ID` overrides |
+| `memoryProvider` | string | `"zai"` | Provider for the no-model-selected fallback of fold/distill/expansion calls. `HUMMIN_MEMORY_PROVIDER` overrides. The session's selected model wins when one is selected |
+| `memoryModelId` | string | `"glm-5.3-flash"` | Model id for the same fallback. `HUMMIN_MEMORY_MODEL_ID` overrides |
+| `memoryQueryExpand` | boolean | `true` | Model-assisted query expansion in memory recall and vault search. `HUMMIN_MEMORY_QUERY_EXPAND=0` overrides |
 
 Spawned distill/fold children always run with `HUMMIN_MEMORY=0` so the shutdown handler cannot recurse.
 
@@ -319,6 +320,8 @@ User-ordered footer segments. When `statusline` has at least one non-empty side,
 |---------|------|---------|-------------|
 | `providers.showAll` | boolean | `false` | `/login` surfaces curated providers (zai, hummin) plus already-configured ones only; set `true` to list all providers |
 | `compactPrompt` | boolean | `false` | Condense tool descriptions and system-prompt guidance to cut fixed prompt overhead (useful for slow-prefill local models) |
+| `verifyNudge` | boolean | `true` | At agent end, if code files were edited and no verification command ran afterwards, queue a one-time reminder message for the model and log a friction advisory |
+| `telemetryEnabled` | boolean | `true` | Install the local JSONL telemetry event sink under `<agentDir>/telemetry/`. `HUMMIN_TELEMETRY=0` overrides |
 | `trackingId` | string | generated | Analytics tracking identifier, generated when `enableAnalytics` is turned on |
 
 ## Project Overrides

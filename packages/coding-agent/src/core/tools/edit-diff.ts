@@ -250,26 +250,80 @@ function countOccurrences(content: string, oldText: string): number {
 	return fuzzyContent.split(fuzzyOldText).length - 1;
 }
 
-function getNotFoundError(path: string, editIndex: number, totalEdits: number): Error {
-	if (totalEdits === 1) {
-		return new Error(
-			`Could not find the exact text in ${path}. The old text must match exactly including all whitespace and newlines.`,
-		);
+const NEAR_MISS_CONTEXT_LINES = 3;
+const NEAR_MISS_MAX_LINE_CHARS = 200;
+
+/** Dice coefficient over character bigrams; 1 for equal strings, 0 for empty. */
+function bigramSimilarity(a: string, b: string): number {
+	if (a.length < 2 || b.length < 2) return a === b && a.length > 0 ? 1 : 0;
+	if (a === b) return 1;
+	const gramsA = new Set<string>();
+	for (let i = 0; i < a.length - 1; i++) gramsA.add(a.slice(i, i + 2));
+	const gramsB = new Set<string>();
+	for (let i = 0; i < b.length - 1; i++) gramsB.add(b.slice(i, i + 2));
+	let overlap = 0;
+	for (const gram of gramsA) {
+		if (gramsB.has(gram)) overlap++;
 	}
-	return new Error(
-		`Could not find edits[${editIndex}] in ${path}. The oldText must match exactly including all whitespace and newlines.`,
-	);
+	return (2 * overlap) / (gramsA.size + gramsB.size);
 }
 
-function getDuplicateError(path: string, editIndex: number, totalEdits: number, occurrences: number): Error {
-	if (totalEdits === 1) {
-		return new Error(
-			`Found ${occurrences} occurrences of the text in ${path}. The text must be unique. Please provide more context to make it unique.`,
-		);
+/**
+ * Locate the file region closest to a failed oldText, rendered as bounded
+ * "path:line: text" lines, so an error can show what is actually there.
+ * Probe: the first non-empty oldText line, scored against every content line
+ * (exact containment wins, then bigram similarity). Returns null when either
+ * side is blank.
+ */
+export function nearestMatchContext(content: string, oldText: string, path: string): string | null {
+	const probe = oldText
+		.split("\n")
+		.map((line) => line.trim())
+		.find((line) => line.length > 0);
+	if (!probe) return null;
+	const lines = content.split("\n");
+	let bestIndex = -1;
+	let bestScore = 0;
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i].trim();
+		const score = line.includes(probe) ? 1 : bigramSimilarity(line, probe);
+		if (score > bestScore) {
+			bestScore = score;
+			bestIndex = i;
+		}
 	}
-	return new Error(
-		`Found ${occurrences} occurrences of edits[${editIndex}] in ${path}. Each oldText must be unique. Please provide more context to make it unique.`,
-	);
+	if (bestIndex === -1) return null;
+	const start = Math.max(0, bestIndex - 1);
+	const snippetLines = lines.slice(start, start + NEAR_MISS_CONTEXT_LINES);
+	return snippetLines
+		.map((line, offset) => {
+			const lineNumber = start + offset + 1;
+			const text = line.length > NEAR_MISS_MAX_LINE_CHARS ? `${line.slice(0, NEAR_MISS_MAX_LINE_CHARS)}…` : line;
+			return `${path}:${lineNumber}: ${text}`;
+		})
+		.join("\n");
+}
+
+function getNotFoundError(path: string, editIndex: number, totalEdits: number, context: string | null): Error {
+	const base =
+		totalEdits === 1
+			? `Could not find the exact text in ${path}. The old text must match exactly including all whitespace and newlines.`
+			: `Could not find edits[${editIndex}] in ${path}. The oldText must match exactly including all whitespace and newlines.`;
+	return new Error(context ? `${base} Closest match in the file:\n\n${context}` : base);
+}
+
+function getDuplicateError(
+	path: string,
+	editIndex: number,
+	totalEdits: number,
+	occurrences: number,
+	context: string | null,
+): Error {
+	const base =
+		totalEdits === 1
+			? `Found ${occurrences} occurrences of the text in ${path}. The text must be unique. Please provide more context to make it unique.`
+			: `Found ${occurrences} occurrences of edits[${editIndex}] in ${path}. Each oldText must be unique. Please provide more context to make it unique.`;
+	return new Error(context ? `${base} First occurrence:\n\n${context}` : base);
 }
 
 function getEmptyOldTextError(path: string, editIndex: number, totalEdits: number): Error {
@@ -322,12 +376,23 @@ export function applyEditsToNormalizedContent(
 		const edit = normalizedEdits[i];
 		const matchResult = fuzzyFindText(replacementBaseContent, edit.oldText);
 		if (!matchResult.found) {
-			throw getNotFoundError(path, i, normalizedEdits.length);
+			throw getNotFoundError(
+				path,
+				i,
+				normalizedEdits.length,
+				nearestMatchContext(normalizedContent, edit.oldText, path),
+			);
 		}
 
 		const occurrences = countOccurrences(replacementBaseContent, edit.oldText);
 		if (occurrences > 1) {
-			throw getDuplicateError(path, i, normalizedEdits.length, occurrences);
+			throw getDuplicateError(
+				path,
+				i,
+				normalizedEdits.length,
+				occurrences,
+				nearestMatchContext(normalizedContent, edit.oldText, path),
+			);
 		}
 
 		matchedEdits.push({

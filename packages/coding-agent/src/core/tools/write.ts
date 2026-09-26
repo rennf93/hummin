@@ -4,11 +4,12 @@ import { mkdir as fsMkdir, writeFile as fsWriteFile } from "fs/promises";
 import { dirname } from "path";
 import { type Static, Type } from "typebox";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
-import { countLineChanges } from "./edit-diff.ts";
+import { countLineChanges, generateUnifiedPatch } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { writeRenderers } from "./renderers/write.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
+import { formatSize } from "./truncate.ts";
 
 const writeSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to write (relative or absolute)" }),
@@ -51,6 +52,38 @@ export interface WriteToolDetails {
 	removed: number;
 }
 
+/** Max lines of the overwrite diff included in the tool result. */
+const WRITE_DIFF_MAX_LINES = 60;
+
+/** Human-readable line count with trailing-newline handling ("3 lines", "1 line"). */
+function lineCountText(content: string): string {
+	const lines = content.length === 0 ? 0 : content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
+	return `${lines} line${lines === 1 ? "" : "s"}`;
+}
+
+/**
+ * Cap a unified diff for the tool result, keeping the head (where the change
+ * starts) and marking the cut explicitly.
+ */
+export function truncateDiff(diff: string, maxLines = WRITE_DIFF_MAX_LINES): string {
+	const trimmed = diff.endsWith("\n") ? diff.slice(0, -1) : diff;
+	const lines = trimmed.split("\n");
+	if (lines.length <= maxLines) return trimmed;
+	return `${lines.slice(0, maxLines).join("\n")}\n[diff truncated, ${lines.length - maxLines} more lines]`;
+}
+
+/**
+ * Tool result text for a write. New files get line/byte counts only (the
+ * model just authored the content); overwrites also get a bounded unified
+ * diff so the model can self-verify what replaced the previous bytes. The
+ * first line always starts with "Successfully wrote to <path>".
+ */
+export function writeResultText(path: string, previousContent: string | null, content: string): string {
+	const firstLine = `Successfully wrote to ${path} (${lineCountText(content)}, ${formatSize(Buffer.byteLength(content, "utf8"))})`;
+	if (previousContent === null || previousContent === content) return firstLine;
+	return `${firstLine}\n\n${truncateDiff(generateUnifiedPatch(path, previousContent, content))}`;
+}
+
 export function createWriteToolDefinition(
 	cwd: string,
 	options?: WriteToolOptions,
@@ -90,15 +123,16 @@ export function createWriteToolDefinition(
 				throwIfAborted();
 
 				// Capture previous content for the diff stat before overwriting.
-				const previousContent = existsSync(absolutePath) ? readFileSync(absolutePath, "utf8") : "";
-				const stat = countLineChanges(previousContent, content);
+				const existed = existsSync(absolutePath);
+				const previousContent = existed ? readFileSync(absolutePath, "utf8") : null;
+				const stat = countLineChanges(previousContent ?? "", content);
 
 				// Write the file contents.
 				await ops.writeFile(absolutePath, content);
 				throwIfAborted();
 
 				return {
-					content: [{ type: "text", text: `Successfully wrote to ${path}` }],
+					content: [{ type: "text", text: writeResultText(path, previousContent, content) }],
 					details: { added: stat.added, removed: stat.removed } satisfies WriteToolDetails,
 				};
 			});

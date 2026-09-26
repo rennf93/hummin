@@ -1,7 +1,19 @@
 // Core session management
 
+// Telemetry event sink (JSONL file sink installable by extensions; re-exported
+// from the node subpath because extension module aliases only resolve this
+// package's barrel)
+export {
+	emitTelemetryEvent,
+	FileTelemetryEventSink,
+	type FileTelemetryEventSinkOptions,
+	getTelemetryEventSink,
+	setTelemetryEventSink,
+	TELEMETRY_LOG_MAX_BYTES,
+	type TelemetryEventRecord,
+	type TelemetryEventSink,
+} from "@earendil-works/pi-telemetry/node";
 export { type Args, parseArgs } from "./cli/args.ts";
-
 // Config paths
 export {
 	CONFIG_DIR_NAME,
@@ -317,6 +329,8 @@ export {
 	type SkillFrontmatter,
 } from "./core/skills.ts";
 export { createSyntheticSourceInfo } from "./core/source-info.ts";
+// System prompt sections (per-section token accounting for extensions)
+export { estimateSystemPromptSectionTokens } from "./core/system-prompt.ts";
 export { type EditDiffResult, generateDiffString, generateUnifiedPatch } from "./core/tools/edit-diff.ts";
 // Tools
 export {
@@ -338,6 +352,7 @@ export {
 	createWriteToolDefinition,
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
+	DEFAULT_SELECTED_TOOLS,
 	type EditOperations,
 	type EditToolDetails,
 	type EditToolInput,

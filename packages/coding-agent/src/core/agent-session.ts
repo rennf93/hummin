@@ -50,6 +50,7 @@ import {
 	resetApiProviders,
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
+import { emitTelemetryEvent } from "@earendil-works/pi-telemetry/node";
 import { getAgentDir } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
@@ -133,7 +134,7 @@ import {
 	normalizeBuildSystemPromptOptions,
 } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
-import { createAllToolDefinitions } from "./tools/index.ts";
+import { createAllToolDefinitions, DEFAULT_SELECTED_TOOLS } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
@@ -380,6 +381,8 @@ export class AgentSession {
 	private readonly _boundaryDispatchedMessages = new WeakSet<object>();
 	private _lastAssistantMessage: AssistantMessage | undefined;
 	private _lastAssistantToolResults: AgentMessage[] = [];
+	/** Wall-clock start of the in-flight assistant response, for turn telemetry. */
+	private _assistantTurnStartedMs: number | undefined;
 	private _lastActivityOutcome: AgentActivityOutcome = "completed";
 	private _isBeforeSettle = false;
 	private _abortDuringBeforeSettle = false;
@@ -914,6 +917,12 @@ export class AgentSession {
 			}
 		}
 
+		// Telemetry: mark the start of an assistant response so message_end can
+		// report its duration.
+		if (event.type === "message_start" && event.message.role === "assistant") {
+			this._assistantTurnStartedMs = Date.now();
+		}
+
 		// Emit to extensions first, then notify public listeners.
 		await this._emitExtensionEvent(event);
 		this._emit(event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event);
@@ -948,6 +957,19 @@ export class AgentSession {
 				if (assistantMsg.stopReason !== "error" && assistantMsg.stopReason !== "length") {
 					this._overflowRecoveryAttempted = false;
 				}
+
+				// Telemetry: one point-in-time event per completed assistant response.
+				const turnStartedMs = this._assistantTurnStartedMs;
+				this._assistantTurnStartedMs = undefined;
+				emitTelemetryEvent("assistant_turn_completed", {
+					model: assistantMsg.model,
+					provider: assistantMsg.provider,
+					stopReason: assistantMsg.stopReason,
+					contextTokens: assistantMsg.usage ? calculateContextTokens(assistantMsg.usage) : 0,
+					outputTokens: assistantMsg.usage?.output ?? 0,
+					totalTokens: assistantMsg.usage?.totalTokens ?? 0,
+					durationMs: turnStartedMs === undefined ? undefined : Date.now() - turnStartedMs,
+				});
 
 				// Reset retry counter immediately on successful assistant response
 				// This prevents accumulation across multiple LLM calls within a turn
@@ -2592,6 +2614,12 @@ export class AgentSession {
 				usage,
 				details,
 			};
+			// Telemetry: record the completed manual compaction.
+			emitTelemetryEvent("compaction_completed", {
+				trigger: "manual",
+				tokensBefore,
+				tokensAfter: estimatedTokensAfter,
+			});
 			// compaction_end listeners may submit queued prompts, so expose idle state before notifying them.
 			this._clearManualCompactionState();
 			this._emit({
@@ -2931,6 +2959,12 @@ export class AgentSession {
 				usage,
 				details,
 			};
+			// Telemetry: record the completed automatic compaction.
+			emitTelemetryEvent("compaction_completed", {
+				trigger: reason,
+				tokensBefore,
+				tokensAfter: estimatedTokensAfter,
+			});
 			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
 
 			if (willRetry) return true;
@@ -3348,7 +3382,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write"];
+			: [...DEFAULT_SELECTED_TOOLS];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,
@@ -3466,6 +3500,14 @@ export class AgentSession {
 			maxAttempts: settings.maxRetries,
 			delayMs,
 			errorMessage: message.errorMessage || "Unknown error",
+		});
+
+		// Telemetry: record the scheduled retry with a bounded error summary.
+		emitTelemetryEvent("auto_retry_scheduled", {
+			attempt: this._retryAttempt,
+			maxAttempts: settings.maxRetries,
+			delayMs,
+			error: (message.errorMessage || "Unknown error").slice(0, 200),
 		});
 
 		// Keep the failed attempt in raw history while durably omitting it from model projection.

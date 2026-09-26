@@ -699,4 +699,12 @@ describe("SettingsManager", () => {
 			}
 		});
 	});
+
+	describe("hummin verify nudge", () => {
+		it("defaults to on and honors an explicit false", () => {
+			expect(SettingsManager.inMemory().getVerifyNudge()).toBe(true);
+			expect(SettingsManager.inMemory({ verifyNudge: false }).getVerifyNudge()).toBe(false);
+			expect(SettingsManager.inMemory({ verifyNudge: true }).getVerifyNudge()).toBe(true);
+		});
+	});
 });

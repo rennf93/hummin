@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a process-wide telemetry event sink registry (`setTelemetryEventSink`, `emitTelemetryEvent`) and a fail-open JSONL `FileTelemetryEventSink` with lazy directory creation and oldest-file rotation under a total size cap. Node-only: exported from the new `./node` entry so the browser-pure root barrel is unchanged.
+
 ## [1.2.1] - 2026-09-26
 
 ## [1.2.0] - 2026-09-25

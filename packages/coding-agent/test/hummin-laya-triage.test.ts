@@ -1,5 +1,6 @@
 import { expect, test, vi } from "vitest";
 import {
+	GATE_BLOCK_THRESHOLD,
 	layaGateThreshold,
 	layaSteerThreshold,
 	looksLikeTestFailure,
@@ -105,4 +106,11 @@ test("gate and steer thresholds resolve from env, ignoring invalid values", () =
 	// No env, no laya keys in the test project's settings: built-in defaults.
 	expect(layaGateThreshold()).toBe(0.75);
 	expect(layaSteerThreshold()).toBe(0.7);
+});
+
+test("the gate block fallback stays aligned with the settings-layer default", () => {
+	// hummin-laya falls back to GATE_BLOCK_THRESHOLD when settings are
+	// unreadable; settings-manager's getLayaGateThreshold() defaults to the
+	// same 0.75, so blocking must not depend on settings readability.
+	expect(GATE_BLOCK_THRESHOLD).toBe(0.75);
 });

@@ -30,6 +30,7 @@ import {
 	dismissProcessJob,
 } from "./lib/processes.ts";
 import { prepareChildDispatch, resolveChildModel, type ThinkingLevel } from "./lib/child-dispatch-review.ts";
+import { lessonsForChildBrief } from "./hummin-memory.ts";
 
 export function resolveTaskModel(requested: string | undefined, ctx: Pick<ExtensionContext, "modelRegistry">): Model<Api> {
 	const model = resolveChildModel(requested, ctx);
@@ -156,6 +157,35 @@ export function parseMonitorNotice(content: string): MonitorNoticeInfo {
 	return { id: "?", kind: "lifecycle", lines: null, state: null, exitCode: null, detail: content.split("\n")[0] ?? "" };
 }
 
+// ============================================================================
+// Task result composition (pure; unit-tested in test/hummin-subagents-report.test.ts)
+// ============================================================================
+
+/** Max chars of child output included in a task result. */
+export const TASK_REPORT_MAX_CHARS = 8000;
+
+/**
+ * Bounded tail of a finished child's captured output. `hummin -p` (print
+ * mode) writes exactly the final assistant message to stdout and redirects
+ * every incidental write to stderr, so the tail carries the child's final
+ * report. Head-truncated with an explicit notice; the full stream stays on
+ * disk at the job's log file.
+ */
+export function childReportExcerpt(output: string, logFile: string, maxChars = TASK_REPORT_MAX_CHARS): string {
+	const text = output.replace(/\s+$/, "");
+	if (text.length <= maxChars) return text;
+	return `[truncated, showing the last ${maxChars} of ${text.length} chars; full output: ${logFile}]\n${text.slice(text.length - maxChars)}`;
+}
+
+/**
+ * Compose a child prompt with an inherited-lessons block prepended. Pure; the
+ * lessons come from lessonsForChildBrief() and are already bounded there.
+ */
+export function withInheritedLessons(prompt: string, lessons: string | null): string {
+	if (!lessons) return prompt;
+	return `Context inherited from the parent session (may or may not be relevant):\n${lessons}\n\n---\n\n${prompt}`;
+}
+
 /**
  * Collapsible notice component for custom messages. Custom message renderers
  * are rebuilt with `options.expanded` whenever the transcript toggles output
@@ -199,6 +229,48 @@ function tailText(job: { logFile: string; output: string }): string {
 		// Log may not exist yet; fall back to captured output.
 	}
 	return outputTail(text) || "(no output)";
+}
+
+/** Full captured output of a job: the on-disk log (stdout and stderr,
+ * capped at 1MB by ProcessManager), falling back to the in-memory tail. */
+function jobOutput(job: ProcessJob): string {
+	try {
+		return readFileSync(job.logFile, "utf8");
+	} catch {
+		// Log may not exist yet; fall back to captured output.
+		return job.output;
+	}
+}
+
+/** Status header identical to describeJob() minus the captured-output
+ * section: task results append the report separately, bounded and labeled. */
+function taskStatusHeader(job: ProcessJob): string {
+	const elapsed = formatDuration(Date.now() - job.startedAt);
+	const state =
+		job.state === "running"
+			? `running ${elapsed}`
+			: `${job.state} (exit ${job.exitCode ?? "none"}, ${elapsed})`;
+	const parts = [`task ${job.id} · ${job.label} · ${state}`, `log: ${job.logFile}`];
+	if (job.error) parts.push(`error: ${job.error}`);
+	return parts.join("\n");
+}
+
+/**
+ * Text for task tool results and completion messages. Finished jobs append
+ * the child's bounded final report (the tail of its captured output, which
+ * in print mode is the final assistant message); running jobs keep the live
+ * describeJob() shape. Never throws: an unreadable log falls back to the
+ * in-memory output, then to the bare status header.
+ */
+export function taskResultText(job: ProcessJob): string {
+	if (job.state === "running") return describeJob(job);
+	const header = taskStatusHeader(job);
+	try {
+		const report = childReportExcerpt(jobOutput(job), job.logFile);
+		return report ? `${header}\n\nChild final report (tail of captured output):\n${report}` : header;
+	} catch {
+		return describeJob(job);
+	}
 }
 
 /** Live list of background jobs; refreshes on a 2s interval while open. */
@@ -299,6 +371,20 @@ const taskMeta = ((globalThis as Record<symbol, unknown>)[TASK_META_KEY] ??= new
 	TaskMeta
 >;
 
+/**
+ * Prepend inherited lessons to a child brief when enabled. The tool schema
+ * decides opt-in/out; this only guards the parent-side memory switch and
+ * never fails the dispatch: any error falls back to the bare prompt.
+ */
+async function resolveChildPrompt(prompt: string, inherit: "lessons" | "none" | undefined): Promise<string> {
+	if ((inherit ?? "lessons") === "none" || process.env.HUMMIN_MEMORY === "0") return prompt;
+	try {
+		return withInheritedLessons(prompt, await lessonsForChildBrief(prompt));
+	} catch {
+		return prompt;
+	}
+}
+
 export default function humminSubagents(pi: ExtensionAPI): void {
 	const manager = new ProcessManager(join(getAgentDir(), "subagents"), "task");
 
@@ -313,7 +399,7 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 		void pi.sendMessage(
 			{
 				customType: "hummin-task",
-				content: describeJob(finished),
+				content: taskResultText(finished),
 				display: true,
 				details: {
 					label: `"${meta.what}"`,
@@ -421,11 +507,18 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 		name: "task",
 		label: "Task (subagent)",
 		description:
-			"Run a bounded independent hummin session. Supply a complete brief: children cannot see this conversation. Background completion is delivered automatically. Children share the selected working directory; give concurrent writers separate directories.",
+			"Run a bounded independent hummin session. Supply a complete brief: children cannot see this conversation. Unless inherit is \"none\", a bounded set of relevant lessons from the parent session's memory store is prepended to the brief. On completion the result carries the child's final report (bounded tail of its output; the full log path is included). Background completion is delivered automatically as a follow-up message with the same report. Children share the selected working directory; give concurrent writers separate directories.",
 		promptSnippet: "task: delegate a bounded task to an independent session",
 		parameters: Type.Object({
 			prompt: Type.String({ minLength: 1 }),
 			cwd: Type.Optional(Type.String()),
+			inherit: Type.Optional(
+				Type.Union([Type.Literal("lessons"), Type.Literal("none")], {
+					description:
+						"\"lessons\" (default) prepends relevant lessons from the parent session's memory store to the brief; \"none\" sends the brief as-is.",
+					default: "lessons",
+				}),
+			),
 			model: Type.Optional(
 				Type.String({
 					description: "fast (cloud default), local (first online fleet model), or exact provider/model",
@@ -463,9 +556,10 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 		async execute(_id, params, signal, _update, ctx) {
 			const cwd = resolve(ctx.cwd, params.cwd ?? ".");
 			if (!statSync(cwd).isDirectory()) throw new Error(`Not a directory: ${cwd}`);
+			const childPrompt = await resolveChildPrompt(params.prompt, params.inherit);
 			const review = await prepareChildDispatch({
 				kind: "task",
-				prompt: params.prompt,
+				prompt: childPrompt,
 				cwd,
 				model: params.model?.trim() || undefined,
 				thinking: params.thinking?.trim() as ThinkingLevel | undefined,
@@ -480,7 +574,7 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 			const what = summary.length > 72 ? `${summary.slice(0, 72)}…` : summary || "(empty prompt)";
 			const job = manager.start({
 				command: "hummin",
-				args: ["-p", params.prompt, "--provider", model.provider, "--model", model.id, "--thinking", thinking],
+				args: ["-p", childPrompt, "--provider", model.provider, "--model", model.id, "--thinking", thinking],
 				cwd,
 				kind: "task",
 				label: `"${what}" · ${model.provider}/${model.id}`,
@@ -515,7 +609,7 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 			if (!params.background) await job.done;
 			refreshBackgroundStatus(ctx.ui);
 			return {
-				content: [{ type: "text", text: describeJob(job) }],
+				content: [{ type: "text", text: taskResultText(job) }],
 				details: { taskId: job.id },
 				isError: job.state !== "running" && job.state !== "completed",
 			};
@@ -537,7 +631,7 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 					await job.done;
 				}
 				refreshBackgroundStatus(ctx.ui);
-				return { content: [{ type: "text", text: describeJob(job) }], details: { taskId: job.id } };
+				return { content: [{ type: "text", text: taskResultText(job) }], details: { taskId: job.id } };
 			},
 		});
 	}

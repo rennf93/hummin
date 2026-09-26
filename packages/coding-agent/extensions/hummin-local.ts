@@ -1,6 +1,8 @@
 /** Fleet-driven, per-engine/host providers. Local requests share an abortable
  * process lock through the end of the stream. Discovery never invents IDs. */
 import { setTimeout as delay } from "node:timers/promises";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
 	type Api,
 	type ApiKeyAuth,
@@ -12,7 +14,12 @@ import {
 	type Model,
 	openAICompletionsApi,
 } from "@earendil-works/pi-ai/compat";
-import { type ExtensionAPI, SettingsManager, withLocalInferenceLock } from "@earendil-works/pi-coding-agent";
+import {
+	type ExtensionAPI,
+	getAgentDir,
+	SettingsManager,
+	withLocalInferenceLock,
+} from "@earendil-works/pi-coding-agent";
 
 type FleetServerSettings = ReturnType<SettingsManager["getFleetServers"]>[number];
 
@@ -314,6 +321,113 @@ function instancePort(baseUrl: string): number {
 // always forces fresh discovery.
 export const DISCOVERY_TTL_MS = 30_000;
 
+// =============================================================================
+// Fleet health persistence: last-known-good discovery per server, kept in
+// <agentDir>/fleet-health.json ({servers: {key: {lastSeen, contextWindow,
+// models, endpoint}}}, key = engine-host-port). A fresh entry (within
+// FLEET_HEALTH_MAX_AGE_MS) fills the offline catalog of a downed server with
+// the models it actually served recently and their measured context window,
+// and stands in for /props when a running server does not serve that endpoint.
+// Offline entries never join failover chains, exactly as before. All file IO
+// is fail-open: a missing or corrupt file is an empty state, and bookkeeping
+// must never break discovery. Parsing and merging are pure and unit-tested.
+// =============================================================================
+
+/** Servers unseen for longer than this stop contributing remembered state. */
+export const FLEET_HEALTH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+export interface FleetHealthEntry {
+	/** ISO timestamp of the last successful discovery against the server. */
+	lastSeen: string;
+	contextWindow: number;
+	models: string[];
+	endpoint: string;
+}
+
+export interface FleetHealthState {
+	servers: Record<string, FleetHealthEntry>;
+}
+
+/** Grouping key shared with the provider grouping below (engine + host + port). */
+export function fleetServerKey(engine: string, host: string, port: number): string {
+	return `${engine}-${host}-${port}`;
+}
+
+export function fleetHealthFile(): string {
+	return process.env.HUMMIN_FLEET_HEALTH_FILE?.trim() || join(getAgentDir(), "fleet-health.json");
+}
+
+function isValidFleetEntry(value: unknown): value is FleetHealthEntry {
+	if (typeof value !== "object" || value === null) return false;
+	const entry = value as Record<string, unknown>;
+	return (
+		typeof entry.lastSeen === "string" &&
+		Number.isFinite(Date.parse(entry.lastSeen)) &&
+		typeof entry.contextWindow === "number" &&
+		entry.contextWindow > 0 &&
+		Array.isArray(entry.models) &&
+		entry.models.every((id) => typeof id === "string" && id.length > 0) &&
+		typeof entry.endpoint === "string"
+	);
+}
+
+/** Tolerant parser: a corrupt or non-conforming file parses to an empty state. */
+export function parseFleetHealth(text: string): FleetHealthState {
+	try {
+		const parsed: unknown = JSON.parse(text);
+		if (typeof parsed !== "object" || parsed === null) return { servers: {} };
+		const raw = (parsed as { servers?: unknown }).servers;
+		if (typeof raw !== "object" || raw === null) return { servers: {} };
+		const servers: Record<string, FleetHealthEntry> = {};
+		for (const [key, entry] of Object.entries(raw as Record<string, unknown>)) {
+			if (isValidFleetEntry(entry)) servers[key] = entry;
+		}
+		return { servers };
+	} catch {
+		return { servers: {} };
+	}
+}
+
+/** Pure merge: updates win per key, every other server's entry is preserved. */
+export function mergeFleetHealth(
+	previous: FleetHealthState | undefined,
+	updates: Readonly<Record<string, FleetHealthEntry>>,
+): FleetHealthState {
+	return { servers: { ...(previous?.servers ?? {}), ...updates } };
+}
+
+/** The persisted entry for a key, but only when well-formed and fresh enough. */
+export function freshFleetEntry(
+	state: FleetHealthState | undefined,
+	key: string,
+	nowMs: number,
+	maxAgeMs: number = FLEET_HEALTH_MAX_AGE_MS,
+): FleetHealthEntry | undefined {
+	const entry = state?.servers[key];
+	if (!entry || !isValidFleetEntry(entry)) return undefined;
+	if (!Number.isFinite(nowMs - Date.parse(entry.lastSeen))) return undefined;
+	return nowMs - Date.parse(entry.lastSeen) <= maxAgeMs ? entry : undefined;
+}
+
+function readFleetHealth(path: string): FleetHealthState {
+	try {
+		return parseFleetHealth(readFileSync(path, "utf8"));
+	} catch {
+		return { servers: {} };
+	}
+}
+
+/** Atomic tmp+replace write (rename is atomic on POSIX); failures are dropped. */
+function writeFleetHealth(path: string, state: FleetHealthState): void {
+	try {
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(`${path}.tmp`, JSON.stringify(state, null, 1), { mode: 0o600 });
+		renameSync(`${path}.tmp`, path);
+	} catch {
+		// fail-open: health bookkeeping must never break discovery
+	}
+}
+
 interface DiscoveredInstance {
 	modelId: string;
 	baseUrl: string;
@@ -327,25 +441,58 @@ interface DiscoveredInstance {
 let discoveryCache: { key: string; instances: DiscoveredInstance[]; expiresAt: number } | undefined;
 
 async function discoverInstances(configs: InstanceConfig[]): Promise<DiscoveredInstance[]> {
+	const instanceMeta = new Map(
+		configs.map((config) => [config.baseUrl, config] as const),
+	);
+	const health = readFleetHealth(fleetHealthFile());
+	const nowMs = Date.now();
 	const instances = configs.map((config) => config.baseUrl);
 	// Per-instance model discovery: no cross-host dedupe - each host is a
 	// distinct, explicitly selectable endpoint (engine + host are visible).
 	const serving: DiscoveredInstance[] = [];
 	const discovered = await Promise.allSettled(
 		instances.map(async (baseUrl) => {
+			const meta = instanceMeta.get(baseUrl)!;
+			const remembered = freshFleetEntry(
+				health,
+				fleetServerKey(meta.engine, meta.hostLabel, meta.port),
+				nowMs,
+			);
 			const [ids, contextWindow] = await Promise.all([
 				fetchModels(baseUrl, process.env.COLI_API_KEY),
 				fetchContextWindow(baseUrl, process.env.COLI_API_KEY),
 			]);
-			return { baseUrl, ids, contextWindow: contextWindow ?? Number(process.env.HUMMIN_CTX ?? process.env.HUMMIN_COLIBRI_CTX ?? 16384) };
+			return {
+				baseUrl,
+				ids,
+				// A fresh persisted window beats the env fallback: it was measured
+				// from /props on a previous run and env fallbacks are coarse.
+				contextWindow:
+					contextWindow ??
+					remembered?.contextWindow ??
+					Number(process.env.HUMMIN_CTX ?? process.env.HUMMIN_COLIBRI_CTX ?? 16384),
+			};
 		}),
 	);
-	const instanceMeta = new Map(
-		instances.map((baseUrl) => {
-			const config = configs.find((entry) => entry.baseUrl === baseUrl)!;
-			return [baseUrl, config];
-		}),
-	);
+
+	// Health bookkeeping: servers that answered refresh their last-known-good
+	// entry. One merged write per discovery run; downed servers keep theirs.
+	const updates: Record<string, FleetHealthEntry> = {};
+	for (const result of discovered) {
+		if (result.status !== "fulfilled") continue;
+		const meta = instanceMeta.get(result.value.baseUrl)!;
+		updates[fleetServerKey(meta.engine, meta.hostLabel, meta.port)] = {
+			lastSeen: new Date(nowMs).toISOString(),
+			contextWindow: result.value.contextWindow,
+			models: result.value.ids,
+			endpoint: result.value.baseUrl,
+		};
+	}
+	if (Object.keys(updates).length > 0) {
+		writeFleetHealth(fleetHealthFile(), mergeFleetHealth(health, updates));
+	}
+	const reachableBaseUrls = new Set(Object.values(updates).map((entry) => entry.endpoint));
+
 	for (const result of discovered) {
 		if (result.status !== "fulfilled") continue;
 		const meta = instanceMeta.get(result.value.baseUrl)!;
@@ -363,21 +510,44 @@ async function discoverInstances(configs: InstanceConfig[]): Promise<DiscoveredI
 	}
 	// Catalog fill-in: staged-but-off servers still get their configured models
 	// listed (with their known context window until the server comes up and a
-	// fresh session reads /props). Generation against an off server fails
-	// with connection refused - start it from the menubar.
+	// fresh session reads /props). A fresh persisted entry widens that catalog
+	// to the models the server actually served recently, so a downed host keeps
+	// real picker entries instead of falling straight to HUMMIN_CTX/16384.
+	// Generation against an off server fails with connection refused - start it
+	// from the menubar.
 	for (const config of configs) {
+		const remembered = reachableBaseUrls.has(config.baseUrl)
+			? undefined
+			: freshFleetEntry(health, fleetServerKey(config.engine, config.hostLabel, config.port), nowMs);
+		const listed = new Set(
+			serving.filter((entry) => entry.baseUrl === config.baseUrl).map((entry) => entry.modelId),
+		);
 		for (const entry of config.models ?? []) {
-			const already = serving.some((entry2) => entry2.modelId === entry.id && entry2.baseUrl === config.baseUrl);
-			if (already) continue;
+			listed.add(entry.id);
 			serving.push({
 				modelId: entry.id,
 				baseUrl: config.baseUrl,
 				host: config.hostLabel,
 				port: config.port,
 				engine: config.engine,
-				contextWindow: entry.contextWindow,
+				contextWindow: remembered?.contextWindow ?? entry.contextWindow,
 				offline: true,
 			});
+		}
+		if (remembered) {
+			for (const modelId of remembered.models) {
+				if (listed.has(modelId)) continue;
+				listed.add(modelId);
+				serving.push({
+					modelId,
+					baseUrl: config.baseUrl,
+					host: config.hostLabel,
+					port: config.port,
+					engine: config.engine,
+					contextWindow: remembered.contextWindow,
+					offline: true,
+				});
+			}
 		}
 	}
 	return serving;

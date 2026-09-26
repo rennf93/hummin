@@ -1,11 +1,25 @@
-import { describe, expect, it } from "vitest";
-import {
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import humminGuardrails, {
 	defaultPolicy,
 	denialKind,
+	FRICTION_STEER_CUSTOM_TYPE,
+	frictionSteerMessage,
 	GuardrailsState,
 	hashToolCall,
+	isCodeFile,
+	isVerificationCommand,
 	SOFT_PING_AT,
+	VERIFY_NUDGE_CUSTOM_TYPE,
+	VERIFY_NUDGE_MESSAGE,
+	VERIFY_NUDGE_SOURCE,
+	VerifyNudgeState,
 } from "../extensions/hummin-guardrails.ts";
+import { parseFrictionLine, SessionFrictionTally } from "../extensions/lib/friction.ts";
+import { ENV_AGENT_DIR } from "../src/config.ts";
 
 function fixedClock(start = 1_000_000) {
 	let now = start;
@@ -210,5 +224,245 @@ describe("GuardrailsState circuit breaker", () => {
 		state.observeResult("bash", true);
 		now += 5_000; // far outside the 100ms window
 		expect(state.observeCall("bash", { command: "c" }).allowed).toBe(true);
+	});
+});
+
+describe("isVerificationCommand", () => {
+	it("matches the supported verification runners, scripts, and chains", () => {
+		expect(isVerificationCommand("npm run check")).toBe(true);
+		expect(isVerificationCommand("npm test")).toBe(true);
+		expect(isVerificationCommand("npm run test")).toBe(true);
+		expect(isVerificationCommand("npx vitest run test/foo.test.ts")).toBe(true);
+		expect(
+			isVerificationCommand(
+				"node $(git rev-parse --show-toplevel)/node_modules/vitest/dist/cli.js --run test/x.test.ts",
+			),
+		).toBe(true);
+		expect(isVerificationCommand("node --test test/foo.test.ts")).toBe(true);
+		expect(isVerificationCommand("node -e 'require(\"./smoke\").run()'")).toBe(true);
+		expect(isVerificationCommand("npx tsc --noEmit")).toBe(true);
+		expect(isVerificationCommand("python -m pytest tests/")).toBe(true);
+		expect(isVerificationCommand("go test ./...")).toBe(true);
+		expect(isVerificationCommand("cargo test --lib")).toBe(true);
+		expect(isVerificationCommand("cargo check")).toBe(true);
+		expect(isVerificationCommand("make build")).toBe(true);
+		expect(isVerificationCommand("gradle test")).toBe(true);
+		expect(isVerificationCommand("mvn verify")).toBe(true);
+		expect(isVerificationCommand("npx jest")).toBe(true);
+		expect(isVerificationCommand("npx playwright test")).toBe(true);
+		expect(isVerificationCommand("npm test && npm run build")).toBe(true);
+	});
+
+	it("rejects non-verification commands", () => {
+		expect(isVerificationCommand("ls -la")).toBe(false);
+		expect(isVerificationCommand("git status")).toBe(false);
+		expect(isVerificationCommand("rm -rf build")).toBe(false);
+		expect(isVerificationCommand("cat Makefile")).toBe(false);
+		expect(isVerificationCommand("echo tested")).toBe(false);
+		expect(isVerificationCommand("")).toBe(false);
+	});
+});
+
+describe("isCodeFile", () => {
+	it("accepts code extensions case-insensitively", () => {
+		expect(isCodeFile("src/main.ts")).toBe(true);
+		expect(isCodeFile("lib/util.PY")).toBe(true);
+		expect(isCodeFile("/abs/path/component.tsx")).toBe(true);
+		expect(isCodeFile("scripts/ci.sh")).toBe(true);
+	});
+
+	it("rejects docs, data, and extensionless paths", () => {
+		expect(isCodeFile("README.md")).toBe(false);
+		expect(isCodeFile("package.json")).toBe(false);
+		expect(isCodeFile("notes.txt")).toBe(false);
+		expect(isCodeFile("dockerfile-noext")).toBe(false);
+	});
+});
+
+describe("VerifyNudgeState", () => {
+	it("is due when a code file was edited and never verified, and claims once", () => {
+		const nudge = new VerifyNudgeState();
+		expect(nudge.isDue()).toBe(false);
+		nudge.observeCall("edit", { path: "src/a.ts" }, 10);
+		expect(nudge.isDue()).toBe(true);
+		expect(nudge.claimIfDue()).toBe(true);
+		expect(nudge.claimIfDue()).toBe(false);
+	});
+
+	it("is not due when a verification command ran after the last edit", () => {
+		const nudge = new VerifyNudgeState();
+		nudge.observeCall("edit", { path: "src/a.ts" }, 10);
+		nudge.observeCall("bash", { command: "npm test" }, 20);
+		expect(nudge.isDue()).toBe(false);
+	});
+
+	it("is due again when code is edited after the verification", () => {
+		const nudge = new VerifyNudgeState();
+		nudge.observeCall("write", { path: "src/a.ts" }, 10);
+		nudge.observeCall("bash", { command: "npm run check" }, 20);
+		nudge.observeCall("edit", { path: "src/b.ts" }, 30);
+		expect(nudge.isDue()).toBe(true);
+	});
+
+	it("ignores non-code edits and non-verification commands", () => {
+		const nudge = new VerifyNudgeState();
+		nudge.observeCall("edit", { path: "README.md" }, 10);
+		nudge.observeCall("bash", { command: "ls -la" }, 11);
+		expect(nudge.isDue()).toBe(false);
+	});
+
+	it("accepts powershell verification commands and malformed input harmlessly", () => {
+		const nudge = new VerifyNudgeState();
+		nudge.observeCall("edit", { path: "src/a.ts" }, 10);
+		nudge.observeCall("powershell", { command: "npm test" }, 20);
+		expect(nudge.isDue()).toBe(false);
+		// non-string path/command inputs are ignored without throwing
+		nudge.observeCall("edit", { path: 42 }, 30);
+		nudge.observeCall("bash", { command: 42 }, 31);
+		expect(nudge.isDue()).toBe(false);
+	});
+});
+
+describe("frictionSteerMessage", () => {
+	it("names the source, counts, last failing tool, and remediation", () => {
+		const tally = new SessionFrictionTally();
+		tally.record("tool_error", "guardrails", "bash");
+		tally.record("tool_error", "guardrails", "bash");
+		const record = tally.record("tool_rejected", "guardrails", "edit");
+		const message = frictionSteerMessage(record);
+		expect(message).toContain(`${record.total} tool errors/rejections this session from guardrails`);
+		expect(message).toContain("2 tool errors, 1 rejection");
+		expect(message).toContain("last: edit");
+		expect(message).toContain("re-read the target region");
+	});
+});
+
+describe("VERIFY_NUDGE_MESSAGE", () => {
+	it("states the missing verification explicitly", () => {
+		expect(VERIFY_NUDGE_MESSAGE).toContain("no verification command");
+	});
+});
+
+// --- Extension wiring ---------------------------------------------------------
+//
+// The factory-level tests below drive the real pi.on handlers with a fake
+// ExtensionAPI so the session end-to-end behavior is pinned: the verify nudge
+// fires once at agent_end, the settings gate is honored, and the friction
+// steer fires once per source. appendFriction and the settings gate read the
+// agent dir live, so ENV_AGENT_DIR points at a throwaway directory.
+
+interface SentMessage {
+	customType: string;
+	content: unknown;
+	display: boolean;
+	details: unknown;
+}
+
+interface SentRecord {
+	message: SentMessage;
+	options: { deliverAs?: string } | undefined;
+}
+
+function fakeGuardrailsPi(): {
+	api: ExtensionAPI;
+	emit: (event: string, payload?: unknown) => Promise<unknown>;
+	sent: SentRecord[];
+} {
+	const handlers = new Map<string, ((event: unknown) => unknown)[]>();
+	const sent: SentRecord[] = [];
+	const api = {
+		on: (event: string, handler: (event: unknown) => unknown) => {
+			const list = handlers.get(event) ?? [];
+			list.push(handler);
+			handlers.set(event, list);
+			return () => undefined;
+		},
+		sendMessage: (message: SentMessage, options?: { deliverAs?: string }) => {
+			sent.push({ message, options });
+		},
+	} as unknown as ExtensionAPI;
+	const emit = async (event: string, payload: unknown = {}): Promise<unknown> => {
+		let result: unknown;
+		for (const handler of handlers.get(event) ?? []) result = await handler(payload);
+		return result;
+	};
+	return { api, emit, sent };
+}
+
+describe("humminGuardrails wiring", () => {
+	let agentDir: string;
+	beforeEach(() => {
+		agentDir = mkdtempSync(join(tmpdir(), "hummin-guardrails-wiring-"));
+		vi.stubEnv(ENV_AGENT_DIR, agentDir);
+		vi.stubEnv("HUMMIN_GUARDRAILS", "1");
+	});
+	afterEach(() => {
+		rmSync(agentDir, { recursive: true, force: true });
+		vi.unstubAllEnvs();
+	});
+
+	it("sends the verify nudge once at agent_end and logs a friction advisory", async () => {
+		const { api, emit, sent } = fakeGuardrailsPi();
+		humminGuardrails(api);
+		await emit("tool_call", { type: "tool_call", toolCallId: "1", toolName: "edit", input: { path: "src/a.ts" } });
+		await emit("tool_call", { type: "tool_call", toolCallId: "2", toolName: "bash", input: { command: "ls" } });
+		await emit("agent_end");
+		expect(sent).toHaveLength(1);
+		const first = sent[0];
+		expect(first?.message.customType).toBe(VERIFY_NUDGE_CUSTOM_TYPE);
+		expect(first?.message.display).toBe(false);
+		expect(String(first?.message.content)).toContain("no verification command");
+		expect(first?.options).toEqual({ deliverAs: "nextTurn" });
+		// once per session: a second agent_end does not resend
+		await emit("agent_end");
+		expect(sent).toHaveLength(1);
+		const lines = readFileSync(join(agentDir, "friction.log"), "utf8").trim().split("\n");
+		const advisories = lines.map((line) => parseFrictionLine(line)).filter((event) => event?.kind === "advisory");
+		expect(advisories.some((event) => event?.source === VERIFY_NUDGE_SOURCE)).toBe(true);
+	});
+
+	it("does not nudge when a verification command ran after the last edit", async () => {
+		const { api, emit, sent } = fakeGuardrailsPi();
+		humminGuardrails(api);
+		await emit("tool_call", { type: "tool_call", toolCallId: "1", toolName: "edit", input: { path: "src/a.ts" } });
+		await emit("tool_call", { type: "tool_call", toolCallId: "2", toolName: "bash", input: { command: "npm test" } });
+		await emit("agent_end");
+		expect(sent).toHaveLength(0);
+	});
+
+	it("honors the verifyNudge=false setting", async () => {
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ verifyNudge: false }));
+		const { api, emit, sent } = fakeGuardrailsPi();
+		humminGuardrails(api);
+		await emit("tool_call", { type: "tool_call", toolCallId: "1", toolName: "edit", input: { path: "src/a.ts" } });
+		await emit("agent_end");
+		expect(sent).toHaveLength(0);
+	});
+
+	it("steers once when one source crosses three session errors", async () => {
+		const { api, emit, sent } = fakeGuardrailsPi();
+		humminGuardrails(api);
+		const errorEvent = {
+			type: "tool_result",
+			toolCallId: "x",
+			toolName: "bash",
+			input: { command: "npm test" },
+			content: [],
+			isError: true,
+		};
+		await emit("tool_result", errorEvent);
+		await emit("tool_result", errorEvent);
+		await emit("tool_result", errorEvent);
+		expect(sent).toHaveLength(1);
+		const first = sent[0];
+		expect(first?.message.customType).toBe(FRICTION_STEER_CUSTOM_TYPE);
+		expect(first?.message.display).toBe(false);
+		expect(String(first?.message.content)).toContain("3 tool errors/rejections this session from guardrails");
+		// latched: a fourth error does not re-steer
+		await emit("tool_result", errorEvent);
+		expect(sent).toHaveLength(1);
+		const lines = readFileSync(join(agentDir, "friction.log"), "utf8").trim().split("\n");
+		const advisories = lines.map((line) => parseFrictionLine(line)).filter((event) => event?.kind === "advisory");
+		expect(advisories.some((event) => event?.source === "friction-steer")).toBe(true);
 	});
 });

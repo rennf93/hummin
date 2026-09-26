@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Added
+
+- Core session telemetry events, emitted through the `@earendil-works/pi-telemetry` event sink when one is installed: `assistant_turn_completed` (model, context/output/total tokens, duration), `compaction_completed` (trigger and tokens before/after), and `auto_retry_scheduled` (attempt, delay, error truncated to 200 chars). The sink API (`emitTelemetryEvent`, `setTelemetryEventSink`, `FileTelemetryEventSink`) is re-exported from the package barrel so extensions can install it.
+- `hummin-telemetry` extension: installs the JSONL event sink at `<agentDir>/telemetry/<session-id>.jsonl` (pid-keyed until session start; total size capped with oldest-file rotation). Disable with `HUMMIN_TELEMETRY=0` (env wins) or `telemetryEnabled=false` in settings.
+- Fleet health persistence (`<agentDir>/fleet-health.json`, `HUMMIN_FLEET_HEALTH_FILE` overrides the path): local fleet discovery records last-known-good models and measured context windows per engine-host-port server. A fresh entry (7 days) keeps a downed server's offline picker entries real instead of falling back to `HUMMIN_CTX`/16384, and stands in for `/props` when a running server does not serve that endpoint. Offline entries still never join failover chains.
+- Verification nudge in `hummin-guardrails`: the session tracks `edit`/`write` calls that touch code files and `bash`/`powershell` verification commands (test runners, `tsc`, project check scripts). At agent end, if code was edited but nothing verified it afterwards, a one-time hidden message is queued for the next turn and an advisory lands in `friction.log` (source `verify-nudge`). Disable with `verifyNudge: false` in settings.
+- Session friction consumer: per-source in-memory counters for `tool_error` and `tool_rejected` (shared across extension modules on `globalThis`, reset per session). `/friction` renders them as a leading "this session" section above the historical digest, and when one source crosses 3 errors in a session the guardrails extension sends a one-time hidden steer (re-read the target region or change approach) and logs an advisory (source `friction-steer`).
+- Memory distillation extracts up to three distinct lessons per session (single model call, per-lesson Laya intake gate; previously exactly one). Query expansion (`memoryQueryExpand`, default on; `HUMMIN_MEMORY_QUERY_EXPAND=0` disables) optionally augments recall and vault-search queries with model-proposed keywords (2s timeout, fail-open, cached per query). Vault lessons additionally rank with the titles of entities citing them, so paraphrase queries reach a lesson through its entity names.
+- Memory inheritance for child dispatches: `task` prepends the most relevant project-memory lessons to the child brief by default (retrieved from the parent's memory; children still run with `HUMMIN_MEMORY=0`). `inherit: "none"` opts out per call.
+- `task` results for finished jobs now include the child's final report: a bounded tail of its captured output (8000 chars) with the full log path, instead of a status line plus a 30-line tail; `task_status` and background completion messages carry the same excerpt.
+- `write` feedback: overwriting an existing file returns line/byte counts plus a bounded unified diff (60 lines) of what changed; new files return counts only.
+- `edit` failure errors include the nearest matching region (`path:line` context) for not-found and ambiguous multi-edit entries, so the model can fix its `oldText` without re-reading the file.
+- `/status` now shows per-section system-prompt token estimates (chars/4, same estimator as compaction) with a warning for any section over 4000 tokens or a total over 20000, making a bloated AGENTS.md or extension section visible.
+
+### Changed
+
+- The Laya bash gate gray-zone block fallback is now 0.75, aligned with the settings-layer `layaGateThreshold` default, so blocking no longer depends on settings being readable; env and settings overrides keep their order, and the gate rubric's stated block line matches.
+- Extension-injected system-prompt sections sort alphabetically after the fixed-order known sections, so the prompt prefix is byte-stable across turns (prompt-cache friendly) regardless of extension load order.
+- `grep` joined the default tool loadout (`read`, `bash`, `edit`, `write`, `grep`): purpose-built search with budgeted, annotated output replaces raw `rg` in bash as the default path.
+
+### Fixed
+
+- A failed extension load no longer exits the process: the diagnostics are reported loudly in both interactive and print modes (interactive mode also shows them in the TUI), the remaining extensions keep working, and the `hummin -ne` hint is preserved. All other fatal runtime errors still exit 1.
+- Shutdown distillation never ran: the spawned worker was started without its `distill` mode argument and exited immediately, leaving every pending job unconsumed. Jobs now dispatch correctly, and jobs held by child-dispatch review persist with a held marker and are retried once at the next startup (24h window) instead of being dropped.
+
 ## [1.2.1] - 2026-09-26
 
 ### Added

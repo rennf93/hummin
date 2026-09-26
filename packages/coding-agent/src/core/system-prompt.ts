@@ -5,13 +5,14 @@
 import { getSystemMessageText } from "@earendil-works/pi-ai";
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
+import { DEFAULT_SELECTED_TOOLS } from "./tools/index.ts";
 
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces the default prefix). */
 	customPrompt?: string;
 	/** Exact full prompt replacement set by a before_agent_start handler. */
 	forceSystemPrompt?: string;
-	/** Tools to include in prompt. Default: [read, bash, edit, write]. */
+	/** Tools to include in prompt. Default: DEFAULT_SELECTED_TOOLS (read, bash, edit, write, grep). */
 	selectedTools?: string[];
 	/** Optional one-line tool snippets keyed by tool name. */
 	toolSnippets?: Record<string, string>;
@@ -57,7 +58,7 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptOption
 	return {
 		customPrompt: input.customPrompt,
 		forceSystemPrompt: input.forceSystemPrompt,
-		selectedTools: [...(input.selectedTools ?? ["read", "bash", "edit", "write"])],
+		selectedTools: [...(input.selectedTools ?? DEFAULT_SELECTED_TOOLS)],
 		toolSnippets: { ...(input.toolSnippets ?? {}) },
 		toolGuidelines: Object.fromEntries(
 			Object.entries(input.toolGuidelines ?? {}).map(([name, guidelines]) => [name, [...guidelines]]),
@@ -120,7 +121,13 @@ function buildRules(
 	return rules.map((rule) => `- ${rule}`).join("\n");
 }
 
-/** Build the ordered, independently replaceable sections of the structured system prompt. */
+/**
+ * Build the ordered, independently replaceable sections of the structured system prompt.
+ * Section order is deterministic: the known sections (preamble, tools, rules, docs, addendum,
+ * project_context, skills, cwd) come first in that fixed order, then extension-contributed
+ * sections sorted alphabetically by name, so identical inputs produce byte-identical section
+ * order across turns and prompt caching stays stable.
+ */
 export function buildSystemPromptSections(input: BuildSystemPromptOptions): SystemPromptSections {
 	const options = normalizeBuildSystemPromptOptions(input);
 	const {
@@ -174,7 +181,10 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 		if (skillsPrompt) promptSections.skills = skillsPrompt;
 	}
 	promptSections.cwd = cwd.replace(/\\/g, "/");
-	for (const [name, content] of Object.entries(customSections)) {
+	// Deterministic order for extension-contributed sections: sorted by name (code-unit order,
+	// not locale-aware) so identical inputs always produce identical section order.
+	for (const name of Object.keys(customSections).sort()) {
+		const content = customSections[name];
 		if (content) promptSections[name] = content;
 	}
 
@@ -200,6 +210,22 @@ export function buildSystemPromptState(input: BuildSystemPromptOptions): {
 /** Build the system prompt text, rendered exactly as the transcript's system message replays it. */
 export function buildSystemPrompt(input: BuildSystemPromptOptions): string {
 	return getSystemMessageText({ role: "system", ...buildSystemPromptState(input), timestamp: 0 });
+}
+
+/**
+ * Estimated token cost per section, keyed by section name in prompt order. Uses the same
+ * chars/4 heuristic as the compaction estimator, so numbers are consistent with compaction
+ * accounting; they are estimates, not provider-reported usage. Returns null for a forced
+ * prompt (`forceSystemPrompt` set): it replaces the structured sections, so there is nothing
+ * per-section to size.
+ */
+export function estimateSystemPromptSectionTokens(options: BuildSystemPromptOptions): Record<string, number> | null {
+	if (options.forceSystemPrompt !== undefined) return null;
+	const estimates: Record<string, number> = {};
+	for (const [name, content] of Object.entries(buildSystemPromptSections(options))) {
+		if (content) estimates[name] = Math.ceil(content.length / 4);
+	}
+	return estimates;
 }
 
 /**

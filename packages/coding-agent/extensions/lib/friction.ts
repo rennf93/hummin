@@ -307,6 +307,126 @@ export interface LayaCalibration {
 	suggestedThreshold: number | undefined;
 }
 
+// --- Session-scoped consumer state -------------------------------------------
+//
+// The friction log is collect-only history; these counters are the live
+// in-memory consumer for the current session: per-source counts of tool
+// errors and policy rejections, /friction's "this session" section, and the
+// once-per-source steer when a source accumulates too many errors.
+
+/** Kinds the session consumer counts per source. */
+export const SESSION_COUNTED_KINDS: readonly FrictionKind[] = ["tool_error", "tool_rejected"];
+
+/** Combined tool_error + tool_rejected events from one source after which the
+ * session steer fires (once per source per session). */
+export const FRICTION_SESSION_STEER_AT = 3;
+
+export interface SessionSourceCount {
+	source: string;
+	toolErrors: number;
+	toolRejections: number;
+}
+
+export interface SessionTallyRecord extends SessionSourceCount {
+	/** Combined tool_error + tool_rejected count for this source after this record. */
+	total: number;
+	/** The most recent detail seen for this source (e.g. the failing tool name). */
+	lastDetail: string | undefined;
+	/** True exactly when this record brought the source to the steer threshold
+	 * and the steer has not been marked sent yet. */
+	crossed: boolean;
+	/** True when the steer for this source already fired earlier in the session. */
+	steered: boolean;
+}
+
+/**
+ * In-memory per-source session counters. Pure bookkeeping with no I/O and no
+ * clock, so tests drive it directly.
+ */
+export class SessionFrictionTally {
+	private readonly counts = new Map<string, { toolErrors: number; toolRejections: number }>();
+	private readonly lastDetails = new Map<string, string>();
+	private readonly steeredSources = new Set<string>();
+
+	/** Count one friction event. Kinds outside SESSION_COUNTED_KINDS leave the
+	 * tally untouched: they create no source entry, change no totals, and never
+	 * cross. */
+	record(kind: FrictionKind, source: string, detail?: string): SessionTallyRecord {
+		const existing = this.counts.get(source);
+		if (!SESSION_COUNTED_KINDS.includes(kind)) {
+			return {
+				source,
+				toolErrors: existing?.toolErrors ?? 0,
+				toolRejections: existing?.toolRejections ?? 0,
+				total: existing === undefined ? 0 : existing.toolErrors + existing.toolRejections,
+				lastDetail: existing === undefined ? undefined : this.lastDetails.get(source),
+				crossed: false,
+				steered: this.steeredSources.has(source),
+			};
+		}
+		const entry = existing ?? { toolErrors: 0, toolRejections: 0 };
+		this.counts.set(source, entry);
+		if (kind === "tool_error") entry.toolErrors += 1;
+		if (kind === "tool_rejected") entry.toolRejections += 1;
+		if (detail !== undefined && detail !== "") this.lastDetails.set(source, detail);
+		const steered = this.steeredSources.has(source);
+		const total = entry.toolErrors + entry.toolRejections;
+		return {
+			source,
+			toolErrors: entry.toolErrors,
+			toolRejections: entry.toolRejections,
+			total,
+			lastDetail: this.lastDetails.get(source),
+			crossed: !steered && total >= FRICTION_SESSION_STEER_AT,
+			steered,
+		};
+	}
+
+	/** Latch the once-per-source steer after it has been sent. */
+	markSteered(source: string): void {
+		this.steeredSources.add(source);
+	}
+
+	/** Per-source counts in first-seen order. */
+	snapshot(): SessionSourceCount[] {
+		const rows: SessionSourceCount[] = [];
+		for (const [source, entry] of this.counts) {
+			rows.push({ source, toolErrors: entry.toolErrors, toolRejections: entry.toolRejections });
+		}
+		return rows;
+	}
+
+	isEmpty(): boolean {
+		return this.counts.size === 0;
+	}
+}
+
+/**
+ * The live session tally shared between extension modules (guardrails records,
+ * /friction renders). Lives on globalThis under a Symbol.for key: extension
+ * modules are re-evaluated per load and per session switch (jiti runs with
+ * `moduleCache: false`), so module-level singletons fork per copy - same
+ * pattern as lib/processes.ts and hummin-monitor.ts.
+ */
+const SESSION_TALLY_KEY = Symbol.for("hummin.friction-session-tally");
+
+export function sessionFrictionTally(): SessionFrictionTally {
+	const scope = globalThis as Record<symbol, unknown>;
+	const existing = scope[SESSION_TALLY_KEY];
+	if (existing instanceof SessionFrictionTally) return existing;
+	const fresh = new SessionFrictionTally();
+	scope[SESSION_TALLY_KEY] = fresh;
+	return fresh;
+}
+
+/** Install a fresh tally. Called when the guardrails extension initializes,
+ * i.e. once per session, so counts never leak across sessions. */
+export function resetSessionFrictionTally(): SessionFrictionTally {
+	const fresh = new SessionFrictionTally();
+	(globalThis as Record<symbol, unknown>)[SESSION_TALLY_KEY] = fresh;
+	return fresh;
+}
+
 /**
  * Pure calibration view over laya-gate entries. The suggestion comes from
  * ground truth: a confirmed block was a false positive at its score, so the

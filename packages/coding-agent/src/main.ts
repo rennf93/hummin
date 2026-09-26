@@ -926,13 +926,23 @@ export async function main(args: string[], options?: MainOptions) {
 	time("resolveModelScope");
 	const startupDiagnostics = deduplicateDiagnostics([...startupSettingsDiagnostics, ...runtime.diagnostics]);
 	const hasRuntimeErrors = runtime.diagnostics.some((diagnostic) => diagnostic.type === "error");
+	const hasExtensionLoadErrors = runtime.diagnostics.some(
+		(diagnostic) => diagnostic.type === "error" && diagnostic.message.includes("Failed to load extension"),
+	);
+	// Extension load failures are reported loudly but never kill the run: the
+	// remaining extensions keep working (the hint below offers -ne as the
+	// bypass). Interactive mode additionally surfaces every diagnostic through
+	// the TUI. All other runtime errors stay fatal.
+	const hasFatalErrors = runtime.diagnostics.some(
+		(diagnostic) => diagnostic.type === "error" && !diagnostic.message.includes("Failed to load extension"),
+	);
 	if (appMode !== "interactive" || hasRuntimeErrors) {
 		reportDiagnostics(startupDiagnostics);
 	}
-	if (hasRuntimeErrors) {
-		if (runtime.diagnostics.some((diagnostic) => diagnostic.message.includes("Failed to load extension"))) {
-			console.error(chalk.yellow(EXTENSION_LOAD_FAILURE_HINT));
-		}
+	if (hasExtensionLoadErrors) {
+		console.error(chalk.yellow(EXTENSION_LOAD_FAILURE_HINT));
+	}
+	if (hasFatalErrors) {
 		process.exit(1);
 	}
 	time("createAgentSession");

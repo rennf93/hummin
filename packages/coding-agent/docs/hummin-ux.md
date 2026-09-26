@@ -4,8 +4,10 @@
 
 `/fleet` lists configured inference servers and offers Start, Stop, and Restart.
 `/status` reports the selected model, context window, fleet health, memory,
-todo progress, and TUI mode. Health means the service manager reports the
-process running; a model may still be loading.
+system-prompt section sizes, todo progress, and TUI mode. Health means the
+service manager reports the process running; a model may still be loading.
+Section sizes flag any system-prompt section over 4000 tokens and the total
+when it exceeds 20000, so a bloated AGENTS.md or extension section is visible.
 
 Define servers in the `fleet` section of global or project settings. There is
 no built-in fleet. Put preferred servers first. Server order determines fleet
@@ -95,8 +97,12 @@ retain the existing export formats.
 model), or an exact `provider/model` ID. IDs retain their case and any slashes
 in the model name. An invalid working directory or unavailable model is an
 error; tasks do not silently run elsewhere. `background: true` returns an ID
-and delivers a completion notification. `task_status` reads its output and
-`task_cancel` cancels it.
+and delivers a completion notification. A finished job's result includes the
+child's final report (bounded tail of its output, with the full log path);
+`task_status` reads the same, and `task_cancel` cancels it. By default the
+most relevant project-memory lessons are prepended to the child brief (from
+the parent's memory, so children need no memory access of their own); pass
+`inherit: "none"` to send the brief verbatim.
 
 Local inference uses a per-server lock shared by processes using the same
 agent directory, held until streaming finishes. Waiting and busy retries are

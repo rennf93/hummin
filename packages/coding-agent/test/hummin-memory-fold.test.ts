@@ -1,10 +1,19 @@
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeEach, expect, test } from "vitest";
-import { decayKeepIndices, MEMORY_WORKER_SOURCE } from "../extensions/lib/memory-workers.ts";
+import { decayKeepIndices, MEMORY_WORKER_SOURCE, parseDistilledLessons } from "../extensions/lib/memory-workers.ts";
 
 // Fresh temp dirs per test: the worker source and job files are written into
 // the memory dir; fold output goes into the vault dir. Never the real store.
@@ -187,6 +196,65 @@ test("prune mode keeps recently injected lessons over never-injected ones when o
 	expect(lessons).toContain("plain lesson 5");
 });
 
+// --- Distill reply parsing (up to three lessons) ------------------------------
+
+test("parseDistilledLessons keeps the prompt's multi-line shape as one lesson per Problem", () => {
+	const reply = [
+		"1. Problem: first lesson body",
+		"   Approach: first approach",
+		"   Gotcha: first gotcha",
+		"2. Problem: second lesson body",
+		"   Approach: second approach",
+		"   Gotcha: second gotcha",
+	].join("\n");
+	expect(parseDistilledLessons(reply)).toEqual([
+		"Problem: first lesson body\n   Approach: first approach\n   Gotcha: first gotcha",
+		"Problem: second lesson body\n   Approach: second approach\n   Gotcha: second gotcha",
+	]);
+});
+
+test("parseDistilledLessons caps at three lessons", () => {
+	const reply = Array.from({ length: 4 }, (_, i) => `${i + 1}. Problem: lesson ${i + 1}`).join("\n");
+	const parsed = parseDistilledLessons(reply);
+	expect(parsed).toHaveLength(3);
+	expect(parsed[2]).toBe("Problem: lesson 3");
+});
+
+test("parseDistilledLessons tolerates fences, bold markers, and Lesson N titles", () => {
+	const reply = [
+		"Here are the lessons:",
+		"```",
+		"1. **Problem:** fenced one",
+		"   Approach: fenced approach",
+		"**Lesson 2**",
+		"2) Problem: fenced two",
+		"```",
+	].join("\n");
+	expect(parseDistilledLessons(reply)).toEqual([
+		"Problem: fenced one\n   Approach: fenced approach",
+		"Problem: fenced two",
+	]);
+});
+
+test("parseDistilledLessons returns [] for NONE and collapses duplicate lessons", () => {
+	expect(parseDistilledLessons("NONE")).toEqual([]);
+	const dup = "1. Problem: same\n   Approach: a\n2. Problem: same\n   Approach: a";
+	expect(parseDistilledLessons(dup)).toHaveLength(1);
+	expect(parseDistilledLessons("no lesson shape here at all")).toEqual([]);
+});
+
+test("parseDistilledLessons starts a new lesson at numbered or bulleted Gotcha lines", () => {
+	const reply = "1. Gotcha: first gotcha-only lesson\n2. Gotcha: second gotcha-only lesson";
+	expect(parseDistilledLessons(reply)).toEqual([
+		"Gotcha: first gotcha-only lesson",
+		"Gotcha: second gotcha-only lesson",
+	]);
+});
+
+test("parseDistilledLessons keeps a single one-line reply intact", () => {
+	expect(parseDistilledLessons(LESSON)).toEqual([LESSON]);
+});
+
 // --- Distill mode: laya-gated lesson intake -----------------------------------
 
 const LESSON = "Problem: one. Approach: two. Gotcha: three.";
@@ -349,4 +417,38 @@ test("distill mode fails open when laya is unreachable or the intake read is swi
 		expect(readFileSync(join(memory, "lessons.jsonl"), "utf8")).toContain(LESSON);
 		expect(existsSync(join(memory, "laya-gate.log"))).toBe(false);
 	}
+});
+
+test("distill mode stores each lesson of a multi-lesson reply independently", () => {
+	stubHummin(
+		[
+			"1. Problem: first lesson body",
+			"   Approach: first approach",
+			"   Gotcha: first gotcha",
+			"2. Problem: second lesson body",
+			"   Approach: second approach",
+			"   Gotcha: second gotcha",
+		].join("\n"),
+	);
+	const memory = process.env.HUMMIN_MEMORY_DIR!;
+	const vault = process.env.HUMMIN_MEMORY_VAULT_DIR!;
+	// No laya env in play: the intake gate fails open and both lessons store.
+	const jobPath = writeWorkerAndJob({ ...distillJob(memory), vaultMode: true, vaultDir: vault });
+	expect(runWorker("distill", jobPath)).toBe(0);
+	const lines = readFileSync(join(memory, "lessons.jsonl"), "utf8").trim().split("\n");
+	expect(lines).toHaveLength(2);
+	expect(JSON.parse(lines[0]).lesson).toBe(
+		"Problem: first lesson body\n   Approach: first approach\n   Gotcha: first gotcha",
+	);
+	expect(JSON.parse(lines[1]).lesson).toBe(
+		"Problem: second lesson body\n   Approach: second approach\n   Gotcha: second gotcha",
+	);
+	// One mirror section per lesson in the human-readable view.
+	const mirror = readFileSync(join(memory, "p.lessons.md"), "utf8");
+	expect(mirror.match(/^## /gm)).toHaveLength(2);
+	// Vault mode: one inbox file per lesson.
+	expect(readdirSync(join(vault, "inbox")).filter((f) => f.endsWith(".md"))).toHaveLength(2);
+	// The session is marked processed once, not once per lesson.
+	const state = JSON.parse(readFileSync(join(memory, "state.json"), "utf8"));
+	expect(state.processed["/p/session-1.jsonl"]).toEqual(expect.any(String));
 });

@@ -1,8 +1,9 @@
-// hummin-friction: the /friction command. Prints a plain-text summary of the
-// friction log (last 7 days): totals by kind, per-day counts, plus laya gate
-// activity and threshold calibration from laya-gate.log. Data collection lives
-// in lib/friction.ts and is fail-silent; this file only reads, renders, and
-// registers the command.
+// hummin-friction: the /friction command. Prints the live per-source counts
+// for the current session (fed by hummin-guardrails via lib/friction.ts)
+// above a plain-text summary of the friction log (last 7 days): totals by
+// kind, per-day counts, plus laya gate activity and threshold calibration
+// from laya-gate.log. Data collection lives in lib/friction.ts and is
+// fail-silent; this file only reads, renders, and registers the command.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { layaGateThreshold } from "./hummin-laya.ts";
 import {
@@ -10,12 +11,14 @@ import {
 	parseLayaGateEntry,
 	readFrictionEvents,
 	readLayaGateLines,
+	sessionFrictionTally,
 	summarizeFriction,
 	summarizeLayaCalibration,
 	summarizeLayaGate,
 	type FrictionSummary,
 	type LayaCalibration,
 	type LayaGateSummary,
+	type SessionSourceCount,
 } from "./lib/friction.ts";
 
 export const FRICTION_REPORT_DAYS = 7;
@@ -59,16 +62,30 @@ export function layaCalibrationRows(calibration: LayaCalibration): ReadonlyArray
 	return rows;
 }
 
-/** Plain-text /friction report. Pure; exported for tests. */
+/** Rows for the live per-source session counts. Pure; exported for tests. */
+export function sessionSectionRows(counts: readonly SessionSourceCount[]): ReadonlyArray<readonly [string, string]> {
+	return counts.map((entry) => {
+		const parts: string[] = [];
+		if (entry.toolErrors > 0) parts.push(`tool_error ${entry.toolErrors}`);
+		if (entry.toolRejections > 0) parts.push(`tool_rejected ${entry.toolRejections}`);
+		return [entry.source, parts.join(", ") || "0"] as const;
+	});
+}
+
+/** Plain-text /friction report. Pure; exported for tests. The optional
+ * session counts render as the leading "this session" section. */
 export function renderFrictionReport(
 	friction: FrictionSummary,
 	laya: LayaGateSummary,
 	calibration?: LayaCalibration,
+	session: readonly SessionSourceCount[] = [],
 ): string {
-	if (friction.total === 0 && laya.block + laya.confirmed + laya.read === 0) {
+	const hasSession = session.length > 0;
+	if (friction.total === 0 && laya.block + laya.confirmed + laya.read === 0 && !hasSession) {
 		return `No friction recorded in the last ${FRICTION_REPORT_DAYS} days.`;
 	}
 	const sections = [
+		...(hasSession ? (["this session", formatRows(sessionSectionRows(session)), ""] as const) : []),
 		`Friction, last ${FRICTION_REPORT_DAYS} days (total ${friction.total})`,
 		formatRows(FRICTION_KINDS.map((kind) => [kind, String(friction.byKind[kind])] as const)),
 		"",
@@ -99,13 +116,14 @@ export default function humminFriction(pi: ExtensionAPI): void {
 		category: "Usage",
 		handler: async (_args, ctx: ExtensionContext) => {
 			const summary = summarizeFriction(readFrictionEvents(FRICTION_REPORT_DAYS), { days: FRICTION_REPORT_DAYS });
+			const session = sessionFrictionTally().snapshot();
 			const lines = readLayaGateLines();
 			const laya = summarizeLayaGate(lines);
 			const calibration = summarizeLayaCalibration(
 				lines.map((line) => parseLayaGateEntry(line)).filter((entry): entry is NonNullable<typeof entry> => entry !== undefined),
 				{ threshold: layaGateThreshold() },
 			);
-			ctx.ui.notify(renderFrictionReport(summary, laya, calibration), "info");
+			ctx.ui.notify(renderFrictionReport(summary, laya, calibration, session), "info");
 		},
 	});
 }

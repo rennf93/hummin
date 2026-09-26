@@ -1,8 +1,8 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { enqueueDistill, enqueueFold, triggerAutoFold } from "../extensions/hummin-memory.ts";
+import { enqueueDistill, enqueueFold, retryHeldDistills, triggerAutoFold } from "../extensions/hummin-memory.ts";
 
 const dirs: string[] = [];
 const originalMemory = process.env.HUMMIN_MEMORY_DIR;
@@ -55,7 +55,7 @@ function context(action: "allow" | "block") {
 	};
 }
 
-test("distillation holds pending input without spawning, then uses approved tuple", async () => {
+test("distillation holds persist a held job without spawning, then use the approved tuple", async () => {
 	const memory = tempDir("hummin-memory-dispatch-");
 	process.env.HUMMIN_MEMORY_DIR = memory;
 	const session = join(memory, "session.jsonl");
@@ -65,12 +65,110 @@ test("distillation holds pending input without spawning, then uses approved tupl
 	);
 	const held = context("block");
 	await enqueueDistill(session, "/tmp/project", false, { ...held, agentDir: tempDir("hummin-memory-reviews-") });
-	// A held distill writes no pending job file: nothing consumes it later. The
-	// hold lives in child-dispatch-reviews.json and the ui notice.
+	// A held distill is not dropped: it is persisted with a held marker so the
+	// next session start can retry it once. The hold itself lives in
+	// child-dispatch-reviews.json and the ui notice.
 	const pending = join(memory, "pending");
-	expect(existsSync(pending)).toBe(false);
+	expect(existsSync(pending)).toBe(true);
+	const files = readdirSync(pending).filter((f) => f.endsWith(".json"));
+	expect(files).toHaveLength(1);
+	const job = JSON.parse(readFileSync(join(pending, files[0]), "utf8"));
+	expect(job.held).toBe(true);
+	expect(job.heldReason).toContain("held for explicit memory review");
+	expect(typeof job.heldAt).toBe("string");
+	expect(job.pendingPath).toBe(join(pending, files[0]));
+	expect(job.sessionFile).toBe(session);
 	expect(held.messages[0]).toContain("memory distillation held for dispatch review review-memory-1");
 	expect(held.calls()).toBe(1);
+});
+
+function writeHeldJob(memory: string, overrides: Record<string, unknown> = {}): string {
+	const pending = join(memory, "pending");
+	mkdirSync(pending, { recursive: true });
+	const path = join(pending, "held-job.json");
+	writeFileSync(
+		path,
+		JSON.stringify({
+			mode: "distill",
+			memoryDir: memory,
+			sessionFile: "/tmp/project/s1.jsonl",
+			cwd: "/tmp/project",
+			tail: "USER: x".padEnd(140, "x"),
+			provider: "zai",
+			modelId: "glm-5.3-flash",
+			thinking: "low",
+			pendingPath: path,
+			project: "tmpproject",
+			session: "s1.jsonl",
+			held: true,
+			heldReason: "held for explicit memory review",
+			heldAt: new Date().toISOString(),
+			...overrides,
+		}),
+	);
+	return path;
+}
+
+test("retryHeldDistills re-dispatches an allowed held job once and clears the marker", async () => {
+	const memory = tempDir("hummin-memory-held-allow-");
+	process.env.HUMMIN_MEMORY_DIR = memory;
+	// Mock hummin so the retried worker completes (NONE) and removes its
+	// pending file instead of leaking a child past the test.
+	const bin = tempDir("hummin-memory-held-bin-");
+	const hummin = join(bin, "hummin");
+	writeFileSync(hummin, "#!/bin/sh\necho NONE\n");
+	chmodSync(hummin, 0o755);
+	process.env.PATH = `${bin}:${originalPath ?? ""}`;
+	const path = writeHeldJob(memory);
+	const allowed = context("allow");
+	const retried = await retryHeldDistills({ ...allowed, agentDir: tempDir("hummin-memory-reviews-") });
+	expect(retried).toBe(1);
+	// The rewrite clears the held marker before the worker spawns (read races
+	// the child's completion, hence this immediate read).
+	const job = JSON.parse(readFileSync(path, "utf8"));
+	expect(job.held).toBeUndefined();
+	expect(job.provider).toBe("zai");
+	// The worker eventually consumes the job (NONE reply removes the file).
+	for (let i = 0; i < 100 && existsSync(path); i++) await new Promise((resolve) => setTimeout(resolve, 50));
+	expect(existsSync(path)).toBe(false);
+});
+
+test("retryHeldDistills drops the job when the retry blocks again", async () => {
+	const memory = tempDir("hummin-memory-held-block-");
+	process.env.HUMMIN_MEMORY_DIR = memory;
+	const path = writeHeldJob(memory);
+	const held = context("block");
+	const retried = await retryHeldDistills({ ...held, agentDir: tempDir("hummin-memory-reviews-") });
+	expect(retried).toBe(0);
+	expect(existsSync(path)).toBe(false);
+	expect(held.messages[0]).toContain("retry held again");
+});
+
+test("retryHeldDistills drops held jobs older than 24h or with a spent retry", async () => {
+	const memory = tempDir("hummin-memory-held-expired-");
+	process.env.HUMMIN_MEMORY_DIR = memory;
+	const old = writeHeldJob(memory, {
+		sessionFile: "/tmp/project/old.jsonl",
+		heldAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+	});
+	const spent = writeHeldJob(memory, { sessionFile: "/tmp/project/spent.jsonl", heldRetries: 1 });
+	const undated = writeHeldJob(memory, { sessionFile: "/tmp/project/undated.jsonl", heldAt: undefined });
+	const ctx = context("allow");
+	await retryHeldDistills({ ...ctx, agentDir: tempDir("hummin-memory-reviews-") });
+	expect(existsSync(old)).toBe(false);
+	expect(existsSync(spent)).toBe(false);
+	expect(existsSync(undated)).toBe(false);
+	expect(ctx.calls()).toBe(0);
+});
+
+test("retryHeldDistills leaves fresh non-held pending jobs alone", async () => {
+	const memory = tempDir("hummin-memory-held-skip-");
+	process.env.HUMMIN_MEMORY_DIR = memory;
+	const path = writeHeldJob(memory, { held: undefined, heldReason: undefined, heldAt: undefined });
+	const ctx = context("allow");
+	await retryHeldDistills({ ...ctx, agentDir: tempDir("hummin-memory-reviews-") });
+	expect(existsSync(path)).toBe(true);
+	expect(ctx.calls()).toBe(0);
 });
 
 test("explicit fold and automatic fold hold before their child launches", async () => {

@@ -111,8 +111,9 @@ These fork-specific variables are read by hummin and its bundled extensions. Whe
 | `HUMMIN_MEMORY_MODE` | `lesson` or `vault`; overrides `memoryMode` (default `lesson`) |
 | `HUMMIN_MEMORY_DIR` | Lesson storage dir; default `<agentDir>/memory` |
 | `HUMMIN_MEMORY_VAULT_DIR` | Vault directory; overrides `memoryVaultDir` (default `~/.hummin/agent/vault`) |
-| `HUMMIN_MEMORY_PROVIDER` | Provider for vault fold + distillation calls; overrides `memoryProvider` (default `zai`) |
-| `HUMMIN_MEMORY_MODEL_ID` | Model id for vault fold + distillation calls; overrides `memoryModelId` (default `glm-5.3-flash`) |
+| `HUMMIN_MEMORY_PROVIDER` | Provider for the no-model-selected fallback of fold/distill/expansion calls; overrides `memoryProvider` (default `zai`). The session's selected model wins when one is selected |
+| `HUMMIN_MEMORY_MODEL_ID` | Model id for the same fallback; overrides `memoryModelId` (default `glm-5.3-flash`) |
+| `HUMMIN_MEMORY_QUERY_EXPAND` | `0` disables model-assisted query expansion in memory recall and vault search |
 | `HUMMIN_MEMORY_AUTO_FOLD_THRESHOLD` | Inbox lesson count that triggers an automatic fold pass; default `3`, `0` disables |
 | `HUMMIN_MEMORY_MAX_CHARS` | Transcript tail (characters) passed to the distiller; default `12000` |
 
@@ -122,8 +123,10 @@ These fork-specific variables are read by hummin and its bundled extensions. Whe
 |----------|-------------|
 | `HUMMIN_INSTANCES` | Comma-separated local inference server base URLs for the hummin provider; overrides `localInstances` |
 | `HUMMIN_COLIBRI_INSTANCES` | Pre-rename fallback for `HUMMIN_INSTANCES` |
-| `HUMMIN_CTX` | Fallback context window (tokens) for fleet models when the server's `/props` does not report one |
+| `HUMMIN_CTX` | Fallback context window (tokens) for fleet models when the server's `/props` does not report one and no fresh `fleet-health.json` entry exists |
 | `HUMMIN_COLIBRI_CTX` | Pre-rename fallback for `HUMMIN_CTX` |
+| `HUMMIN_FLEET_HEALTH_FILE` | Overrides the fleet health file path (default `<agentDir>/fleet-health.json`) |
+| `HUMMIN_TELEMETRY` | `0` disables the local telemetry event sink |
 | `HUMMIN_FLEET_SSH_HOST` | Overrides `fleet.docker.sshHost` |
 | `HUMMIN_FLEET_COMPOSE_DIR` | Overrides `fleet.docker.composeDir` |
 | `HUMMIN_FLEET_LAUNCHD_DOMAIN` | Overrides `fleet.launchd.domain` |
