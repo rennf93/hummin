@@ -124,7 +124,7 @@ class McpPanel {
 	}
 }
 
-export default function humminMcp(pi: ExtensionAPI): void {
+export default async function humminMcp(pi: ExtensionAPI): Promise<void> {
 	if (process.env.HUMMIN_MCP === "0") return;
 	const servers = configuredServers(process.cwd());
 	const entries = new Map<string, ServerEntry>();
@@ -137,23 +137,30 @@ export default function humminMcp(pi: ExtensionAPI): void {
 			const baseDescription =
 				tool.description && tool.description.trim().length > 0 ? tool.description.trim() : `${tool.name} (MCP tool)`;
 			const description = `${offline ? "[offline] " : ""}${baseDescription}${descriptionSuffix}`;
-			pi.registerTool({
-				name,
-				label: `MCP ${entry.name}/${tool.name}`,
-				description,
-				parameters: params as TSchema,
-				async execute(_toolCallId, callParams, signal, _onUpdate, ctx) {
-					if (entry.client.state !== "ready") {
-						throw new Error(`MCP server ${entry.name} is offline; /mcp to check and restart`);
-					}
-					signal?.throwIfAborted();
-					const result = await entry.client.callTool(tool.name, callParams as Record<string, unknown>, signal);
-					const text = McpClient.textOf(result) || "(empty result)";
-					if (result.isError) throw new Error(text);
-					if (!ctx.hasPendingMessages()) ctx.ui.notify(`${entry.name}/${tool.name} ok`, "info");
-					return { content: [{ type: "text", text }], details: {} };
-				},
-			});
+			try {
+				pi.registerTool({
+					name,
+					label: `MCP ${entry.name}/${tool.name}`,
+					description,
+					parameters: params as TSchema,
+					async execute(_toolCallId, callParams, signal, _onUpdate, ctx) {
+						if (entry.client.state !== "ready") {
+							throw new Error(`MCP server ${entry.name} is offline; /mcp to check and restart`);
+						}
+						signal?.throwIfAborted();
+						const result = await entry.client.callTool(tool.name, callParams as Record<string, unknown>, signal);
+						const text = McpClient.textOf(result) || "(empty result)";
+						if (result.isError) throw new Error(text);
+						if (!ctx.hasPendingMessages()) ctx.ui.notify(`${entry.name}/${tool.name} ok`, "info");
+						return { content: [{ type: "text", text }], details: {} };
+					},
+				});
+			} catch (error) {
+				// A stale ctx (session replaced mid-run) freezes the tool surface;
+				// late tools/list_changed notifications must not crash the runtime.
+				console.error(`[hummin-mcp] tool ${name} not registered: ${error instanceof Error ? error.message : String(error)}`);
+				return;
+			}
 			entry.registered.add(name);
 		}
 	};
@@ -194,17 +201,22 @@ export default function humminMcp(pi: ExtensionAPI): void {
 	const declareUnavailable = (name: string, error: unknown): void => {
 		onCrashed(name);
 		const detail = error instanceof Error ? error.message : String(error);
-		// Headless runs (--mode json) have no TUI and may never flush queued
-		// followUp messages; stderr is the channel guaranteed to reach logs.
+		// stderr is the durable record: headless runs (--mode json) may have
+		// replaced their session by the time a server fails, which stale-poisons
+		// this captured ctx and makes the followUp message throw.
 		console.error(`[hummin-mcp] server ${name} unavailable: ${detail}`);
-		pi.sendMessage(
-			{
-				customType: "hummin-mcp",
-				content: `MCP server ${name} unavailable: ${detail}. Tools not registered; /mcp to restart.`,
-				display: true,
-			},
-			{ deliverAs: "followUp" },
-		);
+		try {
+			pi.sendMessage(
+				{
+					customType: "hummin-mcp",
+					content: `MCP server ${name} unavailable: ${detail}. Tools not registered; /mcp to restart.`,
+					display: true,
+				},
+				{ deliverAs: "followUp" },
+			);
+		} catch {
+			// stale ctx - the stderr line above already recorded the failure
+		}
 	};
 
 	// One connect attempt against a fresh client: a timed-out attempt may
@@ -217,7 +229,15 @@ export default function humminMcp(pi: ExtensionAPI): void {
 		await connect(entry);
 	};
 
-	// Register before connect so state callbacks can find the entry.
+	// Register before connect so state callbacks can find the entry. The
+	// connects run to completion INSIDE the extension factory: MCP tools must
+	// register while this extension's context is fresh. A handshake that lands
+	// after the session rebinds hits a stale ctx and every registered tool is
+	// silently lost (proven on the wire in headless --mode json: clean
+	// handshake, all tools listed, then "extension ctx is stale" on
+	// registration). Awaiting here costs server boot time at startup and
+	// puts the full verb surface in the model's hands from turn one.
+	const connectRuns: Promise<void>[] = [];
 	for (const [name, config] of servers) {
 		const entry: ServerEntry = {
 			name,
@@ -226,21 +246,24 @@ export default function humminMcp(pi: ExtensionAPI): void {
 			registered: new Set<string>(),
 		};
 		entries.set(name, entry);
-		void (async () => {
-			for (let attempt = 1; ; attempt++) {
-				try {
-					await attemptConnect(entry);
-					return;
-				} catch (error) {
-					if (attempt >= INITIAL_CONNECT_ATTEMPTS) {
-						declareUnavailable(name, error);
+		connectRuns.push(
+			(async () => {
+				for (let attempt = 1; ; attempt++) {
+					try {
+						await attemptConnect(entry);
 						return;
+					} catch (error) {
+						if (attempt >= INITIAL_CONNECT_ATTEMPTS) {
+							declareUnavailable(name, error);
+							return;
+						}
+						await new Promise((resolve) => setTimeout(resolve, RECONNECT_BACKOFF_MS));
 					}
-					await new Promise((resolve) => setTimeout(resolve, RECONNECT_BACKOFF_MS));
 				}
-			}
-		})();
+			})(),
+		);
 	}
+	await Promise.allSettled(connectRuns);
 
 	// Best-effort shutdown of all servers at session end (exact PIDs only).
 	pi.on("session_shutdown", async () => {
