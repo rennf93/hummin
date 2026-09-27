@@ -14,10 +14,20 @@ import { detectSupportedImageMimeType, encodeBase64 } from "./image.ts";
 import { resolveReadToolPath } from "./path-utils.ts";
 import type { ExecutionToolContext } from "./tool-context.ts";
 
+// An explicit tiny limit (e.g. limit:1) costs one LLM turn per line, and models
+// imitate the continuation hint verbatim, so a file crawl at one line per turn
+// is otherwise unbounded. Floor tiny limits and suggest a page size in the hint.
+const MIN_EXPLICIT_LIMIT_LINES = 20;
+const SUGGESTED_PAGE_LINES = 200;
+
 const readSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),
 	offset: Type.Optional(Type.Number({ description: "Line number to start reading from (1-indexed)" })),
-	limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
+	limit: Type.Optional(
+		Type.Number({
+			description: `Maximum number of lines to read (values below ${MIN_EXPLICIT_LIMIT_LINES} are raised to ${MIN_EXPLICIT_LIMIT_LINES})`,
+		}),
+	),
 });
 
 export type ReadToolInput = Static<typeof readSchema>;
@@ -111,7 +121,8 @@ export function createReadTool<TContext extends ExecutionToolContext = Execution
 			let selectedContent: string;
 			let userLimitedLines: number | undefined;
 			if (limit !== undefined) {
-				const endLine = Math.min(startLine + limit, allLines.length);
+				const effectiveLimit = Math.max(limit, MIN_EXPLICIT_LIMIT_LINES);
+				const endLine = Math.min(startLine + effectiveLimit, allLines.length);
 				selectedContent = allLines.slice(startLine, endLine).join("\n");
 				userLimitedLines = endLine - startLine;
 			} else {
@@ -138,7 +149,11 @@ export function createReadTool<TContext extends ExecutionToolContext = Execution
 			} else if (userLimitedLines !== undefined && startLine + userLimitedLines < allLines.length) {
 				const remaining = allLines.length - (startLine + userLimitedLines);
 				const nextOffset = startLine + userLimitedLines + 1;
-				outputText = `${truncation.content}\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue.]`;
+				// Models copy the hint's pattern, so suggest a page size the
+				// model can reuse when its chosen limit pages too thinly.
+				const pageSize = Math.min(SUGGESTED_PAGE_LINES, remaining);
+				const limitSuggestion = limit !== undefined && limit < SUGGESTED_PAGE_LINES ? ` (limit=${pageSize})` : "";
+				outputText = `${truncation.content}\n\n[${remaining} more lines in file. Use offset=${nextOffset}${limitSuggestion} to continue.]`;
 			} else {
 				outputText = truncation.content;
 			}
