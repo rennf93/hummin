@@ -9,8 +9,23 @@
 import { type ChildProcess, spawn } from "node:child_process";
 
 export const MCP_PROTOCOL_VERSION = "2024-11-05";
-export const MCP_INIT_TIMEOUT_MS = 10_000;
+/**
+ * Servers that boot a runtime before answering `initialize` (venv/uv/python
+ * cold starts) routinely exceed 10s, and several servers sharing one
+ * interpreter/project lock serialize those boots - 30s keeps the handshake
+ * from racing the child's startup. `HUMMIN_MCP_INIT_TIMEOUT_MS` overrides.
+ */
+export const MCP_INIT_TIMEOUT_MS = 30_000;
 export const MCP_REQUEST_TIMEOUT_MS = 30_000;
+
+/** Resolve an env-provided millisecond timeout to a positive integer, falling
+ * back to `fallback` when unset or invalid (garbage values never wedge a
+ * server). Matches the env-over-default scalar pattern used in settings. */
+export function resolveTimeoutMs(raw: string | undefined, fallback: number): number {
+	if (raw === undefined) return fallback;
+	const parsed = Number(raw.trim());
+	return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
 
 /** De-facto standard config shape: settings `mcpServers[name]`. */
 export interface McpServerConfig {

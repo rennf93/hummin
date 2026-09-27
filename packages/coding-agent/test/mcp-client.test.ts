@@ -2,9 +2,11 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	MCP_INIT_TIMEOUT_MS,
 	McpClient,
 	mergeMcpServers,
 	qualifiedToolName,
+	resolveTimeoutMs,
 	sanitizeToolPart,
 	toolParamsSchema,
 } from "../extensions/lib/mcp-client.ts";
@@ -60,6 +62,18 @@ describe("naming and schema helpers", () => {
 		const missing = toolParamsSchema(undefined);
 		expect(missing.params).toEqual({ type: "object", properties: {}, required: [] });
 		expect(missing.descriptionSuffix).toBe("");
+	});
+
+	it("resolves timeout env overrides, falling back on unset or invalid values", () => {
+		expect(resolveTimeoutMs(undefined, MCP_INIT_TIMEOUT_MS)).toBe(MCP_INIT_TIMEOUT_MS);
+		expect(resolveTimeoutMs("", 5_000)).toBe(5_000);
+		expect(resolveTimeoutMs("  45000  ", 5_000)).toBe(45_000);
+		// Garbage, zero, and negative values never wedge a server.
+		expect(resolveTimeoutMs("soon", 5_000)).toBe(5_000);
+		expect(resolveTimeoutMs("0", 5_000)).toBe(5_000);
+		expect(resolveTimeoutMs("-1", 5_000)).toBe(5_000);
+		// Fractional values are floored to whole milliseconds.
+		expect(resolveTimeoutMs("1500.9", 5_000)).toBe(1500);
 	});
 });
 

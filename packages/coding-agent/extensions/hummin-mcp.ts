@@ -11,18 +11,24 @@ import { SettingsManager, type ExtensionAPI, type Theme } from "@earendil-works/
 import { truncateToWidth, type KeybindingsManager, type TUI } from "@earendil-works/pi-tui";
 import { type TSchema } from "typebox";
 import {
+	MCP_INIT_TIMEOUT_MS,
+	MCP_REQUEST_TIMEOUT_MS,
 	McpClient,
+	type McpClientOptions,
 	type McpServerConfig,
 	type McpServerState,
 	type McpToolInfo,
 	mergeMcpServers,
 	qualifiedToolName,
+	resolveTimeoutMs,
 	toolParamsSchema,
 } from "./lib/mcp-client.ts";
 import { runningProcessCount } from "./lib/processes.ts";
 
 const PROCESS_BUDGET = 8;
 const RESTART_TIMEOUT_MS = 15_000;
+const INITIAL_CONNECT_ATTEMPTS = 2;
+const RECONNECT_BACKOFF_MS = 2_000;
 
 interface ServerEntry {
 	name: string;
@@ -172,26 +178,68 @@ export default function humminMcp(pi: ExtensionAPI): void {
 		registerTools(entry, tools, false);
 	};
 
+	// Timeouts are env-tunable: fleet images launch MCP children through
+	// runtime bootstrappers (uv/venv) whose cold `initialize` legitimately
+	// exceeds the built-in default, and gateway verbs can outlast the
+	// request default server-side.
+	const clientOptions = (name: string): McpClientOptions => ({
+		initTimeoutMs: resolveTimeoutMs(process.env.HUMMIN_MCP_INIT_TIMEOUT_MS, MCP_INIT_TIMEOUT_MS),
+		requestTimeoutMs: resolveTimeoutMs(process.env.HUMMIN_MCP_REQUEST_TIMEOUT_MS, MCP_REQUEST_TIMEOUT_MS),
+		onStateChange: (state) => {
+			if (state === "crashed" || state === "error") onCrashed(name);
+		},
+		onToolsChanged: (tools) => onToolsChanged(name, tools),
+	});
+
+	const declareUnavailable = (name: string, error: unknown): void => {
+		onCrashed(name);
+		const detail = error instanceof Error ? error.message : String(error);
+		// Headless runs (--mode json) have no TUI and may never flush queued
+		// followUp messages; stderr is the channel guaranteed to reach logs.
+		console.error(`[hummin-mcp] server ${name} unavailable: ${detail}`);
+		pi.sendMessage(
+			{
+				customType: "hummin-mcp",
+				content: `MCP server ${name} unavailable: ${detail}. Tools not registered; /mcp to restart.`,
+				display: true,
+			},
+			{ deliverAs: "followUp" },
+		);
+	};
+
+	// One connect attempt against a fresh client: a timed-out attempt may
+	// still own a slow child, so restart semantics mirror /mcp (stop the old
+	// client, never reuse it).
+	const attemptConnect = async (entry: ServerEntry): Promise<void> => {
+		const previous = entry.client;
+		entry.client = new McpClient(entry.name, entry.config, clientOptions(entry.name));
+		await previous.stop().catch(() => undefined);
+		await connect(entry);
+	};
+
 	// Register before connect so state callbacks can find the entry.
 	for (const [name, config] of servers) {
-		const client = new McpClient(name, config, {
-			onStateChange: (state) => {
-				if (state === "crashed" || state === "error") onCrashed(name);
-			},
-			onToolsChanged: (tools) => onToolsChanged(name, tools),
-		});
-		entries.set(name, { name, config, client, registered: new Set<string>() });
-		client.connect().catch((error: unknown) => {
-			onCrashed(name);
-			pi.sendMessage(
-				{
-					customType: "hummin-mcp",
-					content: `MCP server ${name} unavailable: ${error instanceof Error ? error.message : String(error)}. Tools not registered; /mcp to restart.`,
-					display: true,
-				},
-				{ deliverAs: "followUp" },
-			);
-		});
+		const entry: ServerEntry = {
+			name,
+			config,
+			client: new McpClient(name, config, clientOptions(name)),
+			registered: new Set<string>(),
+		};
+		entries.set(name, entry);
+		void (async () => {
+			for (let attempt = 1; ; attempt++) {
+				try {
+					await attemptConnect(entry);
+					return;
+				} catch (error) {
+					if (attempt >= INITIAL_CONNECT_ATTEMPTS) {
+						declareUnavailable(name, error);
+						return;
+					}
+					await new Promise((resolve) => setTimeout(resolve, RECONNECT_BACKOFF_MS));
+				}
+			}
+		})();
 	}
 
 	// Best-effort shutdown of all servers at session end (exact PIDs only).
@@ -232,12 +280,7 @@ export default function humminMcp(pi: ExtensionAPI): void {
 				const action = await ctx.ui.select(`${selected.name} (${selected.client.state})`, ["Restart", "Close"]);
 				if (action !== "Restart") return;
 				const previous = selected.client;
-				selected.client = new McpClient(selected.name, selected.config, {
-					onStateChange: (state) => {
-						if (state === "crashed" || state === "error") onCrashed(selected.name);
-					},
-					onToolsChanged: (tools) => onToolsChanged(selected.name, tools),
-				});
+				selected.client = new McpClient(selected.name, selected.config, clientOptions(selected.name));
 				try {
 					await previous.stop();
 					await Promise.race([

@@ -147,6 +147,8 @@ These fork-specific variables are read by hummin and its bundled extensions. Whe
 | `HUMMIN_AGENTS_NAME` | Overrides the session registry name (`agents.name`) |
 | `HUMMIN_CRON` | `0` disables the cron scheduler; tools stay registered and no-op with an in-band notice |
 | `HUMMIN_MCP` | `0` disables the MCP extension |
+| `HUMMIN_MCP_INIT_TIMEOUT_MS` | Overrides the MCP `initialize` handshake timeout (default 30000). Raise it for servers that boot a runtime (venv/uv) before answering; invalid values fall back to the default |
+| `HUMMIN_MCP_REQUEST_TIMEOUT_MS` | Overrides the MCP per-request (`tools/list`, `tools/call`) timeout (default 30000). Raise it for servers whose tools legitimately run long; invalid values fall back to the default |
 | `HUMMIN_JITI_CACHE` | `0` disables the extension loader's jiti transform cache |
 
 ### Guardrails tool-call budget
