@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Read tool: an explicit limit below 20 lines is raised to 20, so a tiny `limit` (e.g. 1) can no longer make the model crawl a large file one line per LLM turn, and the early-stop continuation hint now suggests a copyable page size (`Use offset=K (limit=P) to continue.`) instead of a bare offset ([#8](https://github.com/rennf93/hummin/pull/8)).
+
 ## [1.2.3] - 2026-09-26
 
 ### Added
