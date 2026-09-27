@@ -214,7 +214,32 @@ describe("AgentHarness tools", () => {
 			expect(output).toContain("Line 41");
 			expect(output).toContain("Line 60");
 			expect(output).not.toContain("Line 61");
-			expect(output).toContain("[40 more lines in file. Use offset=61 to continue.]");
+			expect(output).toContain("[40 more lines in file. Use offset=61 (limit=40) to continue.]");
+		});
+
+		it("raises an explicit limit below the floor to 20 lines", async () => {
+			const context = createContext();
+			getOrThrow(
+				await context.env.writeFile(
+					"tiny.txt",
+					Array.from({ length: 100 }, (_, index) => `Line ${index + 1}`).join("\n"),
+					BACKGROUND_CONTEXT,
+				),
+			);
+
+			const result = await createReadTool().execute(
+				"read-floor",
+				{ path: "tiny.txt", limit: 1 },
+				noUpdate,
+				context,
+				invocation,
+				BACKGROUND_CONTEXT,
+			);
+			const output = textOutput(result);
+
+			expect(output).toContain("Line 20");
+			expect(output).not.toContain("Line 21");
+			expect(output).toContain("[80 more lines in file. Use offset=21 (limit=80) to continue.]");
 		});
 
 		it("truncates large text by line count", async () => {

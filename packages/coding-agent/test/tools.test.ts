@@ -144,13 +144,51 @@ describe("Coding Agent Tools", () => {
 			const lines = Array.from({ length: 100 }, (_, i) => `Line ${i + 1}`);
 			writeFileSync(testFile, lines.join("\n"));
 
-			const result = await readTool.execute("test-call-6", { path: testFile, limit: 10 });
+			const result = await readTool.execute("test-call-6", { path: testFile, limit: 30 });
 			const output = getTextOutput(result);
 
 			expect(output).toContain("Line 1");
-			expect(output).toContain("Line 10");
-			expect(output).not.toContain("Line 11");
-			expect(output).toContain("[90 more lines in file. Use offset=11 to continue.]");
+			expect(output).toContain("Line 30");
+			expect(output).not.toContain("Line 31");
+			expect(output).toContain("[70 more lines in file. Use offset=31 (limit=70) to continue.]");
+		});
+
+		it("should raise an explicit limit below the floor to 20 lines", async () => {
+			const testFile = join(testDir, "tiny-limit-test.txt");
+			const lines = Array.from({ length: 100 }, (_, i) => `Line ${i + 1}`);
+			writeFileSync(testFile, lines.join("\n"));
+
+			const result = await readTool.execute("test-call-6b", { path: testFile, limit: 1 });
+			const output = getTextOutput(result);
+
+			expect(output).toContain("Line 1");
+			expect(output).toContain("Line 20");
+			expect(output).not.toContain("Line 21");
+			expect(output).toContain("[80 more lines in file. Use offset=21 (limit=80) to continue.]");
+		});
+
+		it("should not suggest a page size when the explicit limit is already large", async () => {
+			const testFile = join(testDir, "big-limit-test.txt");
+			const lines = Array.from({ length: 500 }, (_, i) => `Line ${i + 1}`);
+			writeFileSync(testFile, lines.join("\n"));
+
+			const result = await readTool.execute("test-call-6c", { path: testFile, limit: 250 });
+			const output = getTextOutput(result);
+
+			expect(output).toContain("Line 250");
+			expect(output).not.toContain("Line 251");
+			expect(output).toContain("[250 more lines in file. Use offset=251 to continue.]");
+			expect(output).not.toContain("(limit=");
+		});
+
+		it("should return remaining lines when the raised limit reaches end of file", async () => {
+			const testFile = join(testDir, "short-limit-test.txt");
+			writeFileSync(testFile, "Line 1\nLine 2\nLine 3");
+
+			const result = await readTool.execute("test-call-6d", { path: testFile, limit: 1 });
+
+			expect(getTextOutput(result)).toBe("Line 1\nLine 2\nLine 3");
+			expect(getTextOutput(result)).not.toContain("Use offset=");
 		});
 
 		it("should handle offset + limit together", async () => {
@@ -169,7 +207,7 @@ describe("Coding Agent Tools", () => {
 			expect(output).toContain("Line 41");
 			expect(output).toContain("Line 60");
 			expect(output).not.toContain("Line 61");
-			expect(output).toContain("[40 more lines in file. Use offset=61 to continue.]");
+			expect(output).toContain("[40 more lines in file. Use offset=61 (limit=40) to continue.]");
 		});
 
 		it("should show error when offset is beyond file length", async () => {
