@@ -18,6 +18,9 @@ import { toJsonEvent } from "./json-event.ts";
 export interface PrintModeOptions {
 	/** Output mode: "text" for final response only, "json" for all events */
 	mode: "text" | "json";
+	/** JSON mode: drop message_update delta records (message_end carries the
+	 * full assembled message) so whole-message consumers get a compact stream */
+	noJsonDeltas?: boolean;
 	/** Array of additional prompts to send after initialMessage */
 	messages?: string[];
 	/** First message to send (may contain @file content) */
@@ -31,7 +34,7 @@ export interface PrintModeOptions {
  * Sends prompts to the agent and outputs the result.
  */
 export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: PrintModeOptions): Promise<number> {
-	const { mode, messages = [], initialMessage, initialImages } = options;
+	const { mode, messages = [], initialMessage, initialImages, noJsonDeltas } = options;
 	let exitCode = 0;
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
@@ -107,6 +110,9 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		unsubscribeBackpressure?.();
 		unsubscribe = session.subscribe((event) => {
 			if (mode === "json") {
+				if (noJsonDeltas && event.type === "message_update") {
+					return;
+				}
 				writeRawStdout(`${JSON.stringify(toJsonEvent(event))}\n`);
 			}
 		});

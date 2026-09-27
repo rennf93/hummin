@@ -98,6 +98,10 @@ The top-level `usage` is the latest cumulative provider-reported usage for the a
 {"type":"message_update","usage":{"input":100,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":101,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello "}}
 ```
 
+### Whole-message mode
+
+Run with `--no-json-deltas` to drop `message_update` records entirely. Everything else is unchanged: `message_start`, `message_end` (which always carries the authoritative full message, usage included), turn, tool-execution, and agent events still stream normally. Use this for whole-message consumers (log capture, batch processing) that never render live deltas - the stream shrinks by an order of magnitude on verbose sessions. `--mode rpc` is unaffected and always streams deltas.
+
 ## Tool execution events
 
 | Event | Fields | Meaning |

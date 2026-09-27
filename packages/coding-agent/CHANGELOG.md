@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- MCP extension: the `initialize` handshake no longer races slow server boots. The default init timeout is raised from 10s to 30s (servers that launch through a runtime bootstrapper such as uv/venv routinely exceed 10s, and several servers sharing one interpreter lock serialize those boots), `HUMMIN_MCP_INIT_TIMEOUT_MS` and `HUMMIN_MCP_REQUEST_TIMEOUT_MS` override both timeouts per deployment (invalid values fall back to the defaults), a failed initial connect is retried once against a fresh client after a 2s backoff (mirroring `/mcp` restart semantics), and a permanently unavailable server now also logs one `[hummin-mcp] server <name> unavailable: ...` line on stderr so headless `--mode json` runs leave the failure in their error log instead of only queueing a follow-up message that may never flush.
+
+### Added
+
+- `--no-json-deltas` for `--mode json`: drops `message_update` delta records from the stream while `message_end` (the authoritative full message, usage included) and all other events keep flowing, shrinking captured logs by an order of magnitude on verbose sessions for whole-message consumers. `--mode rpc` is unaffected ([docs/json.md](docs/json.md)).
+
 ## [1.2.4] - 2026-09-27
 
 ### Fixed

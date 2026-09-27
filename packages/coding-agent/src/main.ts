@@ -1008,6 +1008,7 @@ export async function main(args: string[], options?: MainOptions) {
 		printTimings();
 		const exitCode = await runPrintMode(runtime, {
 			mode: toPrintOutputMode(appMode),
+			noJsonDeltas: parsed.noJsonDeltas,
 			messages: parsed.messages,
 			initialMessage,
 			initialImages,
