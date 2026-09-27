@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- MCP extension: tools now survive headless sessions. Wire-tap evidence: the MCP handshake completed cleanly (initialize answered, tools/list returned every tool) and then registration crashed with "extension ctx is stale after session replacement or reload", silently losing every tool - headless `--mode json` rebinds its session after extension load, so any handshake landing post-load registered into a dead context. The extension now runs its server connects (with retry) to completion inside the extension factory, while the context is fresh, putting the full verb surface in the model's hands from turn one; late `tools/list_changed` notifications and the unavailable notice also can no longer crash the run on a stale context.
+
 ## [1.2.5] - 2026-09-27
 
 ### Fixed
