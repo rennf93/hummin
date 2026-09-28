@@ -157,15 +157,22 @@ export async function runSchedulerPass(dir: string, nowMs: number, context?: Sch
 
 function recordExit(dir: string, name: string, pid: number, code: number | null): void {
 	try {
-		const entry = getEntry(dir, name);
-		if (!entry || entry.lastPid !== pid) return;
-		const store = readCronStore(dir);
-		writeCronStore(dir, {
-			version: 1,
-			entries: store.entries.map((candidate) =>
-				candidate.name === name && candidate.lastPid === pid ? { ...candidate, lastExit: code, queuedSince: undefined } : candidate,
-			),
-		});
+		// Serialize against scheduler passes: an unlocked read-modify-write of
+		// cron.json can lose updates and leave an entry stuck showing "running".
+		if (!acquireSchedulerLock(dir)) return;
+		try {
+			const entry = getEntry(dir, name);
+			if (!entry || entry.lastPid !== pid) return;
+			const store = readCronStore(dir);
+			writeCronStore(dir, {
+				version: 1,
+				entries: store.entries.map((candidate) =>
+					candidate.name === name && candidate.lastPid === pid ? { ...candidate, lastExit: code, queuedSince: undefined } : candidate,
+				),
+			});
+		} finally {
+			releaseSchedulerLock(dir);
+		}
 	} catch {
 		// best-effort: never crash the session over a bookkeeping write
 	}

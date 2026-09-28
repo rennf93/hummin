@@ -4,6 +4,7 @@
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { DispatchReceipt } from "./child-dispatch-review.ts";
+import { humminBinCommand } from "./hummin-bin.ts";
 
 // ============================================================================
 // Types
@@ -136,15 +137,20 @@ export function clearStaleQueued(entry: CronEntry, nowMs: number): CronEntry {
 	return entry;
 }
 
-/** argv for a detached run child. Kept pure for tests. */
+/** argv for a detached run child. Kept pure for tests. The binary resolves
+ * like every other hummin child (lib/hummin-bin.ts: replays the running CLI
+ * entry, HUMMIN_BIN override); HUMMIN_CRON_BIN remains a straight binary
+ * override for the spawn name alone. */
 export function childCommand(entry: Pick<CronEntry, "prompt" | "cwd" | "model" | "thinking">): {
 	command: string;
 	args: string[];
 	cwd: string;
 	env: Record<string, string>;
 } {
-	const command = process.env.HUMMIN_CRON_BIN || "hummin";
-	const args = ["-p", entry.prompt, "--session-dir", entry.cwd];
+	const override = process.env.HUMMIN_CRON_BIN?.trim();
+	const bin = humminBinCommand();
+	const command = override || bin.command;
+	const args = [...(override ? [] : bin.prefixArgs), "-p", entry.prompt, "--session-dir", entry.cwd];
 	if (entry.model) args.push("--model", entry.model);
 	if (entry.thinking) args.push("--thinking", entry.thinking);
 	return { command, args, cwd: entry.cwd, env: { HUMMIN_MEMORY: "0" } };

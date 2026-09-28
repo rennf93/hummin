@@ -15,7 +15,16 @@ export interface ChildDispatchOptions { agentDir?: string; laya?: (state: string
 type Ctx = { modelRegistry: { getAvailable(): readonly Model<Api>[] } };
 interface Held { receipt: DispatchReceipt; reason: string; status: "pending" | "accepted" | "overridden"; confidence?: number; margin?: number; }
 const pathFor = (dir: string) => join(dir, "child-dispatch-reviews.json");
-const read = (dir: string): Held[] => { try { const value = JSON.parse(readFileSync(pathFor(dir), "utf8")) as unknown; if (!Array.isArray(value)) throw new Error("Invalid child dispatch review store."); return value as Held[]; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; } };
+// A corrupt store must never brick every dispatch (prepareChildDispatch reads
+// on every task/cron/memory path): an unreadable or malformed file is
+// quarantined (best effort) and treated as empty. The append-only
+// child-dispatch-reviews.log audit trail is unaffected.
+const quarantineCorruptStore = (dir: string): void => { try { renameSync(pathFor(dir), `${pathFor(dir)}.corrupt-${process.pid}-${Date.now()}`); } catch { /* leave the file in place */ } };
+const read = (dir: string): Held[] => {
+ let text: string;
+ try { text = readFileSync(pathFor(dir), "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; return []; }
+ try { const value = JSON.parse(text) as unknown; if (!Array.isArray(value)) throw new Error("Invalid child dispatch review store."); return value as Held[]; } catch { quarantineCorruptStore(dir); return []; }
+};
 // Every allowed dispatch appends an accepted record; keep the store bounded.
 // Pruning a long-idle receipt is fail-safe: its next retry is re-reviewed.
 const MAX_STORE_RECORDS = 200;

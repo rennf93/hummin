@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionContext, getAgentDir, getShellConfig } from "@earendil-works/pi-coding-agent";
 import { ProcessManager } from "./lib/processes.ts";
 
 // ============================================================================
@@ -191,6 +191,22 @@ export function buildHookEnv(
 	return env;
 }
 
+/**
+ * Shell for hook commands: the user's configured shell (same resolution the
+ * monitor/exec tools use), falling back to POSIX sh. The hook command string
+ * is POSIX-compatible, and a login shell is deliberately avoided: hooks fire
+ * on every tool event and login startup would tax each one.
+ */
+export function hookShell(): { shell: string; args: string[] } {
+	try {
+		const config = getShellConfig();
+		if (config.commandTransport !== "stdin") return { shell: config.shell, args: [...config.args] };
+	} catch {
+		// unreadable shell config: fall through to POSIX sh
+	}
+	return { shell: "/bin/sh", args: ["-c"] };
+}
+
 /** Pad a cell to the column width, with one space of gutter. */
 function cell(text: string, width: number): string {
 	const padding = Math.max(1, width - text.length + 1);
@@ -314,11 +330,12 @@ export default function humminHooks(pi: ExtensionAPI): void {
 		ctx: ExtensionContext,
 	): Promise<BlockDecision | undefined> {
 		const command = buildShellCommand(entry.command, JSON.stringify(payload));
+		const shell = hookShell();
 		let job;
 		try {
 			job = manager.start({
-				command: "/bin/zsh",
-				args: ["-lc", command],
+				command: shell.shell,
+				args: [...shell.args, command],
 				cwd: ctx.cwd,
 				kind: "hook",
 				label: `${entry.event}: ${entry.command.slice(0, 80)}`,

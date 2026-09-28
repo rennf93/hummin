@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	acquireSchedulerLock,
 	type CronEntry,
@@ -46,6 +46,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	releaseSchedulerLock(dir);
+	vi.unstubAllEnvs();
 });
 
 describe("schedule parse", () => {
@@ -220,14 +221,24 @@ describe("scheduler lock liveness", () => {
 });
 
 describe("childCommand", () => {
-	it("builds detached run args with HUMMIN_MEMORY=0", () => {
+	it("builds detached run args with HUMMIN_MEMORY=0 and the HUMMIN_BIN override", () => {
+		// The binary resolves through lib/hummin-bin.ts; HUMMIN_BIN pins it to
+		// the plain PATH name for a deterministic assertion.
+		vi.stubEnv("HUMMIN_BIN", "hummin");
 		const child = childCommand({ prompt: "do the thing", cwd: "/tmp/proj", model: undefined });
 		expect(child.command).toBe("hummin");
 		expect(child.args).toEqual(["-p", "do the thing", "--session-dir", "/tmp/proj"]);
 		expect(child.cwd).toBe("/tmp/proj");
 		expect(child.env.HUMMIN_MEMORY).toBe("0");
 	});
+	it("HUMMIN_BIN override may carry leading args (node <script>)", () => {
+		vi.stubEnv("HUMMIN_BIN", "/usr/local/bin/node /opt/hummin/cli.mjs");
+		const child = childCommand({ prompt: "p", cwd: "/tmp", model: undefined });
+		expect(child.command).toBe("/usr/local/bin/node");
+		expect(child.args.slice(0, 3)).toEqual(["/opt/hummin/cli.mjs", "-p", "p"]);
+	});
 	it("appends --model when set", () => {
+		vi.stubEnv("HUMMIN_BIN", "hummin");
 		const child = childCommand({ prompt: "p", cwd: "/tmp", model: "zai/glm-5.3", thinking: "high" });
 		expect(child.args.slice(-4)).toEqual(["--model", "zai/glm-5.3", "--thinking", "high"]);
 	});

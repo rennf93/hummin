@@ -8,14 +8,14 @@ const createdDirs: string[] = [];
 let memoryDirOriginal: string | undefined;
 let vaultDirOriginal: string | undefined;
 let expandOriginal: string | undefined;
-let pathOriginal: string | undefined;
+let binOriginal: string | undefined;
 let embedOriginal: string | undefined;
 
 beforeEach(() => {
 	memoryDirOriginal = process.env.HUMMIN_MEMORY_DIR;
 	vaultDirOriginal = process.env.HUMMIN_MEMORY_VAULT_DIR;
 	expandOriginal = process.env.HUMMIN_MEMORY_QUERY_EXPAND;
-	pathOriginal = process.env.PATH;
+	binOriginal = process.env.HUMMIN_BIN;
 	// Embeddings stay off: a developer-env HUMMIN_MEMORY_EMBED_URL must not
 	// reach the network from these expansion tests.
 	embedOriginal = process.env.HUMMIN_MEMORY_EMBED;
@@ -29,8 +29,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	if (pathOriginal === undefined) delete process.env.PATH;
-	else process.env.PATH = pathOriginal;
+	if (binOriginal === undefined) delete process.env.HUMMIN_BIN;
+	else process.env.HUMMIN_BIN = binOriginal;
 });
 
 afterAll(() => {
@@ -45,8 +45,11 @@ afterAll(() => {
 	else process.env.HUMMIN_MEMORY_EMBED = embedOriginal;
 });
 
-/** Mock `hummin` on PATH: appends its argv to the args file (one line per
- * call marker) and prints a fixed keyword list. */
+/** Mock the hummin binary the way runMemoryPrint now resolves it: HUMMIN_BIN
+ * points at the mock script (child sessions replay the running entry by
+ * default, which in tests would be the vitest CLI). The mock appends its argv
+ * to the args file (one line per call marker) and prints a fixed keyword
+ * list. */
 function installHumminMock(reply = "alpha, beta, gamma-delta"): string {
 	const bin = mkdtempSync(join(tmpdir(), "hummin-expand-bin-"));
 	createdDirs.push(bin);
@@ -56,7 +59,7 @@ function installHumminMock(reply = "alpha, beta, gamma-delta"): string {
 		`#!/bin/sh\nprintf '%s\\n' "$@" >> ${argsFile}\nprintf 'call\\n' >> ${argsFile}\necho "${reply}"\n`,
 	);
 	chmodSync(join(bin, "hummin"), 0o755);
-	process.env.PATH = `${bin}:${pathOriginal ?? ""}`;
+	process.env.HUMMIN_BIN = join(bin, "hummin");
 	return argsFile;
 }
 
