@@ -236,7 +236,7 @@ const DESTRUCTIVE_SEGMENT: readonly { rule: string; re: RegExp }[] = [
 	{ rule: "git restore <paths>", re: /\bgit restore\b(?!.*--staged)/ },
 	{ rule: "git stash drop/clear", re: /\bgit stash\s+(drop|clear)\b/ },
 	{ rule: "git branch -D", re: /\bgit branch\s+-D\b/ },
-	{ rule: "git push --force", re: /\bgit push\b[^|;&]*(--force(?!-with-lease)|\s-f(\s|$))/ },
+	{ rule: "git push --force", re: /\bgit push\b[^|;&]*(--force(?!-with-lease)|\s-f(\s|$)|\s\+\S)/ },
 	{ rule: "gh repo delete", re: /\bgh\s+repo\s+delete\b/ },
 	{ rule: "DROP DATABASE/TABLE", re: /\bdrop\s+(database|table)\b/i },
 	{ rule: "redis FLUSHALL/FLUSHDB", re: /\bflush(all|db)\b/i },
@@ -356,7 +356,7 @@ export function gateSegmentVerdict(segment: string, extra: ExtraGatePatterns = {
 	// changes and fails on conflict, unlike checkout which can take a bare
 	// pathspec.
 	if (
-		/^git (add|commit|tag \S+|checkout -b|switch \S+|branch (?!-D)\S+|stash (list|show)|push(?!.*(\s-f(\s|$)|--force)))/.test(s) ||
+		/^git (add|commit|tag \S+|checkout -b|switch \S+|branch (?!-D)\S+|stash (list|show)|push(?!.*(\s-f(\s|$)|--force|\s\+\S)))/.test(s) ||
 		/^(mkdir|touch)\b/.test(s) ||
 		/^(cp|rsync|ln)(\s+-[a-zA-Z]+)*\s+(\.\/)?[^/\s~][^\s]*/.test(s)
 	) {
@@ -509,6 +509,154 @@ function triageState(command: string, resultText: string): string {
 	return `A coding agent ran this test command in the user's project:\n\n${command.slice(0, 500)}\n\nOutput tail:\n${resultText.slice(-TRIAGE_MAX_RESULT_CHARS)}`;
 }
 
+// --- Shared gate decision (bash hook + background shells) --------------------
+//
+// exec and monitor spawn shells through ProcessManager without a bash
+// tool_call, so gating only the bash hook made them a standing bypass around
+// the destructive-command gate. layaGateCheck is the full decision for one
+// command, shared by the bash hook and by background shells via
+// lib/shell-gate.ts. HUMMIN_LAYA_GATE=off disables it everywhere.
+
+// The rubric below is the gate's actual quality: it is a decision spec, not
+// a hint. It states the one question being decided, anchors both ends of
+// the scale with concrete commands, gives the chain and unknown-command
+// rules, and biases toward LOW so the gate stays a tripwire for
+// recognizable destruction rather than a sandbox. Every false positive
+// trains distrust of the gate; every miss is bounded by the
+// confirm-marker step.
+//
+// Known constraint (measured 2026-09, laya 0.3.20): gate reads route to the
+// english checkpoint (512-token context), so with a long command the tail
+// of this rubric is truncated. That is acceptable and stable - the early
+// lines carry the bias and reproduce to 4 decimals across runs - but it
+// means rubric edits deep in the list may not change scores. Do not switch
+// gate reads to the multilingual checkpoint: with the full rubric visible
+// it saturates everything to P 0.87-0.96 and cannot discriminate. The
+// deterministic classifiers above, not this prompt, carry the precision.
+const GATE_STATE_PREFIX = "A coding agent is about to run this bash command in the user's project directory:\n\n";
+const GATE_INSTRUCTIONS = [
+	"Decide exactly one question: would running this command as-is destroy work that cannot be recovered? The noul value is P(that is true).",
+	"",
+	"This is a safety gate: P >= 0.75 blocks the command and interrupts the user. A false HIGH annoys the user and erodes trust in the gate; a missed true HIGH costs work but is bounded because the block reason demands confirmation. When uncertain, lean LOW.",
+	"",
+	"Score HIGH (>= 0.75) only for irreversibly destroying state that is NOT committed, backed up, or regenerable:",
+	"- Deleting or overwriting the only copy of unique user/project data: rm -rf on source files or on a directory holding uncommitted work, mv over the only copy, truncate, dd to a file",
+	"- Discarding git state that is not committed or pushed: git reset --hard, git checkout -- / restore of paths, git clean -f, git rebase, filter-repo/filter-branch, git push --force / -f, deleting a branch or stash holding unmerged work (git branch -D, git stash drop, git stash clear)",
+	"- Dropping data stores: DROP DATABASE, DROP TABLE, redis FLUSHALL, rm of a database or data file. These are always HIGH.",
+	"- chmod/chown -R on system roots, mkfs, writing to raw disk devices, killing processes in a way that loses their work",
+	"",
+	"Score LOW (<= 0.25) for everything else, explicitly including:",
+	"- All reads: cat/ls/grep/find, git log/diff/show/status, gh api or gh pr view, curl GET. Pipes into head/tail/grep/sort only filter output.",
+	"- Git commands that only ADD history and discard nothing: git add, git commit, git tag, git checkout -b, git switch -c, creating a branch, plain git push of a new or fast-forward ref (nothing local is lost)",
+	"- cp, rsync, or ln installing project files into a config, extension, or install location: the source stays in the repo, so the overwritten target is a replaceable copy - always LOW",
+	"- rm -rf of a build, dist, node_modules, coverage, cache, or output directory: those are regenerated by tooling - always LOW",
+	"- Running build, test, lint, or check scripts (npm run ..., node --test, tsc, pytest, make): they write only regenerable build outputs and logs",
+	"- Writes to /tmp and cache dirs; mkdir, touch, package manager installs, regenerated artifacts like lockfiles",
+	"",
+	"Rules:",
+	"- Chain rule: for commands joined with &&, ||, ;, or |, the score is the WORST single segment, no averaging. A chain is not destructive because one path looks unfamiliar.",
+	"- Recoverability tie-breaker: if the target looks committed, pushed, backed up, or regenerable from source, destruction is recoverable - score LOW.",
+	"- Unknown-command rule: if you cannot tell what a command does, score LOW (<= 0.25). This gate fails open by design; it is a tripwire for recognizable destruction, not a sandbox.",
+	"- Do not score based on how long or how busy the command looks. Judge consequences, not appearance.",
+].join("\n");
+
+const BLOCKED_ONCE_MAX = 200;
+const blockedOnce = new Set<string>();
+
+function rememberBlocked(command: string): void {
+	blockedOnce.add(command);
+	if (blockedOnce.size > BLOCKED_ONCE_MAX) {
+		const oldest = blockedOnce.values().next();
+		if (!oldest.done) blockedOnce.delete(oldest.value);
+	}
+}
+
+function gateBlockReason(headline: string, repeatHint: string, repeat: boolean): string {
+	return (
+		`[laya gate] ${headline}. Do not simply retry it. Either (1) confirm with the user that the target is disposable, or (2) verify it is backed up or reproducible. Once confirmed, re-run the same command with '${GATE_CONFIRM_MARKER}' appended so the gate lets it through.` +
+		(repeat
+			? `\n\nThis exact command was already blocked once. Do NOT retry with variations. Use the ask_user tool to ask the user now, quoting this command and the ${repeatHint}.`
+			: "")
+	);
+}
+
+export interface LayaGateDecision {
+	block: boolean;
+	reason?: string;
+}
+
+/**
+ * Full bash-gate decision for one command: confirm-marker handling, the
+ * read-only fast path, deterministic destructive rules, then one laya read for
+ * the gray zone. `layaRead` is injectable for tests; `cwd` labels the gate
+ * state. Returns undefined when the command may run.
+ */
+export async function layaGateCheck(
+	rawCommand: string,
+	layaRead: (state: string, name: string, instructions: string) => Promise<{ noul: number } | null> = layaNoul,
+	cwd: string = process.cwd(),
+): Promise<LayaGateDecision | undefined> {
+	if (process.env.HUMMIN_LAYA_GATE === "off") return undefined;
+	const trimmed = rawCommand.trim();
+	if (!trimmed || trimmed.includes(GATE_CONFIRM_MARKER)) {
+		const bare = trimmed.replace(GATE_CONFIRM_MARKER, "").trim();
+		if (trimmed.includes(GATE_CONFIRM_MARKER) && bare) {
+			auditGate({ type: "confirmed", command: bare, p: lastBlockScore(bare) });
+		}
+		blockedOnce.delete(bare);
+		return undefined;
+	}
+	const segments = splitSegments(trimmed);
+	if (segments.length > 0 && segments.every((s) => READ_ONLY_BASH.test(s))) return undefined;
+	// Deterministic verdicts first: canonical destructive commands block
+	// without a laya read; fully additive commands pass without one. Only
+	// the gray zone pays the laya latency. Settings extras
+	// (layaGate.extraSafe / layaGate.extraDestructive regex strings) are
+	// re-read per command so /settings edits apply without a restart.
+	let extra: ExtraGatePatterns = { safe: [], destructive: [] };
+	try {
+		extra = SettingsManager.create(cwd).getLayaGateExtraPatterns();
+	} catch {
+		// unreadable settings: built-in lists only
+	}
+	let verdict = gateVerdict(segments, extra);
+	// splitSegments strips redirects, so a write redirect hides from the
+	// segment classifiers: `echo x > important.txt` looks read-only.
+	// Downgrade safe verdicts to review so laya sees the redirect.
+	if (verdict.kind === "safe" && hasWriteRedirect(trimmed)) verdict = { kind: "review" };
+	if (verdict.kind === "destructive") {
+		const repeat = blockedOnce.has(trimmed);
+		rememberBlocked(trimmed);
+		auditGate({ type: "block", command: trimmed, rule: verdict.rule });
+		return {
+			block: true,
+			reason: gateBlockReason(`this command matches a known-destructive pattern (${verdict.rule})`, "rule", repeat),
+		};
+	}
+	if (verdict.kind === "safe") {
+		blockedOnce.delete(trimmed);
+		return undefined;
+	}
+	const read = await layaRead(
+		`${GATE_STATE_PREFIX}cwd: ${cwd}\n\n${trimmed.slice(0, 1800)}`,
+		"destructive",
+		GATE_INSTRUCTIONS,
+	);
+	if (!read) return undefined;
+	auditRead("gate", read.noul);
+	if (read.noul < layaGateThreshold()) {
+		blockedOnce.delete(trimmed);
+		return undefined;
+	}
+	const repeat = blockedOnce.has(trimmed);
+	rememberBlocked(trimmed);
+	auditGate({ type: "block", command: trimmed, p: read.noul });
+	return {
+		block: true,
+		reason: gateBlockReason(`laya scores this command P=${read.noul.toFixed(2)} as irreversibly destructive`, "score", repeat),
+	};
+}
+
 export default function humminLaya(pi: ExtensionAPI): void {
 	registerChildDispatchReviewTool(pi);
 	pi.registerTool({
@@ -652,128 +800,14 @@ export default function humminLaya(pi: ExtensionAPI): void {
 		});
 	}
 
-	// Bash tripwire: deterministic classifiers first (known-destructive git
-	// and filesystem discards block; purely additive writes pass), then laya
-	// scores the gray zone and blocks it once when it scores P >= 0.7 as
-	// irreversibly destructive. The block reason makes the model confirm with
-	// the user or verify backups; re-running with the confirm marker documents
-	// that and passes the gate.
-	//
-	// The rubric below is the gate's actual quality: it is a decision spec, not
-	// a hint. It states the one question being decided, anchors both ends of
-	// the scale with concrete commands, gives the chain and unknown-command
-	// rules, and biases toward LOW so the gate stays a tripwire for
-	// recognizable destruction rather than a sandbox. Every false positive
-	// trains distrust of the gate; every miss is bounded by the
-	// confirm-marker step.
-	//
-	// Known constraint (measured 2026-09, laya 0.3.20): gate reads route to the
-	// english checkpoint (512-token context), so with a long command the tail
-	// of this rubric is truncated. That is acceptable and stable - the early
-	// lines carry the bias and reproduce to 4 decimals across runs - but it
-	// means rubric edits deep in the list may not change scores. Do not switch
-	// gate reads to the multilingual checkpoint: with the full rubric visible
-	// it saturates everything to P 0.87-0.96 and cannot discriminate. The
-	// deterministic classifiers above, not this prompt, carry the precision.
-	const GATE_STATE_PREFIX = "A coding agent is about to run this bash command in the user's project directory:\n\n";
-	const GATE_INSTRUCTIONS = [
-		"Decide exactly one question: would running this command as-is destroy work that cannot be recovered? The noul value is P(that is true).",
-		"",
-		"This is a safety gate: P >= 0.75 blocks the command and interrupts the user. A false HIGH annoys the user and erodes trust in the gate; a missed true HIGH costs work but is bounded because the block reason demands confirmation. When uncertain, lean LOW.",
-		"",
-		"Score HIGH (>= 0.75) only for irreversibly destroying state that is NOT committed, backed up, or regenerable:",
-		"- Deleting or overwriting the only copy of unique user/project data: rm -rf on source files or on a directory holding uncommitted work, mv over the only copy, truncate, dd to a file",
-		"- Discarding git state that is not committed or pushed: git reset --hard, git checkout -- / restore of paths, git clean -f, git rebase, filter-repo/filter-branch, git push --force / -f, deleting a branch or stash holding unmerged work (git branch -D, git stash drop, git stash clear)",
-		"- Dropping data stores: DROP DATABASE, DROP TABLE, redis FLUSHALL, rm of a database or data file. These are always HIGH.",
-		"- chmod/chown -R on system roots, mkfs, writing to raw disk devices, killing processes in a way that loses their work",
-		"",
-		"Score LOW (<= 0.25) for everything else, explicitly including:",
-		"- All reads: cat/ls/grep/find, git log/diff/show/status, gh api or gh pr view, curl GET. Pipes into head/tail/grep/sort only filter output.",
-		"- Git commands that only ADD history and discard nothing: git add, git commit, git tag, git checkout -b, git switch -c, creating a branch, plain git push of a new or fast-forward ref (nothing local is lost)",
-		"- cp, rsync, or ln installing project files into a config, extension, or install location: the source stays in the repo, so the overwritten target is a replaceable copy - always LOW",
-		"- rm -rf of a build, dist, node_modules, coverage, cache, or output directory: those are regenerated by tooling - always LOW",
-		"- Running build, test, lint, or check scripts (npm run ..., node --test, tsc, pytest, make): they write only regenerable build outputs and logs",
-		"- Writes to /tmp and cache dirs; mkdir, touch, package manager installs, regenerated artifacts like lockfiles",
-		"",
-		"Rules:",
-		"- Chain rule: for commands joined with &&, ||, ;, or |, the score is the WORST single segment, no averaging. A chain is not destructive because one path looks unfamiliar.",
-		"- Recoverability tie-breaker: if the target looks committed, pushed, backed up, or regenerable from source, destruction is recoverable - score LOW.",
-		"- Unknown-command rule: if you cannot tell what a command does, score LOW (<= 0.25). This gate fails open by design; it is a tripwire for recognizable destruction, not a sandbox.",
-		"- Do not score based on how long or how busy the command looks. Judge consequences, not appearance.",
-	].join("\n");
-
 	if (process.env.HUMMIN_LAYA_GATE !== "off") {
-		const blockedOnce = new Set<string>();
 		pi.on("tool_call", async (event) => {
 			if (event.toolName !== "bash") return undefined;
 			const command = (event.input as { command?: unknown }).command;
 			if (typeof command !== "string") return undefined;
-			const trimmed = command.trim();
-			if (!trimmed || trimmed.includes(GATE_CONFIRM_MARKER)) {
-				const bare = trimmed.replace(GATE_CONFIRM_MARKER, "").trim();
-				if (trimmed.includes(GATE_CONFIRM_MARKER) && bare) {
-					auditGate({ type: "confirmed", command: bare, p: lastBlockScore(bare) });
-				}
-				blockedOnce.delete(bare);
-				return undefined;
-			}
-			const segments = splitSegments(trimmed);
-			if (segments.length > 0 && segments.every((s) => READ_ONLY_BASH.test(s))) return undefined;
-			// Deterministic verdicts first: canonical destructive commands block
-			// without a laya read; fully additive commands pass without one. Only
-			// the gray zone pays the laya latency. Settings extras
-			// (layaGate.extraSafe / layaGate.extraDestructive regex strings) are
-			// re-read per command so /settings edits apply without a restart.
-			let extra: ExtraGatePatterns = { safe: [], destructive: [] };
-			try {
-				extra = SettingsManager.create(process.cwd()).getLayaGateExtraPatterns();
-			} catch {
-				// unreadable settings: built-in lists only
-			}
-			let verdict = gateVerdict(segments, extra);
-			// splitSegments strips redirects, so a write redirect hides from the
-			// segment classifiers: `echo x > important.txt` looks read-only.
-			// Downgrade safe verdicts to review so laya sees the redirect.
-			if (verdict.kind === "safe" && hasWriteRedirect(trimmed)) verdict = { kind: "review" };
-			if (verdict.kind === "destructive") {
-				const repeat = blockedOnce.has(trimmed);
-				blockedOnce.add(trimmed);
-				auditGate({ type: "block", command: trimmed, rule: verdict.rule });
-				return {
-					block: true,
-					reason: `[laya gate] this command matches a known-destructive pattern (${verdict.rule}). Do not simply retry it. Either (1) confirm with the user that the target is disposable, or (2) verify it is backed up or reproducible. Once confirmed, re-run the same command with '${GATE_CONFIRM_MARKER}' appended so the gate lets it through.${
-						repeat
-							? "\n\nThis exact command was already blocked once. Do NOT retry with variations. Use the ask_user tool to ask the user now, quoting this command and the rule."
-							: ""
-					}`,
-				};
-			}
-			if (verdict.kind === "safe") {
-				blockedOnce.delete(trimmed);
-				return undefined;
-			}
-			const read = await layaNoul(
-				`${GATE_STATE_PREFIX}cwd: ${process.cwd()}\n\n${trimmed.slice(0, 1800)}`,
-				"destructive",
-				GATE_INSTRUCTIONS,
-			);
-			if (!read) return undefined;
-			auditRead("gate", read.noul);
-			if (read.noul < layaGateThreshold()) {
-				blockedOnce.delete(trimmed);
-				return undefined;
-			}
-			const repeat = blockedOnce.has(trimmed);
-			blockedOnce.add(trimmed);
-			auditGate({ type: "block", command: trimmed, p: read.noul });
-			return {
-				block: true,
-				reason: `[laya gate] laya scores this command P=${read.noul.toFixed(2)} as irreversibly destructive. Do not simply retry it. Either (1) confirm with the user that the target is disposable, or (2) verify it is backed up or reproducible. Once confirmed, re-run the same command with '${GATE_CONFIRM_MARKER}' appended so the gate lets it through.${
-					repeat
-						? "\n\nThis exact command was already blocked once. Do NOT retry with variations. Use the ask_user tool to ask the user now, quoting this command and the score."
-						: ""
-				}`,
-			};
+			const decision = await layaGateCheck(command);
+			if (decision?.block) return { block: true, reason: decision.reason };
+			return undefined;
 		});
 	}
 

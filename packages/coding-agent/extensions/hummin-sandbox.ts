@@ -19,7 +19,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { access as fsAccess, constants as fsConstants, mkdtemp, open as fsOpen, readFile, rm, writeFile } from "node:fs/promises";
+import { access as fsAccess, constants as fsConstants, mkdtemp, open as fsOpen, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, platform as osPlatform, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -31,6 +31,7 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { SANDBOX_WRAP_KEY, type SandboxWrapFn } from "./lib/shell-gate.ts";
 
 // ---------------------------------------------------------------------------
 // Pure helpers (unit-tested in test/sandbox-wrap.test.ts)
@@ -335,6 +336,14 @@ function reconstructOverride(ctx: ExtensionContext): SandboxMode | undefined {
 	return override;
 }
 
+/** Atomic settings write: unique tmp file in the same dir, then rename, so a
+ * crash or a concurrent writer cannot leave a half-written settings.json. */
+async function writeSettingsAtomic(path: string, parsed: Record<string, unknown>): Promise<void> {
+	const temp = `${path}.tmp-${process.pid}`;
+	await writeFile(temp, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
+	await rename(temp, path);
+}
+
 /** Persist the sandbox mode into the global settings file (additive edit). */
 async function persistGlobalMode(mode: SandboxMode): Promise<void> {
 	const path = join(getAgentDir(), "settings.json");
@@ -347,7 +356,7 @@ async function persistGlobalMode(mode: SandboxMode): Promise<void> {
 	const sandbox = (typeof parsed.sandbox === "object" && parsed.sandbox !== null ? parsed.sandbox : {}) as Record<string, unknown>;
 	sandbox.mode = mode;
 	parsed.sandbox = sandbox;
-	await writeFile(path, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
+	await writeSettingsAtomic(path, parsed);
 }
 
 let envOverrideSetByUs = false;
@@ -394,6 +403,48 @@ export default function humminSandbox(pi: ExtensionAPI): void {
 	};
 
 	let notifiedFallback = false;
+
+	type SandboxPlan = { networkDeny: boolean; argv: (shellPath: string, command: string) => string[] };
+	// One profile per (mechanism, cwd, network policy) per session, not per
+	// command: the seatbelt path used to mkdtemp a fresh profile directory for
+	// every sandboxed exec and never clean it up. The directory is removed at
+	// session shutdown.
+	let cachedPlan: { key: string; plan: SandboxPlan; dir: string } | undefined;
+	const activeConfig = async (): Promise<SandboxPlan | undefined> => {
+		if (activeMode() !== "workspace") return undefined;
+		const support = await sandboxSupport();
+		if (!support) return undefined;
+		const cwd = process.cwd();
+		const tmpDir = tmpdir();
+		const networkDeny = configNow().network === "deny";
+		const key = JSON.stringify([support, cwd, tmpDir, networkDeny]);
+		if (cachedPlan?.key === key) return cachedPlan.plan;
+		if (support === "seatbelt") {
+			const dir = await mkdtemp(join(tmpDir, "hummin-sandbox-"));
+			const profilePath = join(dir, "exec.sb");
+			const handle = await fsOpen(profilePath, "wx", 0o600);
+			await handle.writeFile(buildSeatbeltProfile({ home, cwd, tmpDir, networkDeny }));
+			await handle.close();
+			cachedPlan = {
+				key,
+				dir,
+				plan: {
+					networkDeny,
+					argv: (shellPath, command) => ["/usr/bin/sandbox-exec", "-f", profilePath, shellPath, "-c", command],
+				},
+			};
+			return cachedPlan.plan;
+		}
+		cachedPlan = {
+			key,
+			dir: "",
+			plan: {
+				networkDeny,
+				argv: (shellPath, command) => buildBwrapArgv({ cwd, tmpDir, networkDeny, shellPath, command }),
+			},
+		};
+		return cachedPlan.plan;
+	};
 	const ops = sandboxOperations({
 		shellPath: () => getShellConfig(settings.getShellPath()).shell,
 		fallback: () => configNow().fallback,
@@ -403,29 +454,33 @@ export default function humminSandbox(pi: ExtensionAPI): void {
 				notifiedFallback = true;
 			}
 		},
-		activeConfig: async () => {
-			if (activeMode() !== "workspace") return undefined;
-			const support = await sandboxSupport();
-			if (!support) return undefined;
-			const cwd = process.cwd();
-			const tmpDir = tmpdir();
-			const networkDeny = configNow().network === "deny";
-			if (support === "seatbelt") {
-				const dir = await mkdtemp(join(tmpDir, "hummin-sandbox-"));
-				const profilePath = join(dir, "exec.sb");
-				const handle = await fsOpen(profilePath, "wx", 0o600);
-				await handle.writeFile(buildSeatbeltProfile({ home, cwd, tmpDir, networkDeny }));
-				await handle.close();
-				return {
-					networkDeny,
-					argv: (shellPath, command) => ["/usr/bin/sandbox-exec", "-f", profilePath, shellPath, "-c", command],
-				};
-			}
+		activeConfig,
+	});
+
+	// Bridge for background shells (exec/monitor) via lib/shell-gate.ts: run
+	// them under the same profile the bash tool uses, or block when workspace
+	// mode is on but no mechanism is available and fallback is "block".
+	const sandboxWrap: SandboxWrapFn = async (shellPath, command) => {
+		if (activeMode() !== "workspace") return { status: "unwrapped" };
+		const plan = await activeConfig();
+		if (!plan) {
+			if (configNow().fallback === "allow") return { status: "unwrapped" };
 			return {
-				networkDeny,
-				argv: (shellPath, command) => buildBwrapArgv({ cwd, tmpDir, networkDeny, shellPath, command }),
+				status: "blocked",
+				reason:
+					`[Sandbox] workspace mode is on but no sandbox mechanism is available on ${osPlatform()}. ` +
+					`Set sandbox.fallback to "allow" or sandbox.mode to "off" (/sandbox).`,
 			};
-		},
+		}
+		const argv = plan.argv(shellPath, command);
+		return { status: "wrapped", command: argv[0]!, args: argv.slice(1) };
+	};
+	(globalThis as Record<string, unknown>)[SANDBOX_WRAP_KEY] = sandboxWrap;
+
+	pi.on("session_shutdown", async () => {
+		const dir = cachedPlan?.dir;
+		cachedPlan = undefined;
+		if (dir) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
 	});
 
 	const baseBash = createBashToolDefinition(process.cwd(), { operations: ops });
@@ -530,7 +585,7 @@ export default function humminSandbox(pi: ExtensionAPI): void {
 				const sandbox = (typeof parsed.sandbox === "object" && parsed.sandbox !== null ? parsed.sandbox : {}) as Record<string, unknown>;
 				sandbox.network = network;
 				parsed.sandbox = sandbox;
-				await writeFile(path, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
+				await writeSettingsAtomic(path, parsed);
 				ctx.ui.notify(`[Sandbox] network ${network === "deny" ? "denied" : "allowed"} (persisted).`, "info");
 			} catch (error) {
 				ctx.ui.notify(`[Sandbox] could not persist network policy (${error instanceof Error ? error.message : String(error)})`, "warning");

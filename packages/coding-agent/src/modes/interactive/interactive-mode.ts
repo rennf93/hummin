@@ -127,6 +127,12 @@ import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
+import {
+	parseNotificationChannel,
+	parseNotificationWhen,
+	sendTerminalNotification,
+	setNotificationGate,
+} from "../../core/terminal-notifications.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
@@ -719,6 +725,12 @@ export class InteractiveMode {
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
+		// One gate for every notification call site (core agent_end + hummin-ask):
+		// applies the notificationsWhen condition against the live terminal focus.
+		setNotificationGate(() => {
+			if (this.settingsManager.getTerminalNotificationsWhen() === "always") return true;
+			return this.ui.terminal.isFocused() !== true;
+		});
 		this.headerContainer = new Container();
 		this.loadedResourcesContainer = new Container();
 		this.chatContainer = new Container();
@@ -3768,9 +3780,13 @@ export class InteractiveMode {
 				break;
 			}
 
-			case "agent_end":
+			case "agent_end": {
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(false);
+				}
+				const notifyChannel = this.settingsManager.getTerminalNotifications();
+				if (notifyChannel !== "off") {
+					sendTerminalNotification(notifyChannel, `${APP_NAME}: turn complete`);
 				}
 				this.clearStatusIndicator("working");
 				if (this.streamingComponent) {
@@ -3782,6 +3798,7 @@ export class InteractiveMode {
 
 				this.ui.requestRender();
 				break;
+			}
 
 			case "agent_settled":
 				await this.checkShutdownRequested();
@@ -5207,6 +5224,8 @@ export class InteractiveMode {
 					quietStartup: this.settingsManager.getQuietStartup(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
 					showTerminalProgress: this.settingsManager.getShowTerminalProgress(),
+					terminalNotifications: this.settingsManager.getTerminalNotifications(),
+					terminalNotificationsWhen: this.settingsManager.getTerminalNotificationsWhen(),
 					tuiMode: this.ui.mode,
 					fullscreenExitOutput: this.settingsManager.getFullscreenExitOutput(),
 					fullscreenScrollbar: this.settingsManager.getFullscreenScrollbar(),
@@ -5408,6 +5427,25 @@ export class InteractiveMode {
 					},
 					onShowTerminalProgressChange: (enabled) => {
 						this.settingsManager.setShowTerminalProgress(enabled);
+					},
+					onTerminalNotificationsChange: (channel) => {
+						const parsed = parseNotificationChannel(channel);
+						if (!parsed) {
+							selector?.updateValue("terminal-notifications", this.settingsManager.getTerminalNotifications());
+							return;
+						}
+						this.settingsManager.setTerminalNotifications(parsed);
+					},
+					onTerminalNotificationsWhenChange: (when) => {
+						const parsed = parseNotificationWhen(when);
+						if (!parsed) {
+							selector?.updateValue(
+								"terminal-notifications-when",
+								this.settingsManager.getTerminalNotificationsWhen(),
+							);
+							return;
+						}
+						this.settingsManager.setTerminalNotificationsWhen(parsed);
 					},
 					onTuiModeChange: (mode) => {
 						if (!this.switchTuiMode(mode)) {

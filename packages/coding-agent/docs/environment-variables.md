@@ -149,7 +149,24 @@ These fork-specific variables are read by hummin and its bundled extensions. Whe
 | `HUMMIN_MCP` | `0` disables the MCP extension |
 | `HUMMIN_MCP_INIT_TIMEOUT_MS` | Overrides the MCP `initialize` handshake timeout (default 30000). Raise it for servers that boot a runtime (venv/uv) before answering; invalid values fall back to the default |
 | `HUMMIN_MCP_REQUEST_TIMEOUT_MS` | Overrides the MCP per-request (`tools/list`, `tools/call`) timeout (default 30000). Raise it for servers whose tools legitimately run long; invalid values fall back to the default |
+| `HUMMIN_LSP` | `0` disables the LSP extension |
 | `HUMMIN_JITI_CACHE` | `0` disables the extension loader's jiti transform cache |
+| `HUMMIN_NOTIFY` | Notification channel: `off`, `bell`, `osc9`, `desktop`, or `all` (default `bell`, overrides `terminal.notifications`) |
+| `HUMMIN_NOTIFY_WHEN` | When notifications fire: `always`, or `unfocused` (default, overrides `terminal.notificationsWhen`) |
+
+### Laya System-1 layer
+
+The laya service (default `http://127.0.0.1:9989/v1/systemone`) provides calibrated second opinions for four automatic hooks and the `laya_decide` tool. Every hook fails open: an unreachable or slow laya never blocks the turn, the command, or the lesson. Every read is audited to `<agentDir>/laya-gate.log` and summarized by `/friction`.
+
+| Variable | Description |
+|----------|-------------|
+| `HUMMIN_LAYA_URL` | Overrides the laya service endpoint (default `http://127.0.0.1:9989/v1/systemone`); the service authenticates with `COLI_API_KEY` (the shared fleet key) |
+| `HUMMIN_LAYA_GATE` | `off` disables the bash destructive-command gate everywhere (the bash tool hook and background exec/monitor shells) |
+| `HUMMIN_LAYA_GATE_THRESHOLD` | Gray-zone block threshold on P(destructive), `0` to `1`; default `0.75`, overrides `layaGateThreshold` |
+| `HUMMIN_LAYA_STEER` | `off` disables the per-turn destructive-intent steer |
+| `HUMMIN_LAYA_STEER_THRESHOLD` | Destructive-intent steer threshold, `0` to `1`; default `0.7`, overrides `layaSteerThreshold` |
+| `HUMMIN_LAYA_TRIAGE` | `off` disables the test-failure triage advisory |
+| `HUMMIN_LAYA_INTAKE` | `off` skips the distill worker's per-lesson intake score (lessons are stored unconditionally) |
 
 ### Guardrails tool-call budget
 
@@ -160,7 +177,7 @@ Disabled by default; opt in by setting `HUMMIN_BUDGET_TOOL_CALL_HALT_AT`.
 | `HUMMIN_BUDGET_TOOL_CALL_HALT_AT` | Tool calls per turn before the guardrail halts the run (`0` = off, the default) |
 | `HUMMIN_BUDGET_TOOL_CALL_WARN_AT` | Warn threshold (`0` = off) |
 | `HUMMIN_BUDGET_LOOP_THRESHOLD` | Identical-call count inside the window that counts as a loop (default `3`) |
-| `HUMMIN_BUDGET_LOOP_WINDOW` | Loop-detection window in seconds (default `10`) |
+| `HUMMIN_BUDGET_LOOP_WINDOW` | Loop-detection window in tool calls (default `10`) |
 | `HUMMIN_BUDGET_PER_TOOL_WINDOW_MS` | Rolling per-tool window in milliseconds (default `60000`) |
 | `HUMMIN_BUDGET_PER_TOOL_RETRY_LIMIT` | Per-tool retry limit inside the window (default `8`) |
 | `HUMMIN_BUDGET_EXEMPT_VERBS` | Comma-separated tool verbs exempt from budget checks (default `read,grep,find,ls`) |
@@ -170,6 +187,9 @@ Disabled by default; opt in by setting `HUMMIN_BUDGET_TOOL_CALL_HALT_AT`.
 
 | Variable | Description |
 |----------|-------------|
+| `HUMMIN_BIN` | Overrides the hummin binary child sessions spawn (`task`, cron, query expansion): full command line, argv split on spaces; default replays `process.execPath` + the running CLI entry |
+| `HUMMIN_CRON_BIN` | Overrides the binary cron entries spawn (default follows `HUMMIN_BIN` semantics via the same CLI resolution) |
+| `HUMMIN_TELEMETRY_DIR` | Overrides the telemetry directory (default `<agentDir>/telemetry`) |
 | `HUMMIN_OFFLINE` | `1` disables startup network operations (alias of `PI_OFFLINE`, same as `--offline`) |
 | `HUMMIN_ALLOW_UPSTREAM_UPDATE` | `1` allows `hummin update self` to replace this fork with upstream pi; blocked by default (update with `git pull` in your clone instead) |
 | `HUMMIN_VIM` | TUI editor | `1` selects vim modal editing (same as `editorMode: "vim"`) |

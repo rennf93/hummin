@@ -51,28 +51,29 @@ GLM-5.3, GLM-5.3-Flash and GLM-5.3-highspeed ship in the `zai` provider catalog 
 - **Local fleet**: one provider across all your OpenAI-compatible servers (colibri, llama.cpp, Ollama, ...), health-probed and startable from the model picker, with per-origin serialization and real context windows.
 - **Integrations**: MCP client (`mcpServers`), TypeScript LSP tools (diagnostics/definition/references/hover), declarative `hooks.json`, `ask_user` questions, DuckDuckGo search and SSRF-guarded fetch.
 - **Safety**: bash sandboxing (macOS seatbelt / Linux bubblewrap) with `[Sandbox]` in-band blocks, destructive-command advisories (`/bashguard`), loop + budget guardrails, project trust, file checkpoints with `/rewind`.
-- **Memory**: session distillation into lessons plus a self-curating Obsidian-compatible vault with BM25-ranked recall injected into every session.
+- **Memory**: session distillation into lessons plus a self-curating Obsidian-compatible vault, with hybrid BM25 + embeddings recall injected into every session and searchable on demand.
 - **Visibility**: `/context` token breakdown with cache-hit ratio, `/cost` with local-served vs cloud split, `/status` + `/doctor` dashboards, two-row statusline (user-definable segments).
 - **UX**: vim editing mode, grouped command palette, custom statusline segments, fullscreen transcript search, themeable, remote browser control over loopback.
 
 ## Local inference (colibri, llama.cpp, ...)
 
-The bundled `hummin-colibri` extension registers ONE provider (`colibri`) that exposes every model found on your local OpenAI-compatible servers. The engine behind each server does not matter - colibri (MoE streaming), llama.cpp, Ollama all work; the server's own `/v1/models` is the source of truth for model ids, and the first server in the list that serves a model wins (duplicates dedupe into one entry with fallback ordering).
+The bundled `hummin-local` extension turns every configured OpenAI-compatible server into a fleet citizen: one provider per engine+host (so the picker badge says WHICH engine and WHICH host serves a model), the server's own `/v1/models` as the source of truth for model ids, and no guessed placeholder ids for servers that are down. The engine behind each server does not matter - colibri (MoE streaming), llama.cpp, Ollama all work. Configure the fleet in settings (`fleet.servers`, what `hummin init` writes) or via env; fleet order is preference order.
 
 **Full documentation: [rennf93.github.io/hummin](https://rennf93.github.io/hummin/) - engines, model choices, downloading, server setup on Linux/Mac, fleet configuration and troubleshooting.**
 
 ```bash
-export HUMMIN_COLIBRI_INSTANCES="http://nas:9996,http://nas:9998,http://mac:9998"   # order = preference
-export COLI_API_KEY=...                    # only if the servers enforce a key
+export HUMMIN_INSTANCES="http://nas:9996,http://nas:9998,http://mac:9998"   # order = preference
+export HUMMIN_API_KEY=...                  # only if the servers enforce a key (COLI_API_KEY still honored)
 hummin                                     # extensions autoload from ~/.hummin/agent/extensions/
 ```
 
 Behavior:
 
-- One model namespace across all servers; unreachable servers contribute no models until a session restart (no guessed placeholder ids).
-- One generation at a time per server is handled, not thrown at you: requests are serialized per server and the documented busy response (429 + `x-colibri-queue-wait-ms`) is retried with capped backoff.
-- Context windows are read from each server's `/props` when available (llama.cpp), falling back to `HUMMIN_COLIBRI_CTX` (default 16384).
-- Reasoning: qwen-family models map hummin's thinking level to `chat_template_kwargs.enable_thinking` - on by default, `/thinking off` disables. Other model families register without thinking controls.
+- Fleet failover: a request that cannot start (server down, connection died before any content) or exhausts its busy-retry budget moves to the next fleet endpoint serving the same model, in fleet order. Each hop announces itself in the UI.
+- One generation at a time per server endpoint: requests are serialized per endpoint and busy responses (429/overloaded) are retried with capped backoff before failover.
+- Context windows come from each server's `/props` when available (llama.cpp), from persisted fleet health (7 days) otherwise, and from `HUMMIN_CTX` (default 16384) as the last fallback. Downed servers keep their real picker entries from the persisted catalog instead of falling back to guesses.
+- Reasoning: qwen-family and nemotron models map hummin's thinking level to `chat_template_kwargs.enable_thinking` - on by default, `/thinking off` disables. Other model families register without thinking controls.
+- `/fleet` probes, starts, stops, and restarts servers; the `/model` picker can start an offline server directly.
 
 ### Developing without a server
 
@@ -100,9 +101,10 @@ export HUMMIN_MEMORY_MODE=vault           # lesson (default) or vault
 export HUMMIN_MEMORY_VAULT_DIR=~/hummin-vault
 ```
 
-- **lesson mode**: after each session, one distillation call summarizes it into a Problem/Approach/Gotcha note (or nothing, if there is no lesson) under `~/.hummin/agent/memory/`.
-- **vault mode**: lessons queue in a git-backed, Obsidian-compatible vault; `/vault-fold` runs an agent pass that folds them into an entity graph (`entities/<type>/<slug>.md`, wikilinks, dated facts) following the vault's own AGENTS.md conventions contract; `/vault-recall <query>` searches it.
-- Distillation provider defaults to cloud (`zai`); override with `HUMMIN_MEMORY_PROVIDER` / `HUMMIN_MEMORY_MODEL_ID`.
+- **lesson mode**: after each session, a distillation pass extracts up to three distinct Problem/Approach/Gotcha lessons (or nothing, when there is no durable lesson; a laya intake score gates out session-specific noise) under `~/.hummin/agent/memory/`. Recall is hybrid: BM25 blended with embedding similarity when an embeddings endpoint resolves, relevance-floored, and injected into sessions as a delta briefing (a lesson is never briefed twice). The `vault` tool searches lessons and entities on demand.
+- **vault mode**: lessons queue in a git-backed, Obsidian-compatible vault; folds run as background agent passes that merge them into an entity graph (`entities/<type>/<slug>.md`, wikilinks, dated facts) following the vault's own AGENTS.md conventions contract, with automatic folding at a threshold and a post-fold validation pass (clean worktree, inbox drained, every moved lesson cited). `/vault-canvas` renders the graph for Obsidian; `/vault-recall <query>` searches it.
+- Distillation follows the session's selected model; the cloud fallback defaults to `zai` and is overridden with `HUMMIN_MEMORY_PROVIDER` / `HUMMIN_MEMORY_MODEL_ID`.
+- Child sessions (`task`, cron) inherit a bounded set of relevant lessons in their brief and get read-only vault search (`HUMMIN_MEMORY_TOOLS=1`), never the write path.
 
 ## Bench
 
@@ -125,16 +127,23 @@ hummin init --yes --memory vault --vault-dir ~/hummin-vault \
   --instances "http://nas:9996,http://nas:9998,http://mac:9998"   # scriptable
 ```
 
-Env vars (`HUMMIN_COLIBRI_INSTANCES`, `HUMMIN_MEMORY`, `HUMMIN_MEMORY_MODE`, `HUMMIN_MEMORY_VAULT_DIR`) still override stored settings when set.
+Env vars (`HUMMIN_INSTANCES` (pre-rename `HUMMIN_COLIBRI_INSTANCES` still works), `HUMMIN_MEMORY`, `HUMMIN_MEMORY_MODE`, `HUMMIN_MEMORY_VAULT_DIR`) still override stored settings when set.
 
 Then copy [SYSTEM.example.md](https://github.com/rennf93/hummin/blob/main/SYSTEM.example.md) to `~/.hummin/agent/SYSTEM.md` for the tuned operating rules, and `/model` to pick a default.
 
 ## Differences from upstream pi
 
-- Rebranded binary/config (`hummin`, `~/.hummin/agent`) via pi's official `piConfig` fork support.
-- GLM-first provider curation and defaults (this README).
-- `hummin-colibri` extension + mock server.
-- One upstream build fix (`FinishReason.TOO_MANY_TOOL_CALLS` handling) pending upstream discussion.
+The fork is a thin overlay on upstream: zero deletions, `@earendil-works/*` package names kept for cheap upstream merges. On top of the rebrand, it ships 27 bundled extensions (upstream ships none; its `examples/extensions/` are reference code) and a set of core changes. What that adds, by area:
+
+- **Memory and vault** (`hummin-memory`, `lib/memory-workers`): session distillation into lessons with a laya-scored intake gate, hybrid BM25 + embeddings recall injected per prompt, usage-aware decay, a git-backed Obsidian vault with validated auto-folding, and lesson inheritance for child sessions. Upstream has no memory feature.
+- **Laya System-1 layer** (`hummin-laya`, `lib/child-dispatch-review`, `lib/model-rightsize`): a local calibrated classifier wired into four automatic hooks (per-turn destructive-intent steer, a bash gate with deterministic classifiers plus a scored gray zone and a confirm-marker escape, test-failure triage, memory intake scoring), the `laya_decide` tool, and model right-sizing for child dispatches with reviewable holds. No upstream equivalent.
+- **Local fleet** (`hummin-local`, `hummin-fleet`, `lib/fleet-actions`): per-engine+host providers with fleet failover chains, per-endpoint serialization, busy backoff, `/props`-measured context windows, 7-day fleet-health persistence, and server controls from `/fleet` and the model picker. Plus an EnvHttpProxy-aware HTTP dispatcher tuned for slow local prefills.
+- **Agent teamwork** (`hummin-agents`, `hummin-team`, `hummin-cron`, `hummin-subagents`, `hummin-monitor`): cross-terminal messaging over a Unix-socket broker with offline inboxes, a shared task board, scheduled detached runs, bounded subagents with background mode and session-switch adoption, and event-driven background monitors plus one-shot execs with completion delivery.
+- **Safety depth** (`hummin-sandbox`, `hummin-bashguard`, `hummin-guardrails`, `hummin-plan`, `hummin-session`, `hummin-laya`): workspace sandboxing (seatbelt/bubblewrap) applied to every shell path, advisory and gate layers over background shells too, loop/circuit/budget guardrails with friction steers and a verify-nudge, plan mode, and file checkpoints with `/rewind`.
+- **Observability** (`hummin-telemetry`, `hummin-friction`, `hummin-usage`, `hummin-stats`, `lib/friction`): a telemetry sink feeding `/stats`, a friction log feeding `/friction` with laya-gate calibration, `/context` with cache-hit ratio first-class, `/cost` with a local-vs-cloud split.
+- **Integrations**: MCP client with offline dimming (`hummin-mcp`), TypeScript LSP tools with edit-time diagnostics push (`hummin-lsp`), `hooks.json` (`hummin-hooks`), path-scoped rules (`hummin-rules`), `ask_user` (`hummin-ask`), todos (`hummin-todos`), `/init` + `/doctor` (`hummin-project`), remote browser control (`hummin-remote`).
+
+Core changes beyond extensions: GLM-first provider curation and defaults, `hummin-dark` theme, read continuation paging, indentation-insensitive edit matching, write diff feedback, `--no-json-deltas` for JSON-mode consumers, and a per-section system-prompt budget report in `/status`. All are documented in the per-package CHANGELOGs.
 
 Everything else is upstream pi: sessions, extensions API, themes, tools, RPC/JSON modes. Read upstream's docs under [packages/coding-agent/docs](packages/coding-agent/docs).
 

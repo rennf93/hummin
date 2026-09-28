@@ -2,12 +2,19 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { enqueueDistill, enqueueFold, retryHeldDistills, triggerAutoFold } from "../extensions/hummin-memory.ts";
+import {
+	enqueueDistill,
+	enqueueFold,
+	markProcessed,
+	retryHeldDistills,
+	triggerAutoFold,
+} from "../extensions/hummin-memory.ts";
 
 const dirs: string[] = [];
 const originalMemory = process.env.HUMMIN_MEMORY_DIR;
 const originalVault = process.env.HUMMIN_MEMORY_VAULT_DIR;
 const originalPath = process.env.PATH;
+const originalBin = process.env.HUMMIN_BIN;
 
 afterEach(() => {
 	if (originalMemory === undefined) delete process.env.HUMMIN_MEMORY_DIR;
@@ -16,6 +23,8 @@ afterEach(() => {
 	else process.env.HUMMIN_MEMORY_VAULT_DIR = originalVault;
 	if (originalPath === undefined) delete process.env.PATH;
 	else process.env.PATH = originalPath;
+	if (originalBin === undefined) delete process.env.HUMMIN_BIN;
+	else process.env.HUMMIN_BIN = originalBin;
 });
 
 function tempDir(prefix: string): string {
@@ -113,12 +122,14 @@ test("retryHeldDistills re-dispatches an allowed held job once and clears the ma
 	const memory = tempDir("hummin-memory-held-allow-");
 	process.env.HUMMIN_MEMORY_DIR = memory;
 	// Mock hummin so the retried worker completes (NONE) and removes its
-	// pending file instead of leaking a child past the test.
+	// pending file instead of leaking a child past the test. HUMMIN_BIN pins
+	// the mock: the worker's job now carries a cli spec resolved from the
+	// parent's humminBinCommand(), which reads this env var first.
 	const bin = tempDir("hummin-memory-held-bin-");
 	const hummin = join(bin, "hummin");
 	writeFileSync(hummin, "#!/bin/sh\necho NONE\n");
 	chmodSync(hummin, 0o755);
-	process.env.PATH = `${bin}:${originalPath ?? ""}`;
+	process.env.HUMMIN_BIN = hummin;
 	const path = writeHeldJob(memory);
 	const allowed = context("allow");
 	const retried = await retryHeldDistills({ ...allowed, agentDir: tempDir("hummin-memory-reviews-") });
@@ -187,7 +198,7 @@ test("explicit fold and automatic fold hold before their child launches", async 
 	const argsFile = join(bin, "args");
 	writeFileSync(hummin, `#!/bin/sh\nprintf '%s\\n' "$@" > "${argsFile}"\necho spawned\n`);
 	chmodSync(hummin, 0o755);
-	process.env.PATH = `${bin}:${originalPath ?? ""}`;
+	process.env.HUMMIN_BIN = hummin;
 	expect(await triggerAutoFold(vault, "test", ctx)).toBe(false);
 	expect(held.calls()).toBe(2);
 	const approved = context("allow");
@@ -209,4 +220,64 @@ test("explicit fold and automatic fold hold before their child launches", async 
 	expect(autoApproved.prompts[0]).toBe(
 		"Fold the inbox lessons into the entity graph now, following AGENTS.md exactly.",
 	);
+});
+
+test("automatic fold delegates to enqueueFold's locked worker path", async () => {
+	const vault = tempDir("hummin-memory-auto-vault-");
+	process.env.HUMMIN_MEMORY_DIR = tempDir("hummin-memory-auto-mem-");
+	process.env.HUMMIN_MEMORY_VAULT_DIR = vault;
+	mkdirSync(join(vault, "inbox"), { recursive: true });
+	for (const name of ["lesson-a.md", "lesson-b.md", "lesson-c.md"])
+		writeFileSync(join(vault, "inbox", name), "lesson\n");
+	// Held: the fold job file is retained (no spawn), and the hold notifies
+	// through ctx.ui.notify, exactly like an explicit /vault-fold hold.
+	const held = context("block");
+	expect(await triggerAutoFold(vault, "auto-held", { ...held, agentDir: tempDir("hummin-memory-reviews-") })).toBe(
+		false,
+	);
+	expect(existsSync(join(vault, ".fold-job.json"))).toBe(true);
+	const job = JSON.parse(readFileSync(join(vault, ".fold-job.json"), "utf8"));
+	expect(job).toMatchObject({
+		mode: "fold",
+		vaultDir: vault,
+		threshold: 1,
+		force: true,
+		label: "auto-held",
+	});
+	expect(held.messages[0]).toContain("memory fold held for dispatch review review-memory-1");
+	// Approved: the worker consumes the job (removePending) and runs the fold
+	// child - the old direct `hummin -p` spawn left neither file behind.
+	const bin = tempDir("hummin-memory-auto-bin-");
+	const argsFile = join(bin, "args");
+	const autoHummin = join(bin, "hummin");
+	writeFileSync(autoHummin, `#!/bin/sh\nprintf '%s\\n' "$@" > "${argsFile}"\necho spawned\n`);
+	chmodSync(autoHummin, 0o755);
+	process.env.HUMMIN_BIN = autoHummin;
+	const approved = context("allow");
+	expect(
+		await triggerAutoFold(vault, "auto-worker", { ...approved, agentDir: tempDir("hummin-memory-reviews-") }),
+	).toBe(true);
+	for (let i = 0; i < 100 && existsSync(join(vault, ".fold-job.json")); i++)
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	expect(existsSync(join(vault, ".fold-job.json"))).toBe(false);
+	expect(readFileSync(join(vault, "fold.log"), "utf8")).toContain("spawned");
+});
+
+test("markProcessed prunes stamps older than 90 days and keeps fresh ones", () => {
+	const memory = tempDir("hummin-memory-state-");
+	process.env.HUMMIN_MEMORY_DIR = memory;
+	const old = new Date(Date.now() - 91 * 24 * 60 * 60 * 1000).toISOString();
+	const recent = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+	writeFileSync(
+		join(memory, "state.json"),
+		JSON.stringify({ processed: { "/old/a.jsonl": old, "/recent/b.jsonl": recent, "/junk/c.jsonl": "not-a-date" } }),
+	);
+	markProcessed("/new/d.jsonl");
+	const state = JSON.parse(readFileSync(join(memory, "state.json"), "utf8"));
+	expect(state.processed["/old/a.jsonl"]).toBeUndefined();
+	expect(state.processed["/junk/c.jsonl"]).toBeUndefined();
+	expect(state.processed["/recent/b.jsonl"]).toBe(recent);
+	expect(typeof state.processed["/new/d.jsonl"]).toBe("string");
+	// the atomic write leaves no tmp file behind
+	expect(existsSync(join(memory, "state.json.tmp"))).toBe(false);
 });

@@ -18,6 +18,11 @@ export interface MemoryDistillJob {
 	provider: string;
 	modelId: string;
 	thinking: string;
+	/** How the worker spawns the hummin CLI child, resolved by the parent from
+	 * the running process entry (lib/hummin-bin.ts). The worker's own argv[1]
+	 * is the worker script, so it cannot replay the entry itself; job files
+	 * written before this field existed fall back to HUMMIN_BIN, then PATH. */
+	cli?: { command: string; prefixArgs: string[] };
 	receipt?: unknown;
 	reviewId?: string;
 	dispatchReason?: string;
@@ -45,6 +50,9 @@ export interface MemoryFoldJob {
 	provider: string;
 	modelId: string;
 	thinking: string;
+	/** Same contract as MemoryDistillJob.cli: the parent-resolved CLI for the
+	 * worker's fold-child spawn. */
+	cli?: { command: string; prefixArgs: string[] };
 	receipt?: unknown;
 	reviewId?: string;
 	dispatchReason?: string;
@@ -120,7 +128,7 @@ export function decayKeepIndices(lines: string[], maxRecords: number, maxBytes: 
  * splitting it into fragments. Title/numbering before a body is dropped.
  * Exact duplicates collapse; output is capped at maxLessons. Returns [] for
  * NONE replies and for replies without any lesson shape (the worker then
- * stores the raw output, preserving the old single-lesson fallback).
+ * stores nothing, exactly like a NONE reply).
  */
 export function parseDistilledLessons(output: string, maxLessons = 3): string[] {
 	// Strip numbering, bullets, and bold markers from a lesson's first line
@@ -180,6 +188,32 @@ export function parseDistilledLessons(output: string, maxLessons = 3): string[] 
 		unique.push(lesson);
 	}
 	return unique.slice(0, maxLessons);
+}
+
+/**
+ * Pure: the argv head (binary plus any prefix args) for the worker's hummin
+ * CLI child calls. Resolution order: the parent-resolved `cli` spec from the
+ * job file (the running entry replay - the worker cannot derive it, its own
+ * argv[1] is the worker script), then the HUMMIN_BIN override split on
+ * spaces, then the bare PATH name the old worker used. Embedded verbatim into
+ * MEMORY_WORKER_SOURCE: self-contained, no outer-scope references.
+ */
+export function humminChildArgvHead(
+	cli: { command?: unknown; prefixArgs?: unknown } | undefined,
+	env: Readonly<Record<string, string | undefined>>,
+): string[] {
+	if (cli && typeof cli.command === "string" && cli.command.trim()) {
+		const prefix = Array.isArray(cli.prefixArgs)
+			? cli.prefixArgs.filter((arg): arg is string => typeof arg === "string")
+			: [];
+		return [cli.command, ...prefix];
+	}
+	const override = (env.HUMMIN_BIN ?? "").trim();
+	if (override) {
+		const parts = override.split(/\s+/).filter(Boolean);
+		if (parts[0] !== undefined) return [parts[0], ...parts.slice(1)];
+	}
+	return ["hummin"];
 }
 
 /** The fs primitives the checkpoint scan needs, injected so the scanning core
@@ -352,6 +386,10 @@ function lastCompactionSummary(path, maxSummaryChars) {
 // foldValidationFailures there).
 ${foldValidationFailures}
 
+// Hummin CLI resolution for the worker's child calls (job cli spec > HUMMIN_BIN
+// > PATH), embedded verbatim from memory-workers.ts.
+${humminChildArgvHead}
+
 const mode = process.argv[2];
 const jobPath = process.argv[3];
 if (!mode || !jobPath) process.exit(2);
@@ -508,6 +546,19 @@ function removePending() {
 	try { rmSync(job.pendingPath, { force: true }); } catch {}
 }
 
+// Mark a session processed even though nothing was stored (NONE or
+// unparseable reply), so a re-shutdown cannot re-run the model call for it.
+// Same store lock and atomic write as the storing path.
+function markSessionProcessed(memoryDir) {
+	withLock(join(memoryDir, ".locks", "store.lock"), () => {
+		const state = readState(memoryDir);
+		state.processed = state.processed || {};
+		state.processed[job.sessionFile] = new Date().toISOString();
+		atomicWrite(join(memoryDir, "state.json"), JSON.stringify(state, null, 1));
+		return true;
+	});
+}
+
 // Every laya read is audited to the shared laya-gate.log; the worker appends
 // directly and never lets a logging failure break the run.
 function auditRead(gateLog, kind, p) {
@@ -586,7 +637,8 @@ async function distill() {
 			"Session transcript (tail):",
 			job.tail || "",
 		].join("\n");
-		const result = spawnSync("hummin", ["-p", prompt, "--provider", job.provider, "--model", job.modelId, "--thinking", job.thinking || "low"], {
+		const argvHead = humminChildArgvHead(job.cli, process.env);
+		const result = spawnSync(argvHead[0], [...argvHead.slice(1), "-p", prompt, "--provider", job.provider, "--model", job.modelId, "--thinking", job.thinking || "low"], {
 			encoding: "utf8",
 			timeout: DISTILL_TIMEOUT_MS,
 			maxBuffer: CHILD_MAX_BUFFER,
@@ -594,15 +646,18 @@ async function distill() {
 		});
 		const output = String(result.stdout || "").trim();
 		if (result.error || result.status !== 0 || !output) return 1;
-		if (/^NONE$/i.test(output.split("\n").at(-1)?.trim() || "")) {
+		const parsed = parseDistilledLessons(output, MAX_LESSONS_PER_SESSION);
+		// A NONE reply and a reply without any parsable lesson shape are
+		// treated identically: nothing is stored (raw model output must never
+		// become a lesson), the session is marked processed, and the pending
+		// job is removed.
+		if (/^NONE$/i.test(output.split("\n").at(-1)?.trim() || "") || parsed.length === 0) {
+			markSessionProcessed(memoryDir);
 			removePending();
 			return 0;
 		}
-		// One reply may carry up to MAX_LESSONS_PER_SESSION lessons; a reply
-		// without any parsable lesson shape falls back to the raw output
-		// (old single-lesson behavior, so nothing distillable is lost).
-		const parsed = parseDistilledLessons(output, MAX_LESSONS_PER_SESSION);
-		const toStore = parsed.length > 0 ? parsed : [output];
+		// One reply may carry up to MAX_LESSONS_PER_SESSION lessons.
+		const toStore = parsed;
 		// Per-lesson intake gate: drop only the gated-out lessons. A null
 		// score (gate unavailable) stores that lesson - fail open per lesson.
 		const kept = [];
@@ -698,7 +753,8 @@ function entityBodies(vaultDir) {
 function runFoldChild(vaultDir, count, repair) {
 	const prompt = "Fold the inbox lessons into the entity graph now, following AGENTS.md exactly. Inbox has " + count + " lesson(s)."
 		+ (repair ? " This is a repair pass: the previous fold did not validate. Complete the fold per AGENTS.md and make sure everything is committed." : "");
-	return spawnSync("hummin", ["-p", prompt, "--provider", job.provider, "--model", job.modelId, "--thinking", job.thinking || "low"], {
+	const argvHead = humminChildArgvHead(job.cli, process.env);
+	return spawnSync(argvHead[0], [...argvHead.slice(1), "-p", prompt, "--provider", job.provider, "--model", job.modelId, "--thinking", job.thinking || "low"], {
 		cwd: vaultDir,
 		encoding: "utf8",
 		timeout: FOLD_TIMEOUT_MS,

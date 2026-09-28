@@ -331,6 +331,26 @@ export {
 export { createSyntheticSourceInfo } from "./core/source-info.ts";
 // System prompt sections (per-section token accounting for extensions)
 export { estimateSystemPromptSectionTokens } from "./core/system-prompt.ts";
+export {
+	DEFAULT_NOTIFICATION_CHANNEL,
+	DEFAULT_NOTIFICATION_WHEN,
+	detectDesktopBackend,
+	NOTIFICATION_CHANNELS,
+	NOTIFICATION_WHEN_VALUES,
+	type NotificationSentEvent,
+	type NotificationWriter,
+	onNotificationSent,
+	parseNotificationChannel,
+	parseNotificationWhen,
+	resetDesktopBackendCache,
+	resolveNotificationChannel,
+	resolveNotificationWhen,
+	sanitizeNotificationMessage,
+	sendTerminalNotification,
+	setNotificationGate,
+	type TerminalNotificationChannel,
+	type TerminalNotificationWhen,
+} from "./core/terminal-notifications.ts";
 export { type EditDiffResult, generateDiffString, generateUnifiedPatch } from "./core/tools/edit-diff.ts";
 // Tools
 export {

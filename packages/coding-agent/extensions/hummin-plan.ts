@@ -3,8 +3,9 @@
  *
  * /plan toggles the mode; the state is appended to the session (branch-safe,
  * reconstructed on load). While plan mode is ON, the tool_call hook blocks
- * write/edit and bash wholesale - reads, grep, find, ls stay available - with
- * in-band remediation text (guardrails pattern). Exit asks for confirmation.
+ * write/edit and every shell path (bash, exec, monitor, task, cron) - reads,
+ * grep, find, ls stay available - with in-band remediation text (guardrails
+ * pattern). Exit asks for confirmation.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -26,7 +27,11 @@ function reconstructState(ctx: ExtensionContext): boolean {
 	return enabled;
 }
 
-const BLOCKED_TOOLS = new Set(["edit", "write", "bash", "powershell", "task", "monitor"]);
+/** Tools plan mode blocks wholesale. exec and cron_create are included even
+ * though they spawn background shells rather than editing directly: both can
+ * write files, and a read-only mode that a background shell can bypass is not
+ * read-only. Exported for tests. */
+export const PLAN_BLOCKED_TOOLS = new Set(["edit", "write", "bash", "powershell", "task", "monitor", "exec", "cron_create"]);
 
 export default function humminPlan(pi: ExtensionAPI): void {
 	let planMode = false;
@@ -42,7 +47,7 @@ export default function humminPlan(pi: ExtensionAPI): void {
 	pi.on("tool_call", async (event) => {
 		if (!planMode) return;
 		if (event.toolName === "monitor" && event.input.action !== "start") return;
-		if (!BLOCKED_TOOLS.has(event.toolName)) return;
+		if (!PLAN_BLOCKED_TOOLS.has(event.toolName)) return;
 		return {
 			block: true,
 			reason:
@@ -51,7 +56,7 @@ export default function humminPlan(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("plan", {
-		description: "Toggle plan mode (read-only; blocks write/edit/bash)",
+		description: "Toggle plan mode (read-only; blocks write/edit/shell/task/cron)",
 		category: "Session",
 		handler: async (_args, ctx) => {
 			if (planMode) {

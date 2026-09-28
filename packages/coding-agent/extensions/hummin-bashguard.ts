@@ -250,7 +250,7 @@ export function destructiveCommandWarning(raw: string, cwd: string): string | un
 	if (tokens[0] === "rm" || tokens.includes("rm")) {
 		const rmIdx = tokens.indexOf("rm");
 		const rest = tokens.slice(rmIdx + 1);
-		const recursive = rest.some((t) => /^-[a-zA-Z]*r[a-zA-Z]*$/i.test(t));
+		const recursive = rest.some((t) => t === "--recursive" || /^-[a-zA-Z]*r[a-zA-Z]*$/i.test(t));
 		if (recursive) {
 			const targets = rest.filter((t) => !t.startsWith("-"));
 			for (const target of targets) {
@@ -496,6 +496,14 @@ function settingsToRaw(settings: SettingsManager): { global: unknown; project: u
 	};
 }
 
+/** Current bashguard config for a cwd, resolved the same way the running
+ * extension resolves it (env > project settings > global > defaults). Used by
+ * lib/shell-gate.ts so background shells classify identically to bash. */
+export function bashguardConfigFor(cwd: string): BashguardConfig {
+	const { global, project } = settingsToRaw(SettingsManager.create(cwd));
+	return resolveBashguardConfig(process.env, global, project);
+}
+
 export default function humminBashguard(pi: ExtensionAPI): void {
 	if (process.env.HUMMIN_BASHGUARD === "0") {
 		return;
@@ -508,7 +516,10 @@ export default function humminBashguard(pi: ExtensionAPI): void {
 	};
 
 	// Advisory text pending delivery, keyed by toolCallId (tool_call -> tool_result).
+	// Capped so an aborted call that never produces a tool_result cannot grow
+	// the map without bound; the oldest pending advisory is dropped first.
 	const pendingAdvisories = new Map<string, string>();
+	const PENDING_ADVISORIES_MAX = 100;
 
 	pi.on("tool_call", async (event) => {
 		if (event.toolName !== "bash") return;
@@ -520,6 +531,10 @@ export default function humminBashguard(pi: ExtensionAPI): void {
 			return { block: true, reason: decision.reason };
 		}
 		pendingAdvisories.set(event.toolCallId, decision.notice);
+		if (pendingAdvisories.size > PENDING_ADVISORIES_MAX) {
+			const oldest = pendingAdvisories.keys().next();
+			if (!oldest.done) pendingAdvisories.delete(oldest.value);
+		}
 		appendFriction({ kind: "advisory", source: "bashguard", detail: decision.notice });
 		return undefined;
 	});

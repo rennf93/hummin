@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent";
+import { SettingsManager, type ExtensionAPI, type ExtensionContext, type ToolInfo } from "@earendil-works/pi-coding-agent";
 
 /**
  * Usage visibility: /context (token breakdown vs the model's context window)
@@ -286,6 +286,18 @@ function assistantSamples(ctx: ExtensionContext): UsageSample[] {
 		);
 }
 
+/** The compaction reserve the way compaction itself resolves it (settings
+ * `reserveTokens`, model-aware), falling back to the same default when the
+ * settings runtime is unavailable. /context's trigger line must match what
+ * compaction will actually do. */
+export function resolveReserveTokens(model: { provider: string; id: string } | undefined): number {
+	try {
+		return SettingsManager.create(process.cwd()).getCompactionReserveTokens(model);
+	} catch {
+		return DEFAULT_RESERVE_TOKENS;
+	}
+}
+
 export default function humminUsage(pi: ExtensionAPI): void {
 	pi.registerCommand("context", {
 		description: "Show context window usage: system prompt, tools, conversation, cache hit, remaining",
@@ -300,7 +312,7 @@ export default function humminUsage(pi: ExtensionAPI): void {
 					tools,
 					lastUsage: lastAssistantUsage(ctx),
 					contextWindow: ctx.model?.contextWindow,
-					reserveTokens: DEFAULT_RESERVE_TOKENS,
+					reserveTokens: resolveReserveTokens(ctx.model),
 				});
 				ctx.ui.notify(formatContextReport(report), "info");
 			} catch (error) {

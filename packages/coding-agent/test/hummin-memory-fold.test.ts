@@ -17,6 +17,7 @@ import { lastFoldValidation } from "../extensions/hummin-memory.ts";
 import {
 	decayKeepIndices,
 	foldValidationFailures,
+	humminChildArgvHead,
 	lastCompactionSummary,
 	MEMORY_WORKER_SOURCE,
 	parseDistilledLessons,
@@ -48,9 +49,13 @@ afterAll(() => {
 	if (vaultDirOriginal === undefined) delete process.env.HUMMIN_MEMORY_VAULT_DIR;
 	else process.env.HUMMIN_MEMORY_VAULT_DIR = vaultDirOriginal;
 	if (pathOriginal !== undefined) process.env.PATH = pathOriginal;
+	if (process.env.HUMMIN_BIN !== undefined) delete process.env.HUMMIN_BIN;
 });
 
-/** A fake `hummin` on PATH so the worker's model call never leaves the machine. */
+/** A fake `hummin` so the worker's model call never leaves the machine. The
+ * worker resolves its child via job cli spec > HUMMIN_BIN > PATH; these jobs
+ * carry no cli spec (pre-upgrade shape), so HUMMIN_BIN pins the mock
+ * regardless of the host PATH. */
 function stubHummin(output: string): void {
 	const bin = join(workDir, "bin");
 	mkdirSync(bin, { recursive: true });
@@ -58,7 +63,7 @@ function stubHummin(output: string): void {
 	lastHumminArgsPath = join(workDir, "hummin-args");
 	writeFileSync(script, `#!/bin/sh\nprintf '%s\\n' "$@" > "${lastHumminArgsPath}"\necho "${output}"\n`);
 	chmodSync(script, 0o755);
-	process.env.PATH = `${bin}:${pathOriginal ?? ""}`;
+	process.env.HUMMIN_BIN = script;
 }
 
 function writeWorkerAndJob(job: Record<string, unknown>): string {
@@ -588,7 +593,10 @@ echo "stub fold output"
 `,
 	);
 	chmodSync(script, 0o755);
-	process.env.PATH = `${bin}:${pathOriginal ?? ""}`;
+	// The hand-built jobs carry no cli spec (pre-upgrade shape), so the
+	// worker falls back to HUMMIN_BIN; pinning it keeps the stub hermetic
+	// against the host PATH and any real HUMMIN_BIN.
+	process.env.HUMMIN_BIN = script;
 	return marker;
 }
 
@@ -668,4 +676,55 @@ test("lastFoldValidation reads the last marker only", () => {
 	writeFileSync(log, ['fold-validation {"ok":true,"failed":[]}', "fold-validation failed"].join("\n"));
 	expect(lastFoldValidation(log)).toEqual({ ok: false, failed: [] });
 	expect(lastFoldValidation(join(workDir, "nope.log"))).toBeNull();
+});
+
+test("humminChildArgvHead prefers the cli spec, then HUMMIN_BIN, then PATH", () => {
+	expect(humminChildArgvHead({ command: "/opt/cli.mjs", prefixArgs: ["/usr/bin/node"] }, {})).toEqual([
+		"/opt/cli.mjs",
+		"/usr/bin/node",
+	]);
+	// HUMMIN_BIN applies when the job has no cli spec (pre-upgrade job files).
+	expect(humminChildArgvHead(undefined, { HUMMIN_BIN: "node /x/cli.js" })).toEqual(["node", "/x/cli.js"]);
+	// Malformed cli specs fall through to the env, never crash.
+	expect(humminChildArgvHead({ command: "", prefixArgs: "junk" }, { HUMMIN_BIN: "hummin" })).toEqual(["hummin"]);
+	expect(humminChildArgvHead({ command: "  " }, {})).toEqual(["hummin"]);
+	expect(humminChildArgvHead(undefined, {})).toEqual(["hummin"]);
+	// Non-string prefix entries are dropped, not passed through.
+	expect(humminChildArgvHead({ command: "hummin", prefixArgs: [1, "ok", null] }, {})).toEqual(["hummin", "ok"]);
+});
+
+test("the worker prefers the job's cli spec over HUMMIN_BIN and PATH", () => {
+	const vault = process.env.HUMMIN_MEMORY_VAULT_DIR!;
+	mkdirSync(join(vault, "inbox"), { recursive: true });
+	writeFileSync(join(vault, "inbox", "lesson-cli.md"), "body\n");
+	spawnSync("git", ["init", "-q"], { cwd: vault });
+	// Two mocks: `cliA` is named in the job's cli spec, `binB/hummin` holds
+	// both HUMMIN_BIN and PATH. Only the cli-spec mock may be called.
+	const binA = join(workDir, "bin-cli-a");
+	const markerA = join(workDir, "calls-a");
+	mkdirSync(binA, { recursive: true });
+	const cliA = join(binA, "cli-a");
+	writeFileSync(cliA, `#!/bin/sh\nprintf 'call-a\\n' >> "${markerA}"\necho done\n`);
+	chmodSync(cliA, 0o755);
+	const binB = join(workDir, "bin-cli-b");
+	const markerB = join(workDir, "calls-b");
+	mkdirSync(binB, { recursive: true });
+	const cliB = join(binB, "hummin");
+	writeFileSync(cliB, `#!/bin/sh\nprintf 'call-b\\n' >> "${markerB}"\necho done\n`);
+	chmodSync(cliB, 0o755);
+	process.env.HUMMIN_BIN = cliB;
+	process.env.PATH = `${binB}:${pathOriginal ?? ""}`;
+	const jobPath = writeWorkerAndJob({
+		mode: "fold",
+		vaultDir: vault,
+		provider: "x",
+		modelId: "y",
+		threshold: 1,
+		force: true,
+		pendingPath: join(workDir, ".fold-job.json"),
+		cli: { command: cliA, prefixArgs: [] },
+	});
+	expect(runWorker("fold", jobPath)).toBe(0);
+	expect(readFileSync(markerA, "utf8")).toContain("call-a");
+	expect(existsSync(markerB)).toBe(false);
 });

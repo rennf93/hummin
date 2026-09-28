@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Focus reporting (DECSET 1004): `Terminal` gains `isFocused()` (true/false after a focus event, undefined before the first one) and `onFocusChange()`; focus sequences `\x1b[I`/`\x1b[O` are intercepted before key parsing and never reach components.
+
 ## [1.2.6] - 2026-09-27
 
 ## [1.2.5] - 2026-09-27

@@ -710,6 +710,39 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("hummin terminal notifications", () => {
+		it("defaults to bell and honors a stored channel", () => {
+			expect(SettingsManager.inMemory().getTerminalNotifications()).toBe("bell");
+			expect(SettingsManager.inMemory({ terminal: { notifications: "all" } }).getTerminalNotifications()).toBe(
+				"all",
+			);
+			expect(SettingsManager.inMemory({ terminal: { notifications: "off" } }).getTerminalNotifications()).toBe(
+				"off",
+			);
+			// invalid stored value falls to the default
+			expect(
+				SettingsManager.inMemory({ terminal: { notifications: "toast" as never } }).getTerminalNotifications(),
+			).toBe("bell");
+		});
+
+		it("env HUMMIN_NOTIFY overrides stored settings; invalid env falls through", () => {
+			const saved = process.env.HUMMIN_NOTIFY;
+			try {
+				process.env.HUMMIN_NOTIFY = "osc9";
+				expect(SettingsManager.inMemory({ terminal: { notifications: "off" } }).getTerminalNotifications()).toBe(
+					"osc9",
+				);
+				process.env.HUMMIN_NOTIFY = "nonsense";
+				expect(SettingsManager.inMemory({ terminal: { notifications: "all" } }).getTerminalNotifications()).toBe(
+					"all",
+				);
+			} finally {
+				if (saved === undefined) delete process.env.HUMMIN_NOTIFY;
+				else process.env.HUMMIN_NOTIFY = saved;
+			}
+		});
+	});
+
 	describe("hummin verify nudge", () => {
 		it("defaults to on and honors an explicit false", () => {
 			expect(SettingsManager.inMemory().getVerifyNudge()).toBe(true);

@@ -2,9 +2,13 @@
 // for the current session (fed by hummin-guardrails via lib/friction.ts)
 // above a plain-text summary of the friction log (last 7 days): totals by
 // kind, per-day counts, plus laya gate activity and threshold calibration
-// from laya-gate.log. Data collection lives in lib/friction.ts and is
-// fail-silent; this file only reads, renders, and registers the command.
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+// from laya-gate.log. The calibration's suggested threshold can be applied
+// directly from the command (persisted to global settings, atomic write).
+// Data collection lives in lib/friction.ts and is fail-silent; this file only
+// reads, renders, and registers the command.
+import { readFile, rename, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { layaGateThreshold } from "./hummin-laya.ts";
 import {
 	FRICTION_KINDS,
@@ -110,6 +114,26 @@ function layaRows(laya: LayaGateSummary): ReadonlyArray<readonly [string, string
 	] as const;
 }
 
+/**
+ * Persist `layaGateThreshold` to the global settings file (atomic tmp+rename,
+ * same pattern as the sandbox mode toggle). The gate resolves the threshold
+ * from settings on every command, so the change applies to new gate reads
+ * immediately; a project settings `layaGateThreshold` would still mask it.
+ */
+export async function applySuggestedThreshold(suggested: number, agentDir: string = getAgentDir()): Promise<void> {
+	const path = join(agentDir, "settings.json");
+	let parsed: Record<string, unknown> = {};
+	try {
+		parsed = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+	} catch {
+		parsed = {};
+	}
+	parsed.layaGateThreshold = suggested;
+	const temp = `${path}.tmp-${process.pid}`;
+	await writeFile(temp, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
+	await rename(temp, path);
+}
+
 export default function humminFriction(pi: ExtensionAPI): void {
 	pi.registerCommand("friction", {
 		description: "Show agent friction summary (tool errors, denials, advisories, laya gate)",
@@ -124,6 +148,19 @@ export default function humminFriction(pi: ExtensionAPI): void {
 				{ threshold: layaGateThreshold() },
 			);
 			ctx.ui.notify(renderFrictionReport(summary, laya, calibration, session), "info");
+			const suggested = calibration?.suggestedThreshold;
+			if (suggested === undefined) return;
+			const choice = await ctx.ui.select(
+				"laya gate calibration",
+				[`Apply suggested layaGateThreshold ${suggested.toFixed(2)} (persisted globally)`, "Leave as is"],
+			);
+			if (!choice || !choice.startsWith("Apply")) return;
+			try {
+				await applySuggestedThreshold(suggested);
+				ctx.ui.notify(`layaGateThreshold ${suggested.toFixed(2)} written to global settings. New gate reads use it unless HUMMIN_LAYA_GATE_THRESHOLD or a project-level layaGateThreshold overrides it.`, "info");
+			} catch (error) {
+				ctx.ui.notify(`friction: could not persist threshold (${error instanceof Error ? error.message : String(error)})`, "warning");
+			}
 		},
 	});
 }

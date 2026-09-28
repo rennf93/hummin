@@ -88,7 +88,7 @@ it("delivers a background completion once, via followUp only (no duplicate notif
 	const binary = join(dir, "hummin");
 	writeFileSync(binary, `#!${process.execPath}\nconsole.log("child output");\n`);
 	chmodSync(binary, 0o755);
-	vi.stubEnv("PATH", `${dir}:${process.env.PATH}`);
+	vi.stubEnv("HUMMIN_BIN", binary);
 	await tools
 		.get("task")!
 		.execute("child", { prompt: "test", model: "fleet-host/Org/Model", background: true }, undefined, undefined, ctx);
@@ -121,7 +121,7 @@ it("background task survives turn-signal abort (signal not forwarded)", async ()
 	// Child runs long enough for the abort to land mid-run.
 	writeFileSync(binary, `#!${process.execPath}\nsetTimeout(() => { console.log("child output"); }, 300);\n`);
 	chmodSync(binary, 0o755);
-	vi.stubEnv("PATH", `${dir}:${process.env.PATH}`);
+	vi.stubEnv("HUMMIN_BIN", binary);
 	const controller = new AbortController();
 	const execution = tools
 		.get("task")!

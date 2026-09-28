@@ -338,6 +338,14 @@ export class GuardrailsState {
 		return { allowed: true };
 	}
 
+	/** True when the session produced something worth a post-mortem record:
+	 * a budget halt, any per-tool rejections, or a long-enough call history.
+	 * Unremarkable sessions write nothing, so the post-mortems directory stays
+	 * an incident log instead of a per-session dump. */
+	get notable(): boolean {
+		return this.halted || this.rejections.size > 0 || this.totalToolCalls >= SOFT_PING_AT;
+	}
+
 	// Returns an in-band reminder to append to the tool result, if one is due.
 	observeResult(toolName: string, isError: boolean): string | undefined {
 		const at = this.clock();
@@ -456,6 +464,6 @@ export default function humminGuardrails(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async () => {
-		writePostMortem(state);
+		if (state.notable) writePostMortem(state);
 	});
 }

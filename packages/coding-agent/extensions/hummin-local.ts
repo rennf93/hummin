@@ -64,6 +64,17 @@ const DISPLAY_NAMES: Record<string, string> = {
 };
 const displayName = (modelId: string): string => DISPLAY_NAMES[modelId] ?? modelId;
 
+/**
+ * One key for every discovery request. HUMMIN_API_KEY is the generation
+ * credential (localAuth resolves it via envApiKeyAuth), so discovery must
+ * honor it too - keying discovery on COLI_API_KEY alone produced discovery
+ * 401s for users who only set HUMMIN_API_KEY. COLI_API_KEY stays as the
+ * legacy fallback, then the keyless default that local servers ignore.
+ */
+function discoveryApiKey(): string {
+	return process.env.HUMMIN_API_KEY?.trim() || process.env.COLI_API_KEY?.trim() || "hummin";
+}
+
 function instanceConfigs(): InstanceConfig[] {
 	const settings = SettingsManager.create(process.cwd());
 	const fleet = typeof settings.getFleetServers === "function" ? settings.getFleetServers() : [];
@@ -459,8 +470,8 @@ async function discoverInstances(configs: InstanceConfig[]): Promise<DiscoveredI
 				nowMs,
 			);
 			const [ids, contextWindow] = await Promise.all([
-				fetchModels(baseUrl, process.env.COLI_API_KEY),
-				fetchContextWindow(baseUrl, process.env.COLI_API_KEY),
+				fetchModels(baseUrl, discoveryApiKey()),
+				fetchContextWindow(baseUrl, discoveryApiKey()),
 			]);
 			return {
 				baseUrl,
@@ -555,10 +566,12 @@ async function discoverInstances(configs: InstanceConfig[]): Promise<DiscoveredI
 
 async function cachedDiscovery(configs: InstanceConfig[]): Promise<DiscoveredInstance[]> {
 	// Key covers everything discovery reads: the fleet config (order =
-	// priority, including per-server catalogs), the auth key, and the
-	// context-window env fallback. Any change invalidates the cache.
+	// priority, including per-server catalogs), the auth keys (discovery and
+	// generation must agree, so a change to either invalidates the cache), and
+	// the context-window env fallback.
 	const key = JSON.stringify([
 		configs,
+		process.env.HUMMIN_API_KEY ?? "",
 		process.env.COLI_API_KEY ?? "",
 		process.env.HUMMIN_CTX ?? process.env.HUMMIN_COLIBRI_CTX ?? "",
 	]);

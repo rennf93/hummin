@@ -60,6 +60,14 @@ class BoundedWriteTerminal implements Terminal {
 	clearScreen(): void {}
 	setTitle(_title: string): void {}
 	setProgress(_active: boolean): void {}
+
+	isFocused(): boolean | undefined {
+		return true;
+	}
+
+	onFocusChange(_listener: (focused: boolean) => void): () => void {
+		return () => {};
+	}
 }
 
 class LoggingVirtualTerminal extends VirtualTerminal {

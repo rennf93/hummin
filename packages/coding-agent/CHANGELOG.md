@@ -2,6 +2,46 @@
 
 ## [Unreleased]
 
+### New Features
+
+- Terminal notifications when a turn ends or the agent asks a question: BEL marks the pane (Warp dot, tmux bell) and OSC 9 raises a toast in iTerm2/Windows Terminal/ConEmu. Configure with `terminal.notifications` or `/settings` → Terminal → Notifications (see Added for details).
+- Task personas and chaining: give `task` children a named brief (`persona`) and make them wait on prior reports (`after_task_id` + `{previous}`) for multi-step pipelines.
+- One safety gate for every shell hummin spawns: `exec` and `monitor` now pass bashguard, the laya destructive gate, and the workspace sandbox exactly like the bash tool, and plan mode blocks them too.
+- `/friction` applies the laya gate's calibration suggestion in place instead of telling you to edit settings by hand.
+
+### Added
+
+- Terminal notifications when the agent finishes a turn or asks a question (ask_user): BEL marks the tab/pane (Warp dot, tmux bell), OSC 9 carries a toast payload for iTerm2/Windows Terminal/ConEmu, and `desktop` fires a real OS notification (osascript/notify-send, detected once). Channel is `terminal.notifications` (`off`/`bell`/`osc9`/`desktop`/`all`, default `bell`, env `HUMMIN_NOTIFY` overrides); `terminal.notificationsWhen` (`always`/`unfocused`, default `unfocused`, env `HUMMIN_NOTIFY_WHEN` overrides) suppresses notifications while the terminal is focused via DECSET 1004 focus reporting. Both have `/settings` entries under Terminal.
+- New hook events in `hooks.json`: `stop` (agent finished responding; Claude Code parity name), `session_end` (session shutdown), and `notification` (fires for every terminal notification with its message and channel) — extension-style scripts can now react to the same attention events the TUI notifies about.
+- Personas and chaining for the `task` tool. `persona` resolves a named brief from `.hummin/agents/<name>.md` (project, trust-gated) or `~/.hummin/agent/agents/<name>.md` (global) and prepends it to the child's brief; `after_task_id` waits for a prior task to finish and replaces `{previous}` in the prompt with that task's final report (bounded to the same 8000-char excerpt), aborting with the turn. Several `task` calls in one turn already run concurrently; the description now says so.
+- `/friction` can apply the laya gate's calibration suggestion in place: when the report shows a suggested threshold, an interactive action writes `layaGateThreshold` to global settings (atomic tmp+rename) and the gate picks it up on its next read.
+- One gate for every shell hummin spawns (`extensions/lib/shell-gate.ts`): `exec` and `monitor` commands now pass the same pipeline as the bash tool (bashguard classification first, then the laya destructive gate with its deterministic rules, gray-zone score, and confirm-marker escape), and run under the sandbox's seatbelt/bubblewrap profile when workspace mode is on via a `__humminSandboxWrap` bridge registered by the sandbox extension. Previously a background shell bypassed all three layers.
+- Plan mode blocks `exec` and `cron_create` alongside bash/edit/write/task/monitor: background shells and scheduled runs are write paths, and a read-only mode they could bypass was not read-only.
+
+### Changed
+
+- `exec`/`monitor` spawn specs resolve through the new gate; blocked commands surface the same `[laya gate]`/`[BashGuard]`/`[Sandbox]` reasons as bash, and bashguard advisories are attached to the start result instead of being silently absent.
+- web_fetch hardening: redirects are followed manually with a 5-hop budget and every hop is re-validated by hostname and by its DNS answers (private/reserved ranges, IPv4-mapped and NAT64 forms, encoded IPv4 literals like `2130706433` or `0x7f000001`), and the body is read with a hard 5MB cap enforced while streaming instead of trusting `content-length`.
+- Hooks run under the user's configured shell via `getShellConfig()` (POSIX sh fallback) instead of a hardcoded `/bin/zsh -lc`: hooks work on Linux again and no longer pay login-shell startup on every tool event.
+- Sandbox bookkeeping: one seatbelt profile per (mechanism, cwd, network policy) per session instead of a leaked temp directory per command, profile directories are removed at session shutdown, and the `/sandbox` settings writes are atomic (tmp+rename).
+- `/context`'s compaction-trigger line now resolves the settings-configured compaction reserve (the same value compaction uses) instead of a hardcoded 16384.
+- Post-mortems are written only for notable sessions (a budget halt, recorded per-tool rejections, or a session past the soft-ping threshold) instead of one JSON file per shutdown.
+- Child hummin processes (`task`, cron runs, query expansion, and the memory worker's distill/fold children) resolve the CLI through the running process (`process.execPath` + the active entry, `HUMMIN_BIN` overrides) instead of trusting PATH, so dev checkouts without `npm link` stop failing silently; `HUMMIN_CRON_BIN` remains a straight binary override. The memory worker receives the parent-resolved CLI in its job file (its own argv cannot replay the entry); pre-upgrade job files fall back to `HUMMIN_BIN`, then PATH.
+- Guardrails, bashguard, and laya bookkeeping is bounded: the bashguard pending-advisory map caps at 100 entries, the laya gate's blocked-command set at 200, and memory's `state.json` prunes processed-session stamps older than 90 days on write.
+
+### Fixed
+
+- opencode-go's provider default still pointed at `kimi-k2.6`, which upstream removed from the catalog, leaving the provider with a nonexistent default model; it now resolves to the successor `kimi-k2.7-code`.
+- Safety bypass: `exec`, `monitor`, and `cron_create` escaped plan mode, and `exec`/`monitor` shells escaped the sandbox, bashguard, and the laya gate entirely. All shell paths now go through the shared gate (see Added), and plan mode covers the full write surface.
+- Auto-fold took a divergent path: it spawned a raw `hummin -p` session in the vault with no fold lock, no validation markers, and a `console.log` the TUI never displayed. It now delegates to the same locked, validated memory-worker fold path as `/vault-fold` (`enqueueFold`) and notifies through the UI.
+- Fleet discovery authenticated with `COLI_API_KEY` only, while generation resolved `HUMMIN_API_KEY` first: a user who set only `HUMMIN_API_KEY` against a keyed server got discovery 401s and no provider. Discovery now uses the same precedence (`HUMMIN_API_KEY`, then the legacy `COLI_API_KEY`, then the keyless default), and the discovery cache keys on both.
+- The distill worker no longer stores unparseable model output as a lesson: a reply with no parsable Problem/Approach/Gotcha shape is treated exactly like NONE (nothing stored, the session still marked processed so it is never re-distilled).
+- Quick capture no longer swallows markdown headings: only an explicit `#note ` prefix writes to the vault inbox; any other `#`-prefixed prompt passes through to the model untouched.
+- Cron exit recording performed an unlocked read-modify-write of `cron.json`, which could lose updates against a concurrent scheduler pass and leave an entry stuck showing "running" forever; it now serializes on the scheduler lock.
+- A corrupt `child-dispatch-reviews.json` threw out of every dispatch (task, cron, memory) until hand-deleted; the store is now quarantined (renamed with a `.corrupt-<pid>-<ts>` suffix, best effort) and treated as empty, with the append-only reviews log unaffected.
+- bashguard missed `rm --recursive` (single-dash flags only) and the laya gate missed `git push origin +<refspec>` force syntax; both classify now.
+- Memory retrieval hot path: the union lesson corpus is cached keyed on the store's mtime+size and the vault `processed/` dir mtime (retrieval consults it at least three times per prompt), and `graph.canvas` refreshes skip while a fold worker holds `.memory-fold.lock` so a canvas rewrite can no longer fail the fold's clean-worktree validation.
+
 ## [1.2.6] - 2026-09-27
 
 ### Fixed

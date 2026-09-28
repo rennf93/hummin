@@ -20,6 +20,9 @@ function load(extension: (pi: ExtensionAPI) => void) {
 	const cwd = mkdtempSync(join(tmpdir(), "hummin-background-"));
 	directories.push(cwd);
 	vi.stubEnv(ENV_AGENT_DIR, cwd);
+	// Background shell spawns now pass the shared gate (lib/shell-gate.ts);
+	// keep these tests hermetic by disabling the laya read.
+	vi.stubEnv("HUMMIN_LAYA_GATE", "off");
 	const tools = new Map<string, ToolDefinition>();
 	const sendMessage = vi.fn();
 	let shutdown = async () => {};
@@ -70,7 +73,9 @@ it("routes an actual child tool invocation and delivers its captured completion"
 		`#!${process.execPath}\nconsole.log(JSON.stringify({args:process.argv.slice(2),memory:process.env.HUMMIN_MEMORY}));\n`,
 	);
 	chmodSync(binary, 0o755);
-	vi.stubEnv("PATH", `${cwd}:${process.env.PATH}`);
+	// Children resolve the CLI through lib/hummin-bin.ts (running-entry replay
+	// by default); the mock is pinned via HUMMIN_BIN, not PATH.
+	vi.stubEnv("HUMMIN_BIN", binary);
 	const result = await tools
 		.get("task")!
 		.execute(
@@ -140,4 +145,7 @@ it("blocks background launches in plan mode while allowing monitor inspection an
 	expect(await check!({ toolName: "monitor", input: { action: "start" } })).toMatchObject({ block: true });
 	expect(await check!({ toolName: "monitor", input: { action: "stop" } })).toBeUndefined();
 	expect(await check!({ toolName: "monitor", input: { action: "status" } })).toBeUndefined();
+	// Background shells and scheduled runs are write paths too.
+	expect(await check!({ toolName: "exec", input: { command: "echo hi" } })).toMatchObject({ block: true });
+	expect(await check!({ toolName: "cron_create", input: {} })).toMatchObject({ block: true });
 });
