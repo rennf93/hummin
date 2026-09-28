@@ -14,6 +14,7 @@ const dirs: string[] = [];
 const originalMemory = process.env.HUMMIN_MEMORY_DIR;
 const originalVault = process.env.HUMMIN_MEMORY_VAULT_DIR;
 const originalPath = process.env.PATH;
+const originalBin = process.env.HUMMIN_BIN;
 
 afterEach(() => {
 	if (originalMemory === undefined) delete process.env.HUMMIN_MEMORY_DIR;
@@ -22,6 +23,8 @@ afterEach(() => {
 	else process.env.HUMMIN_MEMORY_VAULT_DIR = originalVault;
 	if (originalPath === undefined) delete process.env.PATH;
 	else process.env.PATH = originalPath;
+	if (originalBin === undefined) delete process.env.HUMMIN_BIN;
+	else process.env.HUMMIN_BIN = originalBin;
 });
 
 function tempDir(prefix: string): string {
@@ -119,12 +122,14 @@ test("retryHeldDistills re-dispatches an allowed held job once and clears the ma
 	const memory = tempDir("hummin-memory-held-allow-");
 	process.env.HUMMIN_MEMORY_DIR = memory;
 	// Mock hummin so the retried worker completes (NONE) and removes its
-	// pending file instead of leaking a child past the test.
+	// pending file instead of leaking a child past the test. HUMMIN_BIN pins
+	// the mock: the worker's job now carries a cli spec resolved from the
+	// parent's humminBinCommand(), which reads this env var first.
 	const bin = tempDir("hummin-memory-held-bin-");
 	const hummin = join(bin, "hummin");
 	writeFileSync(hummin, "#!/bin/sh\necho NONE\n");
 	chmodSync(hummin, 0o755);
-	process.env.PATH = `${bin}:${originalPath ?? ""}`;
+	process.env.HUMMIN_BIN = hummin;
 	const path = writeHeldJob(memory);
 	const allowed = context("allow");
 	const retried = await retryHeldDistills({ ...allowed, agentDir: tempDir("hummin-memory-reviews-") });
@@ -193,7 +198,7 @@ test("explicit fold and automatic fold hold before their child launches", async 
 	const argsFile = join(bin, "args");
 	writeFileSync(hummin, `#!/bin/sh\nprintf '%s\\n' "$@" > "${argsFile}"\necho spawned\n`);
 	chmodSync(hummin, 0o755);
-	process.env.PATH = `${bin}:${originalPath ?? ""}`;
+	process.env.HUMMIN_BIN = hummin;
 	expect(await triggerAutoFold(vault, "test", ctx)).toBe(false);
 	expect(held.calls()).toBe(2);
 	const approved = context("allow");
@@ -244,9 +249,10 @@ test("automatic fold delegates to enqueueFold's locked worker path", async () =>
 	// child - the old direct `hummin -p` spawn left neither file behind.
 	const bin = tempDir("hummin-memory-auto-bin-");
 	const argsFile = join(bin, "args");
-	writeFileSync(join(bin, "hummin"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${argsFile}"\necho spawned\n`);
-	chmodSync(join(bin, "hummin"), 0o755);
-	process.env.PATH = `${bin}:${originalPath ?? ""}`;
+	const autoHummin = join(bin, "hummin");
+	writeFileSync(autoHummin, `#!/bin/sh\nprintf '%s\\n' "$@" > "${argsFile}"\necho spawned\n`);
+	chmodSync(autoHummin, 0o755);
+	process.env.HUMMIN_BIN = autoHummin;
 	const approved = context("allow");
 	expect(
 		await triggerAutoFold(vault, "auto-worker", { ...approved, agentDir: tempDir("hummin-memory-reviews-") }),

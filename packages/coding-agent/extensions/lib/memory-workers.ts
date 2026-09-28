@@ -18,6 +18,11 @@ export interface MemoryDistillJob {
 	provider: string;
 	modelId: string;
 	thinking: string;
+	/** How the worker spawns the hummin CLI child, resolved by the parent from
+	 * the running process entry (lib/hummin-bin.ts). The worker's own argv[1]
+	 * is the worker script, so it cannot replay the entry itself; job files
+	 * written before this field existed fall back to HUMMIN_BIN, then PATH. */
+	cli?: { command: string; prefixArgs: string[] };
 	receipt?: unknown;
 	reviewId?: string;
 	dispatchReason?: string;
@@ -45,6 +50,9 @@ export interface MemoryFoldJob {
 	provider: string;
 	modelId: string;
 	thinking: string;
+	/** Same contract as MemoryDistillJob.cli: the parent-resolved CLI for the
+	 * worker's fold-child spawn. */
+	cli?: { command: string; prefixArgs: string[] };
 	receipt?: unknown;
 	reviewId?: string;
 	dispatchReason?: string;
@@ -180,6 +188,32 @@ export function parseDistilledLessons(output: string, maxLessons = 3): string[] 
 		unique.push(lesson);
 	}
 	return unique.slice(0, maxLessons);
+}
+
+/**
+ * Pure: the argv head (binary plus any prefix args) for the worker's hummin
+ * CLI child calls. Resolution order: the parent-resolved `cli` spec from the
+ * job file (the running entry replay - the worker cannot derive it, its own
+ * argv[1] is the worker script), then the HUMMIN_BIN override split on
+ * spaces, then the bare PATH name the old worker used. Embedded verbatim into
+ * MEMORY_WORKER_SOURCE: self-contained, no outer-scope references.
+ */
+export function humminChildArgvHead(
+	cli: { command?: unknown; prefixArgs?: unknown } | undefined,
+	env: Readonly<Record<string, string | undefined>>,
+): string[] {
+	if (cli && typeof cli.command === "string" && cli.command.trim()) {
+		const prefix = Array.isArray(cli.prefixArgs)
+			? cli.prefixArgs.filter((arg): arg is string => typeof arg === "string")
+			: [];
+		return [cli.command, ...prefix];
+	}
+	const override = (env.HUMMIN_BIN ?? "").trim();
+	if (override) {
+		const parts = override.split(/\s+/).filter(Boolean);
+		if (parts[0] !== undefined) return [parts[0], ...parts.slice(1)];
+	}
+	return ["hummin"];
 }
 
 /** The fs primitives the checkpoint scan needs, injected so the scanning core
@@ -351,6 +385,10 @@ function lastCompactionSummary(path, maxSummaryChars) {
 // embedded verbatim from memory-workers.ts (single implementation; see
 // foldValidationFailures there).
 ${foldValidationFailures}
+
+// Hummin CLI resolution for the worker's child calls (job cli spec > HUMMIN_BIN
+// > PATH), embedded verbatim from memory-workers.ts.
+${humminChildArgvHead}
 
 const mode = process.argv[2];
 const jobPath = process.argv[3];
@@ -599,7 +637,8 @@ async function distill() {
 			"Session transcript (tail):",
 			job.tail || "",
 		].join("\n");
-		const result = spawnSync("hummin", ["-p", prompt, "--provider", job.provider, "--model", job.modelId, "--thinking", job.thinking || "low"], {
+		const argvHead = humminChildArgvHead(job.cli, process.env);
+		const result = spawnSync(argvHead[0], [...argvHead.slice(1), "-p", prompt, "--provider", job.provider, "--model", job.modelId, "--thinking", job.thinking || "low"], {
 			encoding: "utf8",
 			timeout: DISTILL_TIMEOUT_MS,
 			maxBuffer: CHILD_MAX_BUFFER,
@@ -714,7 +753,8 @@ function entityBodies(vaultDir) {
 function runFoldChild(vaultDir, count, repair) {
 	const prompt = "Fold the inbox lessons into the entity graph now, following AGENTS.md exactly. Inbox has " + count + " lesson(s)."
 		+ (repair ? " This is a repair pass: the previous fold did not validate. Complete the fold per AGENTS.md and make sure everything is committed." : "");
-	return spawnSync("hummin", ["-p", prompt, "--provider", job.provider, "--model", job.modelId, "--thinking", job.thinking || "low"], {
+	const argvHead = humminChildArgvHead(job.cli, process.env);
+	return spawnSync(argvHead[0], [...argvHead.slice(1), "-p", prompt, "--provider", job.provider, "--model", job.modelId, "--thinking", job.thinking || "low"], {
 		cwd: vaultDir,
 		encoding: "utf8",
 		timeout: FOLD_TIMEOUT_MS,

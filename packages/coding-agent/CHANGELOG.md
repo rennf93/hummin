@@ -17,7 +17,7 @@
 - Sandbox bookkeeping: one seatbelt profile per (mechanism, cwd, network policy) per session instead of a leaked temp directory per command, profile directories are removed at session shutdown, and the `/sandbox` settings writes are atomic (tmp+rename).
 - `/context`'s compaction-trigger line now resolves the settings-configured compaction reserve (the same value compaction uses) instead of a hardcoded 16384.
 - Post-mortems are written only for notable sessions (a budget halt, recorded per-tool rejections, or a session past the soft-ping threshold) instead of one JSON file per shutdown.
-- Child hummin processes (`task`, cron runs, query expansion) resolve the CLI through the running process (`process.execPath` + the active entry, `HUMMIN_BIN` overrides) instead of trusting PATH, so dev checkouts without `npm link` stop failing silently; `HUMMIN_CRON_BIN` remains a straight binary override.
+- Child hummin processes (`task`, cron runs, query expansion, and the memory worker's distill/fold children) resolve the CLI through the running process (`process.execPath` + the active entry, `HUMMIN_BIN` overrides) instead of trusting PATH, so dev checkouts without `npm link` stop failing silently; `HUMMIN_CRON_BIN` remains a straight binary override. The memory worker receives the parent-resolved CLI in its job file (its own argv cannot replay the entry); pre-upgrade job files fall back to `HUMMIN_BIN`, then PATH.
 - Guardrails, bashguard, and laya bookkeeping is bounded: the bashguard pending-advisory map caps at 100 entries, the laya gate's blocked-command set at 200, and memory's `state.json` prunes processed-session stamps older than 90 days on write.
 
 ### Fixed

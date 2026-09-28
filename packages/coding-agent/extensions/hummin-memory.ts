@@ -78,7 +78,7 @@ import type { TextContent } from "@earendil-works/pi-ai";
 import { appendVectorRecords, cosineSimilarity, embedInputs, loadVectorIndex, roundVector } from "./lib/embeddings-client.ts";
 import { MEMORY_WORKER_SOURCE, type MemoryDistillJob, type MemoryFoldJob } from "./lib/memory-workers.ts";
 import { prepareChildDispatch, type DispatchReceipt } from "./lib/child-dispatch-review.ts";
-import { humminArgv } from "./lib/hummin-bin.ts";
+import { humminArgv, humminBinCommand } from "./lib/hummin-bin.ts";
 
 const LESSON_MAX_WORDS = 120;
 
@@ -186,6 +186,7 @@ function buildDistillJob(sessionFile: string, cwd: string, tail: string, dir: st
 		provider: dispatch.configuration.provider,
 		modelId: dispatch.configuration.modelId,
 		thinking: dispatch.configuration.thinking,
+		cli: humminBinCommand(),
 		receipt: dispatch.receipt as DispatchReceipt | undefined,
 		reviewId: dispatch.reviewId,
 		dispatchReason: dispatch.reason,
@@ -1781,6 +1782,7 @@ export async function enqueueFold(dir: string, label: string, ctx: MemoryDispatc
 		provider: dispatch.configuration.provider,
 		modelId: dispatch.configuration.modelId,
 		thinking: dispatch.configuration.thinking,
+		cli: humminBinCommand(),
 		receipt: dispatch.receipt as DispatchReceipt | undefined,
 		reviewId: dispatch.reviewId,
 		dispatchReason: dispatch.reason,
