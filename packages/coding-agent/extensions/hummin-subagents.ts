@@ -186,6 +186,31 @@ export function withInheritedLessons(prompt: string, lessons: string | null): st
 	return `Context inherited from the parent session (may or may not be relevant):\n${lessons}\n\n---\n\n${prompt}`;
 }
 
+// ============================================================================
+// Personas and chaining (pure; unit-tested in test/hummin-subagents-personas.test.ts)
+// ============================================================================
+
+/** Persona names follow the shared handle rules: no dots, no slashes, so the
+ * name is always a single safe path component. */
+export const PERSONA_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+
+/** The placeholder replaced by the referenced task's final report when a
+ * chained task runs. */
+export const PREVIOUS_PLACEHOLDER = "{previous}";
+
+/** Pure: replace every {previous} occurrence with the prior task's report. */
+export function interpolatePrevious(prompt: string, previous: string): string {
+	return prompt.split(PREVIOUS_PLACEHOLDER).join(previous);
+}
+
+/** Pure: compose the persona block prepended to a child brief. An empty or
+ * whitespace persona body composes nothing (the brief runs as-is). */
+export function composePersonaPrompt(name: string, body: string, prompt: string): string {
+	const trimmed = body.trim();
+	if (!trimmed) return prompt;
+	return `You are operating as the persona "${name}". These are its standing instructions for every task:\n\n${trimmed}\n\n---\n\n${prompt}`;
+}
+
 /**
  * Collapsible notice component for custom messages. Custom message renderers
  * are rebuilt with `options.expanded` whenever the transcript toggles output
@@ -372,6 +397,31 @@ const taskMeta = ((globalThis as Record<symbol, unknown>)[TASK_META_KEY] ??= new
 >;
 
 /**
+ * Persona body for a named brief: project `.hummin/agents/<name>.md` first
+ * (trust-gated like project hooks and rules), then the global
+ * `<agentDir>/agents/<name>.md`. Throws with an actionable message when the
+ * name is malformed or no file resolves.
+ */
+export function resolvePersonaBody(name: string, opts: { projectTrusted: boolean; cwd: string; agentDir: string }): string {
+	if (!PERSONA_NAME_RE.test(name)) {
+		throw new Error("persona must be 1-64 chars: letters, digits, '-', '_', starting with a letter or digit");
+	}
+	const candidates = [
+		...(opts.projectTrusted ? [join(opts.cwd, ".hummin", "agents", `${name}.md`)] : []),
+		join(opts.agentDir, "agents", `${name}.md`),
+	];
+	for (const candidate of candidates) {
+		try {
+			const body = readFileSync(candidate, "utf8").trim();
+			if (body) return body;
+		} catch {
+			// missing or unreadable persona file: try the next location
+		}
+	}
+	throw new Error(`Unknown persona: ${name} (looked in .hummin/agents/ and ${join(opts.agentDir, "agents")})`);
+}
+
+/**
  * Prepend inherited lessons to a child brief when enabled. The tool schema
  * decides opt-in/out; this only guards the parent-side memory switch and
  * never fails the dispatch: any error falls back to the bare prompt.
@@ -507,7 +557,7 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 		name: "task",
 		label: "Task (subagent)",
 		description:
-			"Run a bounded independent hummin session. Supply a complete brief: children cannot see this conversation. Unless inherit is \"none\", a bounded set of relevant lessons from the parent session's memory store is prepended to the brief, and children run with read-only access to the memory vault: they can search it with the vault tool but cannot fold, distill, or write to it. On completion the result carries the child's final report (bounded tail of its output; the full log path is included). Background completion is delivered automatically as a follow-up message with the same report. Children share the selected working directory; give concurrent writers separate directories.",
+			"Run a bounded independent hummin session. Supply a complete brief: children cannot see this conversation. Unless inherit is \"none\", a bounded set of relevant lessons from the parent session's memory store is prepended to the brief, and children run with read-only access to the memory vault: they can search it with the vault tool but cannot fold, distill, or write to it. persona runs the child under a named brief resolved from .hummin/agents/<name>.md or ~/.hummin/agent/agents/<name>.md. after_task_id chains this child onto a prior task: it waits for that task to finish and replaces {previous} in the prompt with its final report. Issue several task calls in one turn to run children concurrently. On completion the result carries the child's final report (bounded tail of its output; the full log path is included). Background completion is delivered automatically as a follow-up message with the same report. Children share the selected working directory; give concurrent writers separate directories.",
 		promptSnippet: "task: delegate a bounded task to an independent session",
 		parameters: Type.Object({
 			prompt: Type.String({ minLength: 1 }),
@@ -517,6 +567,18 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 					description:
 						"\"lessons\" (default) prepends relevant lessons from the parent session's memory store to the brief; \"none\" sends the brief as-is.",
 					default: "lessons",
+				}),
+			),
+			persona: Type.Optional(
+				Type.String({
+					description:
+						"Named persona prepended to the brief, resolved from .hummin/agents/<name>.md (project, trust-gated) or ~/.hummin/agent/agents/<name>.md (global).",
+				}),
+			),
+			after_task_id: Type.Optional(
+				Type.String({
+					description:
+						"Wait for this prior task to finish before starting. Use {previous} in the prompt to interpolate the prior task's final report into this brief.",
 				}),
 			),
 			model: Type.Optional(
@@ -555,8 +617,38 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 		},
 		async execute(_id, params, signal, _update, ctx) {
 			const cwd = resolve(ctx.cwd, params.cwd ?? ".");
-			if (!statSync(cwd).isDirectory()) throw new Error(`Not a directory: ${cwd}`);
-			const childPrompt = await resolveChildPrompt(params.prompt, params.inherit);
+			let cwdStat;
+			try {
+				cwdStat = statSync(cwd);
+			} catch {
+				throw new Error(`Not a directory: ${cwd}`);
+			}
+			if (!cwdStat.isDirectory()) throw new Error(`Not a directory: ${cwd}`);
+			let childPrompt = await resolveChildPrompt(params.prompt, params.inherit);
+			if (params.persona?.trim()) {
+				const personaName = params.persona.trim();
+				childPrompt = composePersonaPrompt(
+					personaName,
+					resolvePersonaBody(personaName, { projectTrusted: ctx.isProjectTrusted(), cwd: ctx.cwd, agentDir: getAgentDir() }),
+					childPrompt,
+				);
+			}
+			if (params.after_task_id?.trim()) {
+				const priorId = params.after_task_id.trim();
+				const prior = manager.jobs.get(priorId) ?? adoptedTask(priorId);
+				if (!prior) throw new Error(`Unknown task: ${priorId}`);
+				if (prior.state === "running") {
+					// Chaining waits for the referenced task; aborting the turn
+					// aborts the wait without cancelling the prior task.
+					const aborted = new Promise<never>((_, reject) => {
+						signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+					});
+					await Promise.race([prior.done, aborted]);
+				}
+				if (childPrompt.includes(PREVIOUS_PLACEHOLDER)) {
+					childPrompt = interpolatePrevious(childPrompt, childReportExcerpt(jobOutput(prior), prior.logFile));
+				}
+			}
 			const review = await prepareChildDispatch({
 				kind: "task",
 				prompt: childPrompt,
@@ -631,7 +723,8 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 			parameters: Type.Object({ task_id: Type.String() }),
 			async execute(_id, params, _signal, _update, ctx) {
 				const job = manager.jobs.get(params.task_id) ?? adoptedTask(params.task_id);
-				if (!job) throw new Error(`Unknown task: ${params.task_id}`);				if (action === "cancel") {
+				if (!job) throw new Error(`Unknown task: ${params.task_id}`);
+				if (action === "cancel") {
 					job.stop();
 					await job.done;
 				}
