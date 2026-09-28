@@ -10,6 +10,7 @@ import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
+import { resolveNotificationChannel, type TerminalNotificationChannel } from "./terminal-notifications.ts";
 
 export interface CompactionModelOverride {
 	reserveTokens?: number;
@@ -59,6 +60,7 @@ export interface TerminalSettings {
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
 	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
 	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
+	notifications?: TerminalNotificationChannel; // default: "bell" (BEL/OSC 9 attention notifications; env HUMMIN_NOTIFY overrides)
 	hyperlinks?: boolean | "auto";
 	images?: "kitty" | "iterm2" | "auto" | false;
 	trueColor?: boolean | "auto";
@@ -1859,6 +1861,20 @@ export class SettingsManager {
 		}
 		this.globalSettings.terminal.showTerminalProgress = enabled;
 		this.markModified("terminal", "showTerminalProgress");
+		this.save();
+	}
+
+	/** Terminal notification channel: env HUMMIN_NOTIFY wins, then the setting, then "bell". */
+	getTerminalNotifications(): TerminalNotificationChannel {
+		return resolveNotificationChannel(process.env.HUMMIN_NOTIFY, this.settings.terminal?.notifications);
+	}
+
+	setTerminalNotifications(channel: TerminalNotificationChannel): void {
+		if (!this.globalSettings.terminal) {
+			this.globalSettings.terminal = {};
+		}
+		this.globalSettings.terminal.notifications = channel;
+		this.markModified("terminal", "notifications");
 		this.save();
 	}
 

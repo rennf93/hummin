@@ -331,6 +331,16 @@ export {
 export { createSyntheticSourceInfo } from "./core/source-info.ts";
 // System prompt sections (per-section token accounting for extensions)
 export { estimateSystemPromptSectionTokens } from "./core/system-prompt.ts";
+export {
+	DEFAULT_NOTIFICATION_CHANNEL,
+	NOTIFICATION_CHANNELS,
+	type NotificationWriter,
+	parseNotificationChannel,
+	resolveNotificationChannel,
+	sanitizeNotificationMessage,
+	sendTerminalNotification,
+	type TerminalNotificationChannel,
+} from "./core/terminal-notifications.ts";
 export { type EditDiffResult, generateDiffString, generateUnifiedPatch } from "./core/tools/edit-diff.ts";
 // Tools
 export {

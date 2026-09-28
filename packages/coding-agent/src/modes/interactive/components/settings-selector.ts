@@ -147,6 +147,7 @@ export interface SettingsConfig {
 	defaultProjectTrust: DefaultProjectTrust;
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
+	terminalNotifications: string;
 	tuiMode: TuiMode;
 	fullscreenExitOutput: FullscreenExitOutput;
 	fullscreenScrollbar: ScrollViewScrollbar;
@@ -209,6 +210,7 @@ export interface SettingsCallbacks {
 	onAutocompleteMaxVisibleChange: (maxVisible: number) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
+	onTerminalNotificationsChange: (channel: string) => void;
 	onTuiModeChange: (mode: TuiMode) => void;
 	onFullscreenExitOutputChange: (output: FullscreenExitOutput) => void;
 	onFullscreenScrollbarChange: (mode: ScrollViewScrollbar) => void;
@@ -1390,6 +1392,13 @@ export class SettingsSelectorComponent extends Container {
 				values: ["true", "false"],
 			},
 			{
+				id: "terminal-notifications",
+				label: "Notifications",
+				description: "BEL/OSC 9 notification when a turn ends or the agent asks a question",
+				currentValue: config.terminalNotifications,
+				values: ["off", "bell", "osc9", "all"],
+			},
+			{
 				id: "output-padding",
 				label: "Output padding",
 				description: "Horizontal padding for user messages, assistant messages, and thinking",
@@ -1651,6 +1660,9 @@ export class SettingsSelectorComponent extends Container {
 					break;
 				case "terminal-progress":
 					callbacks.onShowTerminalProgressChange(newValue === "true");
+					break;
+				case "terminal-notifications":
+					callbacks.onTerminalNotificationsChange(newValue);
 					break;
 				case "output-padding":
 					callbacks.onOutputPadChange(newValue === "0" ? 0 : 1);

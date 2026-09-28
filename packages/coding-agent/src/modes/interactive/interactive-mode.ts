@@ -127,6 +127,7 @@ import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
+import { parseNotificationChannel, sendTerminalNotification } from "../../core/terminal-notifications.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
@@ -3768,9 +3769,13 @@ export class InteractiveMode {
 				break;
 			}
 
-			case "agent_end":
+			case "agent_end": {
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(false);
+				}
+				const notifyChannel = this.settingsManager.getTerminalNotifications();
+				if (notifyChannel !== "off") {
+					sendTerminalNotification(notifyChannel, `${APP_NAME}: turn complete`);
 				}
 				this.clearStatusIndicator("working");
 				if (this.streamingComponent) {
@@ -3782,6 +3787,7 @@ export class InteractiveMode {
 
 				this.ui.requestRender();
 				break;
+			}
 
 			case "agent_settled":
 				await this.checkShutdownRequested();
@@ -5207,6 +5213,7 @@ export class InteractiveMode {
 					quietStartup: this.settingsManager.getQuietStartup(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
 					showTerminalProgress: this.settingsManager.getShowTerminalProgress(),
+					terminalNotifications: this.settingsManager.getTerminalNotifications(),
 					tuiMode: this.ui.mode,
 					fullscreenExitOutput: this.settingsManager.getFullscreenExitOutput(),
 					fullscreenScrollbar: this.settingsManager.getFullscreenScrollbar(),
@@ -5408,6 +5415,14 @@ export class InteractiveMode {
 					},
 					onShowTerminalProgressChange: (enabled) => {
 						this.settingsManager.setShowTerminalProgress(enabled);
+					},
+					onTerminalNotificationsChange: (channel) => {
+						const parsed = parseNotificationChannel(channel);
+						if (!parsed) {
+							selector?.updateValue("terminal-notifications", this.settingsManager.getTerminalNotifications());
+							return;
+						}
+						this.settingsManager.setTerminalNotifications(parsed);
 					},
 					onTuiModeChange: (mode) => {
 						if (!this.switchTuiMode(mode)) {

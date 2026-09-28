@@ -1,5 +1,11 @@
 /** ask_user: structured multi-choice question rendered as a TUI selector. */
-import { type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
+import {
+	type ExtensionAPI,
+	type ExtensionContext,
+	type Theme,
+	SettingsManager,
+	sendTerminalNotification,
+} from "@earendil-works/pi-coding-agent";
 import {
 	Text,
 	truncateToWidth,
@@ -286,6 +292,7 @@ export async function askInteractive(
 	signal: AbortSignal | undefined,
 	recommended?: number,
 ): Promise<AskUserResult> {
+	notifyQuestionPending(ctx, question);
 	const options = buildOptions(choices, allowFreeText);
 	const picked = await withAbort(
 		ctx.ui.custom<string | undefined>(
@@ -296,6 +303,16 @@ export async function askInteractive(
 	);
 	if (signal?.aborted || picked === undefined || picked === FREE_TEXT_LABEL) return result("", true);
 	return result(picked, false);
+}
+
+/** Ring the terminal so an unfocused pane gets noticed while the selector waits. */
+function notifyQuestionPending(ctx: ExtensionContext, question: string): void {
+	try {
+		const channel = SettingsManager.create(ctx.cwd).getTerminalNotifications();
+		if (channel !== "off") sendTerminalNotification(channel, `hummin: question - ${question}`);
+	} catch {
+		// Settings are unreadable in exotic setups; asking must keep working.
+	}
 }
 
 export default function humminAsk(pi: ExtensionAPI): void {
