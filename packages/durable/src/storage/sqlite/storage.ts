@@ -530,7 +530,7 @@ export class SqliteStorage implements Storage {
 			}
 			value = apply(value, parseJson<readonly Op[]>(revision.content)) as JsonObject;
 		}
-		return { record, version: base.version, value };
+		return { record, version: base.version, value, deltasSinceBase: tail.length };
 	}
 
 	private candidateNextId(writes: readonly StorageWrite[]): number {

@@ -333,8 +333,8 @@ durable payload.
 For an eligible successor, the Harness:
 
 1. ends the old invocation and rejects further invocation-bound operations;
-2. stops its owned watches;
-3. joins watch callbacks and accepted runtime operations;
+2. stops future delivery to its owned watches;
+3. joins accepted runtime operations; already-running watch callbacks remain caller-owned;
 4. lets storage-admitted commits settle normally;
 5. rereads the task on the Session line and reapplies terminal, closing, abort,
    error, and no-progress precedence;

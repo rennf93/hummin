@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the System theme: follows the terminal's light/dark scheme with Oklab-based color matching ([#10067](https://github.com/earendil-works/pi/pull/10067) by [@mitsuhiko](https://github.com/mitsuhiko)).
+
 ## [1.2.9] - 2026-09-28
 
 ## [1.2.8] - 2026-09-28

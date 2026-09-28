@@ -5,6 +5,7 @@ Pico5 uses existing package types as follows:
 
 ```ts
 import type {
+  AttachedReplicatedState,
   Context,
   Draft,
   JsonValue,
@@ -59,7 +60,8 @@ Required invariants:
    the Session synchronously prepares or aborts every open change at that point.
    Values assigned into a draft are copied by value and must be strict JSON.
 7. The mutation line remains held through storage settlement and committed-state
-   adoption. Listener callbacks run later, off the line.
+   adoption. Commit/close observers run synchronously only to capture immutable
+   state; document-state and watch user callbacks run later, off the line.
 8. An uncertain storage failure is fatal to the open Session. It publishes
    nothing and must be reopened. Preparation and checkpoint failures occur before
    storage admission and roll back normally.
@@ -413,6 +415,7 @@ interface Conversation {
     handlers: Partial<HooksOf<K>>,
     options?: { readonly subtree?: boolean },
   ): () => void;
+  viewState(context: Context): Promise<AttachedReplicatedState<ConversationView>>;
   watch(context: Context): Promise<ConversationWatch>;
 }
 
@@ -592,19 +595,19 @@ the terminal receipt. Aborting an already terminal task returns `terminal`; an
 unknown ID rejects. Explicit task abort includes a background task. Cancelling a
 task or idle wait does not abort work.
 
-`Conversation.watch()` atomically captures its current immutable structural
-revision and registers for later complete Session commits. Its `WatchHandle`
-uses the same serialized asynchronous, latest-revision delivery contract as
-`watchDoc()` in section 9.2. It carries no semantic events and owns no second
-persistence authority.
+`Conversation.viewState()` returns its current structural mount as a disposable
+read-only Chord state. `Conversation.watch()` atomically captures that immutable
+revision and registers for later exact complete-commit frames. Its `WatchHandle`
+uses the same serialized asynchronous, bounded-buffer contract as `watchDoc()`
+in section 9.2. Neither carries semantic events or owns a second persistence
+authority.
 
 `close()` is equivalent to `suspend()` for v1. It seals mutation admission and
-task reservation, signals invocations, and stops watches. Outside the Session
-line it lets already-admitted storage commits settle, joins task/tool/hook
-invocations and in-flight watch callbacks, then closes sources and storage. It
-writes no task outcome. Handles belong to that open Harness and must be
-reacquired after reopen. A non-cooperative watch callback can delay graceful
-close just like a non-cooperative task invocation.
+task reservation, signals invocations, and stops future watch deliveries. Outside
+the Session line it lets already-admitted storage commits settle, joins
+task/tool/hook invocations, then closes states and storage. Already-running watch
+callbacks remain caller-owned and may finish independently. Close writes no task
+outcome. Handles belong to that open Harness and must be reacquired after reopen.
 
 ## 3. Documents
 
@@ -632,12 +635,17 @@ type DocumentSemantics =
   | RewindableConversationSemantics
   | { readonly scope: "task" };
 
+type CheckpointInfo = {
+  /** Deltas already stored after the newest base, excluding this change. */
+  readonly deltasSinceBase: number;
+};
+
 type CommonDocDefinition<T extends JsonObject> = {
   readonly kind: string;
   readonly version: number;
   initial(): T;
   migrate?(value: JsonObject, fromVersion: number): T;
-  checkpointWhen?(value: Readonly<T>, ops: readonly Op[]): boolean;
+  checkpointWhen?(value: Readonly<T>, ops: readonly Op[], info: CheckpointInfo): boolean;
 };
 
 type DocDefinition<T extends JsonObject> =
@@ -814,6 +822,8 @@ There is no mutable `session.document()` API.
 interface Session extends DocumentObserver {
   commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T>;
   close(context: Context): Promise<void>;
+  subscribeCommits(listener: (publication: CommitPublication, context: Context) => void): () => void;
+  subscribeClose(listener: () => void): () => void;
 
   snapshot<T extends JsonObject>(token: SessionDocToken<T>, context: Context): Promise<Readonly<T> | undefined>;
   snapshot<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: ConversationId, context: Context): Promise<Readonly<T> | undefined>;
@@ -825,12 +835,12 @@ interface Session extends DocumentObserver {
   snapshotAsOf<T extends JsonObject>(token: RewindableConversationDocToken<T>, conversationId: ConversationId, at: EntryId, context: Context): Promise<Readonly<T> | undefined>;
   snapshotAsOf<T extends JsonObject, I extends JsonValue>(token: RewindableConversationDocFamilyToken<T, I>, conversationId: ConversationId, key: string, at: EntryId, context: Context): Promise<Readonly<T> | undefined>;
 
-  documentSource<T extends JsonObject>(token: SessionDocToken<T>, context: Context): Promise<DocumentSource<T> | undefined>;
-  documentSource<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: ConversationId, context: Context): Promise<DocumentSource<T> | undefined>;
-  documentSource<T extends JsonObject>(token: TaskDocToken<T>, taskId: TaskId, context: Context): Promise<DocumentSource<T> | undefined>;
-  documentSource<T extends JsonObject, I extends JsonValue>(token: SessionDocFamilyToken<T, I>, key: string, context: Context): Promise<DocumentSource<T> | undefined>;
-  documentSource<T extends JsonObject, I extends JsonValue>(token: ConversationDocFamilyToken<T, I>, conversationId: ConversationId, key: string, context: Context): Promise<DocumentSource<T> | undefined>;
-  documentSource<T extends JsonObject, I extends JsonValue>(token: TaskDocFamilyToken<T, I>, taskId: TaskId, key: string, context: Context): Promise<DocumentSource<T> | undefined>;
+  documentState<T extends JsonObject>(token: SessionDocToken<T>, context: Context): Promise<DocumentState<T> | undefined>;
+  documentState<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: ConversationId, context: Context): Promise<DocumentState<T> | undefined>;
+  documentState<T extends JsonObject>(token: TaskDocToken<T>, taskId: TaskId, context: Context): Promise<DocumentState<T> | undefined>;
+  documentState<T extends JsonObject, I extends JsonValue>(token: SessionDocFamilyToken<T, I>, key: string, context: Context): Promise<DocumentState<T> | undefined>;
+  documentState<T extends JsonObject, I extends JsonValue>(token: ConversationDocFamilyToken<T, I>, conversationId: ConversationId, key: string, context: Context): Promise<DocumentState<T> | undefined>;
+  documentState<T extends JsonObject, I extends JsonValue>(token: TaskDocFamilyToken<T, I>, taskId: TaskId, key: string, context: Context): Promise<DocumentState<T> | undefined>;
 }
 
 interface Tx {
@@ -897,7 +907,7 @@ registered and ordinary documents are not scanned at open.
 - The first acquisition of one logical address is memoized before awaiting. Later
   acquisitions in that transaction return the same draft; for a missing family,
   the first call's detached seed wins and later seeds are ignored.
-- `snapshot()`, `snapshotAsOf()`, `documentSource()`, and `watchDoc()` never create
+- `snapshot()`, `snapshotAsOf()`, `documentState()`, and `watchDoc()` never create
   or persist migration. They return `undefined` when the requested incarnation is
   absent and migrate a reconstructed value only in memory.
 - Task-scoped `tx.doc()` validates against the transaction's latest candidate task
@@ -914,7 +924,7 @@ registered and ordinary documents are not scanned at open.
 - `snapshot()` returns the current shareable immutable revision. Mutation of it
   or any retained descendant is unsupported; callers that need mutable ownership
   must copy it first.
-- `documentSource()` returns an opaque source bound to one committed incarnation.
+- `documentState()` returns a disposable read-only Chord state bound to one committed incarnation.
 - `tx.doc()` returns one revocable Astra overlay `Draft<T>` for the transaction.
 - Historical reads never create documents in the past.
 
@@ -1054,10 +1064,14 @@ For an ordinary later mutation, the definition alone decides whether the
 storage record is a base:
 
 ```ts
-const useBase = definition.checkpointWhen?.(candidateValue, ops) ?? false;
+const useBase = definition.checkpointWhen?.(candidateValue, ops, { deltasSinceBase }) ?? false;
 ```
 
 The Session evaluates this predicate exactly once after tracker preparation.
+`deltasSinceBase` counts the deltas already stored after the incarnation's newest
+base, excluding the change being evaluated. Storage reports it when it
+materializes the current value; the Session advances it after each adopted write
+and resets it after every base, so evaluation performs no Storage read.
 Creation and version transitions require bases and do not call it. The Session
 then gives Storage only the selected representation:
 
@@ -1080,6 +1094,12 @@ code and never receives an unused complete candidate with a selected delta.
 - Storage does not count encoded bytes, compare against `initial()`, or invent
   checkpoints.
 
+A definition can bound replay directly:
+
+```ts
+checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 31
+```
+
 A high-churn live document can checkpoint when it becomes empty:
 
 ```ts
@@ -1100,7 +1120,7 @@ no migrate      -> reject older stored version
 ```
 
 `migrate()` is pure and returns a complete current-version value. Migration is
-access-driven: `tx.doc()`, `snapshot()`, `snapshotAsOf()`, `documentSource()`, and
+access-driven: `tx.doc()`, `snapshot()`, `snapshotAsOf()`, `documentState()`, and
 `watchDoc()` reconstruct and migrate through the token supplied to that call.
 Harness open does not sweep ordinary documents.
 
@@ -1162,7 +1182,7 @@ inside the creating transaction lazily reads the detached source, migrates when
 required, and replaces the copy with one ordinary child create containing the
 final prepared value. Definition-free copies publish explicit `document.copy`
 metadata rather than a value. That metadata announces Storage-backed initial
-state and is never interpreted as a document value. Document sources, watches,
+state and is never interpreted as a document value. Document states, watches,
 and mounted views hydrate by capturing their baseline and subscription
 atomically on the Session line: a later commit already present becomes the
 baseline, while one committed after registration is delivered. Publications
@@ -1174,8 +1194,14 @@ Session-line operation so it never exposes a mixture from one commit.
 
 A Session commit callback may be asynchronous. It owns the Session mutation
 line through callback execution, preparation, storage settlement, committed
-baseline adoption, and publication enqueue. Listener callbacks run later.
+baseline adoption, and publication enqueue. Commit/close observers run on the
+line; document-state and watch user callbacks run later.
 External model, process, tool, network, and human effects run outside it.
+`subscribeCommits()` observes complete immutable publications synchronously
+after adoption, and `subscribeClose()` observes Session closure synchronously.
+Both run on the Session line and return idempotent disposers; their listeners
+must not throw, block, or call Session APIs. Document-state subscribers and watch
+listeners still run later, off the line.
 
 ```ts
 await session.commit(async tx => {
@@ -1341,8 +1367,8 @@ before dispatch. One callback handles every supported older version; newer or
 unmigratable live tasks become orphaned.
 `close()` marks the runtime closing, seals admission and reservation, signals
 invocations, and stops watches. Outside the Session line it settles admitted
-commits and joins invocations plus in-flight watch callbacks before closing
-storage. Later runtime commits reject, and close writes no task outcome. Closing
+commits and joins invocations before closing storage. Already-running watch callbacks remain
+caller-owned. Later runtime commits reject, and close writes no task outcome. Closing
 starts no fresh phase or abort invocation. It does not set abort marks,
 terminalize tasks, retire task documents, or publish document retirement. The
 hosting layer withdraws services and
@@ -1811,8 +1837,8 @@ In v1, changing host extension code is a Harness generation boundary:
 
 1. Stop new admission and task reservation.
 2. Close the Harness, signalling and joining its active task, tool, and hook
-   invocations plus in-flight watch callbacks without writing abort marks or
-   terminal outcomes.
+   invocations without writing abort marks or terminal outcomes. Stop future
+   watch deliveries without joining already-running callbacks.
 3. Dispose the old facets and registrations.
 4. Construct a new Harness over the same storage and new document tokens.
 5. Register the complete task definition set before open performs live-task
@@ -1869,7 +1895,7 @@ does not delete transcript history.
 
 ## 9. Document observation and Chord
 
-### 9.1 Document source
+### 9.1 Document state
 
 Chord's existing replicated-state layer exposes this source-adoption contract:
 
@@ -1908,24 +1934,21 @@ function replicatedState<T>(
   options?: ReplicatedStateSourceOptions,
 ): AttachedReplicatedState<T>;
 
-declare const documentSourceType: unique symbol;
-interface DocumentSource<T extends JsonObject>
-  extends ReplicatedStateSource<Readonly<T> | null> {
-  readonly [documentSourceType]: T;
-}
+type DocumentState<T extends JsonObject> =
+  AttachedReplicatedState<Readonly<T> | null>;
 
 type WatchEnd =
   | { readonly reason: "stopped" | "cancelled" | "session_closed" | "retired" }
-  | { readonly reason: "listener_error" | "diff_error"; readonly error: Error };
+  | { readonly reason: "listener_error"; readonly error: Error };
 
 interface WatchHandle<T> {
   /** Acquisition revision before start; latest delivered immutable revision afterward. */
   readonly value: T;
   /** Installs the sole serialized asynchronous listener. */
-  start(listener: (ops: readonly Op[], context: Context) => Promise<void>): void;
-  /** Prevents another callback from starting and signals an in-flight callback. */
-  stop(): void;
-  /** Settles after termination and any in-flight callback. */
+  start(listener: (value: T, ops: readonly Op[], context: Context) => Promise<void>): void;
+  /** Idempotently stops future callbacks and returns this watch's terminal result. */
+  stop(): Promise<WatchEnd>;
+  /** Settles when the watch terminates; an already-running callback remains caller-owned. */
   readonly closed: Promise<WatchEnd>;
 }
 
@@ -1941,29 +1964,27 @@ interface DocumentObserver {
 }
 ```
 
-`DocumentSource` is an opaque Chord-recognized `ReplicatedStateSource`. A Chord
-replicated state adopts Pico's shareable committed immutable revisions directly,
-without another tracker or a value copy. `attach()` is one synchronous boundary:
-`snapshot.value` includes every commit through `snapshot.cursor`, and the
-attachment buffers only later frames. `activate()` installs the sole listener
-and synchronously drains those frames in contiguous cursor order before
-returning. An operation already covered by the snapshot is never redelivered.
-Source-backed state is publication-only and Pico remains its sole mutator.
-Source revisions and operation placement payloads may share trusted immutable
-containers.
+`documentState()` attaches Pico's committed document stream to Chord before
+returning. The returned state is already hydrated with the exact shareable
+immutable revision, has no mutation methods, and publishes every later exact
+committed revision and operation batch without another tracker, value copy, or
+re-diff. Disposing it unregisters only that observation; Pico remains the sole
+document mutator.
 
-Source and watch acquisition never create; absent lookup returns `undefined`.
+State and watch acquisition never create; absent lookup returns `undefined`.
 Successful acquisition binds one concrete incarnation. Retirement publishes a
-JSON `null` replacement and ends that incarnation's stream. The service may then
-withdraw itself; if it remains exposed, consumers see `null`, never stale state.
-If the incarnation retires before attachment, attachment hydrates terminal
-`null`; it never binds a replacement incarnation. A later recreation requires
-acquiring a new source/watch.
+JSON `null` root replacement and ends that incarnation's stream. If the state
+remains exposed, consumers see `null`, never stale state. A later recreation
+requires acquiring a new state or watch.
 
-Each adopted replicated state assigns its own in-memory contiguous delivery
-sequence; Pico does not persist or expose that sequence through `WatchHandle`.
-A live source or watch pins its incarnation's loaded tracker; eviction begins only
-after every attachment ends. Reopen creates a new source lifetime and hydration.
+Each document state assigns its own in-memory contiguous Chord delivery sequence.
+Pico does not persist or expose that sequence through `WatchHandle`. States and watches retain immutable revisions independently of the loaded tracker
+cache. Reopen creates a new state lifetime and hydration.
+
+Internally, state attachment uses Chord's synchronous atomic snapshot-and-register
+boundary: the snapshot includes every commit before attachment, and every later
+exact frame is buffered until activation. This prevents a snapshot from being
+paired with operations based on a newer unseen revision.
 
 ### 9.2 `watchDoc`
 
@@ -1971,72 +1992,60 @@ Tasks, hooks, and tools may observe any existing document for which their code
 has a token and owner/key. There is no additional subtree permission system inside trusted
 Session code.
 
-`watchDoc()` is available on task, hook, and tool APIs. On the Session line,
-acquisition resolves one existing concrete incarnation, captures its current
-immutable tracker revision in O(1), and registers the handle for later current
-revisions. It returns `undefined` when absent. Before `start()`,
-`watch.value` remains the acquisition revision even when newer revisions commit.
+On the Session line, `watchDoc()` resolves one existing concrete incarnation,
+captures its current immutable tracker revision in O(1), and registers for every
+later exact committed revision and operation batch. It returns `undefined` when
+absent. Before `start()`, `watch.value` remains the acquisition revision while
+later frames buffer.
 
 ```ts
 const watch = await api.watchDoc(JobOutputDoc, producerTaskId, context);
 if (watch === undefined) return;
 try {
   await initializeConsumer(watch.value, context);
-  watch.start(async (_ops, deliveryContext) => {
-    await consume(watch.value, deliveryContext);
+  watch.start(async (value, ops, deliveryContext) => {
+    await consume(value, ops, deliveryContext);
   });
 } catch (error) {
-  watch.stop();
-  await watch.closed;
+  await watch.stop();
   throw error;
 }
 ```
 
-The caller initializes from the acquisition revision before `start()`.
-`start()` synchronously installs the sole listener, changes the prepared handle
-to active, and schedules delivery; it never invokes the listener inline. A
-second `start()`, or `start()` after stop, throws.
+`start()` installs the sole listener and schedules delivery; it never invokes
+user code inline. Each callback receives the exact immutable committed value and
+the exact operation batch that produced it. Immediately before invocation,
+`watch.value` advances to that value. The watch awaits the listener before
+starting its next callback, but Session commits never wait for callback
+settlement.
 
-Each watch retains only its last delivered immutable revision and the newest
-committed immutable revision. It retains no operation queue and never constructs
-reset frames. Before each callback, off the Session line, it computes
-`diffRevisions(lastDelivered, newest)` and advances `watch.value` to that exact
-newest revision. An empty derived batch advances the value silently without
-invoking the listener. A nonempty batch is delivered with a watch-owned Context
-that carries values from the newest coalesced commit's Context while its
-cancellation lifetime belongs to the watch. If a newer revision arrives while a callback
-is in flight, the delivery line repeats after that callback settles. Callbacks
-never overlap, and commits never wait for callback settlement.
-
-An update accepted between acquisition and return, or between return and
-`start()`, is therefore not lost. Slow or unstarted watches converge directly to
-the latest committed state with memory bounded by immutable revision references,
-not queued operation count. Intermediate commits and redundant nonempty batches
-may be coalesced away when their net revision diff is empty. Code that must audit
-every transition must persist each fact as an immutable entry or in its own
-journal. The listener's promise covers all work the watch serializes;
-fire-and-forget work started by the listener is outside that guarantee.
+A watch retains at most 100 pending committed frames, excluding the frame already
+being delivered. Adding frame 101 replaces the complete undelivered suffix with
+one self-contained root replacement `[["r", newestValue]]`, using the newest
+exact immutable revision and that commit's Context. Later exact frames follow
+that replacement normally. Another overflow replaces the pending suffix again.
+No serialized-byte measurement, value copy, operation replay, or re-diff occurs.
+This is convergent observation, not an audit stream; consumers requiring every
+transition must persist those facts separately.
 
 `watch.value` and every previously returned revision remain stable forever under
-the trusted immutability contract. Consumers must not mutate them or any retained
-descendant. A consumer needing mutable ownership must copy first.
+the trusted immutability contract. Consumers must not mutate them or retained
+descendants. The selected commit Context's values are preserved without inheriting the
+producer's cancellation. A callback owns its own asynchronous work.
 
-A watch remains bound to its original incarnation. Retirement sets its newest
-revision to `null`. Before start, `value` remains the acquisition revision;
-after start, the terminal diff advances `watch.value` to `null`, invokes the
-listener, and closes as `retired`. Recreation requires another watch.
+A watch remains bound to its original incarnation. Retirement queues the exact
+terminal `[["r", null]]` frame, or folds it into an overflow replacement with
+value `null`. After that callback settles, the watch closes as `retired` and never
+follows a replacement incarnation.
 
-`stop()` is idempotent, unregisters the handle, discards its pending latest
-revision, prevents another callback from starting, and signals the watch-owned
-delivery Context. An in-flight callback is allowed to settle; `closed` resolves only
-afterward. The acquisition `Context` governs the watch lifetime. Cancellation
-during acquisition cleans up any registration before rejecting. Cancellation
-immediately after successful acquisition may return an already-stopped handle,
-whose `start()` throws and whose `closed` reports `cancelled`. Invocation
-termination and Session close stop owned watches similarly. Diff or listener
-failure is reported, discards pending work, and closes only that watch as
-`diff_error` or `listener_error`, respectively. The first termination reason wins, and every late rejection is
-observed.
+`stop()` is idempotent. It synchronously unregisters, discards pending frames,
+prevents another callback from starting, and returns the common terminal promise.
+An already-running callback is not aborted or joined and remains caller-owned.
+The acquisition `Context` governs watch lifetime. Cancellation during acquisition
+cleans up before rejecting; later cancellation and Session close stop future
+delivery similarly. Listener failure discards pending work and closes only that
+watch as `listener_error`. The first termination reason wins, and every late
+rejection is observed.
 
 ### 9.3 Conversation view
 
@@ -2071,22 +2080,20 @@ because they obey the same trusted immutability contract. The mount performs no
 semantic projection and owns no second persistence authority. A Chord adapter
 assigns a contiguous in-memory delivery sequence per view source lifetime.
 
-`Conversation.watch()` exposes that mount through the same O(1) immutable
-acquisition, serialized asynchronous listener, and latest-revision coalescing as
-`watchDoc()`. An empty mounted operation batch creates no revision; a redundant
-nonempty batch may create a distinct but deeply equal revision. A slow watch may
-skip intermediate revisions and receives a derived diff from its last delivered
-revision directly to the newest one. Chord Session facets may
-forward the captured revision and committed operations through services, but
-that product wiring is not part of the Harness facade and must not add another
-tracker or semantic event envelope.
+`Conversation.viewState()` exposes the mount directly as a disposable read-only
+Chord state for facets and UI services. `Conversation.watch()` exposes the same
+mount through Package 12's serialized exact-frame watch with bounded pending
+frames and full-value overflow replacements. An empty mounted operation batch
+creates no revision; a redundant nonempty batch remains a real publication.
+Neither API adds another tracker, persistence authority, or semantic event
+envelope.
 
 ### 9.4 Agent-mode notifications
 
 The Session kernel and Chord structural sources do not maintain a semantic event
 journal. Coding-agent JSON/RPC compatibility uses a thin agent-mode adapter
-derived from each uncoalesced committed publication before per-watch
-latest-revision coalescing. It owns no tracker or persistence and emits notifications only after
+derived from each uncoalesced committed publication before any per-watch
+overflow replacement. It owns no tracker or persistence and emits notifications only after
 the commit that makes them true.
 
 The adapter protocol covers run start/settlement, committed assistant progress,
@@ -2109,7 +2116,7 @@ these rules:
   adapter.
 
 This adapter is allowed even though a public Session-kernel semantic stream is a
-non-goal. It must not derive notifications from a lossy, latest-revision watch
+non-goal. It must not derive notifications from a lossy, overflow-reset watch
 when complete subscribed lifecycle delivery is promised.
 
 ## 10. Storage contract
@@ -2165,6 +2172,8 @@ type StoredDocument = {
   readonly record: DocumentRecord;
   readonly version: number;
   readonly value: JsonObject;
+  /** Deltas replayed after the selected base to materialize `value`. */
+  readonly deltasSinceBase: number;
 };
 
 type StorageWrite =
@@ -2267,8 +2276,8 @@ background status.
 `document(id, at)` materializes one specific incarnation and never follows a
 replacement at the same logical address. Callers resolve an address with
 `findDocument()` when they do not already hold an incarnation ID. It selects the
-newest applicable base, applies its ordered Chord delta tail, and returns the detached materialized value plus stored
-definition version. Base/delta records are backend-private. The lookup never
+newest applicable base, applies its ordered Chord delta tail, and returns the detached materialized value, stored
+definition version, and number of replayed deltas after that base. Base/delta records are backend-private. The lookup never
 scans unrelated documents. An unknown ID returns `undefined`. At `"current"`, a
 retired incarnation returns `undefined`. A numeric lookup of a rewindable
 conversation incarnation returns `undefined` outside its half-open lifetime and
@@ -2380,7 +2389,7 @@ These are contracts, not invitations to add defensive machinery:
   line. Never await models, tools, processes, network calls, humans, a nested
   Session commit, or a Session waiter inside it. Use methods on the current `Tx`.
 - **Explicit creation:** only typed `tx.doc()` creates an absent document. Snapshot,
-  source, and watch lookup return `undefined` instead.
+  state, and watch lookup return `undefined` instead.
 - **Family initialization:** the first acquisition of an absent family address
   selects its seed. Existing instances and later calls ignore seeds; a seed is
   neither identity nor an update.
@@ -2394,19 +2403,20 @@ These are contracts, not invitations to add defensive machinery:
   change requires explicit copy and retirement. Passing incompatible definition
   tokens that claim the same kind is unsupported caller misuse; Session does not
   maintain a document-definition registry to detect it.
-- **Trusted immutable revisions:** `snapshot()`, source values, watch values, and
+- **Trusted immutable revisions:** `snapshot()`, state values, watch values, and
   their descendants may share tracker-owned containers. Never mutate them; copy
   first when mutable ownership is required. Runtime freezing is not provided.
 - **Watch activation:** before `start()`, `watch.value` remains the immutable
   acquisition revision. Initialize the consumer from it first. After start, the
-  property advances to the newest delivered immutable revision before each
-  callback; every earlier reference remains stable.
-- **Coalesced watches:** slow or unstarted watches retain only their last
-  delivered and newest revisions. Intermediate committed states may be omitted.
-  A facet that must audit every transition must persist each fact as an immutable
-  entry or in its own journal and scan that history explicitly.
-- **Watch self-join:** a listener may call `stop()`, but must not await its own
-  `closed` promise or a Session close that joins that listener.
+  property advances to each delivered immutable revision before its callback;
+  every earlier reference remains stable.
+- **Buffered watches:** slow or unstarted watches retain up to 100 exact committed
+  frames. Overflow replaces the undelivered suffix with one full-value root
+  replacement, so intermediate committed states may be omitted. A consumer that
+  must audit every transition must persist each fact in an immutable entry or
+  journal and scan that history explicitly.
+- **Watch stop:** a listener may call and await `stop()`; it prevents future
+  callbacks but neither aborts nor joins the callback already running.
 - **Durable progress cadence:** clients see only committed progress. A crash may
   lose the current uncommitted throttle window.
 - **Large terminal results:** terminal task records remain queryable. Put large

@@ -1,8 +1,10 @@
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
+	type CommitPublication,
 	type ConversationId,
 	type DocumentAddress,
+	type DocumentCommitChange,
 	type DocumentId,
 	type DocumentPoint,
 	type DocumentRecord,
@@ -11,9 +13,7 @@ import {
 	type Seq,
 	type StorageWrite,
 } from "@earendil-works/pi-durable";
-import type { CommitPublication } from "../src/session/publications.ts";
 import { SessionKernel } from "../src/session/session.ts";
-import type { DocumentCommitChange } from "../src/session/transaction.ts";
 
 export const context: Context = BACKGROUND_CONTEXT;
 

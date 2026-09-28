@@ -1,4 +1,4 @@
-// A tour of the durable Session API in four small examples.
+// A tour of the durable Session API in six small examples.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/scratch.ts
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -136,5 +136,37 @@ const setup = await session.commit(async (tx) => {
 console.log("4. supervisor task:", setup.supervisorId);
 console.log("4. child conversation:", setup.child);
 console.log("4. registry:", await session.snapshot(AgentRegistry, main.id, context));
+
+// ─── 5. Expose a document through Chord ─────────────────────────────────────
+// documentState() never creates a document. It returns a hydrated read-only
+// Chord state bound to the current concrete incarnation.
+const notesState = await session.documentState(Notes, chat.id, context);
+if (notesState === undefined) throw new Error("notes are absent");
+const stopNotes = notesState.subscribe((value, _deliveryContext, delivery) => {
+	console.log("5. Chord notes:", delivery.kind, delivery.sequence, value);
+});
+await session.commit(async (tx) => {
+	(await tx.doc(Notes, chat.id)).text = "published through Chord";
+}, context);
+stopNotes();
+notesState.dispose();
+
+// ─── 6. Serialize asynchronous document work ────────────────────────────────
+// A watch starts from one stable acquisition revision. Slow callbacks never
+// overlap; exact committed frames buffer, with a full-value reset after 100.
+const notesWatch = await session.watchDoc(Notes, chat.id, context);
+if (notesWatch === undefined) throw new Error("notes are absent");
+console.log("6. watch baseline:", notesWatch.value);
+const delivered = new Promise<void>((resolve) => {
+	notesWatch.start(async (value, _ops, _deliveryContext) => {
+		console.log("6. watch update:", value);
+		resolve();
+	});
+});
+await session.commit(async (tx) => {
+	(await tx.doc(Notes, chat.id)).text = "observed asynchronously";
+}, context);
+await delivered;
+await notesWatch.stop();
 
 await session.close(context);

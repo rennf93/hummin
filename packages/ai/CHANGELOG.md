@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the `llama-cpp-classify` classifier API: each question becomes one chat prompt with single-token answer labels, and llama-server's pre-sampling next-token log-probabilities give the softmax over those labels; missing labels are retried with deeper readouts and then reported as errors ([#10119](https://github.com/earendil-works/pi/pull/10119) by [@mitsuhiko](https://github.com/mitsuhiko)).
+
+### Fixed
+
+- Fixed Mistral reasoning models not receiving the requested thinking level.
+- Fixed OpenCode qwen3.8-flash rejecting empty thinking signatures.
+
 ## [1.2.9] - 2026-09-28
 
 ## [1.2.8] - 2026-09-28
@@ -54,6 +63,8 @@
 - Fixed model-level `samplingParams` being dropped by direct `stream()`/`complete()` calls on OpenAI-compatible APIs ([#9506](https://github.com/earendil-works/pi/issues/9506)).
 - Fixed Mistral GLM models producing empty text blocks and split thinking blocks from empty content deltas, which could make later requests fail with "Expected at most one leading ThinkChunk" ([#9674](https://github.com/earendil-works/pi/issues/9674)).
 - Fixed OpenAI Fast mode requests being priced at the standard rate when the response reports `service_tier: "fast"`, as GPT-6 models do ([#10034](https://github.com/earendil-works/pi/issues/10034)).
+- Fixed Mistral reasoning models ignoring the requested thinking level: GLM 5.3 now uses `reasoning_effort` instead of `prompt_mode`, GLM 5.2 accepts `max`, and Mistral models only offer the effort levels the API supports ([#9678](https://github.com/earendil-works/pi/issues/9678)).
+- Fixed OpenCode Zen and OpenCode Go `qwen3.8-flash` thinking being replayed as plain text on later turns because the endpoint returns empty thinking signatures ([#10047](https://github.com/earendil-works/pi/issues/10047)).
 
 ## [1.1.3] - 2026-09-22
 

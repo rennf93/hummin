@@ -87,6 +87,54 @@ describe("Session document checkpoints", () => {
 		expect(writes[0]!.content.value).toBe(snapshot);
 	});
 
+	it("passes the stored delta count since the newest base, including after unload and version bases", async () => {
+		const seen: number[] = [];
+		const V1 = defineDoc<{ count: number }>({
+			kind: "checkpoint.deltas-since-base",
+			version: 1,
+			scope: "session",
+			initial: () => ({ count: 0 }),
+			checkpointWhen: (_value, _ops, info) => {
+				seen.push(info.deltasSinceBase);
+				return info.deltasSinceBase >= 2;
+			},
+		});
+		const V2 = defineDoc<{ count: number }>({
+			kind: "checkpoint.deltas-since-base",
+			version: 2,
+			scope: "session",
+			initial: () => ({ count: 0 }),
+			migrate: (value) => ({ count: value.count as number }),
+			checkpointWhen: (_value, _ops, info) => {
+				seen.push(info.deltasSinceBase);
+				return false;
+			},
+		});
+		const { session, storage } = openTestSession();
+		const increment = async (token: typeof V1): Promise<void> => {
+			await session.commit(async (tx) => {
+				(await tx.doc(token)).count++;
+			}, context);
+		};
+		await session.commit((tx) => tx.doc(V1).then(() => undefined), context);
+		await increment(V1);
+		await increment(V1);
+		await increment(V1);
+		await session.unloadDocuments();
+		await increment(V1);
+		expect(seen).toEqual([0, 1, 2, 0]);
+		const kinds = storage.commits
+			.slice(-4)
+			.map((writes) => (writes[0]!.type === "document.change" ? writes[0]!.content.kind : writes[0]!.type));
+		expect(kinds).toEqual(["delta", "delta", "base", "delta"]);
+
+		// A required version base resets the count without calling the predicate.
+		await increment(V2);
+		await increment(V2);
+		expect(seen).toEqual([0, 1, 2, 0, 0]);
+		expect(storage.commits.at(-2)![0]).toMatchObject({ content: { kind: "base", version: 2 } });
+	});
+
 	it("skips the predicate for empty batches but calls it for nonempty structural no-ops", async () => {
 		let calls = 0;
 		const Doc = defineDoc<{ items: string[] }>({

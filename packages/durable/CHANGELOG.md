@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added document states and buffered watches for session documents.
+- Checkpoint predicates now receive the deltas accumulated since the base checkpoint.
+
 ## [1.2.9] - 2026-09-28
 
 ## [1.2.8] - 2026-09-28
@@ -30,6 +35,7 @@
 - Replaced untyped numeric record IDs and the `TaskRef` wrapper with erased branded numeric ID types, including result-typed `TaskId<R>`, separately branded commit sequences, and generic `Storage.mintId()`.
 - Made task conversation membership immutable after task creation.
 - Added `ConversationQuery` to Storage and transaction conversation scans.
+- Added required `StoredDocument.deltasSinceBase` to Storage document reads.
 
 ### Added
 
@@ -37,6 +43,8 @@
 - Added document checkpoint selection, lazy version migration, and `Session.snapshotAsOf()` for rewindable conversation documents.
 - Added policy-driven backend-side conversation document copying when creating forks.
 - Added indexed conversation ownership queries and guaranteed no-effect Storage rejection handling.
+- Added incarnation-bound read-only Chord document states and serialized asynchronous document watches with bounded exact-frame buffering.
+- Added `deltasSinceBase` checkpoint predicate information so definitions can bound replay without value counters.
 
 ## [1.1.3] - 2026-09-22
 

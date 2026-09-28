@@ -689,9 +689,11 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			expect(await storage.document(firstId, createdAt, context)).toMatchObject({
 				version: 1,
 				value: { items: ["a"], nested: { count: 1 } },
+				deltasSinceBase: 0,
 			});
 			const changed = (await storage.document(firstId, changedAt, context))!;
 			expect(changed.value).toEqual({ items: ["a", "b"], nested: { count: 2 } });
+			expect(changed.deltasSinceBase).toBe(1);
 			(changed.value.items as string[]).push("read mutation");
 			expect((await storage.document(firstId, "current", context))?.value).toEqual({
 				items: ["a", "b"],
@@ -729,11 +731,13 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			expect(await storage.document(firstId, checkpointAt, context)).toMatchObject({
 				version: 2,
 				value: { items: ["checkpoint"], nested: { count: 3 } },
+				deltasSinceBase: 0,
 			});
-			expect((await storage.document(firstId, replacedAt, context))?.value).toEqual({
-				items: ["replacement"],
-				nested: { count: 4 },
+			expect(await storage.document(firstId, replacedAt, context)).toMatchObject({
+				value: { items: ["replacement"], nested: { count: 4 } },
+				deltasSinceBase: 1,
 			});
+			expect((await storage.document(firstId, "current", context))?.deltasSinceBase).toBe(1);
 
 			const secondId = await storage.mintId<DocumentId>();
 			const retiredAt = await storage.commit(

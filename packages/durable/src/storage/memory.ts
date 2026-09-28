@@ -568,7 +568,12 @@ export class MemoryStorage implements Storage {
 		const stored = this.materializeDocument(id, at);
 		return stored === undefined
 			? undefined
-			: { record: clone(stored.record), version: stored.version, value: clone(stored.value) };
+			: {
+					record: clone(stored.record),
+					version: stored.version,
+					value: clone(stored.value),
+					deltasSinceBase: stored.deltasSinceBase,
+				};
 	}
 
 	async scanDocuments(
@@ -610,7 +615,7 @@ export class MemoryStorage implements Storage {
 			base.value,
 			documentDeltaBatches(id, base.version, revisions, baseIndex + 1),
 		) as JsonObject;
-		return { record: stored.record, version: base.version, value };
+		return { record: stored.record, version: base.version, value, deltasSinceBase: revisions.length - baseIndex - 1 };
 	}
 
 	private *visibleEntries(

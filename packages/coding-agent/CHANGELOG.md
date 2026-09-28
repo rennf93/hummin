@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the System theme, following the terminal's light/dark scheme with Oklab-based color matching; the default for an unset theme setting remains hummin-dark, and "system" is opt-in ([#10067](https://github.com/earendil-works/pi/pull/10067) by [@mitsuhiko](https://github.com/mitsuhiko)).
+- Added the `llama-cpp` classifier API and llama-cpp extension support with docs ([#10119](https://github.com/earendil-works/pi/pull/10119) by [@mitsuhiko](https://github.com/mitsuhiko)).
+
+### Changed
+
+- OpenCode Go and Fireworks default models moved to Kimi K3 after upstream model removals; the startup banner no longer lists loaded themes.
+
+### Fixed
+
+- Fixed Mistral reasoning models not receiving the requested thinking level.
+- Fixed OpenCode qwen3.8-flash rejecting empty thinking signatures.
+
 ## [1.2.9] - 2026-09-28
 
 ### Fixed
@@ -188,6 +202,7 @@
 ### Changed
 
 - Switched the build from the TypeScript native preview to TypeScript 7.0 with an ES2024 target, and replaced `tsx` with Node's built-in type stripping for running from source ([#9965](https://github.com/earendil-works/pi/issues/9965)).
+- Removed the `[Themes]` section from the startup banner. Custom themes remain available in `/settings`, and theme conflicts are still reported.
 
 ### Fixed
 
@@ -202,6 +217,8 @@
 - Fixed `RpcClient` skipping the next event listener when a listener unsubscribes while handling an event, which could make `waitForIdle()` time out after `collectEvents()` ([#9990](https://github.com/earendil-works/pi/issues/9990)).
 - Fixed full-file `read` calls rendering as `:1` when models send `null` for omitted `offset` and `limit` ([#9996](https://github.com/earendil-works/pi/issues/9996)).
 - Fixed new sessions being lost when pi exits before the first assistant response. The session file is now created when the first user message is sent ([#10000](https://github.com/earendil-works/pi/issues/10000)).
+- Fixed the Fireworks default model pointing at the removed Kimi K2.6 model; it now defaults to Kimi K3.
+- Fixed the OpenCode Go default model pointing at the removed Kimi K2.6 model; it now defaults to Kimi K3.
 
 ### Changed
 
