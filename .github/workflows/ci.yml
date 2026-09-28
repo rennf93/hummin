@@ -49,10 +49,15 @@ jobs:
       # openrouter.json is excluded: models.dev re-ingests OpenRouter (mostly
       # pricing) continuously, so it churns daily and carries no test assertions.
       # Fix on drift: run `npm run generate:models` locally and commit the diff.
+      # Excluded as chronically volatile: their upstream catalogs re-ingest
+      # pricing/metadata continuously (models.dev re-ingests OpenRouter daily;
+      # Vercel, Bedrock and OpenCode mutate within minutes to hours), and the
+      # drift carries no test assertions. Fix on drift: run
+      # `npm run generate:models` locally and commit the diff.
       - name: Model data drift
         run: |
-          git diff --exit-code -- packages/ai/src/models.generated.ts 'packages/ai/src/providers/data/' ':(exclude)packages/ai/src/providers/data/.manifest.json' ':(exclude)packages/ai/src/providers/data/openrouter.json' \
-            || { echo "::error::Generated model data drifted from the committed copy (upstream metadata changed). Run 'npm run generate:models' locally and commit the diff."; git diff --stat -- packages/ai/src/models.generated.ts 'packages/ai/src/providers/data/' ':(exclude)packages/ai/src/providers/data/.manifest.json' ':(exclude)packages/ai/src/providers/data/openrouter.json'; exit 1; }
+          git diff --exit-code -- packages/ai/src/models.generated.ts 'packages/ai/src/providers/data/' ':(exclude)packages/ai/src/providers/data/.manifest.json' ':(exclude)packages/ai/src/providers/data/openrouter.json' ':(exclude)packages/ai/src/providers/data/opencode.json' ':(exclude)packages/ai/src/providers/data/vercel-ai-gateway.json' ':(exclude)packages/ai/src/providers/data/amazon-bedrock.json' \
+            || { echo "::error::Generated model data drifted from the committed copy (upstream metadata changed). Run 'npm run generate:models' locally and commit the diff."; git diff --stat -- packages/ai/src/models.generated.ts 'packages/ai/src/providers/data/' ':(exclude)packages/ai/src/providers/data/.manifest.json' ':(exclude)packages/ai/src/providers/data/openrouter.json' ':(exclude)packages/ai/src/providers/data/opencode.json' ':(exclude)packages/ai/src/providers/data/vercel-ai-gateway.json' ':(exclude)packages/ai/src/providers/data/amazon-bedrock.json'; exit 1; }
 
       - name: Check
         run: npm run check
