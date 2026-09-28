@@ -11,6 +11,7 @@ import {
 	ProcessManager,
 	refreshBackgroundStatus,
 } from "./lib/processes.ts";
+import { gateBackgroundShell, getSandboxWrap } from "./lib/shell-gate.ts";
 
 /** Bounded line batches: literal matching, split-chunk support, duplicate
  * suppression and a cap even when a process never writes a newline. */
@@ -96,19 +97,44 @@ const monitorNames = ((globalThis as Record<symbol, unknown>)[MONITOR_NAMES_KEY]
 >;
 const MONITOR_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 
-/** Validate an optional user-chosen handle shared by monitor/exec. */
-function validateName(raw: string | undefined, kind: string, names: Map<string, string>): string | undefined {
-	if (raw === undefined || raw === "") return undefined;
-	if (!MONITOR_NAME_RE.test(raw)) {
-		throw new Error("name must be 1-64 chars: letters, digits, '-', '_', starting with a letter or digit");
+	/** Validate an optional user-chosen handle shared by monitor/exec. */
+	function validateName(raw: string | undefined, kind: string, names: Map<string, string>): string | undefined {
+		if (raw === undefined || raw === "") return undefined;
+		if (!MONITOR_NAME_RE.test(raw)) {
+			throw new Error("name must be 1-64 chars: letters, digits, '-', '_', starting with a letter or digit");
+		}
+		const existingId = names.get(raw);
+		const existing = existingId ? findProcessJob(existingId) : undefined;
+		if (existing?.state === "running") {
+			throw new Error(`A ${kind} named '${raw}' is already running (id ${existingId}). Stop it first or pick another name.`);
+		}
+		return raw;
 	}
-	const existingId = names.get(raw);
-	const existing = existingId ? findProcessJob(existingId) : undefined;
-	if (existing?.state === "running") {
-		throw new Error(`A ${kind} named '${raw}' is already running (id ${existingId}). Stop it first or pick another name.`);
+
+	/**
+	 * Gate and sandbox-plan one background shell command. exec and monitor
+	 * spawn through ProcessManager without a bash tool_call, so without this
+	 * they bypassed bashguard, the laya gate, and the sandbox entirely. The
+	 * gate mirrors the bash tool's pipeline (bashguard first, then the laya
+	 * gate); the sandbox bridge, when workspace mode is on, runs the command
+	 * under the same profile the bash tool uses or blocks it. Throws with the
+	 * block reason when the command must not run.
+	 */
+	async function planBackgroundSpawn(
+		command: string,
+		ctx: ExtensionContext,
+		shellPath: string,
+		shellArgs: string[],
+	): Promise<{ command: string; args: string[]; advisory?: string }> {
+		const gate = await gateBackgroundShell(command, ctx.cwd);
+		if (gate.blocked) throw new Error(gate.blocked);
+		const wrap = getSandboxWrap();
+		const plan = wrap ? await wrap(shellPath, command) : undefined;
+		if (plan?.status === "blocked") throw new Error(plan.reason);
+		return plan && plan.status === "wrapped"
+			? { command: plan.command, args: plan.args, advisory: gate.advisory }
+			: { command: shellPath, args: [...shellArgs, command], advisory: gate.advisory };
 	}
-	return raw;
-}
 
 export default function humminMonitor(pi: ExtensionAPI): void {
 	const manager = new ProcessManager(join(getAgentDir(), "monitors"), "monitor");
@@ -341,9 +367,11 @@ export default function humminMonitor(pi: ExtensionAPI): void {
 			const name = validateName(params.name, "monitor", monitorNames);
 			const shell = getShellConfig();
 			if (shell.commandTransport === "stdin") throw new Error("Monitor requires a shell with command arguments");
+			const spawnSpec = await planBackgroundSpawn(params.command, ctx, shell.shell, shell.args);
+			if (spawnSpec.advisory) ctx.ui?.notify?.(spawnSpec.advisory, "warning");
 			const job = manager.start({
-				command: shell.shell,
-				args: [...shell.args, params.command],
+				command: spawnSpec.command,
+				args: spawnSpec.args,
 				cwd: ctx.cwd,
 				kind: "monitor",
 				label: params.command,
@@ -367,7 +395,7 @@ export default function humminMonitor(pi: ExtensionAPI): void {
 			// Spawn visibility: what is watching what, and where output lands
 			ctx.ui?.notify?.(`Started background ${describeJob(job)}`, "info");
 			return {
-				content: [{ type: "text", text: `${name ? `name: ${name}\n` : ""}${describeJob(job)}` }],
+				content: [{ type: "text", text: `${spawnSpec.advisory ? `${spawnSpec.advisory}\n\n` : ""}${name ? `name: ${name}\n` : ""}${describeJob(job)}` }],
 				details: { monitorId: job.id, ...(name ? { name } : {}) },
 			};
 		},
@@ -397,9 +425,11 @@ export default function humminMonitor(pi: ExtensionAPI): void {
 			const name = validateName(params.name, "exec", monitorNames);
 			const shell = getShellConfig();
 			if (shell.commandTransport === "stdin") throw new Error("Exec requires a shell with command arguments");
+			const spawnSpec = await planBackgroundSpawn(params.command, ctx, shell.shell, shell.args);
+			if (spawnSpec.advisory) ctx.ui?.notify?.(spawnSpec.advisory, "warning");
 			const job = execManager.start({
-				command: shell.shell,
-				args: [...shell.args, params.command],
+				command: spawnSpec.command,
+				args: spawnSpec.args,
 				cwd: ctx.cwd,
 				kind: "exec",
 				label: params.command,
@@ -412,7 +442,7 @@ export default function humminMonitor(pi: ExtensionAPI): void {
 			refreshBackgroundStatus(ctx.ui);
 			ctx.ui?.notify?.(`Started background ${describeJob(job)}`, "info");
 			return {
-				content: [{ type: "text", text: `${name ? `name: ${name}\n` : ""}${describeJob(job)}` }],
+				content: [{ type: "text", text: `${spawnSpec.advisory ? `${spawnSpec.advisory}\n\n` : ""}${name ? `name: ${name}\n` : ""}${describeJob(job)}` }],
 				details: { execId: job.id, ...(name ? { name } : {}) },
 			};
 		},
