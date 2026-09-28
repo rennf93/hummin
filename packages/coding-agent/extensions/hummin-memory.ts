@@ -55,11 +55,15 @@
  * with lastInjectedAt in lessons.jsonl, which the store's decay policy uses
  * to prefer keeping recently used lessons. Lessons are plain JSONL plus a
  * human-readable markdown mirror.
+ *
+ * Quick capture: an input line starting with `#note ` is written straight to
+ * the vault inbox. Any other `#`-prefixed text (markdown headings, issue
+ * refs) passes through to the model untouched.
  */
 
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, appendFileSync, unlinkSync, writeFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, appendFileSync, unlinkSync, writeFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { Type } from "typebox";
@@ -74,6 +78,7 @@ import type { TextContent } from "@earendil-works/pi-ai";
 import { appendVectorRecords, cosineSimilarity, embedInputs, loadVectorIndex, roundVector } from "./lib/embeddings-client.ts";
 import { MEMORY_WORKER_SOURCE, type MemoryDistillJob, type MemoryFoldJob } from "./lib/memory-workers.ts";
 import { prepareChildDispatch, type DispatchReceipt } from "./lib/child-dispatch-review.ts";
+import { humminArgv } from "./lib/hummin-bin.ts";
 
 const LESSON_MAX_WORDS = 120;
 
@@ -136,10 +141,6 @@ function ensureMemoryWorker(): string {
 	return file;
 }
 
-function ensureDistillWorker(): string {
-	return ensureMemoryWorker();
-}
-
 /** Queue distillation for this session and run it in a detached worker. */
 type MemoryDispatchContext = {
 	modelRegistry: { getAvailable: () => readonly Model<Api>[] };
@@ -167,7 +168,7 @@ function spawnDistillWorker(pendingPath: string): void {
 	// HUMMIN_MEMORY=0 or the child's own shutdown handler distills again,
 	// recursing without bound. The worker's argv is <mode> <job.json>, matching
 	// the fold invocation in enqueueFold.
-	const child = spawn(process.execPath, [ensureDistillWorker(), "distill", pendingPath], {
+	const child = spawn(process.execPath, [ensureMemoryWorker(), "distill", pendingPath], {
 		detached: true,
 		stdio: "ignore",
 		env: { ...process.env, HUMMIN_MEMORY: "0" },
@@ -341,7 +342,17 @@ function alreadyProcessed(sessionFile: string): boolean {
 	}
 }
 
-function markProcessed(sessionFile: string): void {
+/** Processed-session stamps older than this are dropped whenever state.json
+ * is written, so the processed map cannot grow without bound. */
+const PROCESSED_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * Stamp a session as distilled (exported for tests; the detached worker does
+ * the stamping in real runs). Entries older than 90 days - and entries with
+ * no parseable timestamp - are pruned on write. Atomic tmp+rename, fail-open:
+ * bookkeeping must never break shutdown.
+ */
+export function markProcessed(sessionFile: string): void {
 	try {
 		mkdirSync(memoryDir(), { recursive: true });
 		let state: { processed?: Record<string, string> } = {};
@@ -351,6 +362,11 @@ function markProcessed(sessionFile: string): void {
 			// fresh state
 		}
 		state.processed = state.processed ?? {};
+		const cutoff = Date.now() - PROCESSED_MAX_AGE_MS;
+		for (const [file, stamp] of Object.entries(state.processed)) {
+			const then = Date.parse(stamp);
+			if (!Number.isFinite(then) || then < cutoff) delete state.processed[file];
+		}
 		state.processed[sessionFile] = new Date().toISOString();
 		// atomic tmp+replace (vexa-bridge pattern)
 		writeFileSync(statePath() + ".tmp", JSON.stringify(state, null, 1));
@@ -621,11 +637,55 @@ export function loadVaultLessons(vaultDir: string): LessonRecord[] {
  * a lesson that was distilled into the store and then folded into the vault is
  * counted once. lessons.jsonl is emitted first so its exact-path project match
  * wins ties.
+ *
+ * Parses are cached keyed on the store's mtimeMs+size, the vault dir path, and
+ * the mtime of the vault's processed/ dir (a fold moving lessons in changes
+ * it), the same pattern as vectorIndex(): retrieval runs at least three times
+ * per prompt, and unchanged corpora are served without touching the disk.
  */
+interface UnionCache {
+	vaultDir: string;
+	jsonlPath: string;
+	mtimeMs: number;
+	size: number;
+	processedMtimeMs: number;
+	records: LessonRecord[];
+}
+
+let unionCache: UnionCache | undefined;
+
 export function unionLessonRecords(vaultDir?: string): LessonRecord[] {
-	const byBody = new Map<string, LessonRecord>();
+	const dir = vaultDir ?? "";
 	const jsonl = join(memoryDir(), "lessons.jsonl");
-	if (existsSync(jsonl)) {
+	let mtimeMs = -1;
+	let size = -1;
+	try {
+		const stat = statSync(jsonl);
+		mtimeMs = stat.mtimeMs;
+		size = stat.size;
+	} catch {
+		// missing store: empty unless the vault has lessons
+	}
+	let processedMtimeMs = -1;
+	if (dir) {
+		try {
+			processedMtimeMs = statSync(join(dir, "processed")).mtimeMs;
+		} catch {
+			// no processed dir yet
+		}
+	}
+	if (
+		unionCache &&
+		unionCache.vaultDir === dir &&
+		unionCache.jsonlPath === jsonl &&
+		unionCache.mtimeMs === mtimeMs &&
+		unionCache.size === size &&
+		unionCache.processedMtimeMs === processedMtimeMs
+	) {
+		return unionCache.records;
+	}
+	const byBody = new Map<string, LessonRecord>();
+	if (mtimeMs !== -1) {
 		for (const line of readFileSync(jsonl, "utf8").split("\n")) {
 			if (!line.trim()) continue;
 			try {
@@ -652,7 +712,9 @@ export function unionLessonRecords(vaultDir?: string): LessonRecord[] {
 			if (!byBody.has(body)) byBody.set(body, r);
 		}
 	}
-	return [...byBody.values()];
+	const records = [...byBody.values()];
+	unionCache = { vaultDir: dir, jsonlPath: jsonl, mtimeMs, size, processedMtimeMs, records };
+	return records;
 }
 
 /**
@@ -1040,6 +1102,18 @@ function searchEntities(query: string, limit: number): string[] {
 		.map((e) => `- ${e.rel} (${e.matched} term overlap)\n  ${e.hits.map((h) => h.trim()).join("\n  ")}`);
 }
 
+/**
+ * Note text behind the quick-capture prefix, or null when the input is not a
+ * quick capture. Only the explicit `#note ` prefix captures to the vault
+ * inbox; the old bare `# ` prefix swallowed every markdown heading, so plain
+ * heading text now passes through to the model untouched.
+ */
+export function quickCaptureNote(text: string): string | null {
+	if (!/^#note[ \t]/i.test(text)) return null;
+	const note = text.replace(/^#note[ \t]+/i, "").trim();
+	return note.length > 0 ? note : null;
+}
+
 /** Write a user quick-capture note, choosing a suffix if the timestamp repeats. */
 export function writeQuickCapture(vault: string, cwd: string, text: string, now = new Date()): string {
 	const inbox = join(vault, "inbox");
@@ -1162,13 +1236,15 @@ function queryExpansionEnabled(): boolean {
 }
 
 /** One print-mode hummin call; resolves "" on any failure including timeout
- * (execFile kills the child and errors). HUMMIN_MEMORY=0 in the child env:
- * the child's own shutdown handler must never distill again. */
+ * (execFile kills the child and errors). The child replays this process's own
+ * entry point via humminArgv instead of trusting PATH. HUMMIN_MEMORY=0 in the
+ * child env: the child's own shutdown handler must never distill again. */
 function runMemoryPrint(prompt: string, provider: string, modelId: string, thinking: string, timeoutMs: number): Promise<string> {
 	return new Promise((resolvePrint) => {
+		const argv = humminArgv(["-p", prompt, "--provider", provider, "--model", modelId, "--thinking", thinking]);
 		execFile(
-			"hummin",
-			["-p", prompt, "--provider", provider, "--model", modelId, "--thinking", thinking],
+			argv.command,
+			argv.args,
 			{ timeout: timeoutMs, maxBuffer: 256 * 1024, env: { ...process.env, HUMMIN_MEMORY: "0" } },
 			(error, stdout) => resolvePrint(error ? "" : String(stdout)),
 		);
@@ -1433,12 +1509,14 @@ async function hybridSimilarity(query: string): Promise<Map<string, number>> {
 	return similarity;
 }
 
-/** Test hook: clear the process-lifetime embed caches (endpoint probe, query
- * embeddings, sidecar index) so tests can re-point the endpoint. */
+/** Test hook: clear the process-lifetime caches (endpoint probe, query
+ * embeddings, sidecar index, union lesson corpus) so tests can re-point the
+ * endpoint or the store and read fresh state. */
 export function resetEmbedCachesForTests(): void {
 	resolvedEmbedEndpoint = undefined;
 	queryEmbeddingCache.clear();
 	vectorIndexCache = undefined;
+	unionCache = undefined;
 }
 
 /** The read-only vault search tool: on-demand retrieval over lessons and
@@ -1509,10 +1587,11 @@ export default function humminMemory(pi: ExtensionAPI): void {
 	registerVaultSearchTool(pi);
 
 	pi.on("input", async (event, ctx) => {
-		if (!event.text.startsWith("# ")) return { action: "continue" as const };
+		const note = quickCaptureNote(event.text);
+		if (!note) return { action: "continue" as const };
 		if (!settings.getMemoryEnabled()) return { action: "continue" as const };
 		try {
-			const path = writeQuickCapture(settings.getMemoryVaultDir(), ctx.cwd, event.text.slice(2));
+			const path = writeQuickCapture(settings.getMemoryVaultDir(), ctx.cwd, note);
 			ctx.ui.notify(`captured to vault inbox: ${path}`, "info");
 		} catch (error) {
 			ctx.ui.notify(`memory: quick capture failed (${error instanceof Error ? error.message : String(error)})`, "error");
@@ -1868,22 +1947,6 @@ export function ensureVault(settings?: SettingsManager): string {
 	return dir;
 }
 
-function lessonToInbox(cwd: string, lesson: string, sessionFile?: string): string {
-	const dir = ensureVault();
-	const slug = `lesson-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-	const body = `---
-type: lesson
-date: ${new Date().toISOString().slice(0, 10)}
-project: ${cwd}
-session: ${sessionFile ?? "unknown"}
----
-
-${lesson}
-`;
-	writeFileSync(join(dir, "inbox", `${slug}.md`), body);
-	return slug;
-}
-
 // Graph canvas (jsoncanvas.org format, opens natively in Obsidian): file
 // nodes pointing at entity notes, one column per entity type, edges drawn
 // from each entity's "## Links" wikilinks. A derived view of the graph:
@@ -1955,8 +2018,13 @@ export function writeCanvas(dir: string): number {
 
 /** Lazily refresh graph.canvas from ensureVault: rewrite only when the
  * rendered content differs, so unrelated vault touches never dirty the git
- * worktree. Best effort - a render failure must never break vault startup. */
+ * worktree. Skipped entirely while a fold worker holds .memory-fold.lock: the
+ * fold child commits, then the worker validates `git status --porcelain`, and
+ * a canvas rewrite in between would fail that validation as "git worktree
+ * dirty" even though the fold itself was clean. Best effort - a render
+ * failure must never break vault startup. */
 function refreshCanvas(dir: string): void {
+	if (existsSync(join(dir, ".memory-fold.lock"))) return;
 	try {
 		const canvas = renderCanvas(dir);
 		const next = canvas ? JSON.stringify(canvas, null, "\t") + "\n" : "";
@@ -1979,42 +2047,14 @@ function inboxLessonCount(dir: string): number {
 	return existsSync(join(dir, "inbox")) ? readdirSync(join(dir, "inbox")).filter((f) => f.endsWith(".md")).length : 0;
 }
 
-/** Launch a fold pass as a detached child; output lands in <vault>/fold.log. */
+/**
+ * Auto-fold: once the inbox holds at least the threshold number of lessons,
+ * delegate to enqueueFold, whose locked, validated memory-worker fold path is
+ * the same one /vault-fold uses. Returns true when a fold was actually
+ * spawned; a held dispatch notifies through ctx.ui.notify and returns false.
+ */
 export async function triggerAutoFold(dir: string, label: string, ctx: MemoryDispatchContext): Promise<boolean> {
 	if (AUTO_FOLD_THRESHOLD <= 0) return false;
-	const count = inboxLessonCount(dir);
-	if (count < AUTO_FOLD_THRESHOLD) return false;
-	const requested = memoryModel();
-	const dispatch = await prepareMemoryDispatch(
-		{
-			kind: "memory-fold",
-			prompt: "Fold the inbox lessons into the entity graph now, following AGENTS.md exactly.",
-			cwd: dir,
-			model: `${requested.provider}/${requested.modelId}`,
-			thinking: "low",
-		},
-		ctx,
-	);
-	if (dispatch.action === "block") {
-		ctx.ui?.notify?.(`memory auto-fold held for dispatch review ${dispatch.reviewId ?? "unknown"}: ${dispatch.reason ?? "review required"}`, "warning");
-		return false;
-	}
-	const out = openSync(join(dir, "fold.log"), "a");
-	try {
-		const child = spawn(
-			"hummin",
-			["-p", `Fold the inbox lessons into the entity graph now, following AGENTS.md exactly. Inbox has ${count} lesson(s).`, "--provider", dispatch.configuration.provider, "--model", dispatch.configuration.modelId, "--thinking", dispatch.configuration.thinking],
-			{
-				cwd: dir,
-				detached: true,
-				stdio: ["ignore", out, out],
-				env: { ...process.env, HUMMIN_MEMORY: "0" },
-			},
-		);
-		child.unref();
-	} finally {
-		closeSync(out);
-	}
-	console.log(`vault: auto-folding ${count} lesson(s) in background (${label}); progress in fold.log`);
-	return true;
+	if (inboxLessonCount(dir) < AUTO_FOLD_THRESHOLD) return false;
+	return enqueueFold(dir, label, ctx);
 }

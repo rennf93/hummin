@@ -110,6 +110,29 @@ test("union corpus contains both distillation and vault lessons", () => {
 	expect(loadVaultLessons(process.env.HUMMIN_MEMORY_VAULT_DIR!).length).toBe(1);
 });
 
+test("unionLessonRecords serves an unchanged corpus from cache and re-reads when it changes", () => {
+	const memory = process.env.HUMMIN_MEMORY_DIR!;
+	const vault = process.env.HUMMIN_MEMORY_VAULT_DIR!;
+	const lessonOne = "Gotcha: cache lesson one";
+	writeFileSync(join(memory, "lessons.jsonl"), `${JSON.stringify({ cwd: PROJ, lesson: lessonOne })}\n`);
+	const first = unionLessonRecords(vault);
+	expect(first.map((r) => r.lesson)).toEqual([lessonOne]);
+	// Unchanged corpus: the second call is served from cache (same array
+	// identity proves no re-parse happened).
+	const second = unionLessonRecords(vault);
+	expect(second).toBe(first);
+	// A changed store (size grows) is picked up without any reset hook.
+	const lessonTwo = "Gotcha: cache lesson two";
+	writeFileSync(
+		join(memory, "lessons.jsonl"),
+		`${JSON.stringify({ cwd: PROJ, lesson: lessonOne })}\n${JSON.stringify({ cwd: PROJ, lesson: lessonTwo })}\n`,
+	);
+	expect(unionLessonRecords(vault).map((r) => r.lesson)).toEqual([lessonOne, lessonTwo]);
+	// A fold moving a lesson into processed/ invalidates too (dir mtime).
+	seedVaultLesson(vault, "lesson-folded-cache.md", "Gotcha: vault cache lesson three", { date: "2026-09-20" });
+	expect(unionLessonRecords(vault)).toHaveLength(3);
+});
+
 test("rebuildLessonsFromVault appends only missing vault lessons (Option A)", () => {
 	// Start with a store that only knows one lesson.
 	writeFileSync(

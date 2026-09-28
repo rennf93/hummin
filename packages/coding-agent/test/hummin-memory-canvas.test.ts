@@ -135,3 +135,41 @@ test("ensureVault refreshes a stale graph.canvas and skips rewriting when unchan
 		else process.env.HUMMIN_MEMORY_VAULT_DIR = prevVaultDir;
 	}
 });
+
+test("ensureVault skips the canvas refresh while a fold lock is held", () => {
+	const prevVaultDir = process.env.HUMMIN_MEMORY_VAULT_DIR;
+	const dir = mkdtempSync(join(tmpdir(), "hummin-canvas-fold-lock-"));
+	createdDirs.push(dir);
+	process.env.HUMMIN_MEMORY_VAULT_DIR = dir;
+	try {
+		mkdirSync(join(dir, "entities", "project"), { recursive: true });
+		writeFileSync(
+			join(dir, "entities", "project", "hub.md"),
+			"---\ntype: project\ncreated: 2026-09-14\ntags: [project]\n---\n\nOverview.\n\n## Links\n- []\n",
+		);
+		ensureVault();
+		const frozen = readFileSync(join(dir, "graph.canvas"), "utf8");
+
+		// A fold worker holds the lock between its child's commit and the
+		// worktree validation: a canvas rewrite here would dirty the vault and
+		// fail that validation, so the refresh must not run.
+		mkdirSync(join(dir, ".memory-fold.lock"), { recursive: true });
+		writeFileSync(
+			join(dir, "entities", "project", "leaf.md"),
+			"---\ntype: project\ncreated: 2026-09-15\ntags: [project]\n---\n\nOverview.\n\n## Links\n- [[hub]]\n",
+		);
+		ensureVault();
+		expect(readFileSync(join(dir, "graph.canvas"), "utf8")).toBe(frozen);
+
+		// Lock released: the next vault touchpoint picks the new entity up.
+		rmSync(join(dir, ".memory-fold.lock"), { recursive: true, force: true });
+		ensureVault();
+		const refreshed = JSON.parse(readFileSync(join(dir, "graph.canvas"), "utf8")) as {
+			nodes: Array<{ file: string }>;
+		};
+		expect(refreshed.nodes.map((n) => n.file)).toContain("entities/project/leaf.md");
+	} finally {
+		if (prevVaultDir === undefined) delete process.env.HUMMIN_MEMORY_VAULT_DIR;
+		else process.env.HUMMIN_MEMORY_VAULT_DIR = prevVaultDir;
+	}
+});

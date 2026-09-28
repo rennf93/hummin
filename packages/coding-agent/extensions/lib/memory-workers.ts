@@ -120,7 +120,7 @@ export function decayKeepIndices(lines: string[], maxRecords: number, maxBytes: 
  * splitting it into fragments. Title/numbering before a body is dropped.
  * Exact duplicates collapse; output is capped at maxLessons. Returns [] for
  * NONE replies and for replies without any lesson shape (the worker then
- * stores the raw output, preserving the old single-lesson fallback).
+ * stores nothing, exactly like a NONE reply).
  */
 export function parseDistilledLessons(output: string, maxLessons = 3): string[] {
 	// Strip numbering, bullets, and bold markers from a lesson's first line
@@ -508,6 +508,19 @@ function removePending() {
 	try { rmSync(job.pendingPath, { force: true }); } catch {}
 }
 
+// Mark a session processed even though nothing was stored (NONE or
+// unparseable reply), so a re-shutdown cannot re-run the model call for it.
+// Same store lock and atomic write as the storing path.
+function markSessionProcessed(memoryDir) {
+	withLock(join(memoryDir, ".locks", "store.lock"), () => {
+		const state = readState(memoryDir);
+		state.processed = state.processed || {};
+		state.processed[job.sessionFile] = new Date().toISOString();
+		atomicWrite(join(memoryDir, "state.json"), JSON.stringify(state, null, 1));
+		return true;
+	});
+}
+
 // Every laya read is audited to the shared laya-gate.log; the worker appends
 // directly and never lets a logging failure break the run.
 function auditRead(gateLog, kind, p) {
@@ -594,15 +607,18 @@ async function distill() {
 		});
 		const output = String(result.stdout || "").trim();
 		if (result.error || result.status !== 0 || !output) return 1;
-		if (/^NONE$/i.test(output.split("\n").at(-1)?.trim() || "")) {
+		const parsed = parseDistilledLessons(output, MAX_LESSONS_PER_SESSION);
+		// A NONE reply and a reply without any parsable lesson shape are
+		// treated identically: nothing is stored (raw model output must never
+		// become a lesson), the session is marked processed, and the pending
+		// job is removed.
+		if (/^NONE$/i.test(output.split("\n").at(-1)?.trim() || "") || parsed.length === 0) {
+			markSessionProcessed(memoryDir);
 			removePending();
 			return 0;
 		}
-		// One reply may carry up to MAX_LESSONS_PER_SESSION lessons; a reply
-		// without any parsable lesson shape falls back to the raw output
-		// (old single-lesson behavior, so nothing distillable is lost).
-		const parsed = parseDistilledLessons(output, MAX_LESSONS_PER_SESSION);
-		const toStore = parsed.length > 0 ? parsed : [output];
+		// One reply may carry up to MAX_LESSONS_PER_SESSION lessons.
+		const toStore = parsed;
 		// Per-lesson intake gate: drop only the gated-out lessons. A null
 		// score (gate unavailable) stores that lesson - fail open per lesson.
 		const kept = [];

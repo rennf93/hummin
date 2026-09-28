@@ -2,7 +2,13 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { enqueueDistill, enqueueFold, retryHeldDistills, triggerAutoFold } from "../extensions/hummin-memory.ts";
+import {
+	enqueueDistill,
+	enqueueFold,
+	markProcessed,
+	retryHeldDistills,
+	triggerAutoFold,
+} from "../extensions/hummin-memory.ts";
 
 const dirs: string[] = [];
 const originalMemory = process.env.HUMMIN_MEMORY_DIR;
@@ -209,4 +215,63 @@ test("explicit fold and automatic fold hold before their child launches", async 
 	expect(autoApproved.prompts[0]).toBe(
 		"Fold the inbox lessons into the entity graph now, following AGENTS.md exactly.",
 	);
+});
+
+test("automatic fold delegates to enqueueFold's locked worker path", async () => {
+	const vault = tempDir("hummin-memory-auto-vault-");
+	process.env.HUMMIN_MEMORY_DIR = tempDir("hummin-memory-auto-mem-");
+	process.env.HUMMIN_MEMORY_VAULT_DIR = vault;
+	mkdirSync(join(vault, "inbox"), { recursive: true });
+	for (const name of ["lesson-a.md", "lesson-b.md", "lesson-c.md"])
+		writeFileSync(join(vault, "inbox", name), "lesson\n");
+	// Held: the fold job file is retained (no spawn), and the hold notifies
+	// through ctx.ui.notify, exactly like an explicit /vault-fold hold.
+	const held = context("block");
+	expect(await triggerAutoFold(vault, "auto-held", { ...held, agentDir: tempDir("hummin-memory-reviews-") })).toBe(
+		false,
+	);
+	expect(existsSync(join(vault, ".fold-job.json"))).toBe(true);
+	const job = JSON.parse(readFileSync(join(vault, ".fold-job.json"), "utf8"));
+	expect(job).toMatchObject({
+		mode: "fold",
+		vaultDir: vault,
+		threshold: 1,
+		force: true,
+		label: "auto-held",
+	});
+	expect(held.messages[0]).toContain("memory fold held for dispatch review review-memory-1");
+	// Approved: the worker consumes the job (removePending) and runs the fold
+	// child - the old direct `hummin -p` spawn left neither file behind.
+	const bin = tempDir("hummin-memory-auto-bin-");
+	const argsFile = join(bin, "args");
+	writeFileSync(join(bin, "hummin"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${argsFile}"\necho spawned\n`);
+	chmodSync(join(bin, "hummin"), 0o755);
+	process.env.PATH = `${bin}:${originalPath ?? ""}`;
+	const approved = context("allow");
+	expect(
+		await triggerAutoFold(vault, "auto-worker", { ...approved, agentDir: tempDir("hummin-memory-reviews-") }),
+	).toBe(true);
+	for (let i = 0; i < 100 && existsSync(join(vault, ".fold-job.json")); i++)
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	expect(existsSync(join(vault, ".fold-job.json"))).toBe(false);
+	expect(readFileSync(join(vault, "fold.log"), "utf8")).toContain("spawned");
+});
+
+test("markProcessed prunes stamps older than 90 days and keeps fresh ones", () => {
+	const memory = tempDir("hummin-memory-state-");
+	process.env.HUMMIN_MEMORY_DIR = memory;
+	const old = new Date(Date.now() - 91 * 24 * 60 * 60 * 1000).toISOString();
+	const recent = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+	writeFileSync(
+		join(memory, "state.json"),
+		JSON.stringify({ processed: { "/old/a.jsonl": old, "/recent/b.jsonl": recent, "/junk/c.jsonl": "not-a-date" } }),
+	);
+	markProcessed("/new/d.jsonl");
+	const state = JSON.parse(readFileSync(join(memory, "state.json"), "utf8"));
+	expect(state.processed["/old/a.jsonl"]).toBeUndefined();
+	expect(state.processed["/junk/c.jsonl"]).toBeUndefined();
+	expect(state.processed["/recent/b.jsonl"]).toBe(recent);
+	expect(typeof state.processed["/new/d.jsonl"]).toBe("string");
+	// the atomic write leaves no tmp file behind
+	expect(existsSync(join(memory, "state.json.tmp"))).toBe(false);
 });
