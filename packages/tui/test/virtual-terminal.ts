@@ -102,6 +102,14 @@ export class VirtualTerminal implements Terminal {
 
 	setProgress(_active: boolean): void {}
 
+	isFocused(): boolean | undefined {
+		return true;
+	}
+
+	onFocusChange(_listener: (focused: boolean) => void): () => void {
+		return () => {};
+	}
+
 	// Test-specific methods not in Terminal interface
 
 	/**

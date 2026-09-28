@@ -110,6 +110,15 @@ export interface Terminal {
 
 	// Progress indicator (OSC 9;4)
 	setProgress(active: boolean): void;
+
+	/**
+	 * Focus state from DECSET 1004 focus reporting: true/false after a focus
+	 * event, undefined before the first one (terminal may not report focus).
+	 */
+	isFocused(): boolean | undefined;
+
+	/** Subscribe to focus changes; returns an unsubscribe function. */
+	onFocusChange(listener: (focused: boolean) => void): () => void;
 }
 
 const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
@@ -165,6 +174,37 @@ export class ProcessTerminal implements Terminal {
 		return this._kittyProtocolActive;
 	}
 
+	private _focusState: boolean | undefined;
+	private focusListeners = new Set<(focused: boolean) => void>();
+
+	isFocused(): boolean | undefined {
+		return this._focusState;
+	}
+
+	onFocusChange(listener: (focused: boolean) => void): () => void {
+		this.focusListeners.add(listener);
+		return () => {
+			this.focusListeners.delete(listener);
+		};
+	}
+
+	/** Apply a DECSET 1004 focus sequence and notify listeners. Public for tests and custom input paths. */
+	handleFocusSequence(sequence: string): boolean {
+		if (sequence !== "\x1b[I" && sequence !== "\x1b[O") return false;
+		const focused = sequence === "\x1b[I";
+		if (this._focusState !== focused) {
+			this._focusState = focused;
+			for (const listener of this.focusListeners) {
+				try {
+					listener(focused);
+				} catch {
+					// Listener errors must not break input handling.
+				}
+			}
+		}
+		return true;
+	}
+
 	get modifyOtherKeysActive(): boolean {
 		return this._modifyOtherKeysActive;
 	}
@@ -183,6 +223,10 @@ export class ProcessTerminal implements Terminal {
 
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		process.stdout.write("\x1b[?2004h");
+
+		// Enable focus reporting (DECSET 1004): \x1b[I on focus gained, \x1b[O on focus lost.
+		this._focusState = undefined;
+		process.stdout.write("\x1b[?1004h");
 
 		// Set up resize handler immediately
 		process.stdout.on("resize", this.resizeHandler);
@@ -221,6 +265,10 @@ export class ProcessTerminal implements Terminal {
 				return; // Wait briefly for the rest of a split Kitty response.
 			}
 			if (this.handleKeyboardProtocolNegotiationSequence(negotiationSequence)) {
+				return;
+			}
+
+			if (this.handleFocusSequence(sequence)) {
 				return;
 			}
 
@@ -426,6 +474,10 @@ export class ProcessTerminal implements Terminal {
 
 		// Disable bracketed paste mode
 		process.stdout.write("\x1b[?2004l");
+
+		// Disable focus reporting
+		process.stdout.write("\x1b[?1004l");
+		this._focusState = undefined;
 
 		const shouldDisableKittyProtocol = this.keyboardProtocolPushed || this._kittyProtocolActive;
 		this.clearKeyboardProtocolNegotiationBuffer();

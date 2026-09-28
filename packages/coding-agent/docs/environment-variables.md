@@ -151,6 +151,8 @@ These fork-specific variables are read by hummin and its bundled extensions. Whe
 | `HUMMIN_MCP_REQUEST_TIMEOUT_MS` | Overrides the MCP per-request (`tools/list`, `tools/call`) timeout (default 30000). Raise it for servers whose tools legitimately run long; invalid values fall back to the default |
 | `HUMMIN_LSP` | `0` disables the LSP extension |
 | `HUMMIN_JITI_CACHE` | `0` disables the extension loader's jiti transform cache |
+| `HUMMIN_NOTIFY` | Notification channel: `off`, `bell`, `osc9`, `desktop`, or `all` (default `bell`, overrides `terminal.notifications`) |
+| `HUMMIN_NOTIFY_WHEN` | When notifications fire: `always`, or `unfocused` (default, overrides `terminal.notificationsWhen`) |
 
 ### Laya System-1 layer
 

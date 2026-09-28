@@ -10,7 +10,12 @@ import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
-import { resolveNotificationChannel, type TerminalNotificationChannel } from "./terminal-notifications.ts";
+import {
+	resolveNotificationChannel,
+	resolveNotificationWhen,
+	type TerminalNotificationChannel,
+	type TerminalNotificationWhen,
+} from "./terminal-notifications.ts";
 
 export interface CompactionModelOverride {
 	reserveTokens?: number;
@@ -60,7 +65,8 @@ export interface TerminalSettings {
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
 	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
 	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
-	notifications?: TerminalNotificationChannel; // default: "bell" (BEL/OSC 9 attention notifications; env HUMMIN_NOTIFY overrides)
+	notifications?: TerminalNotificationChannel; // default: "bell" (BEL/OSC 9/desktop attention notifications; env HUMMIN_NOTIFY overrides)
+	notificationsWhen?: TerminalNotificationWhen; // default: "unfocused" (fire on every event, or only when the terminal is not focused; env HUMMIN_NOTIFY_WHEN overrides)
 	hyperlinks?: boolean | "auto";
 	images?: "kitty" | "iterm2" | "auto" | false;
 	trueColor?: boolean | "auto";
@@ -1875,6 +1881,20 @@ export class SettingsManager {
 		}
 		this.globalSettings.terminal.notifications = channel;
 		this.markModified("terminal", "notifications");
+		this.save();
+	}
+
+	/** When notifications fire: env HUMMIN_NOTIFY_WHEN wins, then the setting, then "unfocused". */
+	getTerminalNotificationsWhen(): TerminalNotificationWhen {
+		return resolveNotificationWhen(process.env.HUMMIN_NOTIFY_WHEN, this.settings.terminal?.notificationsWhen);
+	}
+
+	setTerminalNotificationsWhen(when: TerminalNotificationWhen): void {
+		if (!this.globalSettings.terminal) {
+			this.globalSettings.terminal = {};
+		}
+		this.globalSettings.terminal.notificationsWhen = when;
+		this.markModified("terminal", "notificationsWhen");
 		this.save();
 	}
 

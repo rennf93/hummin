@@ -65,6 +65,14 @@ class TestTerminal implements Terminal {
 
 	setProgress(_active: boolean): void {}
 
+	isFocused(): boolean | undefined {
+		return true;
+	}
+
+	onFocusChange(_listener: (focused: boolean) => void): () => void {
+		return () => {};
+	}
+
 	sendInput(data: string): void {
 		this.inputHandler?.(data);
 	}

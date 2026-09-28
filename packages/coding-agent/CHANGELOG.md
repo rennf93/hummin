@@ -2,9 +2,17 @@
 
 ## [Unreleased]
 
+### New Features
+
+- Terminal notifications when a turn ends or the agent asks a question: BEL marks the pane (Warp dot, tmux bell) and OSC 9 raises a toast in iTerm2/Windows Terminal/ConEmu. Configure with `terminal.notifications` or `/settings` → Terminal → Notifications (see Added for details).
+- Task personas and chaining: give `task` children a named brief (`persona`) and make them wait on prior reports (`after_task_id` + `{previous}`) for multi-step pipelines.
+- One safety gate for every shell hummin spawns: `exec` and `monitor` now pass bashguard, the laya destructive gate, and the workspace sandbox exactly like the bash tool, and plan mode blocks them too.
+- `/friction` applies the laya gate's calibration suggestion in place instead of telling you to edit settings by hand.
+
 ### Added
 
-- Terminal notifications when the agent finishes a turn or asks a question (ask_user): BEL marks the tab/pane (Warp dot, tmux bell) and OSC 9 carries a toast payload for iTerm2/Windows Terminal/ConEmu. Channel is `terminal.notifications` (`off`/`bell`/`osc9`/`all`, default `bell`, env `HUMMIN_NOTIFY` overrides) with a Notifications entry in `/settings`.
+- Terminal notifications when the agent finishes a turn or asks a question (ask_user): BEL marks the tab/pane (Warp dot, tmux bell), OSC 9 carries a toast payload for iTerm2/Windows Terminal/ConEmu, and `desktop` fires a real OS notification (osascript/notify-send, detected once). Channel is `terminal.notifications` (`off`/`bell`/`osc9`/`desktop`/`all`, default `bell`, env `HUMMIN_NOTIFY` overrides); `terminal.notificationsWhen` (`always`/`unfocused`, default `unfocused`, env `HUMMIN_NOTIFY_WHEN` overrides) suppresses notifications while the terminal is focused via DECSET 1004 focus reporting. Both have `/settings` entries under Terminal.
+- New hook events in `hooks.json`: `stop` (agent finished responding; Claude Code parity name), `session_end` (session shutdown), and `notification` (fires for every terminal notification with its message and channel) — extension-style scripts can now react to the same attention events the TUI notifies about.
 - Personas and chaining for the `task` tool. `persona` resolves a named brief from `.hummin/agents/<name>.md` (project, trust-gated) or `~/.hummin/agent/agents/<name>.md` (global) and prepends it to the child's brief; `after_task_id` waits for a prior task to finish and replaces `{previous}` in the prompt with that task's final report (bounded to the same 8000-char excerpt), aborting with the turn. Several `task` calls in one turn already run concurrently; the description now says so.
 - `/friction` can apply the laya gate's calibration suggestion in place: when the report shows a suggested threshold, an interactive action writes `layaGateThreshold` to global settings (atomic tmp+rename) and the gate picks it up on its next read.
 - One gate for every shell hummin spawns (`extensions/lib/shell-gate.ts`): `exec` and `monitor` commands now pass the same pipeline as the bash tool (bashguard classification first, then the laya destructive gate with its deterministic rules, gray-zone score, and confirm-marker escape), and run under the sandbox's seatbelt/bubblewrap profile when workspace mode is on via a `__humminSandboxWrap` bridge registered by the sandbox extension. Previously a background shell bypassed all three layers.
@@ -23,6 +31,7 @@
 
 ### Fixed
 
+- opencode-go's provider default still pointed at `kimi-k2.6`, which upstream removed from the catalog, leaving the provider with a nonexistent default model; it now resolves to the successor `kimi-k2.7-code`.
 - Safety bypass: `exec`, `monitor`, and `cron_create` escaped plan mode, and `exec`/`monitor` shells escaped the sandbox, bashguard, and the laya gate entirely. All shell paths now go through the shared gate (see Added), and plan mode covers the full write surface.
 - Auto-fold took a divergent path: it spawned a raw `hummin -p` session in the vault with no fold lock, no validation markers, and a `console.log` the TUI never displayed. It now delegates to the same locked, validated memory-worker fold path as `/vault-fold` (`enqueueFold`) and notifies through the UI.
 - Fleet discovery authenticated with `COLI_API_KEY` only, while generation resolved `HUMMIN_API_KEY` first: a user who set only `HUMMIN_API_KEY` against a keyed server got discovery 401s and no provider. Discovery now uses the same precedence (`HUMMIN_API_KEY`, then the legacy `COLI_API_KEY`, then the keyless default), and the discovery cache keys on both.

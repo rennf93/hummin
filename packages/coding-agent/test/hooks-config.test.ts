@@ -107,7 +107,15 @@ describe("parseHooksConfig", () => {
 	});
 
 	it("covers all spec events", () => {
-		expect([...HOOK_EVENTS]).toEqual(["tool_call", "tool_result", "agent_start", "agent_end"]);
+		expect([...HOOK_EVENTS]).toEqual([
+			"tool_call",
+			"tool_result",
+			"agent_start",
+			"agent_end",
+			"stop",
+			"session_end",
+			"notification",
+		]);
 	});
 });
 

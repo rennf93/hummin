@@ -6,26 +6,48 @@
  * - BEL (`\x07`): marks the tab/pane (Warp dot, tmux bell) and may ring a sound.
  * - OSC 9 (`\x1b]9;<message>\x07`): iTerm2/Windows Terminal/ConEmu toast from
  *   the message payload.
+ * - desktop: a real OS notification via the platform backend (osascript on
+ *   macOS, notify-send on Linux), detected once per process.
  *
- * The message must not contain ESC or BEL, so it is sanitized before emission;
- * those bytes would otherwise terminate or corrupt the sequence.
+ * The OSC message must not contain ESC or BEL, so it is sanitized before
+ * emission; those bytes would otherwise terminate or corrupt the sequence.
  */
 
-export type TerminalNotificationChannel = "off" | "bell" | "osc9" | "all";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 
-export const NOTIFICATION_CHANNELS: readonly TerminalNotificationChannel[] = ["off", "bell", "osc9", "all"];
+export type TerminalNotificationChannel = "off" | "bell" | "osc9" | "desktop" | "all";
+
+export const NOTIFICATION_CHANNELS: readonly TerminalNotificationChannel[] = ["off", "bell", "osc9", "desktop", "all"];
 
 export const DEFAULT_NOTIFICATION_CHANNEL: TerminalNotificationChannel = "bell";
 
+/** When notifications fire: on every event, or only when the terminal is not focused. */
+export type TerminalNotificationWhen = "always" | "unfocused";
+
+export const NOTIFICATION_WHEN_VALUES: readonly TerminalNotificationWhen[] = ["always", "unfocused"];
+
+export const DEFAULT_NOTIFICATION_WHEN: TerminalNotificationWhen = "unfocused";
+
 const OSC9_MESSAGE_MAX = 200;
 
-/** Keep a message only if it names a known channel (case-insensitive). */
+/** Keep a value only if it names a known channel (case-insensitive). */
 export function parseNotificationChannel(raw: unknown): TerminalNotificationChannel | undefined {
 	if (typeof raw !== "string") return undefined;
 	const normalized = raw.trim().toLowerCase();
 	if (!normalized) return undefined;
 	return (NOTIFICATION_CHANNELS as readonly string[]).includes(normalized)
 		? (normalized as TerminalNotificationChannel)
+		: undefined;
+}
+
+/** Keep a value only if it names a known when-condition (case-insensitive). */
+export function parseNotificationWhen(raw: unknown): TerminalNotificationWhen | undefined {
+	if (typeof raw !== "string") return undefined;
+	const normalized = raw.trim().toLowerCase();
+	if (!normalized) return undefined;
+	return (NOTIFICATION_WHEN_VALUES as readonly string[]).includes(normalized)
+		? (normalized as TerminalNotificationWhen)
 		: undefined;
 }
 
@@ -37,6 +59,11 @@ export function resolveNotificationChannel(env: unknown, setting: unknown): Term
 	return parseNotificationChannel(env) ?? parseNotificationChannel(setting) ?? DEFAULT_NOTIFICATION_CHANNEL;
 }
 
+/** Same precedence for the when-condition. */
+export function resolveNotificationWhen(env: unknown, setting: unknown): TerminalNotificationWhen {
+	return parseNotificationWhen(env) ?? parseNotificationWhen(setting) ?? DEFAULT_NOTIFICATION_WHEN;
+}
+
 /** Strip bytes that would terminate the OSC sequence, then bound the length. */
 export function sanitizeNotificationMessage(raw: string): string {
 	const clean = raw.replace(/[\x00-\x1f\x7f]/g, " ").trim();
@@ -45,18 +72,131 @@ export function sanitizeNotificationMessage(raw: string): string {
 
 export type NotificationWriter = (data: string) => void;
 
+/** Minimal shape of the child_process.spawn function, injectable for tests. */
+export type NotificationSpawner = (
+	command: string,
+	args: string[],
+) => { unref(): void; on(event: "error", listener: () => void): unknown };
+
+interface DesktopBackend {
+	/** argv builder: (title, message) -> [args]. */
+	args: (title: string, message: string) => string[];
+}
+
+const DESKTOP_BACKENDS: Record<string, DesktopBackend | undefined> = {
+	darwin: { args: (title, message) => ["-e", `display notification "${message}" with title "${title}"`] },
+	linux: { args: (title, message) => [title, message] },
+};
+
+const DESKTOP_BACKEND_BINARIES: Record<string, string> = {
+	darwin: "/usr/bin/osascript",
+	linux: "notify-send",
+};
+
+let cachedDesktopBackend: DesktopBackend | undefined | null;
+
+/** Resolve the platform notification backend, or undefined when none exists. Cached per process. */
+export function detectDesktopBackend(
+	platform: NodeJS.Platform = process.platform,
+	pathEnv: string = process.env.PATH ?? "",
+): DesktopBackend | undefined {
+	if (cachedDesktopBackend !== null) return cachedDesktopBackend ?? undefined;
+	cachedDesktopBackend = undefined;
+	const backend = DESKTOP_BACKENDS[platform];
+	if (!backend) return undefined;
+	const binary = DESKTOP_BACKEND_BINARIES[platform];
+	if (binary.includes("/")) {
+		if (!existsSync(binary)) return undefined;
+	} else {
+		const found = pathEnv.split(":").some((dir) => dir && existsSync(`${dir}/${binary}`));
+		if (!found) return undefined;
+	}
+	cachedDesktopBackend = backend;
+	return backend;
+}
+
+/** Test seam: reset the cached desktop backend detection. */
+export function resetDesktopBackendCache(): void {
+	cachedDesktopBackend = null;
+}
+
 /**
- * Emit a notification on the given channel. `writer` is injectable for tests;
- * production writes to stdout, which is the terminal in TUI mode. Returns true
- * when anything was written.
+ * Gate consulted before every emission. interactive-mode registers one that
+ * applies the `notificationsWhen` condition (always vs unfocused-only) against
+ * the live terminal focus state, so core and extension call sites share it.
+ * Return false to suppress the notification entirely.
+ */
+let notificationGate: (() => boolean) | undefined;
+
+export function setNotificationGate(gate: (() => boolean) | undefined): void {
+	notificationGate = gate;
+}
+
+export interface NotificationSentEvent {
+	message: string;
+	channel: TerminalNotificationChannel;
+}
+
+type NotificationListener = (event: NotificationSentEvent) => void;
+
+const notificationListeners = new Set<NotificationListener>();
+
+/** Subscribe to sent notifications; extension hooks surface these as `notification` events. */
+export function onNotificationSent(listener: NotificationListener): () => void {
+	notificationListeners.add(listener);
+	return () => notificationListeners.delete(listener);
+}
+
+function emitNotificationSent(event: NotificationSentEvent): void {
+	for (const listener of notificationListeners) {
+		try {
+			listener(event);
+		} catch {
+			// Listener errors must not break the notification path.
+		}
+	}
+}
+
+function spawnDesktopNotification(
+	message: string,
+	spawnFn: NotificationSpawner,
+	detect: () => DesktopBackend | undefined,
+): void {
+	const backend = detect();
+	const binary = DESKTOP_BACKEND_BINARIES[process.platform];
+	if (!backend || !binary) return;
+	const title = "hummin";
+	// Only quotes need escaping inside the AppleScript string literal.
+	const safe = message.replaceAll('"', '\\"');
+	try {
+		const child = spawnFn(binary, backend.args(title, safe));
+		child.on("error", () => {});
+		child.unref();
+	} catch {
+		// Desktop notifications are best-effort; never surface failures.
+	}
+}
+
+/**
+ * Emit a notification on the given channel. `writer` and `spawnFn` are
+ * injectable for tests; production writes to stdout (the terminal in TUI mode)
+ * and spawns the desktop backend detached. Returns true when anything was
+ * written or spawned. The notification gate (notificationsWhen + focus state)
+ * can suppress the whole call.
  */
 export function sendTerminalNotification(
 	channel: TerminalNotificationChannel,
 	message: string,
 	writer: NotificationWriter = (data) => process.stdout.write(data),
+	spawnFn: NotificationSpawner = spawn as unknown as NotificationSpawner,
+	detect: () => DesktopBackend | undefined = detectDesktopBackend,
 ): boolean {
 	if (channel === "off") return false;
+	if (notificationGate && !notificationGate()) return false;
+	const sanitized = sanitizeNotificationMessage(message);
 	if (channel === "bell" || channel === "all") writer("\x07");
-	if (channel === "osc9" || channel === "all") writer(`\x1b]9;${sanitizeNotificationMessage(message)}\x07`);
+	if (channel === "osc9" || channel === "all") writer(`\x1b]9;${sanitized}\x07`);
+	if (channel === "desktop" || channel === "all") spawnDesktopNotification(sanitized, spawnFn, detect);
+	emitNotificationSent({ message: sanitized, channel });
 	return true;
 }

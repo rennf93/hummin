@@ -148,6 +148,7 @@ export interface SettingsConfig {
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
 	terminalNotifications: string;
+	terminalNotificationsWhen: string;
 	tuiMode: TuiMode;
 	fullscreenExitOutput: FullscreenExitOutput;
 	fullscreenScrollbar: ScrollViewScrollbar;
@@ -211,6 +212,7 @@ export interface SettingsCallbacks {
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
 	onTerminalNotificationsChange: (channel: string) => void;
+	onTerminalNotificationsWhenChange: (when: string) => void;
 	onTuiModeChange: (mode: TuiMode) => void;
 	onFullscreenExitOutputChange: (output: FullscreenExitOutput) => void;
 	onFullscreenScrollbarChange: (mode: ScrollViewScrollbar) => void;
@@ -1394,9 +1396,16 @@ export class SettingsSelectorComponent extends Container {
 			{
 				id: "terminal-notifications",
 				label: "Notifications",
-				description: "BEL/OSC 9 notification when a turn ends or the agent asks a question",
+				description: "BEL/OSC 9/desktop notification when a turn ends or the agent asks a question",
 				currentValue: config.terminalNotifications,
-				values: ["off", "bell", "osc9", "all"],
+				values: ["off", "bell", "osc9", "desktop", "all"],
+			},
+			{
+				id: "terminal-notifications-when",
+				label: "Notify when",
+				description: "Notify always, or only when the terminal is not focused (focus reporting)",
+				currentValue: config.terminalNotificationsWhen,
+				values: ["unfocused", "always"],
 			},
 			{
 				id: "output-padding",
@@ -1663,6 +1672,9 @@ export class SettingsSelectorComponent extends Container {
 					break;
 				case "terminal-notifications":
 					callbacks.onTerminalNotificationsChange(newValue);
+					break;
+				case "terminal-notifications-when":
+					callbacks.onTerminalNotificationsWhenChange(newValue);
 					break;
 				case "output-padding":
 					callbacks.onOutputPadChange(newValue === "0" ? 0 : 1);
