@@ -158,14 +158,13 @@ The laya service (default `http://127.0.0.1:9989/v1/systemone`) provides calibra
 
 | Variable | Description |
 |----------|-------------|
-| `HUMMIN_LAYA_URL` | Overrides the laya service endpoint (default `http://127.0.0.1:9989/v1/systemone`) |
+| `HUMMIN_LAYA_URL` | Overrides the laya service endpoint (default `http://127.0.0.1:9989/v1/systemone`); the service authenticates with `COLI_API_KEY` (the shared fleet key) |
 | `HUMMIN_LAYA_GATE` | `off` disables the bash destructive-command gate everywhere (the bash tool hook and background exec/monitor shells) |
 | `HUMMIN_LAYA_GATE_THRESHOLD` | Gray-zone block threshold on P(destructive), `0` to `1`; default `0.75`, overrides `layaGateThreshold` |
 | `HUMMIN_LAYA_STEER` | `off` disables the per-turn destructive-intent steer |
 | `HUMMIN_LAYA_STEER_THRESHOLD` | Destructive-intent steer threshold, `0` to `1`; default `0.7`, overrides `layaSteerThreshold` |
 | `HUMMIN_LAYA_TRIAGE` | `off` disables the test-failure triage advisory |
 | `HUMMIN_LAYA_INTAKE` | `off` skips the distill worker's per-lesson intake score (lessons are stored unconditionally) |
-| `HUMMIN_LAYA_URL` auth | The laya service authenticates with `COLI_API_KEY` (the shared fleet key) |
 
 ### Guardrails tool-call budget
 

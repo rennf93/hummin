@@ -73,7 +73,9 @@ it("routes an actual child tool invocation and delivers its captured completion"
 		`#!${process.execPath}\nconsole.log(JSON.stringify({args:process.argv.slice(2),memory:process.env.HUMMIN_MEMORY}));\n`,
 	);
 	chmodSync(binary, 0o755);
-	vi.stubEnv("PATH", `${cwd}:${process.env.PATH}`);
+	// Children resolve the CLI through lib/hummin-bin.ts (running-entry replay
+	// by default); the mock is pinned via HUMMIN_BIN, not PATH.
+	vi.stubEnv("HUMMIN_BIN", binary);
 	const result = await tools
 		.get("task")!
 		.execute(

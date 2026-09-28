@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -120,6 +120,12 @@ it("chains a finished task: the follow-up starts and the dispatch sees the inter
 	const cwd = tempDir("hummin-personas-chain-");
 	const task = loadTaskTool(cwd);
 	const ctx = chainCtx(cwd);
+	// Hermetic child: HUMMIN_BIN points at a no-op script so the chained task
+	// never launches a real hummin CLI.
+	const noop = join(cwd, "noop-hummin");
+	writeFileSync(noop, "#!/bin/sh\nexit 0\n");
+	chmodSync(noop, 0o755);
+	vi.stubEnv("HUMMIN_BIN", noop);
 	// A prior task that is already finished with a captured report.
 	const processes = new ProcessManager(join(cwd, "prior"), "task");
 	const prior = processes.start({

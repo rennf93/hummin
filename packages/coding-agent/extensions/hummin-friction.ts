@@ -157,7 +157,7 @@ export default function humminFriction(pi: ExtensionAPI): void {
 			if (!choice || !choice.startsWith("Apply")) return;
 			try {
 				await applySuggestedThreshold(suggested);
-				ctx.ui.notify(`layaGateThreshold ${suggested.toFixed(2)} written to global settings; new gate reads use it immediately.`, "info");
+				ctx.ui.notify(`layaGateThreshold ${suggested.toFixed(2)} written to global settings. New gate reads use it unless HUMMIN_LAYA_GATE_THRESHOLD or a project-level layaGateThreshold overrides it.`, "info");
 			} catch (error) {
 				ctx.ui.notify(`friction: could not persist threshold (${error instanceof Error ? error.message : String(error)})`, "warning");
 			}

@@ -30,6 +30,7 @@ import {
 	dismissProcessJob,
 } from "./lib/processes.ts";
 import { prepareChildDispatch, resolveChildModel, type ThinkingLevel } from "./lib/child-dispatch-review.ts";
+import { humminArgv } from "./lib/hummin-bin.ts";
 import { lessonsForChildBrief } from "./hummin-memory.ts";
 
 export function resolveTaskModel(requested: string | undefined, ctx: Pick<ExtensionContext, "modelRegistry">): Model<Api> {
@@ -664,9 +665,19 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 			const thinking = review.configuration.thinking;
 			const summary = params.prompt.replace(/\s+/g, " ").trim();
 			const what = summary.length > 72 ? `${summary.slice(0, 72)}…` : summary || "(empty prompt)";
+			const argv = humminArgv([
+				"-p",
+				childPrompt,
+				"--provider",
+				model.provider,
+				"--model",
+				model.id,
+				"--thinking",
+				thinking,
+			]);
 			const job = manager.start({
-				command: "hummin",
-				args: ["-p", childPrompt, "--provider", model.provider, "--model", model.id, "--thinking", thinking],
+				command: argv.command,
+				args: argv.args,
 				cwd,
 				kind: "task",
 				label: `"${what}" · ${model.provider}/${model.id}`,

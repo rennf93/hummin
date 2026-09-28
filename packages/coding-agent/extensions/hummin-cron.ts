@@ -155,11 +155,17 @@ export async function runSchedulerPass(dir: string, nowMs: number, context?: Sch
 	}
 }
 
-function recordExit(dir: string, name: string, pid: number, code: number | null): void {
-	try {
-		// Serialize against scheduler passes: an unlocked read-modify-write of
-		// cron.json can lose updates and leave an entry stuck showing "running".
-		if (!acquireSchedulerLock(dir)) return;
+/** Record one child exit. Serialized on the scheduler lock against concurrent
+ * passes: an unlocked read-modify-write of cron.json could lose updates and
+ * leave an entry stuck showing "running". The lock is not re-entrant, so a
+ * pass still in flight when the child exits would otherwise drop the record;
+ * a bounded retry covers that window. Best-effort: never crashes the session. */
+async function recordExit(dir: string, name: string, pid: number, code: number | null): Promise<void> {
+	const RETRIES = 5;
+	const RETRY_DELAY_MS = 1_000;
+	for (let attempt = 0; attempt <= RETRIES; attempt++) {
+		if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+		if (!acquireSchedulerLock(dir)) continue;
 		try {
 			const entry = getEntry(dir, name);
 			if (!entry || entry.lastPid !== pid) return;
@@ -170,11 +176,12 @@ function recordExit(dir: string, name: string, pid: number, code: number | null)
 					candidate.name === name && candidate.lastPid === pid ? { ...candidate, lastExit: code, queuedSince: undefined } : candidate,
 				),
 			});
+			return;
+		} catch {
+			return; // best-effort: never crash the session over a bookkeeping write
 		} finally {
 			releaseSchedulerLock(dir);
 		}
-	} catch {
-		// best-effort: never crash the session over a bookkeeping write
 	}
 }
 

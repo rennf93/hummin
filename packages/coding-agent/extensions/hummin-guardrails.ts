@@ -347,7 +347,8 @@ export class GuardrailsState {
 	}
 
 	// Returns an in-band reminder to append to the tool result, if one is due.
-	observeResult(toolName: string, isError: boolean): string | undefined {		const at = this.clock();
+	observeResult(toolName: string, isError: boolean): string | undefined {
+		const at = this.clock();
 		if (isError) {
 			const stamps = this.rejections.get(toolName) ?? [];
 			stamps.push(at);
