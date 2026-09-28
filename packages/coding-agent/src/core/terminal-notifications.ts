@@ -79,18 +79,21 @@ export type NotificationSpawner = (
 ) => { unref(): void; on(event: "error", listener: () => void): unknown };
 
 interface DesktopBackend {
-	/** argv builder: (title, message) -> [args]. */
-	args: (title: string, message: string) => string[];
+	/** Absolute binary path to spawn. */
+	binary: string;
+	argv: (title: string, message: string) => string[];
 }
 
-const DESKTOP_BACKENDS: Record<string, DesktopBackend | undefined> = {
-	darwin: { args: (title, message) => ["-e", `display notification "${message}" with title "${title}"`] },
-	linux: { args: (title, message) => [title, message] },
-};
-
-const DESKTOP_BACKEND_BINARIES: Record<string, string> = {
-	darwin: "/usr/bin/osascript",
-	linux: "notify-send",
+const DESKTOP_BACKENDS: Record<
+	string,
+	{ binary: string; pathLookup: boolean; argv: (title: string, message: string) => string[] } | undefined
+> = {
+	darwin: {
+		binary: "/usr/bin/osascript",
+		pathLookup: false,
+		argv: (title, message) => ["-e", `display notification "${message}" with title "${title}"`],
+	},
+	linux: { binary: "notify-send", pathLookup: true, argv: (title, message) => [title, message] },
 };
 
 let cachedDesktopBackend: DesktopBackend | undefined | null;
@@ -102,17 +105,16 @@ export function detectDesktopBackend(
 ): DesktopBackend | undefined {
 	if (cachedDesktopBackend !== null) return cachedDesktopBackend ?? undefined;
 	cachedDesktopBackend = undefined;
-	const backend = DESKTOP_BACKENDS[platform];
-	if (!backend) return undefined;
-	const binary = DESKTOP_BACKEND_BINARIES[platform];
-	if (binary.includes("/")) {
-		if (!existsSync(binary)) return undefined;
-	} else {
-		const found = pathEnv.split(":").some((dir) => dir && existsSync(`${dir}/${binary}`));
+	const spec = DESKTOP_BACKENDS[platform];
+	if (!spec) return undefined;
+	if (spec.pathLookup) {
+		const found = pathEnv.split(":").some((dir) => dir && existsSync(`${dir}/${spec.binary}`));
 		if (!found) return undefined;
+	} else if (!existsSync(spec.binary)) {
+		return undefined;
 	}
-	cachedDesktopBackend = backend;
-	return backend;
+	cachedDesktopBackend = { binary: spec.binary, argv: spec.argv };
+	return cachedDesktopBackend;
 }
 
 /** Test seam: reset the cached desktop backend detection. */
@@ -163,13 +165,12 @@ function spawnDesktopNotification(
 	detect: () => DesktopBackend | undefined,
 ): void {
 	const backend = detect();
-	const binary = DESKTOP_BACKEND_BINARIES[process.platform];
-	if (!backend || !binary) return;
+	if (!backend) return;
 	const title = "hummin";
 	// Only quotes need escaping inside the AppleScript string literal.
 	const safe = message.replaceAll('"', '\\"');
 	try {
-		const child = spawnFn(binary, backend.args(title, safe));
+		const child = spawnFn(backend.binary, backend.argv(title, safe));
 		child.on("error", () => {});
 		child.unref();
 	} catch {

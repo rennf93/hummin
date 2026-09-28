@@ -141,7 +141,8 @@ describe("sendTerminalNotification", () => {
 		};
 		writes.length = 0;
 		const sent = sendTerminalNotification("all", 'say "hi"', writer, spawnFn, () => ({
-			args: (title, message) => ["-e", `display notification "${message}" with title "${title}"`],
+			binary: "/usr/bin/osascript",
+			argv: (title: string, message: string) => ["-e", `display notification "${message}" with title "${title}"`],
 		}));
 		expect(sent).toBe(true);
 		expect(writes).toEqual(["\x07", '\x1b]9;say "hi"\x07']);
@@ -159,7 +160,8 @@ describe("sendTerminalNotification", () => {
 		writes.length = 0;
 		expect(
 			sendTerminalNotification("desktop", "hello", writer, spawnFn, () => ({
-				args: (title: string, message: string) => [title, message],
+				binary: "/usr/bin/notify-send",
+				argv: (title: string, message: string) => [title, message],
 			})),
 		).toBe(true);
 		expect(writes).toEqual([]);
@@ -185,7 +187,8 @@ describe("sendTerminalNotification", () => {
 		};
 		expect(
 			sendTerminalNotification("all", "hello", writer, spawnFn, () => ({
-				args: (title: string, message: string) => [title, message],
+				binary: "/usr/bin/notify-send",
+				argv: (title: string, message: string) => [title, message],
 			})),
 		).toBe(false);
 		expect(writes).toEqual([]);
