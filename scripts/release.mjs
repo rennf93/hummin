@@ -221,6 +221,37 @@ if (status && status.trim()) {
 }
 console.log("  Working directory clean\n");
 
+// 1.5. Require a green CI run on the origin/main head commit before building
+// a release on top of it. Without this gate a release can tag commits whose
+// required checks are red or unknown (e.g. model-data drift from live
+// upstream catalogs), cutting a version from an unverified tree. The release
+// commits pushed below cannot be pre-verified (they do not exist yet), so
+// this guards the base the release is built on; tag-triggered publication
+// workflows are verified after the push by the operator.
+console.log("Checking origin/main CI status...");
+run("git fetch origin main", { silent: true });
+const headSha = run("git rev-parse HEAD", { silent: true }).trim();
+const originSha = run("git rev-parse origin/main", { silent: true }).trim();
+if (headSha !== originSha) {
+	console.error("Error: HEAD is not origin/main. Push or pull main first; a release built from unpushed commits has no verified CI.");
+	process.exit(1);
+}
+const ciRunsJson = run(
+	`gh run list --workflow ci.yml --branch main --commit ${headSha} --json status,conclusion`,
+	{ silent: true },
+);
+const ciRuns = JSON.parse(ciRunsJson);
+const latestCiRun = ciRuns[0];
+if (!latestCiRun) {
+	console.error(`Error: no CI run found for ${headSha}. Push main and wait for the CI workflow to finish before releasing.`);
+	process.exit(1);
+}
+if (latestCiRun.status !== "completed" || latestCiRun.conclusion !== "success") {
+	console.error(`Error: latest CI run on ${headSha} is ${latestCiRun.status}/${latestCiRun.conclusion ?? "none"}. Only release from a green main: wait for CI (gh run watch) or fix the failure first.`);
+	process.exit(1);
+}
+console.log(`  CI is green on ${headSha.slice(0, 12)}\n`);
+
 // 2. Verify npm package registration before modifying the worktree.
 assertPackagesAreRegisteredWithNpm();
 
