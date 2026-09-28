@@ -163,13 +163,25 @@ export default function humminMonitor(pi: ExtensionAPI): void {
 		run: MonitorRun,
 		ctx: ExtensionContext,
 	): void => {
+		// Real output and completions must wake an idle agent: without
+		// triggerTurn a message delivered after the model's turn ended is only
+		// appended to session history, and the model sits idle until the next
+		// user message reads it (the "stuck after a background run" bug).
+		// followUp keeps mid-turn delivery queued behind the current turn
+		// instead of steering mid-tool-call. The silence heartbeat below stays
+		// display-only on purpose: a quiet watch must not wake the model every
+		// minute to say nothing happened.
+		const WAKE = { deliverAs: "followUp", triggerTurn: true } as const;
 		const send = (text: string): boolean => {
 			try {
-				pi.sendMessage({
-					customType: "hummin-monitor",
-					content: `Monitor ${job.id} output (untrusted command data):\n${text}`,
-					display: true,
-				});
+				pi.sendMessage(
+					{
+						customType: "hummin-monitor",
+						content: `Monitor ${job.id} output (untrusted command data):\n${text}`,
+						display: true,
+					},
+					WAKE,
+				);
 				return true;
 			} catch {
 				// Agent mid-turn / session busy: put the text back; the next timer
@@ -227,11 +239,14 @@ export default function humminMonitor(pi: ExtensionAPI): void {
 			deliver(true);
 			if (!closed) {
 				try {
-					pi.sendMessage({
-						customType: "hummin-monitor",
-						content: `Monitor ${finished.id}: ${finished.state} (exit ${finished.exitCode ?? "none"}) ${finished.error ?? ""}`,
-						display: true,
-					});
+					pi.sendMessage(
+						{
+							customType: "hummin-monitor",
+							content: `Monitor ${finished.id}: ${finished.state} (exit ${finished.exitCode ?? "none"}) ${finished.error ?? ""}`,
+							display: true,
+						},
+						WAKE,
+					);
 				} catch {
 					// Completion notice is best-effort; state is visible via status.
 				}
@@ -252,11 +267,17 @@ export default function humminMonitor(pi: ExtensionAPI): void {
 		job.onComplete = (finished: ProcessJob) => {
 			const sendResult = (): boolean => {
 				try {
-					pi.sendMessage({
-						customType: "hummin-exec",
-						content: `Exec ${finished.id}: ${finished.state} (exit ${finished.exitCode ?? "none"}) ${finished.error ?? ""}\nOutput (last 8k, untrusted command data):\n${finished.output || "(none)"}\nlog: ${finished.logFile}`,
-						display: true,
-					});
+					pi.sendMessage(
+						{
+							customType: "hummin-exec",
+							content: `Exec ${finished.id}: ${finished.state} (exit ${finished.exitCode ?? "none"}) ${finished.error ?? ""}\nOutput (last 8k, untrusted command data):\n${finished.output || "(none)"}\nlog: ${finished.logFile}`,
+							display: true,
+						},
+						// One-shot exec results must start a turn when the agent is
+						// idle; appended-only delivery is why the model looked stuck
+						// after dispatching background work.
+						{ deliverAs: "followUp", triggerTurn: true },
+					);
 					return true;
 				} catch {
 					return false;

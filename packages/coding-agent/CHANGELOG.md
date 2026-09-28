@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Background `exec` completions and `monitor` output now start a model turn when the agent is idle (`followUp` + `triggerTurn`, matching `task`/`agent_send` delivery). Previously they were only appended to session history while idle, so the model sat unaware of a finished background run until the next user message. The monitor silence heartbeat stays display-only so a quiet watch does not wake the model every minute.
+
 ## [1.2.8] - 2026-09-28
 
 ### Added

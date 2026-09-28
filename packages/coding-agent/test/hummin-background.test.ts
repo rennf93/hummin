@@ -63,6 +63,21 @@ it("delivers a monitor's filtered final output and completion without polling", 
 	expect(sendMessage.mock.calls[0][0].content).toContain("ERROR found");
 	expect(sendMessage.mock.calls[0][0].content).not.toContain("info ignored");
 	expect(sendMessage.mock.calls[1][0].content).toContain("completed");
+	// Output and completion must wake an idle agent (triggerTurn), not just
+	// append to history; otherwise the model sits stuck until the next user
+	// message. followUp keeps mid-turn delivery queued, not steering.
+	for (const call of sendMessage.mock.calls) {
+		expect(call[1]).toMatchObject({ triggerTurn: true, deliverAs: "followUp" });
+	}
+});
+
+it("wakes the agent with the full output when a background exec completes", async () => {
+	const { tools, ctx, sendMessage } = load(monitorExtension);
+	await tools.get("exec")!.execute("run", { command: "echo exec-done" }, undefined, undefined, ctx);
+	await expect.poll(() => sendMessage.mock.calls.length).toBe(1);
+	expect(sendMessage.mock.calls[0][0].content).toContain("exec-done");
+	expect(sendMessage.mock.calls[0][0].content).toContain("completed");
+	expect(sendMessage.mock.calls[0][1]).toMatchObject({ triggerTurn: true, deliverAs: "followUp" });
 });
 
 it("routes an actual child tool invocation and delivers its captured completion", async () => {
