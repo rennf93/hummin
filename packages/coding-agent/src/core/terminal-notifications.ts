@@ -143,7 +143,8 @@ type NotificationListener = (event: NotificationSentEvent) => void;
 
 const notificationListeners = new Set<NotificationListener>();
 
-/** Subscribe to sent notifications; extension hooks surface these as `notification` events. */
+/** Subscribe to emission attempts (sent or gate-suppressed); extension hooks
+ * surface these as `notification` events and JSON mode as event lines. */
 export function onNotificationSent(listener: NotificationListener): () => void {
 	notificationListeners.add(listener);
 	return () => notificationListeners.delete(listener);
@@ -193,11 +194,14 @@ export function sendTerminalNotification(
 	detect: () => DesktopBackend | undefined = detectDesktopBackend,
 ): boolean {
 	if (channel === "off") return false;
-	if (notificationGate && !notificationGate()) return false;
 	const sanitized = sanitizeNotificationMessage(message);
+	// Subscribers (hooks, JSON event streams) see every non-off emission
+	// attempt, including ones the notification gate suppresses: automation
+	// wants the event; only the terminal output is conditional.
+	emitNotificationSent({ message: sanitized, channel });
+	if (notificationGate && !notificationGate()) return false;
 	if (channel === "bell" || channel === "all") writer("\x07");
 	if (channel === "osc9" || channel === "all") writer(`\x1b]9;${sanitized}\x07`);
 	if (channel === "desktop" || channel === "all") spawnDesktopNotification(sanitized, spawnFn, detect);
-	emitNotificationSent({ message: sanitized, channel });
 	return true;
 }

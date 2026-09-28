@@ -25,6 +25,7 @@ import {
 	waitForRawStdoutBackpressure,
 	writeRawStdout,
 } from "../../core/output-guard.ts";
+import { setNotificationGate } from "../../core/terminal-notifications.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { toJsonEvent } from "../json-event.ts";
@@ -53,6 +54,10 @@ export type {
  */
 export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<never> {
 	takeOverStdout();
+	// The JSON-RPC stream must stay clean: suppress bell/OSC/desktop output
+	// from every emitter in this process. (Protocol-typed notification events
+	// are a later protocol revision, see hummin-plan.md T1.)
+	setNotificationGate(() => false);
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;

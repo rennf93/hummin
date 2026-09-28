@@ -194,3 +194,122 @@ test("command verdict is safe when every segment is", () => {
 test("command verdict reviews mixed safe/review chains", () => {
 	expect(gateVerdict(splitSegments("launchctl kickstart -k gui/501/x && git add a.ts"))).toEqual({ kind: "review" });
 });
+
+// --- layaGateCheck: confirm-marker authorization -----------------------------
+//
+// The marker is an escape hatch after a block, not a bypass: it authorizes a
+// re-run only when a block of the exact same command exists in the confirm
+// window. Anything else is audited as an anomaly and runs the full gate.
+
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, vi } from "vitest";
+import { GATE_CONFIRM_MARKER, layaGateCheck } from "../extensions/hummin-laya.ts";
+import { ENV_AGENT_DIR } from "../src/config.ts";
+
+const createdDirs: string[] = [];
+const savedAgentDir = process.env[ENV_AGENT_DIR];
+
+afterEach(() => {
+	for (const dir of createdDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+	if (savedAgentDir === undefined) delete process.env[ENV_AGENT_DIR];
+	else process.env[ENV_AGENT_DIR] = savedAgentDir;
+	vi.unstubAllEnvs();
+});
+
+function newAgentDir(logLines: string[]): string {
+	const dir = mkdtempSync(join(tmpdir(), "laya-marker-"));
+	createdDirs.push(dir);
+	writeFileSync(join(dir, "laya-gate.log"), `${logLines.join("\n")}\n`);
+	process.env[ENV_AGENT_DIR] = dir;
+	return dir;
+}
+
+function auditLines(dir: string): Array<Record<string, unknown>> {
+	return readFileSync(join(dir, "laya-gate.log"), "utf8")
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+const neverRead = () => {
+	throw new Error("laya should not be consulted for this command");
+};
+
+async function setupEnv(): Promise<void> {
+	vi.stubEnv("HUMMIN_LAYA_GATE", "on");
+	vi.stubEnv("HUMMIN_NOTIFY", "off");
+	vi.stubEnv("HUMMIN_LAYA_GATE_THRESHOLD", "0.75");
+}
+
+test("marker re-run of a recently scored block passes and links the confirmation", async () => {
+	await setupEnv();
+	const cmd = "rm -rf $HOME/important-notes";
+	const dir = newAgentDir([JSON.stringify({ ts: new Date().toISOString(), type: "block", command: cmd, p: 0.81 })]);
+	const decision = await layaGateCheck(`${cmd} ${GATE_CONFIRM_MARKER}`, neverRead);
+	expect(decision).toBeUndefined();
+	const tail = auditLines(dir).at(-1) as { type: string; p: number };
+	expect(tail.type).toBe("confirmed");
+	expect(tail.p).toBe(0.81);
+});
+
+test("marker re-run of a recent rule block passes without a score", async () => {
+	await setupEnv();
+	const cmd = "git reset --hard HEAD~1";
+	const dir = newAgentDir([
+		JSON.stringify({ ts: new Date().toISOString(), type: "block", command: cmd, rule: "git reset --hard" }),
+	]);
+	const decision = await layaGateCheck(`${cmd} ${GATE_CONFIRM_MARKER}`, neverRead);
+	expect(decision).toBeUndefined();
+	const tail = auditLines(dir).at(-1) as { type: string; p?: number };
+	expect(tail.type).toBe("confirmed");
+	expect(tail.p).toBeUndefined();
+});
+
+test("marker on a never-blocked destructive command runs the full gate", async () => {
+	await setupEnv();
+	const dir = newAgentDir([]);
+	const decision = await layaGateCheck(`git reset --hard HEAD~1 ${GATE_CONFIRM_MARKER}`, neverRead);
+	expect(decision).toEqual({ block: true, reason: expect.stringContaining("known-destructive pattern") });
+	const types = auditLines(dir).map((line) => line.type);
+	expect(types).toEqual(["anomaly", "block"]);
+});
+
+test("marker on a never-blocked gray-zone command is scored, not waved through", async () => {
+	await setupEnv();
+	newAgentDir([]);
+	const reads: string[] = [];
+	const decision = await layaGateCheck(`deploy-tool --env prod ${GATE_CONFIRM_MARKER}`, (state) => {
+		reads.push(state);
+		return Promise.resolve({ noul: 0.2 });
+	});
+	expect(decision).toBeUndefined();
+	expect(reads).toHaveLength(1);
+	expect(reads[0]).not.toContain(GATE_CONFIRM_MARKER);
+});
+
+test("marker on a block older than the confirm window runs the full gate", async () => {
+	await setupEnv();
+	const cmd = "git push --force origin main";
+	const old = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+	newAgentDir([JSON.stringify({ ts: old, type: "block", command: cmd, p: 0.9 })]);
+	const decision = await layaGateCheck(`${cmd} ${GATE_CONFIRM_MARKER}`, neverRead);
+	expect(decision).toEqual({ block: true, reason: expect.stringContaining("force") });
+});
+
+test("marker on a read-only command passes via the fast path", async () => {
+	await setupEnv();
+	const dir = newAgentDir([]);
+	const decision = await layaGateCheck(`git status --short ${GATE_CONFIRM_MARKER}`, neverRead);
+	expect(decision).toBeUndefined();
+	expect(auditLines(dir).map((line) => line.type)).toEqual(["anomaly"]);
+});
+
+test("marker-only input is a no-op", async () => {
+	await setupEnv();
+	const dir = newAgentDir([]);
+	expect(await layaGateCheck(GATE_CONFIRM_MARKER, neverRead)).toBeUndefined();
+	expect(await layaGateCheck("", neverRead)).toBeUndefined();
+	expect(auditLines(dir)).toHaveLength(0);
+});

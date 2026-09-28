@@ -9,6 +9,7 @@
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
+import { onNotificationSent, setNotificationGate } from "../core/terminal-notifications.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
 import { toJsonEvent } from "./json-event.ts";
 
@@ -39,14 +40,29 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
+	let unsubscribeNotifications: (() => void) | undefined;
 	let disposed = false;
 	const signalCleanupHandlers: Array<() => void> = [];
+
+	// Headless streams never carry escape-sequence notifications: bell/OSC
+	// bytes would corrupt both the text result and the JSON event stream. The
+	// shared gate suppresses every emitter in this process; JSON mode surfaces
+	// notifications as first-class event lines instead.
+	setNotificationGate(() => false);
+	if (mode === "json") {
+		unsubscribeNotifications = onNotificationSent((event) => {
+			writeRawStdout(
+				`${JSON.stringify({ type: "notification", message: event.message, channel: event.channel })}\n`,
+			);
+		});
+	}
 
 	const disposeRuntime = async (): Promise<void> => {
 		if (disposed) return;
 		disposed = true;
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
+		unsubscribeNotifications?.();
 		await runtimeHost.dispose();
 	};
 

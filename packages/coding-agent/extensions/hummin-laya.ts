@@ -15,16 +15,31 @@
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TextContent } from "@earendil-works/pi-ai";
-import { type ExtensionAPI, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
+import {
+	type ExtensionAPI,
+	getAgentDir,
+	sendTerminalNotification,
+	SettingsManager,
+	type TerminalNotificationChannel,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readLayaGateLines } from "./lib/friction.ts";
 import { registerChildDispatchReviewTool } from "./lib/child-dispatch-review.ts";
 
-const LAYA_URL = process.env.HUMMIN_LAYA_URL?.trim() || "http://127.0.0.1:9989/v1/systemone";
+const DEFAULT_LAYA_URL = "http://127.0.0.1:9989/v1/systemone";
+/** Read at call time (not import time) so env overrides always apply, matching
+ * the HUMMIN_LAYA_* kill switches and createLayaChoiceCall. This also keeps
+ * handler paths testable with pinned env regardless of import order. */
+function layaUrl(): string {
+	return process.env.HUMMIN_LAYA_URL?.trim() || DEFAULT_LAYA_URL;
+}
 /** Shared fleet key from the environment (exported in ~/.zshrc, same source as
  * hummin-local.ts uses). Never hardcoded here: extensions can end up in repos
- * and screenshots; the literal key only lives in the serve scripts and plists. */
-const LAYA_API_KEY = process.env.COLI_API_KEY?.trim() || "";
+ * and screenshots; the literal key only lives in the serve scripts and plists.
+ * Read at call time; see layaUrl(). */
+function layaApiKey(): string {
+	return process.env.COLI_API_KEY?.trim() || "";
+}
 const TIMEOUT_MS = 15_000;
 const WARM_TIMEOUT_MS = 45_000;
 const MAX_QUESTIONS = 8;
@@ -78,7 +93,7 @@ const STEER_DESTRUCTIVE_THRESHOLD = 0.7;
  * and another for unreadable settings.) */
 export const GATE_BLOCK_THRESHOLD = 0.75;
 const GATE_TIMEOUT_MS = 4_000;
-const GATE_CONFIRM_MARKER = "# laya-gate: confirmed";
+export const GATE_CONFIRM_MARKER = "# laya-gate: confirmed";
 
 /** Destructive-intent thresholds. Resolution order: env
  * (HUMMIN_LAYA_GATE_THRESHOLD / HUMMIN_LAYA_STEER_THRESHOLD), then the
@@ -165,10 +180,11 @@ interface LayaNoulPayload {
 	answers?: Record<string, { noul?: number; confidence?: number }>;
 }
 
-/** Audit trail for the bash gate: one JSON line per block and per marker
- * confirmation, so self-served bypasses are visible after the fact. Deterministic
- * classifier blocks carry a `rule` instead of a laya score. */
-function auditGate(entry: { type: "block" | "confirmed"; command: string; p?: number; rule?: string }): void {
+/** Audit trail for the bash gate: one JSON line per block, per marker
+ * confirmation, and per self-served marker anomaly, so bypasses are visible
+ * after the fact. Deterministic classifier blocks carry a `rule` instead of a
+ * laya score. */
+function auditGate(entry: { type: "block" | "confirmed" | "anomaly"; command: string; p?: number; rule?: string }): void {
 	try {
 		appendFileSync(
 			join(getAgentDir(), "laya-gate.log"),
@@ -179,16 +195,24 @@ function auditGate(entry: { type: "block" | "confirmed"; command: string; p?: nu
 	}
 }
 
-/** The score of the most recent block of this exact command. Confirmations
- * carry no laya read of their own, so the joined block score is what makes
- * "lowest confirmed P" calibration data possible. Fail-silent. */
-function lastBlockScore(command: string): number | undefined {
+/** Marker confirmations authorize a re-run only when a block of the same
+ * command exists within this window; an older block no longer counts. */
+const CONFIRM_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** The most recent block of this exact command inside the confirm window, or
+ * undefined. Scored blocks carry `p`; deterministic rule blocks do not. Bounds
+ * the confirm escape hatch to commands the gate actually stopped recently.
+ * Fail-silent. */
+function recentBlockFor(command: string, now: number): { p?: number } | undefined {
 	try {
 		const lines = readLayaGateLines();
 		for (let i = lines.length - 1; i >= 0; i--) {
 			try {
-				const entry = JSON.parse(lines[i]) as { type?: string; command?: string; p?: number };
-				if (entry.type === "block" && entry.command === command && typeof entry.p === "number") return entry.p;
+				const entry = JSON.parse(lines[i]) as { type?: string; command?: string; p?: number; ts?: string };
+				if (entry.type !== "block" || entry.command !== command) continue;
+				const ts = typeof entry.ts === "string" ? Date.parse(entry.ts) : NaN;
+				if (Number.isFinite(ts) && now - ts > CONFIRM_WINDOW_MS) return undefined;
+				return typeof entry.p === "number" ? { p: entry.p } : {};
 			} catch {
 				// corrupt line: keep scanning
 			}
@@ -351,6 +375,11 @@ export function gateSegmentVerdict(segment: string, extra: ExtraGatePatterns = {
 	// This matters inside chains: `git add x && git status` was blocked because
 	// only whole-command read-only checks ran before laya.
 	if (READ_ONLY_BASH.test(s)) return { kind: "safe" };
+	// Test, build, and check invocations write only regenerable outputs — the
+	// rubric scores them LOW — but live probing (2026-09) showed laya scoring
+	// plain `./test.sh` at P 0.83 anyway (the checkpoint cannot reliably follow
+	// the rubric tail), so they fast-pass deterministically instead.
+	if (looksLikeTestRun(s)) return { kind: "safe" };
 	// Additive writes and repo-relative installs are safe fast-path segments.
 	// git switch of a plain branch is safe too: it refuses to discard local
 	// changes and fails on conflict, unlike checkout which can take a bare
@@ -387,7 +416,7 @@ const DISPOSABLE_DIR = /^(?:\.\/)?(?:build|dist|node_modules|coverage|out|tmp|te
 
 /** One-question noul read from laya; null on any failure or timeout. */
 async function layaNoul(state: string, name: string, instructions: string): Promise<{ noul: number } | null> {
-	if (!LAYA_API_KEY) return null;
+	if (!layaApiKey()) return null;
 	try {
 		const response = await layaFetch(
 			JSON.stringify({ state, questions: { [name]: { type: "noul", instructions } } }),
@@ -409,14 +438,14 @@ let checkpointWarmed = false;
 async function layaFetch(body: string, timeoutMs: number): Promise<Response> {
 	const common = {
 		method: "POST" as const,
-		headers: { "Content-Type": "application/json", Authorization: `Bearer ${LAYA_API_KEY}` },
+		headers: { "Content-Type": "application/json", Authorization: `Bearer ${layaApiKey()}` },
 		body,
 	};
 	try {
-		return await fetch(LAYA_URL, { ...common, signal: AbortSignal.timeout(timeoutMs) });
+		return await fetch(layaUrl(), { ...common, signal: AbortSignal.timeout(timeoutMs) });
 	} catch (err) {
 		if (err instanceof Error && /abort|timeout|econnreset|eclosed|eai_again|enotfound|econnrefused/i.test(err.message)) {
-			return await fetch(LAYA_URL, { ...common, signal: AbortSignal.timeout(timeoutMs) });
+			return await fetch(layaUrl(), { ...common, signal: AbortSignal.timeout(timeoutMs) });
 		}
 		throw err;
 	}
@@ -426,7 +455,7 @@ async function layaFetch(body: string, timeoutMs: number): Promise<Response> {
  * awaited on the first agent turn if the startup prime has not finished; fails
  * silently so an unreachable server never blocks the turn. */
 async function layaWarmCheckpoint(): Promise<void> {
-	if (!LAYA_API_KEY || checkpointWarmed) return;
+	if (!layaApiKey() || checkpointWarmed) return;
 	try {
 		await layaFetch(JSON.stringify({ state: "warmup", questions: { warmup: { type: "noul", instructions: "Warmup." } } }), WARM_TIMEOUT_MS);
 		checkpointWarmed = true;
@@ -571,6 +600,30 @@ function rememberBlocked(command: string): void {
 	}
 }
 
+const GATE_NOTIFY_THROTTLE_MS = 60_000;
+let lastGateNotifyAt = 0;
+
+/** Best-effort attention notification when the gate blocks: the agent is
+ * stopped and may need the user, who is often unfocused exactly then.
+ * Throttled to one per window; suppressed in headless modes by the shared
+ * notification gate and by HUMMIN_NOTIFY=off. Never breaks the gate. */
+function notifyGateBlock(command: string, cwd: string): void {
+	try {
+		const now = Date.now();
+		if (now - lastGateNotifyAt < GATE_NOTIFY_THROTTLE_MS) return;
+		lastGateNotifyAt = now;
+		let channel: TerminalNotificationChannel = "bell";
+		try {
+			channel = SettingsManager.create(cwd).getTerminalNotifications();
+		} catch {
+			// unreadable settings: bell
+		}
+		sendTerminalNotification(channel, `hummin: laya gate blocked ${command.slice(0, 80)}`);
+	} catch {
+		// never break the gate over a notification
+	}
+}
+
 function gateBlockReason(headline: string, repeatHint: string, repeat: boolean): string {
 	return (
 		`[laya gate] ${headline}. Do not simply retry it. Either (1) confirm with the user that the target is disposable, or (2) verify it is backed up or reproducible. Once confirmed, re-run the same command with '${GATE_CONFIRM_MARKER}' appended so the gate lets it through.` +
@@ -590,6 +643,11 @@ export interface LayaGateDecision {
  * read-only fast path, deterministic destructive rules, then one laya read for
  * the gray zone. `layaRead` is injectable for tests; `cwd` labels the gate
  * state. Returns undefined when the command may run.
+ *
+ * The confirm marker authorizes a re-run only when a block of the exact same
+ * command exists in the confirm window (CONFIRM_WINDOW_MS); a marker on any
+ * other command is audited as an anomaly and the stripped command runs the
+ * full gate. Never blocks merely because a marker was unexpected.
  */
 export async function layaGateCheck(
 	rawCommand: string,
@@ -598,16 +656,30 @@ export async function layaGateCheck(
 ): Promise<LayaGateDecision | undefined> {
 	if (process.env.HUMMIN_LAYA_GATE === "off") return undefined;
 	const trimmed = rawCommand.trim();
-	if (!trimmed || trimmed.includes(GATE_CONFIRM_MARKER)) {
+	if (!trimmed) return undefined;
+	let command = trimmed;
+	if (trimmed.includes(GATE_CONFIRM_MARKER)) {
 		const bare = trimmed.replace(GATE_CONFIRM_MARKER, "").trim();
-		if (trimmed.includes(GATE_CONFIRM_MARKER) && bare) {
-			auditGate({ type: "confirmed", command: bare, p: lastBlockScore(bare) });
+		if (!bare) return undefined;
+		const block = recentBlockFor(bare, Date.now());
+		if (block) {
+			auditGate({ type: "confirmed", command: bare, p: block.p });
+			blockedOnce.delete(bare);
+			return undefined;
 		}
-		blockedOnce.delete(bare);
-		return undefined;
+		auditGate({ type: "anomaly", command: bare });
+		command = bare;
 	}
-	const segments = splitSegments(trimmed);
-	if (segments.length > 0 && segments.every((s) => READ_ONLY_BASH.test(s))) return undefined;
+	const segments = splitSegments(command);
+	// hasWriteRedirect must gate the fast path too: splitSegments strips
+	// redirects from segments, so without this check `echo x > important.txt`
+	// passes as read-only without ever reaching the redirect downgrade below.
+	if (
+		segments.length > 0 &&
+		segments.every((s) => READ_ONLY_BASH.test(s)) &&
+		!hasWriteRedirect(command)
+	)
+		return undefined;
 	// Deterministic verdicts first: canonical destructive commands block
 	// without a laya read; fully additive commands pass without one. Only
 	// the gray zone pays the laya latency. Settings extras
@@ -623,34 +695,36 @@ export async function layaGateCheck(
 	// splitSegments strips redirects, so a write redirect hides from the
 	// segment classifiers: `echo x > important.txt` looks read-only.
 	// Downgrade safe verdicts to review so laya sees the redirect.
-	if (verdict.kind === "safe" && hasWriteRedirect(trimmed)) verdict = { kind: "review" };
+	if (verdict.kind === "safe" && hasWriteRedirect(command)) verdict = { kind: "review" };
 	if (verdict.kind === "destructive") {
-		const repeat = blockedOnce.has(trimmed);
-		rememberBlocked(trimmed);
-		auditGate({ type: "block", command: trimmed, rule: verdict.rule });
+		const repeat = blockedOnce.has(command);
+		rememberBlocked(command);
+		auditGate({ type: "block", command, rule: verdict.rule });
+		notifyGateBlock(command, cwd);
 		return {
 			block: true,
 			reason: gateBlockReason(`this command matches a known-destructive pattern (${verdict.rule})`, "rule", repeat),
 		};
 	}
 	if (verdict.kind === "safe") {
-		blockedOnce.delete(trimmed);
+		blockedOnce.delete(command);
 		return undefined;
 	}
 	const read = await layaRead(
-		`${GATE_STATE_PREFIX}cwd: ${cwd}\n\n${trimmed.slice(0, 1800)}`,
+		`${GATE_STATE_PREFIX}cwd: ${cwd}\n\n${command.slice(0, 1800)}`,
 		"destructive",
 		GATE_INSTRUCTIONS,
 	);
 	if (!read) return undefined;
 	auditRead("gate", read.noul);
 	if (read.noul < layaGateThreshold()) {
-		blockedOnce.delete(trimmed);
+		blockedOnce.delete(command);
 		return undefined;
 	}
-	const repeat = blockedOnce.has(trimmed);
-	rememberBlocked(trimmed);
-	auditGate({ type: "block", command: trimmed, p: read.noul });
+	const repeat = blockedOnce.has(command);
+	rememberBlocked(command);
+	auditGate({ type: "block", command, p: read.noul });
+	notifyGateBlock(command, cwd);
 	return {
 		block: true,
 		reason: gateBlockReason(`laya scores this command P=${read.noul.toFixed(2)} as irreversibly destructive`, "score", repeat),
@@ -689,7 +763,7 @@ export default function humminLaya(pi: ExtensionAPI): void {
 			),
 		}),
 		async execute(_toolCallId, params) {
-			if (!LAYA_API_KEY) {
+			if (!layaApiKey()) {
 				return {
 					content: [{ type: "text", text: "Error: COLI_API_KEY is not set in this Hummin process. Export it (it is in ~/.zshrc) and restart Hummin." }],
 					isError: true,
@@ -723,7 +797,7 @@ export default function humminLaya(pi: ExtensionAPI): void {
 			} catch (err) {
 				const msg = err instanceof Error && /abort|timeout/i.test(err.message)
 					? `laya did not answer within ${TIMEOUT_MS / 1000}s (cold checkpoint may still be loading)`
-					: `laya service unreachable at ${LAYA_URL}`;
+					: `laya service unreachable at ${layaUrl()}`;
 				return {
 					content: [{
 						type: "text",

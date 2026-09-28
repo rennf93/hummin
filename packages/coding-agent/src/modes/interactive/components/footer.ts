@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Usage } from "@earendil-works/pi-ai/compat";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { VERSION } from "../../../config.ts";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import type { StatuslineSettings } from "../../../core/settings-manager.ts";
@@ -473,8 +474,9 @@ export class FooterComponent implements Component {
 		}
 		if (sortedStatuses.length > 0) {
 			const statusLine = sortedStatuses.join(" ");
-			// Truncate to terminal width with dim ellipsis for consistency with footer style
-			lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+			// Running version pinned to the right edge of the status row (the
+			// TODOs row); the left side truncates first.
+			lines.push(this.alignLeftRight(statusLine, theme.fg("dim", `v${VERSION}`), width));
 		}
 
 		return lines;

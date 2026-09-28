@@ -113,9 +113,33 @@ describe("parseHooksConfig", () => {
 			"agent_start",
 			"agent_end",
 			"stop",
+			"session_start",
 			"session_end",
 			"notification",
+			"user_prompt_submit",
+			"pre_compact",
 		]);
+	});
+
+	it("parses the lifecycle events like any other", () => {
+		const entries = parseHooksConfig(
+			JSON.stringify({
+				hooks: {
+					user_prompt_submit: [{ command: "log-prompt" }],
+					session_start: [{ command: "say-hi" }],
+					pre_compact: [{ command: "snapshot-context", timeout_ms: 5000 }],
+				},
+			}),
+			"f",
+		);
+		expect(entries.map((entry) => entry.event)).toEqual(["user_prompt_submit", "session_start", "pre_compact"]);
+		expect(entries.find((entry) => entry.event === "pre_compact")?.timeoutMs).toBe(5000);
+	});
+
+	it("still rejects unknown lifecycle events", () => {
+		expect(() => parseHooksConfig(JSON.stringify({ hooks: { session_midpoint: [{ command: "x" }] } }), "f")).toThrow(
+			/unknown hook event/,
+		);
 	});
 });
 

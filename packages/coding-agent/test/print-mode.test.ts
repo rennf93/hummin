@@ -1,7 +1,17 @@
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { writeRawStdout } from "../src/core/output-guard.ts";
+import { onNotificationSent, sendTerminalNotification } from "../src/core/terminal-notifications.ts";
 import type { SessionShutdownEvent } from "../src/index.ts";
 import { runPrintMode } from "../src/modes/print-mode.ts";
+
+vi.mock("../src/core/output-guard.ts", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../src/core/output-guard.ts")>();
+	return { ...actual, writeRawStdout: vi.fn((data: string) => data.length) };
+});
+
+const stdoutLines = (): string[] =>
+	(writeRawStdout as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0]));
 
 type EmitEvent = SessionShutdownEvent;
 
@@ -138,5 +148,39 @@ describe("runPrintMode", () => {
 		expect(errorSpy).toHaveBeenCalledWith("provider failure");
 		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
 		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
+	});
+
+	it("json mode surfaces notifications as event lines, never escape bytes", async () => {
+		// Earlier tests in this file write through the same mock; capture only
+		// what this run emits.
+		const writeMock = writeRawStdout as unknown as ReturnType<typeof vi.fn>;
+		writeMock.mockReset();
+		writeMock.mockImplementation((data: string) => data.length);
+		const runtimeHost = createRuntimeHost(createAssistantMessage({ text: "done" }));
+		const { session } = runtimeHost;
+		const unsubscribe = onNotificationSent(() => {});
+		session.prompt = vi.fn(async () => {
+			// Simulates the laya gate firing mid-turn while headless: the bus
+			// event must surface as a JSON line, with no BEL/OSC bytes written.
+			sendTerminalNotification("bell", "hummin: laya gate blocked rm -rf x");
+		});
+
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+			mode: "json",
+			initialMessage: "clean up",
+		});
+		unsubscribe();
+
+		expect(exitCode).toBe(0);
+		const lines = stdoutLines().filter((line) => line.trim() !== "");
+		expect(lines.length).toBeGreaterThan(0);
+		const events = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+		const notification = events.find((event) => event.type === "notification") as
+			| { type: string; message: string; channel: string }
+			| undefined;
+		expect(notification?.message).toBe("hummin: laya gate blocked rm -rf x");
+		expect(notification?.channel).toBe("bell");
+		// Stream purity: every line is JSON, so no raw BEL/OSC reached stdout.
+		for (const line of lines) expect(() => JSON.parse(line)).not.toThrow();
 	});
 });

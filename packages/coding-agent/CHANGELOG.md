@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- The footer's status row (the TODOs row) now shows the running version right-aligned (e.g. `v1.2.7`); the left side truncates first on narrow terminals, and the row only exists when there is status content to show.
+- New hook events in `hooks.json`: `user_prompt_submit` (per agent turn, payload carries the prompt text), `session_start` (fired after the hooks config loads), and `pre_compact` (before context compaction, payload carries the trigger reason and whether the aborted turn will retry). Payloads are additive on the existing event JSON.
+- The laya gate raises a terminal notification when it blocks a command, throttled to one per minute, so an unfocused user learns the agent is stopped waiting for a confirm. Headless processes suppress the terminal bytes and `--mode json` surfaces every notification as a `{type: "notification", message, channel}` event line instead; RPC mode suppresses entirely.
+- Notification subscribers (hooks, JSON streams) now see every non-off emission attempt, including ones suppressed by the focus condition or by headless mode: automation gets the event, only the terminal output is conditional.
+
+### Fixed
+
+- The laya bash gate no longer blocks the repo's own test runs: `./test.sh` scored P=0.83 in live probing even though the gate rubric scores test scripts LOW (the checkpoint cannot reliably follow the rubric tail). Test, build, and check invocations (`./test.sh`, `npm test`/`npm run test`, vitest, jest, pytest, `cargo test`, `go test`, `node --test`) now fast-pass deterministically via the same matcher the triage feature uses; destructive segments still block first.
+- The laya bash gate no longer fast-paths write redirects hidden behind read-only commands. `splitSegments` strips redirects from each segment, so `echo x > important.txt`, `cat a > b`, or `git diff > patch` passed the whole-command read-only check before the redirect downgrade could send them to laya, clobbering the target with no gate read (found by live probing). Redirect-bearing commands now always reach laya scoring; fd dups (`2>&1`) and `>/dev/null` keep the fast path.
+- The laya gate's confirm marker no longer self-authorizes. A marker re-run passes only when a block of the exact same command exists in the audit log within the last 24 hours; a marker on any other command is audited as `anomaly` and the stripped command runs the full gate (previously 36 of 45 marker confirmations in a 4-day sample had no matching block).
+
 ## [1.2.7] - 2026-09-28
 
 ### New Features
