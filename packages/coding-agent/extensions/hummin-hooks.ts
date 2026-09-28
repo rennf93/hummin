@@ -17,7 +17,10 @@ import { ProcessManager } from "./lib/processes.ts";
  * Events users can hook in hooks.json. `stop`/`session_end` mirror Claude
  * Code's Stop/SessionEnd names; `notification` fires for every terminal
  * notification hummin emits (turn end, ask_user, ...) with its message and
- * channel. `matcher` applies to tool events only (glob on the tool name).
+ * channel. `user_prompt_submit` fires per agent turn with the prompt text;
+ * `session_start` fires once the hooks config is loaded; `pre_compact` fires
+ * before context compaction with the trigger reason. `matcher` applies to
+ * tool events only (glob on the tool name).
  */
 export const HOOK_EVENTS = [
 	"tool_call",
@@ -25,8 +28,11 @@ export const HOOK_EVENTS = [
 	"agent_start",
 	"agent_end",
 	"stop",
+	"session_start",
 	"session_end",
 	"notification",
+	"user_prompt_submit",
+	"pre_compact",
 ] as const;
 export type HookEvent = (typeof HOOK_EVENTS)[number];
 
@@ -282,6 +288,12 @@ interface EventPayload {
 	/** notification events only */
 	message?: string;
 	channel?: string;
+	/** user_prompt_submit */
+	prompt?: string;
+	/** pre_compact: manual, threshold, or overflow */
+	reason?: string;
+	/** pre_compact: true when the aborted turn retries after compacting */
+	will_retry?: boolean;
 }
 
 export default function humminHooks(pi: ExtensionAPI): void {
@@ -398,6 +410,17 @@ export default function humminHooks(pi: ExtensionAPI): void {
 		sessionCtx = ctx;
 		const { problems } = load(ctx);
 		for (const problem of problems) ctx.ui.notify(problem, "warning");
+		// Fired after the load so hooks.json edits apply to their own start event.
+		void runHooks("session_start", {}, ctx);
+	});
+
+	pi.on("before_agent_start", async (event, ctx) => {
+		await runHooks("user_prompt_submit", { prompt: event.prompt }, ctx);
+	});
+
+	pi.on("session_before_compact", async (event, ctx) => {
+		// Non-blocking bridge: hooks.json cannot cancel or customize compaction.
+		await runHooks("pre_compact", { reason: event.reason, will_retry: event.willRetry }, ctx);
 	});
 
 	pi.on("tool_call", async (event, ctx) => {

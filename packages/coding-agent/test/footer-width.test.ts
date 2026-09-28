@@ -1,5 +1,6 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it } from "vitest";
+import { VERSION } from "../src/config.ts";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
 import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
@@ -275,5 +276,45 @@ describe("FooterComponent width handling", () => {
 
 		expect(stats).toContain("$1.234");
 		expect(stats).not.toContain("(sub)");
+	});
+});
+
+describe("version on the status row", () => {
+	it("pins the version to the right edge of the TODOs row", () => {
+		const session = createSession({ sessionName: "" });
+		const data = {
+			...createFooterData(1),
+			getTodoSummary: () => "1/7 · Verify live laya service health",
+		} as unknown as ReadonlyFooterDataProvider;
+		const footer = new FooterComponent(session, data);
+
+		const lines = footer.render(120);
+		const last = stripAnsi(lines[lines.length - 1] ?? "");
+		expect(last).toContain("TODOs 1/7");
+		expect(last.trimEnd().endsWith(`v${VERSION}`)).toBe(true);
+	});
+
+	it("keeps the version within width and on the right when the row is long", () => {
+		const session = createSession({ sessionName: "" });
+		const data = {
+			...createFooterData(1),
+			getTodoSummary: () => `${"word ".repeat(40)}· tail`,
+		} as unknown as ReadonlyFooterDataProvider;
+		const footer = new FooterComponent(session, data);
+
+		const width = 100;
+		const lines = footer.render(width);
+		const last = stripAnsi(lines[lines.length - 1] ?? "");
+		expect(visibleWidth(last)).toBeLessThanOrEqual(width);
+		expect(last.trimEnd().endsWith(`v${VERSION}`)).toBe(true);
+	});
+
+	it("adds no version row when there are no statuses", () => {
+		const session = createSession({ sessionName: "" });
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		const lines = footer.render(120);
+		const rendered = stripAnsi(lines.join("\n"));
+		expect(rendered).not.toContain(`v${VERSION}`);
 	});
 });
