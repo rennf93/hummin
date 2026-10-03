@@ -6,12 +6,13 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { getAgentDir, SettingsManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { buildCatalog, decideRightSize, type ModelLike, type ModelProfile, type RightSizeConfig, type ThinkingLevel } from "./model-rightsize.ts";
+import { resolveDecisionEngine, sys1Fetch } from "./decision-engine.ts";
 export type { ThinkingLevel } from "./model-rightsize.ts";
 
 export type ChildDispatchKind = "task" | "cron" | "memory-distill" | "memory-fold";
 export interface DispatchReceipt { reviewId: string; fingerprint: string; kind: ChildDispatchKind; prompt: string; cwd: string; configuration: { provider: string; modelId: string; thinking: ThinkingLevel }; recommendation?: { provider: string; modelId: string; thinking: ThinkingLevel }; }
 export interface ChildDispatchInput { kind: ChildDispatchKind; prompt: string; cwd: string; model?: string; thinking?: ThinkingLevel; reviewId?: string; overrideReason?: string; receipt?: DispatchReceipt; }
-export interface ChildDispatchOptions { agentDir?: string; laya?: (state: string, questions: { name: string; type: "choice" | "score"; instructions: string; criteria: string[] }[]) => Promise<{ answer: string; p: number }[]>; layaTimeoutMs?: number; profiles?: readonly ModelProfile[]; config?: RightSizeConfig; }
+export interface ChildDispatchOptions { agentDir?: string; sys1?: (state: string, questions: { name: string; type: "choice" | "score"; instructions: string; criteria: string[] }[]) => Promise<{ answer: string; p: number }[]>; sys1TimeoutMs?: number; profiles?: readonly ModelProfile[]; config?: RightSizeConfig; }
 type Ctx = { modelRegistry: { getAvailable(): readonly Model<Api>[] } };
 interface Held { receipt: DispatchReceipt; reason: string; status: "pending" | "accepted" | "overridden"; confidence?: number; margin?: number; }
 const pathFor = (dir: string) => join(dir, "child-dispatch-reviews.json");
@@ -45,22 +46,22 @@ const withStoreLock = async <T>(dir: string, fn: () => Promise<T>): Promise<T> =
 };
 const audit = (dir: string, record: Record<string, unknown>) => { try { appendFileSync(join(dir, "child-dispatch-reviews.log"), JSON.stringify({ ...record, ts: new Date().toISOString() }) + "\n"); } catch { return; } };
 const fingerprint = (input: ChildDispatchInput, configuration: { provider: string; modelId: string; thinking: ThinkingLevel }) => createHash("sha256").update(JSON.stringify([input.kind, input.prompt, input.cwd, configuration])).digest("hex").slice(0, 24);
-export async function createLayaChoiceCall(state: string, questions: { name: string; type: "choice" | "score"; instructions: string; criteria: string[] }[], timeoutMs = 4000): Promise<{ answer: string; p: number; probabilities?: Record<string, number> }[]> {
- const url = (process.env.HUMMIN_LAYA_URL?.trim() || "http://127.0.0.1:9989/v1/systemone");
- const controller = new AbortController();
- const timer = setTimeout(() => controller.abort(), timeoutMs);
- try {
-  const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...(process.env.COLI_API_KEY ? { authorization: "Bearer " + process.env.COLI_API_KEY } : {}) }, body: JSON.stringify({ state, questions: Object.fromEntries(questions.map((question) => [question.name, { type: question.type, instructions: question.instructions, criteria: question.criteria }])) }), signal: controller.signal });
-  if (!response.ok) throw new Error("Laya HTTP " + response.status);
-  const payload = await response.json() as { answers?: Record<string, { choice?: string; score?: number; probabilities?: Record<string, number>; answer_confidence?: number }> };
-  return questions.map((question) => {
-   const answer = payload.answers?.[question.name];
-   const selected = question.type === "choice" ? answer?.choice : typeof answer?.score === "number" ? question.criteria[Math.round(answer.score)] : undefined;
-   const probability = selected ? answer?.probabilities?.[selected] : undefined;
-   if (!selected || !Number.isFinite(probability)) throw new Error("Laya returned an invalid choice");
-   return { answer: selected, p: probability as number, probabilities: answer?.probabilities };
-  });
- } finally { clearTimeout(timer); }
+/** One System-1 choice/score read from the active decision engine, for the
+ * child-dispatch right-size review. Throws on any failure so callers can
+ * degrade to advisory. */
+export async function createSys1ChoiceCall(state: string, questions: { name: string; type: "choice" | "score"; instructions: string; criteria: string[] }[], timeoutMs?: number): Promise<{ answer: string; p: number; probabilities?: Record<string, number> }[]> {
+	const engine = resolveDecisionEngine();
+	const effectiveTimeout = timeoutMs ?? engine.dispatchTimeoutMs;
+	const response = await sys1Fetch(engine, JSON.stringify({ state, questions: Object.fromEntries(questions.map((question) => [question.name, { type: question.type, instructions: question.instructions, criteria: question.criteria }])) }), effectiveTimeout);
+	if (!response.ok) throw new Error("System-1 HTTP " + response.status);
+	const payload = await response.json() as { answers?: Record<string, { choice?: string; score?: number; probabilities?: Record<string, number>; answer_confidence?: number }> };
+	return questions.map((question) => {
+		const answer = payload.answers?.[question.name];
+		const selected = question.type === "choice" ? answer?.choice : typeof answer?.score === "number" ? question.criteria[Math.round(answer.score)] : undefined;
+		const probability = selected ? answer?.probabilities?.[selected] : undefined;
+		if (!selected || !Number.isFinite(probability)) throw new Error("System-1 returned an invalid choice");
+		return { answer: selected, p: probability as number, probabilities: answer?.probabilities };
+	});
 }
 export function resolveChildModel(requested: string | undefined, ctx: Ctx): Model<Api> | undefined {
  const value = requested?.trim() || "fast"; const models = ctx.modelRegistry.getAvailable();
@@ -74,7 +75,7 @@ export function resolveChildModel(requested: string | undefined, ctx: Ctx): Mode
 }
 export async function prepareChildDispatch(input: ChildDispatchInput, ctx: Ctx, options: ChildDispatchOptions = {}): Promise<{ action: "allow" | "block" | "advisory"; reviewId?: string; reason?: string; configuration: { provider: string; modelId: string; thinking: ThinkingLevel }; receipt?: DispatchReceipt }> {
  if (!options.agentDir) options.agentDir = getAgentDir();
- if (!options.laya) options.laya = (state, questions) => createLayaChoiceCall(state, questions, options.layaTimeoutMs);
+ if (!options.sys1) options.sys1 = (state, questions) => createSys1ChoiceCall(state, questions, options.sys1TimeoutMs);
  if (!options.config || !options.profiles) {
   try {
    const settings = SettingsManager.create(input.cwd);
@@ -109,7 +110,7 @@ export async function prepareChildDispatch(input: ChildDispatchInput, ctx: Ctx, 
   }
   const receipt: DispatchReceipt = { reviewId: randomUUID(), fingerprint: id, kind: input.kind, prompt: input.prompt, cwd: input.cwd, configuration };
   const candidates = ctx.modelRegistry.getAvailable().map((entry) => ({ provider: entry.provider, id: entry.id, reasoning: entry.reasoning, cost: entry.cost, thinkingLevels: ("thinkingLevels" in entry && entry.thinkingLevels ? entry.thinkingLevels : getSupportedThinkingLevels(entry as Model<Api>)) as ThinkingLevel[] }));
-  let decision; try { decision = await decideRightSize({ subtask: input.prompt, requested: model.provider + "/" + model.id, thinking, catalog: buildCatalog(candidates as ModelLike[], options.profiles), config: options.config || { enabled: true, swingThreshold: 0.6 }, laya: options.laya || (async () => { throw new Error("Laya unavailable"); }) }); } catch { return { action: "advisory" as const, reason: "Laya unavailable; dispatch allowed.", configuration }; }
+  let decision; try { decision = await decideRightSize({ subtask: input.prompt, requested: model.provider + "/" + model.id, thinking, catalog: buildCatalog(candidates as ModelLike[], options.profiles), config: options.config || { enabled: true, swingThreshold: 0.6 }, sys1: options.sys1 || (async () => { throw new Error("System-1 unavailable"); }) }); } catch { return { action: "advisory" as const, reason: "System-1 engine unavailable; dispatch allowed.", configuration }; }
   // Re-read after the Laya await: a sync writer (resolveChildDispatchReview)
   // may have updated the store while this review was in flight; its update
   // must not be clobbered by the stale pre-await snapshot.

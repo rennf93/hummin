@@ -559,27 +559,45 @@ function markSessionProcessed(memoryDir) {
 	});
 }
 
-// Every laya read is audited to the shared laya-gate.log; the worker appends
-// directly and never lets a logging failure break the run.
+// Every System-1 read is audited to the shared laya-gate.log with the
+// answering engine; the worker appends directly and never lets a logging
+// failure break the run. The parent injects the resolved engine routing as
+// env (HUMMIN_DECISION_*), so the worker needs no settings resolution.
 function auditRead(gateLog, kind, p) {
 	if (typeof gateLog !== "string") return;
-	try { appendFileSync(gateLog, JSON.stringify({ ts: new Date().toISOString(), type: "read", kind, p }) + "\n"); } catch {}
+	const engine = String(process.env.HUMMIN_DECISION_ENGINE || "laya").trim() || "laya";
+	try { appendFileSync(gateLog, JSON.stringify({ ts: new Date().toISOString(), type: "read", kind, p, engine }) + "\n"); } catch {}
 }
 
-// One laya read gating lesson intake: a score >= INTAKE_THRESHOLD stores the
-// lesson, below drops it exactly like a NONE reply. Any failure (missing key,
-// unreachable, timeout, parse) returns null and the lesson is stored - fail
-// open. HUMMIN_LAYA_INTAKE=off skips the read entirely.
+// The parent injects the active engine's intake threshold (0..1); an absent,
+// empty, or out-of-range value keeps the built-in default.
+function intakeThreshold() {
+	const raw = String(process.env.HUMMIN_DECISION_INTAKE_THRESHOLD || "").trim();
+	const n = raw !== "" ? Number(raw) : NaN;
+	return Number.isFinite(n) && n >= 0 && n <= 1 ? n : INTAKE_THRESHOLD;
+}
+
+// One System-1 read gating lesson intake: a score >= threshold stores the
+// lesson, below drops it exactly like a NONE reply. Any failure (unreachable,
+// timeout, parse) returns null and the lesson is stored - fail open.
+// HUMMIN_SYS1_INTAKE=off (or the legacy HUMMIN_LAYA_INTAKE=off) skips the
+// read entirely. The parent injects HUMMIN_DECISION_URL / _API_KEY /
+// _INTAKE_THRESHOLD. A defined-but-empty injected URL means the active engine
+// is unconfigured: skip the read entirely instead of falling back to the
+// legacy laya names, which would score lessons against a different engine
+// than the parent session (the one-engine contract).
 async function layaIntakeScore(lesson) {
-	if (String(process.env.HUMMIN_LAYA_INTAKE || "").trim().toLowerCase() === "off") return null;
-	const apiKey = String(process.env.COLI_API_KEY || "").trim();
-	if (!apiKey) return null;
-	const url = String(process.env.HUMMIN_LAYA_URL || "").trim() || "http://127.0.0.1:9989/v1/systemone";
+	const intakeSwitch = String(process.env.HUMMIN_SYS1_INTAKE || process.env.HUMMIN_LAYA_INTAKE || "").trim().toLowerCase();
+	if (intakeSwitch === "off") return null;
+	const injectedUrl = process.env.HUMMIN_DECISION_URL;
+	if (typeof injectedUrl === "string" && injectedUrl.trim() === "") return null;
+	const apiKey = String(process.env.HUMMIN_DECISION_API_KEY || process.env.COLI_API_KEY || "").trim();
+	const url = injectedUrl !== undefined && injectedUrl.trim() !== "" ? injectedUrl.trim() : (String(process.env.HUMMIN_LAYA_URL || "").trim() || "http://127.0.0.1:9989/v1/systemone");
 	const state = "A coding agent distilled the following lesson from a finished session in " + job.cwd + ". Decide whether it is durable project knowledge.\n\n" + lesson.slice(0, 4000);
 	try {
 		const response = await fetch(url, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+			headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: "Bearer " + apiKey } : {}) },
 			body: JSON.stringify({
 				state,
 				questions: {
@@ -661,9 +679,10 @@ async function distill() {
 		// Per-lesson intake gate: drop only the gated-out lessons. A null
 		// score (gate unavailable) stores that lesson - fail open per lesson.
 		const kept = [];
+		const intakeLine = intakeThreshold();
 		for (const lesson of toStore) {
 			const intake = await layaIntakeScore(lesson);
-			if (intake !== null && intake < INTAKE_THRESHOLD) continue;
+			if (intake !== null && intake < intakeLine) continue;
 			kept.push(lesson);
 		}
 		if (kept.length === 0) {

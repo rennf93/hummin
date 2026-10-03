@@ -1267,7 +1267,7 @@ export class SettingsSelectorComponent extends Container {
 				id: "laya-right-size",
 				label: "Laya right-size gate",
 				description:
-					"Laya reviews child dispatches (task, cron) against the model catalog and holds confident mismatches for review. HUMMIN_LAYA_RIGHTSIZE=off takes precedence.",
+					"The System-1 engine reviews child dispatches (task, cron) against the model catalog and holds confident mismatches for review. HUMMIN_SYS1_RIGHTSIZE=off (legacy HUMMIN_LAYA_RIGHTSIZE) takes precedence.",
 				currentValue: config.layaRightSizeEnabled ? "true" : "false",
 				values: ["true", "false"],
 			},

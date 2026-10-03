@@ -135,7 +135,7 @@ test("gateBackgroundShell sends escape-shaped gray-zone execs to laya and blocks
 				cwd,
 			),
 	});
-	expect(decision.blocked).toContain("[laya gate]");
+	expect(decision.blocked).toContain("[sys1 gate]");
 	expect(decision.blocked).toContain("P=0.90");
 });
 
