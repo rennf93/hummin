@@ -6,6 +6,7 @@
 
 - System-1 decision engine selector: one engine at a time (laya, clef, or jev) answers every System-1 read (bash gate gray zone, per-turn steer, test-failure triage, memory intake, child-dispatch review, decide tool), with per-engine settings (`decision.<engine>.url`/`.apiKey`/thresholds/timeouts), `HUMMIN_DECISION_*` env overrides, and an `engine` field in laya-gate.log entries. No per-read engine mixing and no auto-failover; thresholds stay per engine so calibration does not mix distributions.
 - `/friction` calibration now scopes blocks, confirmations, and near-misses to the active engine and suggests `decision.<engine>.gateThreshold`; applying a suggestion persists the per-engine key.
+- Recalibrated the clef engine against the production gate rubric (53-probe matrix on the Mac MLX instance): gate line stays 0.75 (safe probes 0.016-0.03, destructive 0.85-0.97, gray-zone split at the line), steer moved 0.7 to 0.8 (a benign prompt scored 0.733), triage and intake keep the laya lines, gate timeout 6.5s to 8s (measured p95 ~6.5s). Unlike laya, clef reads the full rubric tail: a one-line rubric edit moved a score from 0.13 to 0.96.
 
 ### Changed
 

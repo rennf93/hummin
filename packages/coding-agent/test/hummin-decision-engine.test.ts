@@ -85,10 +85,16 @@ test("HUMMIN_DECISION_ENGINE selects another engine with its own profile", () =>
 	const engine = resolveDecisionEngine();
 	expect(engine.id).toBe("clef");
 	expect(engine.url).toBe("http://127.0.0.1:9987/v1/systemone");
-	expect(engine.gateTimeoutMs).toBe(6500);
+	expect(engine.gateTimeoutMs).toBe(8000);
 	expect(engine.decideTimeoutMs).toBe(120000);
-	// clef ships the laya thresholds as interim defaults.
+	// Clef's calibrated lines (2026-10-03 probe matrix, see
+	// lib/decision-engine.ts): the gate line survives recalibration at 0.75,
+	// steer moved up to keep a benign 0.733 prompt from firing, triage and
+	// intake kept the laya lines.
 	expect(engine.gateThreshold).toBe(0.75);
+	expect(engine.steerThreshold).toBe(0.8);
+	expect(engine.triageThreshold).toBe(0.45);
+	expect(engine.intakeThreshold).toBe(0.5);
 });
 
 test("jev without a url resolves unconfigured and warns once", () => {

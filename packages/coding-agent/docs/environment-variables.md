@@ -166,7 +166,7 @@ Select the engine with `HUMMIN_DECISION_ENGINE` or settings `decision.engine`. P
 | `HUMMIN_DECISION_URL` | Overrides the active engine's SystemOne endpoint (engine defaults: laya `http://127.0.0.1:9989/v1/systemone`, clef `http://127.0.0.1:9987/v1/systemone`, jev unset) |
 | `HUMMIN_DECISION_API_KEY` | Overrides the active engine's bearer key (default `COLI_API_KEY`, the shared fleet key; no-auth engines work with it unset) |
 | `HUMMIN_DECISION_GATE_THRESHOLD` | Gray-zone block threshold on P(destructive), `0` to `1` (default `0.75`) |
-| `HUMMIN_DECISION_STEER_THRESHOLD` | Destructive-intent steer threshold, `0` to `1` (default `0.7`) |
+| `HUMMIN_DECISION_STEER_THRESHOLD` | Destructive-intent steer threshold, `0` to `1` (engine defaults: laya `0.7`, clef `0.8`) |
 | `HUMMIN_DECISION_TRIAGE_THRESHOLD` | Triage advisory threshold, `0` to `1` (default `0.45`) |
 | `HUMMIN_DECISION_INTAKE_THRESHOLD` | Memory lesson intake threshold, `0` to `1` (default `0.5`) |
 | `HUMMIN_SYS1_GATE` | `off` disables the bash destructive-command gate everywhere (the bash tool hook and background exec/monitor shells) |

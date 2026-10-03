@@ -29,9 +29,17 @@ export type DecisionEngineId = "laya" | "clef" | "jev";
 
 export const DECISION_ENGINES: readonly DecisionEngineId[] = ["laya", "clef", "jev"];
 
-/** Per-engine defaults. Thresholds are calibrated per engine: clef ships the
- * laya lines as interim defaults (measured 2026-10-03: destructive 0.94 vs
- * benign 0.02 at the 0.75 gate line) until its own recalibration lands. */
+/** Per-engine defaults. Thresholds are calibrated per engine. Clef's values
+ * were recalibrated 2026-10-03 against the production rubric on the Mac MLX
+ * instance (53-probe matrix; results in PR #13): safe gate probes scored
+ * 0.016-0.03, unambiguous destructive 0.85-0.97, and the gray zone splits at
+ * the line - git rebase 0.84 and an unknown command touching /etc/passwd 0.86
+ * block, force-with-lease 0.69 passes. Steer moved 0.7 -> 0.8 because a
+ * benign rename prompt scored 0.733; triage (0.90 vs 0.055) and intake
+ * (0.86 vs 0.26) kept the laya lines. Gate timeout 8s: measured p95 ~6.5s
+ * under load. Note the deterministic classifiers block every canonical
+ * destructive form before the engine is consulted; the scored layer only
+ * ever judges the gray zone. */
 const ENGINE_DEFAULTS: Record<DecisionEngineId, DecisionEngineConfig> = {
 	laya: {
 		id: "laya",
@@ -52,14 +60,11 @@ const ENGINE_DEFAULTS: Record<DecisionEngineId, DecisionEngineConfig> = {
 		url: "http://127.0.0.1:9987/v1/systemone",
 		apiKey: "",
 		gateThreshold: 0.75,
-		steerThreshold: 0.7,
+		steerThreshold: 0.8,
 		triageThreshold: 0.45,
 		intakeThreshold: 0.5,
-		// Full-rubric gate reads measured 3.9s on the Mac MLX instance; the
-		// timeout carries headroom over that, since a cold or busy server
-		// must still fail open instead of stalling the command.
-		gateTimeoutMs: 6500,
-		dispatchTimeoutMs: 4000,
+		gateTimeoutMs: 8000,
+		dispatchTimeoutMs: 6000,
 		decideTimeoutMs: 120000,
 		warmTimeoutMs: 45000,
 		unconfigured: false,
