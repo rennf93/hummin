@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- System-1 decision engine selector: one engine at a time (laya, clef, or jev) answers every System-1 read (bash gate gray zone, per-turn steer, test-failure triage, memory intake, child-dispatch review, decide tool), with per-engine settings (`decision.<engine>.url`/`.apiKey`/thresholds/timeouts), `HUMMIN_DECISION_*` env overrides, and an `engine` field in laya-gate.log entries. No per-read engine mixing and no auto-failover; thresholds stay per engine so calibration does not mix distributions.
+- `/friction` calibration now scopes blocks, confirmations, and near-misses to the active engine and suggests `decision.<engine>.gateThreshold`; applying a suggestion persists the per-engine key.
+
+### Changed
+
+- Renamed the `laya_decide` tool to `sys1_decide` so the second-opinion tool stays generic across the laya, clef, and jev engines. The `HUMMIN_LAYA_*` kill switches and URL/threshold envs keep working as legacy aliases of the `HUMMIN_SYS1_*`/`HUMMIN_DECISION_*` names (right-size switches included); the legacy laya URL and threshold envs steer the laya engine only.
+
 ## [1.2.10] - 2026-09-28
 
 ### Added

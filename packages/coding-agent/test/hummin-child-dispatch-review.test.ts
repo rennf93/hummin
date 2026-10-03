@@ -5,7 +5,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	type ChildDispatchInput,
-	createLayaChoiceCall,
+	createSys1ChoiceCall,
 	type DispatchReceipt,
 	listChildDispatchReviews,
 	prepareChildDispatch,
@@ -77,16 +77,16 @@ afterEach(() => {
 });
 
 describe("child dispatch review lifecycle", () => {
-	it("allows an ordinary dispatch and reuses its receipt without another Laya call", async () => {
+	it("allows an ordinary dispatch and reuses its receipt without another System-1 call", async () => {
 		const { ctx, input, options } = setup();
 		const calls: string[] = [];
 		const first = await prepareChildDispatch(input, ctx, {
 			...options,
-			laya: laya("zai/base [thinking=off]", 0.9, calls),
+			sys1: laya("zai/base [thinking=off]", 0.9, calls),
 		});
 		expect(first.action).toBe("allow");
 		expect(first.receipt?.configuration).toEqual({ provider: "zai", modelId: "base", thinking: "off" });
-		const second = await prepareChildDispatch(input, ctx, { ...options, laya: laya("invalid", 0.9, calls) });
+		const second = await prepareChildDispatch(input, ctx, { ...options, sys1: laya("invalid", 0.9, calls) });
 		expect(second.action).toBe("allow");
 		expect(calls).toHaveLength(1);
 	});
@@ -96,11 +96,11 @@ describe("child dispatch review lifecycle", () => {
 		const calls: string[] = [];
 		const first = await prepareChildDispatch(input, ctx, {
 			...options,
-			laya: laya("zai/pro [thinking=medium]", 0.4, calls),
+			sys1: laya("zai/pro [thinking=medium]", 0.4, calls),
 		});
 		expect(first.action).toBe("advisory");
 		expect(first.configuration).toEqual({ provider: "zai", modelId: "base", thinking: "off" });
-		const second = await prepareChildDispatch(input, ctx, { ...options, laya: laya("invalid", 0.9, calls) });
+		const second = await prepareChildDispatch(input, ctx, { ...options, sys1: laya("invalid", 0.9, calls) });
 		expect(second.action).toBe("allow");
 		expect(second.configuration).toEqual(first.configuration);
 		expect(calls).toHaveLength(1);
@@ -111,13 +111,13 @@ describe("child dispatch review lifecycle", () => {
 		const calls: string[] = [];
 		const held = await prepareChildDispatch(input, ctx, {
 			...options,
-			laya: laya("zai/pro [thinking=medium]", 0.95, calls),
+			sys1: laya("zai/pro [thinking=medium]", 0.95, calls),
 		});
 		expect(held.action).toBe("block");
 		expect(held.reason).toContain(held.reviewId);
 		// The hold must carry the concrete same-provider recommendation.
 		expect(held.reason).toContain("zai/pro [thinking=medium]");
-		const retry = await prepareChildDispatch(input, ctx, { ...options, laya: laya("invalid", 0.95, calls) });
+		const retry = await prepareChildDispatch(input, ctx, { ...options, sys1: laya("invalid", 0.95, calls) });
 		expect(retry.action).toBe("block");
 		expect(calls).toHaveLength(1);
 	});
@@ -126,7 +126,7 @@ describe("child dispatch review lifecycle", () => {
 		const { agentDir, ctx, input, options } = setup();
 		const _held = await prepareChildDispatch(input, ctx, {
 			...options,
-			laya: laya("zai/pro [thinking=medium]", 0.95),
+			sys1: laya("zai/pro [thinking=medium]", 0.95),
 		});
 		const review = listChildDispatchReviews(agentDir)[0]!;
 		resolveChildDispatchReview(
@@ -137,20 +137,20 @@ describe("child dispatch review lifecycle", () => {
 		);
 		const original = await prepareChildDispatch({ ...input, reviewId: review.receipt.reviewId }, ctx, {
 			...options,
-			laya: laya("invalid", 0.95),
+			sys1: laya("invalid", 0.95),
 		});
 		expect(original.action).toBe("allow");
 		expect(original.configuration).toEqual({ provider: "zai", modelId: "pro", thinking: "medium" });
 		const recommended = await prepareChildDispatch({ ...input, model: "zai/pro", thinking: "medium" }, ctx, {
 			...options,
-			laya: laya("invalid", 0.95),
+			sys1: laya("invalid", 0.95),
 		});
 		expect(recommended.action).toBe("allow");
 	});
 
 	it("accepts a reasoned override while preserving the original tuple", async () => {
 		const { agentDir, ctx, input, options } = setup();
-		await prepareChildDispatch(input, ctx, { ...options, laya: laya("zai/pro [thinking=medium]", 0.95) });
+		await prepareChildDispatch(input, ctx, { ...options, sys1: laya("zai/pro [thinking=medium]", 0.95) });
 		const review = listChildDispatchReviews(agentDir)[0]!;
 		resolveChildDispatchReview(
 			review.receipt.reviewId,
@@ -160,7 +160,7 @@ describe("child dispatch review lifecycle", () => {
 		);
 		const result = await prepareChildDispatch({ ...input, reviewId: review.receipt.reviewId }, ctx, {
 			...options,
-			laya: laya("invalid", 0.95),
+			sys1: laya("invalid", 0.95),
 		});
 		expect(result.action).toBe("allow");
 		expect(result.configuration).toEqual({ provider: "zai", modelId: "base", thinking: "off" });
@@ -170,9 +170,9 @@ describe("child dispatch review lifecycle", () => {
 		const { ctx, input, options } = setup();
 		const held = await prepareChildDispatch(input, ctx, {
 			...options,
-			laya: laya("zai/pro [thinking=medium]", 0.95),
+			sys1: laya("zai/pro [thinking=medium]", 0.95),
 		});
-		const restarted = await prepareChildDispatch(input, ctx, { ...options, laya: laya("invalid", 0.95) });
+		const restarted = await prepareChildDispatch(input, ctx, { ...options, sys1: laya("invalid", 0.95) });
 		expect(held?.reviewId).toBeTruthy();
 		expect(restarted.action).toBe("block");
 		expect(restarted.reviewId).toBe(held?.reviewId);
@@ -180,7 +180,7 @@ describe("child dispatch review lifecycle", () => {
 
 	it("blocks forged, unknown, changed, offline, and unsupported receipts", async () => {
 		const { agentDir, ctx, input, options } = setup();
-		await prepareChildDispatch(input, ctx, { ...options, laya: laya("zai/pro [thinking=medium]", 0.95) });
+		await prepareChildDispatch(input, ctx, { ...options, sys1: laya("zai/pro [thinking=medium]", 0.95) });
 		const review = listChildDispatchReviews(agentDir)[0]!;
 		await expect(prepareChildDispatch({ ...input, reviewId: "unknown" }, ctx, options)).resolves.toMatchObject({
 			action: "block",
@@ -221,12 +221,12 @@ describe("child dispatch review lifecycle", () => {
 		const a = prepareChildDispatch(
 			{ kind: "task", prompt: "first independent review", cwd: "/tmp/a", model: "zai/base", thinking: "off" },
 			ctx,
-			{ ...options, laya: slow },
+			{ ...options, sys1: slow },
 		);
 		const b = prepareChildDispatch(
 			{ kind: "task", prompt: "second independent review", cwd: "/tmp/b", model: "zai/base", thinking: "off" },
 			ctx,
-			{ ...options, laya: slow },
+			{ ...options, sys1: slow },
 		);
 		release!();
 		const results = await Promise.all([a, b]);
@@ -253,7 +253,7 @@ describe("child dispatch review lifecycle", () => {
 		}) as typeof fetch;
 		try {
 			process.env.HUMMIN_LAYA_URL = "http://mock.invalid";
-			const result = await createLayaChoiceCall("state", [
+			const result = await createSys1ChoiceCall("state", [
 				{
 					name: "recommended_configuration",
 					type: "choice",

@@ -6,11 +6,11 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { default as humminLaya, type LayaGateDecision, layaGateCheck } from "../extensions/hummin-laya.ts";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 
-// Handler-level coverage for the hummin-laya extension: the laya_decide tool
+// Handler-level coverage for the hummin-laya extension: the sys1_decide tool
 // execute path, per-turn steering, test-failure triage wiring, gate kill
 // switches, and the laya-gate.log audit trail. Network and env are pinned:
 // fetch is stubbed in every test and COLI_API_KEY / HUMMIN_LAYA_URL /
-// ENV_AGENT_DIR are stubbed so results never depend on whether the local laya
+// ENV_AGENT_DIR are stubbed so results never depend on whether the local decision
 // service happens to be running (the module reads these env values at call
 // time precisely so this pinning is possible).
 //
@@ -36,6 +36,19 @@ interface RecordedCall {
 const cleanups: string[] = [];
 let agentDir: string;
 
+/** The decision-era env names must be cleared so a developer shell exporting
+ * e.g. HUMMIN_DECISION_ENGINE cannot flip engine identity or thresholds
+ * under this suite's assertions. */
+const DECISION_ENV_NAMES = [
+	"HUMMIN_DECISION_ENGINE",
+	"HUMMIN_DECISION_URL",
+	"HUMMIN_DECISION_API_KEY",
+	"HUMMIN_DECISION_GATE_THRESHOLD",
+	"HUMMIN_DECISION_STEER_THRESHOLD",
+	"HUMMIN_DECISION_TRIAGE_THRESHOLD",
+];
+const savedDecisionEnv: Record<string, string | undefined> = {};
+
 beforeEach(() => {
 	agentDir = mkdtempSync(join(tmpdir(), "hummin-laya-handlers-"));
 	cleanups.push(agentDir);
@@ -43,9 +56,17 @@ beforeEach(() => {
 	vi.stubEnv("COLI_API_KEY", "test-key");
 	vi.stubEnv("HUMMIN_LAYA_URL", "http://laya.test/v1/systemone");
 	vi.stubEnv("HUMMIN_NOTIFY", "off");
+	for (const name of DECISION_ENV_NAMES) {
+		savedDecisionEnv[name] = process.env[name];
+		delete process.env[name];
+	}
 });
 
 afterEach(() => {
+	for (const [name, value] of Object.entries(savedDecisionEnv)) {
+		if (value === undefined) delete process.env[name];
+		else process.env[name] = value;
+	}
 	vi.unstubAllEnvs();
 	vi.unstubAllGlobals();
 	for (const dir of cleanups.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -124,10 +145,10 @@ function register(): FakePi {
 	return pi;
 }
 
-/** The one and only laya_decide tool definition. */
+/** The one and only sys1_decide tool definition. */
 function decideTool(pi: FakePi): RegisteredTool {
-	const tool = pi.tools.get("laya_decide");
-	if (!tool) throw new Error("laya_decide was not registered");
+	const tool = pi.tools.get("sys1_decide");
+	if (!tool) throw new Error("sys1_decide was not registered");
 	return tool;
 }
 
@@ -142,7 +163,7 @@ async function auditLines(): Promise<Array<Record<string, unknown>>> {
 
 // --- Registration and startup warm -------------------------------------------
 
-test("registration primes the laya checkpoint with a warmup read", async () => {
+test("registration primes the active engine with a warmup read", async () => {
 	const calls = stubFetch(() => okResponse(noulPayload("warmup", 0.5)));
 	register();
 	await vi.waitFor(() => expect(calls.length).toBeGreaterThan(0));
@@ -152,18 +173,46 @@ test("registration primes the laya checkpoint with a warmup read", async () => {
 	expect(calls[0]?.url).toBe("http://laya.test/v1/systemone");
 });
 
-// --- laya_decide input validation --------------------------------------------
+// --- sys1_decide input validation --------------------------------------------
 
-test("missing COLI_API_KEY fails the tool with a restart hint", async () => {
-	stubFetch(() => okResponse(noulPayload("q", 0.5)));
+test("a missing API key does not fail fast: no-auth engines answer, 401 surfaces auth", async () => {
+	// No-auth engines (the Mac MLX clef instance) must work with zero config,
+	// so an empty key goes through and a success response is honored.
+	const calls = stubFetch(() => okResponse(noulPayload("q", 0.5)));
 	vi.stubEnv("COLI_API_KEY", "");
+	const pi = register();
+	const ok = await decideTool(pi).execute("t1", {
+		state: "s",
+		questions: [{ name: "q", type: "noul", instructions: "i" }],
+	});
+	expect(ok.isError).toBeUndefined();
+	expect(calls).toHaveLength(1);
+	// An auth-requiring engine answers 401 and the error points at the key.
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}), text: async () => "unauthorized" })),
+	);
+	const denied = await decideTool(pi).execute("t2", {
+		state: "s",
+		questions: [{ name: "q", type: "noul", instructions: "i" }],
+	});
+	expect(denied.isError).toBe(true);
+	expect(denied.content[0]?.text).toContain("no API key is configured");
+});
+
+test("an unconfigured engine fails the tool with a configure hint", async () => {
+	stubFetch(() => okResponse(noulPayload("q", 0.5)));
+	vi.stubEnv("HUMMIN_DECISION_ENGINE", "jev");
+	vi.stubEnv("HUMMIN_DECISION_URL", "");
+	vi.stubEnv("HUMMIN_LAYA_URL", "");
 	const pi = register();
 	const result = await decideTool(pi).execute("t1", {
 		state: "s",
 		questions: [{ name: "q", type: "noul", instructions: "i" }],
 	});
 	expect(result.isError).toBe(true);
-	expect(result.content[0]?.text).toContain("COLI_API_KEY is not set");
+	expect(result.content[0]?.text).toContain("no url configured");
+	expect(result.content[0]?.text).toContain("decision.jev.url");
 });
 
 test("empty state and empty questions are rejected before any fetch", async () => {
@@ -195,7 +244,7 @@ test("invalid question names are rejected with the naming rule", async () => {
 	expect(calls).toHaveLength(0);
 });
 
-// --- laya_decide transport failures ------------------------------------------
+// --- sys1_decide transport failures ------------------------------------------
 
 test("timeout after the retry is reported as a cold-checkpoint hint", async () => {
 	stubFetch(() => {
@@ -207,7 +256,7 @@ test("timeout after the retry is reported as a cold-checkpoint hint", async () =
 		questions: [{ name: "q", type: "noul", instructions: "i" }],
 	});
 	expect(result.isError).toBe(true);
-	expect(result.content[0]?.text).toContain("laya did not answer within 15s");
+	expect(result.content[0]?.text).toContain("the laya engine did not answer within 15s");
 	expect(result.content[0]?.text).toContain("cold checkpoint");
 });
 
@@ -221,7 +270,7 @@ test("transport errors name the configured laya URL", async () => {
 		questions: [{ name: "q", type: "noul", instructions: "i" }],
 	});
 	expect(result.isError).toBe(true);
-	expect(result.content[0]?.text).toContain("laya service unreachable at http://laya.test/v1/systemone");
+	expect(result.content[0]?.text).toContain("the laya engine is unreachable at http://laya.test/v1/systemone");
 });
 
 test("HTTP error status is surfaced with its detail body", async () => {
@@ -232,7 +281,7 @@ test("HTTP error status is surfaced with its detail body", async () => {
 		questions: [{ name: "q", type: "noul", instructions: "i" }],
 	});
 	expect(result.isError).toBe(true);
-	expect(result.content[0]?.text).toBe("laya returned HTTP 503: checkpoint loading");
+	expect(result.content[0]?.text).toBe("the laya engine returned HTTP 503: checkpoint loading");
 });
 
 test("an abort mid-flight is retried once before succeeding", async () => {
@@ -252,7 +301,7 @@ test("an abort mid-flight is retried once before succeeding", async () => {
 	expect(result.content[0]?.text).toContain("lean yes");
 });
 
-// --- laya_decide answer formatting -------------------------------------------
+// --- sys1_decide answer formatting -------------------------------------------
 
 test("choice answers list the top pick then descending probabilities", async () => {
 	stubFetch(() =>
@@ -320,7 +369,7 @@ test("missing answers and routing are rendered per line", async () => {
 	const lines = result.content[0]?.text.split("\n") ?? [];
 	expect(lines[0]).toContain("present: P(true) 0.900 -> lean yes");
 	expect(lines[1]).toBe("absent: (no answer returned)");
-	expect(lines).toContain("(laya checkpoint: english)");
+	expect(lines).toContain("(sys1 engine laya: english)");
 });
 
 test("a weakest confidence below 0.5 adds the trust-the-model note", async () => {
@@ -387,7 +436,7 @@ test("a confident destructive read injects a hidden steer message", async () => 
 		{},
 	)) as { message?: { customType: string; content: string; display: boolean } };
 	expect(calls).toHaveLength(1);
-	expect(result.message?.customType).toBe("laya-read");
+	expect(result.message?.customType).toBe("sys1-read");
 	expect(result.message?.display).toBe(false);
 	expect(result.message?.content).toContain("P=0.86");
 	const lines = await auditLines();
@@ -436,7 +485,7 @@ test("a failing run scored below 0.45 sends the hidden triage advisory", async (
 	await handler?.(triageEvent("node --test test/foo.test.ts", "FAIL 1 failed | 9 passed"), {});
 	expect(calls).toHaveLength(1);
 	expect(pi.sent).toHaveLength(1);
-	expect(pi.sent[0]?.customType).toBe("hummin-laya-triage");
+	expect(pi.sent[0]?.customType).toBe("hummin-sys1-triage");
 	expect(pi.sent[0]?.content).toContain("P(caused_by_change)=0.17");
 	expect(pi.sent[0]?.display).toBe(false);
 	const lines = await auditLines();
@@ -516,6 +565,9 @@ test("scored and rule blocks leave matching audit entries", async () => {
 	const scored = lines.find((line) => line.type === "block" && line.command === "deploy-tool --env prod");
 	expect(scored).toMatchObject({ p: 0.91 });
 	expect(lines.filter((line) => line.type === "read" && line.kind === "gate")).toHaveLength(1);
+	// Every gate line names the answering engine so /friction can calibrate
+	// per engine.
+	expect(lines.every((line) => line.engine === "laya")).toBe(true);
 });
 
 test("the repeat escalation asks for ask_user on the second block", async () => {

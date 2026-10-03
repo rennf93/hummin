@@ -268,6 +268,12 @@ export interface Settings {
 	};
 	/** hummin laya: per-turn destructive steer threshold, 0..1 (env HUMMIN_LAYA_STEER_THRESHOLD overrides) */
 	layaSteerThreshold?: number;
+	/** hummin System-1 decision layer: which engine answers every System-1 read
+	 * (bash gate gray zone, steer, triage, memory intake, dispatch review,
+	 * sys1_decide) plus per-engine overrides. One engine at a time: no per-read
+	 * mixing and no auto-failover; an unreachable engine fails open per read.
+	 * env HUMMIN_DECISION_ENGINE / HUMMIN_DECISION_* override the fields. */
+	decision?: DecisionSettings;
 	/** hummin guardrails: nudge at agent end when code files were edited but no
 	 * verification command (tests, typecheck) ran after the last edit. Default true. */
 	verifyNudge?: boolean;
@@ -316,6 +322,29 @@ export interface Settings {
 	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
 	/** hummin: custom statusline segment layout (see STATUSLINE_TOKENS); empty = default footer */
 	statusline?: StatuslineSettings;
+}
+
+/** hummin System-1 layer: per-engine connection and calibration overrides.
+ * Every field is optional; unset fields fall back to the engine's built-in
+ * defaults (see extensions/lib/decision-engine.ts). */
+export interface DecisionEngineOverride {
+	url?: string;
+	apiKey?: string;
+	gateThreshold?: number;
+	steerThreshold?: number;
+	triageThreshold?: number;
+	intakeThreshold?: number;
+	gateTimeoutMs?: number;
+	dispatchTimeoutMs?: number;
+	decideTimeoutMs?: number;
+	warmTimeoutMs?: number;
+}
+
+export interface DecisionSettings {
+	engine?: "laya" | "clef" | "jev";
+	laya?: DecisionEngineOverride;
+	clef?: DecisionEngineOverride;
+	jev?: DecisionEngineOverride;
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -373,10 +402,11 @@ function resolveLayaThreshold(envRaw: string | undefined, stored: number | undef
 }
 
 /**
- * hummin laya: model right-size gate config. Env `HUMMIN_LAYA_RIGHTSIZE` (0 or
- * off disables the gate) > `layaRightSize.swingThreshold` (project > global) >
- * defaults (enabled: true, swing 0.6). The swing threshold is clamped
- * to 0..1; the enabled flag accepts 0/"0"/off/false to disable.
+ * hummin System-1: model right-size gate config. Env `HUMMIN_SYS1_RIGHTSIZE`
+ * (`HUMMIN_LAYA_RIGHTSIZE` kept as a legacy alias; 0 or off disables the gate)
+ * > `layaRightSize.swingThreshold` (project > global) > defaults (enabled:
+ * true, swing 0.6). The swing threshold is clamped to 0..1; the enabled flag
+ * accepts 0/"0"/off/false to disable.
  */
 type LayaRightSizeSettings = NonNullable<Settings["layaRightSize"]>;
 
@@ -385,7 +415,7 @@ function resolveLayaRightSizeConfig(
 	globalRaw: unknown,
 	projectRaw: unknown,
 ): { enabled: boolean; swingThreshold: number; profiles: Array<Record<string, unknown>> } {
-	const rawEnabled = env.HUMMIN_LAYA_RIGHTSIZE?.trim().toLowerCase();
+	const rawEnabled = (env.HUMMIN_SYS1_RIGHTSIZE ?? env.HUMMIN_LAYA_RIGHTSIZE)?.trim().toLowerCase();
 	const enabled = rawEnabled === undefined || !["0", "off", "false"].includes(rawEnabled);
 	const projectValue =
 		typeof projectRaw === "object" && projectRaw !== null
@@ -397,7 +427,7 @@ function resolveLayaRightSizeConfig(
 			: undefined;
 	// project > global, then env > effective value > default (0.6).
 	const swing = resolveLayaThreshold(
-		env.HUMMIN_LAYA_RIGHTSIZE_SWING,
+		env.HUMMIN_SYS1_RIGHTSIZE_SWING ?? env.HUMMIN_LAYA_RIGHTSIZE_SWING,
 		(projectValue ?? globalValue) as number | undefined,
 		0.6,
 	);
@@ -1465,6 +1495,15 @@ export class SettingsManager {
 
 	getLayaSteerThreshold(): number {
 		return resolveLayaThreshold(process.env.HUMMIN_LAYA_STEER_THRESHOLD, this.settings.layaSteerThreshold, 0.7);
+	}
+
+	/** hummin System-1 layer: the merged decision namespace (global + project).
+	 * Extensions validate and resolve it against env and engine defaults; a
+	 * stored shape that is not an object is ignored by the caller. */
+	getDecisionEngineSettings(): DecisionSettings | undefined {
+		const value: unknown = this.settings.decision;
+		if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+		return value as DecisionSettings;
 	}
 
 	/** hummin guardrails: verify-nudge enabled (default true). */

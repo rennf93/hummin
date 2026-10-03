@@ -9,7 +9,7 @@
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { layaGateThreshold } from "./hummin-laya.ts";
+import { resolveDecisionEngine } from "./lib/decision-engine.ts";
 import {
 	FRICTION_KINDS,
 	parseLayaGateEntry,
@@ -60,7 +60,7 @@ export function layaCalibrationRows(calibration: LayaCalibration): ReadonlyArray
 	if (calibration.suggestedThreshold !== undefined) {
 		rows.push([
 			"suggestion",
-			`lowest confirmed P ${pct2(Math.min(...calibration.confirmedScores))} still blocks at ${pct2(calibration.threshold)}; consider settings layaGateThreshold ${pct2(calibration.suggestedThreshold)}`,
+			`lowest confirmed P ${pct2(Math.min(...calibration.confirmedScores))} still blocks at ${pct2(calibration.threshold)}; consider settings decision.${calibration.engine ?? "laya"}.gateThreshold ${pct2(calibration.suggestedThreshold)}`,
 		]);
 	}
 	return rows;
@@ -96,12 +96,12 @@ export function renderFrictionReport(
 		"per day",
 		formatRows(friction.perDay.map((entry) => [entry.day, String(entry.count)] as const)),
 		"",
-		"laya gate (all time)",
+		"sys1 gate (all time)",
 		formatRows(layaRows(laya)),
 	];
 	const calibrationRows = calibration ? layaCalibrationRows(calibration) : [];
 	if (calibrationRows.length > 0) {
-		sections.push("", `laya calibration (threshold ${pct2(calibration?.threshold ?? 0.75)})`, formatRows(calibrationRows));
+		sections.push("", `sys1 calibration (engine ${calibration?.engine ?? "all"}, threshold ${pct2(calibration?.threshold ?? 0.75)})`, formatRows(calibrationRows));
 	}
 	return sections.join("\n");
 }
@@ -115,12 +115,14 @@ function layaRows(laya: LayaGateSummary): ReadonlyArray<readonly [string, string
 }
 
 /**
- * Persist `layaGateThreshold` to the global settings file (atomic tmp+rename,
- * same pattern as the sandbox mode toggle). The gate resolves the threshold
- * from settings on every command, so the change applies to new gate reads
- * immediately; a project settings `layaGateThreshold` would still mask it.
+ * Persist `decision.<engine>.gateThreshold` to the global settings file
+ * (atomic tmp+rename, same pattern as the sandbox mode toggle). The gate
+ * resolves the threshold from the engine config on every command, so the
+ * change applies to new gate reads immediately. For the laya engine the
+ * legacy flat `layaGateThreshold` key is removed: it shadows the per-engine
+ * key in the resolution order, so leaving it would silently no-op the apply.
  */
-export async function applySuggestedThreshold(suggested: number, agentDir: string = getAgentDir()): Promise<void> {
+export async function applySuggestedThreshold(suggested: number, engine: string = "laya", agentDir: string = getAgentDir()): Promise<void> {
 	const path = join(agentDir, "settings.json");
 	let parsed: Record<string, unknown> = {};
 	try {
@@ -128,7 +130,16 @@ export async function applySuggestedThreshold(suggested: number, agentDir: strin
 	} catch {
 		parsed = {};
 	}
-	parsed.layaGateThreshold = suggested;
+	const decision = (parsed.decision && typeof parsed.decision === "object" && !Array.isArray(parsed.decision)
+		? parsed.decision
+		: {}) as Record<string, unknown>;
+	const override = (decision[engine] && typeof decision[engine] === "object" && !Array.isArray(decision[engine])
+		? decision[engine]
+		: {}) as Record<string, unknown>;
+	override.gateThreshold = suggested;
+	decision[engine] = override;
+	parsed.decision = decision;
+	if (engine === "laya" && "layaGateThreshold" in parsed) delete parsed.layaGateThreshold;
 	const temp = `${path}.tmp-${process.pid}`;
 	await writeFile(temp, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
 	await rename(temp, path);
@@ -136,28 +147,29 @@ export async function applySuggestedThreshold(suggested: number, agentDir: strin
 
 export default function humminFriction(pi: ExtensionAPI): void {
 	pi.registerCommand("friction", {
-		description: "Show agent friction summary (tool errors, denials, advisories, laya gate)",
+		description: "Show agent friction summary (tool errors, denials, advisories, sys1 gate)",
 		category: "Usage",
 		handler: async (_args, ctx: ExtensionContext) => {
 			const summary = summarizeFriction(readFrictionEvents(FRICTION_REPORT_DAYS), { days: FRICTION_REPORT_DAYS });
 			const session = sessionFrictionTally().snapshot();
 			const lines = readLayaGateLines();
 			const laya = summarizeLayaGate(lines);
+			const engine = resolveDecisionEngine();
 			const calibration = summarizeLayaCalibration(
 				lines.map((line) => parseLayaGateEntry(line)).filter((entry): entry is NonNullable<typeof entry> => entry !== undefined),
-				{ threshold: layaGateThreshold() },
+				{ threshold: engine.gateThreshold, engine: engine.id },
 			);
 			ctx.ui.notify(renderFrictionReport(summary, laya, calibration, session), "info");
 			const suggested = calibration?.suggestedThreshold;
 			if (suggested === undefined) return;
 			const choice = await ctx.ui.select(
-				"laya gate calibration",
-				[`Apply suggested layaGateThreshold ${suggested.toFixed(2)} (persisted globally)`, "Leave as is"],
+				`sys1 gate calibration (${engine.id})`,
+				[`Apply suggested decision.${engine.id}.gateThreshold ${suggested.toFixed(2)} (persisted globally)`, "Leave as is"],
 			);
 			if (!choice || !choice.startsWith("Apply")) return;
 			try {
-				await applySuggestedThreshold(suggested);
-				ctx.ui.notify(`layaGateThreshold ${suggested.toFixed(2)} written to global settings. New gate reads use it unless HUMMIN_LAYA_GATE_THRESHOLD or a project-level layaGateThreshold overrides it.`, "info");
+				await applySuggestedThreshold(suggested, engine.id);
+				ctx.ui.notify(`decision.${engine.id}.gateThreshold ${suggested.toFixed(2)} written to global settings (a stale global layaGateThreshold key was removed). New gate reads use it unless a HUMMIN_DECISION_* env override, a project-level decision namespace, or a project-level legacy layaGateThreshold overrides it.`, "info");
 			} catch (error) {
 				ctx.ui.notify(`friction: could not persist threshold (${error instanceof Error ? error.message : String(error)})`, "warning");
 			}

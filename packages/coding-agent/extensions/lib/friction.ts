@@ -246,6 +246,8 @@ export interface LayaGateEntry {
 	p?: number;
 	/** Block and confirmation entries carry the command. */
 	command?: string;
+	/** Which decision engine produced the line (absent in older entries). */
+	engine?: string;
 }
 
 /** Parse one laya-gate.log line into its useful fields; undefined otherwise. */
@@ -261,6 +263,7 @@ export function parseLayaGateEntry(line: string): LayaGateEntry | undefined {
 		if (typeof record.kind === "string") entry.kind = record.kind;
 		if (typeof record.p === "number") entry.p = record.p;
 		if (typeof record.command === "string") entry.command = record.command;
+		if (typeof record.engine === "string" && record.engine !== "") entry.engine = record.engine;
 		return entry;
 	} catch {
 		return undefined;
@@ -289,6 +292,8 @@ export function readLayaGateLines(logPath: string = layaGateLogPath()): string[]
 }
 
 export interface LayaCalibration {
+	/** The engine whose entries were summarized (undefined = all engines). */
+	engine?: string;
 	threshold: number;
 	/** Blocks whose logged score is known. */
 	blocks: number;
@@ -302,8 +307,8 @@ export interface LayaCalibration {
 	 * threshold: the only signal that a threshold may be too high. */
 	nearMisses: number;
 	nearMissMax: number | undefined;
-	/** Suggested layaGateThreshold setting, or undefined when the data does
-	 * not suggest a change. Never auto-applied. */
+	/** Suggested decision.<engine>.gateThreshold setting, or undefined when
+	 * the data does not suggest a change. Never auto-applied. */
 	suggestedThreshold: number | undefined;
 }
 
@@ -431,19 +436,22 @@ export function resetSessionFrictionTally(): SessionFrictionTally {
  * Pure calibration view over laya-gate entries. The suggestion comes from
  * ground truth: a confirmed block was a false positive at its score, so the
  * lowest confirmed score the current threshold would still block is the
- * binding constraint; suggest just above it (capped at 0.99).
+ * binding constraint; suggest just above it (capped at 0.99). When `engine`
+ * is given, entries written by other engines are excluded: thresholds are
+ * calibrated per engine, so mixing distributions would corrupt the view.
  */
 export function summarizeLayaCalibration(
 	entries: readonly LayaGateEntry[],
-	opts: { threshold: number; nearMissFloor?: number },
+	opts: { threshold: number; nearMissFloor?: number; engine?: string },
 ): LayaCalibration {
 	const threshold = opts.threshold;
 	const floor = Math.min(opts.nearMissFloor ?? 0.5, threshold);
+	const relevant = opts.engine === undefined ? entries : entries.filter((entry) => (entry.engine ?? "laya") === opts.engine);
 	const blockScores: number[] = [];
 	const confirmedScores: number[] = [];
 	let nearMisses = 0;
 	let nearMissMax: number | undefined;
-	for (const entry of entries) {
+	for (const entry of relevant) {
 		if (entry.type === "block" && typeof entry.p === "number") {
 			blockScores.push(entry.p);
 		} else if (entry.type === "confirmed" && typeof entry.p === "number") {
@@ -456,6 +464,7 @@ export function summarizeLayaCalibration(
 	blockScores.sort((a, b) => a - b);
 	const binding = confirmedScores.filter((p) => p >= threshold).sort((a, b) => a - b)[0];
 	return {
+		engine: opts.engine,
 		threshold,
 		blocks: blockScores.length,
 		blockP:

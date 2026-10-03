@@ -91,6 +91,10 @@ test("triageRateLimited allows one read per 10 minutes", () => {
 // --- threshold resolution -----------------------------------------------------
 
 test("gate and steer thresholds resolve from env, ignoring invalid values", () => {
+	// The decision-era names win over the legacy ones, so clear them first.
+	for (const name of ["HUMMIN_DECISION_GATE_THRESHOLD", "HUMMIN_DECISION_STEER_THRESHOLD", "HUMMIN_DECISION_ENGINE"]) {
+		delete process.env[name];
+	}
 	vi.stubEnv("HUMMIN_LAYA_GATE_THRESHOLD", "0.9");
 	vi.stubEnv("HUMMIN_LAYA_STEER_THRESHOLD", "0.55");
 	expect(layaGateThreshold()).toBe(0.9);

@@ -58,7 +58,7 @@ describe("cron child dispatch review", () => {
 			reviewOptions: {
 				agentDir: dir,
 				profiles: [],
-				laya: async () => [{ answer: "fixture/cheap [thinking=off]", p: 0.99 }],
+				sys1: async () => [{ answer: "fixture/cheap [thinking=off]", p: 0.99 }],
 			},
 		});
 		expect(result[0]).toMatch(/held for dispatch review/);
@@ -103,7 +103,7 @@ describe("cron child dispatch review", () => {
 			reviewOptions: {
 				agentDir: dir,
 				profiles: [],
-				laya: async () => [{ answer: "fixture/cheap [thinking=low]", p: 0.55 }],
+				sys1: async () => [{ answer: "fixture/cheap [thinking=low]", p: 0.55 }],
 				config: { enabled: true, swingThreshold: 0.6 },
 			},
 		});
@@ -183,7 +183,7 @@ describe("cron child dispatch review", () => {
 			reviewOptions: {
 				agentDir: dir,
 				profiles: [],
-				laya: async () => [{ answer: "fixture/cheap [thinking=low]", p: 0.55 }],
+				sys1: async () => [{ answer: "fixture/cheap [thinking=low]", p: 0.55 }],
 				config: { enabled: true, swingThreshold: 0.6 },
 			},
 		});
