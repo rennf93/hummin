@@ -12,7 +12,7 @@
  *
  * One at a time is a deliberate contract, not a limitation: thresholds are
  * calibrated per engine, so mixing engines across read kinds would interleave
- * two score distributions in laya-gate.log and split every calibration signal.
+ * two score distributions in sys1-gate.log and split every calibration signal.
  * There is no auto-failover for the same reason: an unreachable engine fails
  * open per read (the deterministic gate classifiers still run), and the
  * menubar shows the dead service.
@@ -288,18 +288,26 @@ function str(value: unknown): string | undefined {
 	return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
 }
 
-/** Legacy laya threshold resolution: the pre-decision env vars and flat
- * settings keys still steer the laya engine so existing shells and settings
- * keep working. Only consulted when the active engine is laya. */
+/** Legacy laya threshold resolution: the pre-decision flat settings keys
+ * (`layaGateThreshold` / `layaSteerThreshold`) still steer the laya engine so
+ * existing settings files keep working. Env wins (checked here first); the
+ * raw global+project values are merged project-wins, matching the flat-key
+ * precedence the removed accessors implemented. */
 function readLegacyLayaOverrides(cwd: string): { gateThreshold?: number; steerThreshold?: number } {
 	const gateEnv = clamp01(envStr("HUMMIN_LAYA_GATE_THRESHOLD"));
 	const steerEnv = clamp01(envStr("HUMMIN_LAYA_STEER_THRESHOLD"));
 	if (gateEnv !== undefined && steerEnv !== undefined) return { gateThreshold: gateEnv, steerThreshold: steerEnv };
 	try {
-		const settings = SettingsManager.create(cwd);
+		const settings = SettingsManager.create(cwd) as unknown as Record<string, unknown>;
+		const readFlat = (method: string): { layaGateThreshold?: unknown; layaSteerThreshold?: unknown } => {
+			const fn = settings[method];
+			if (typeof fn !== "function") return {};
+			return (fn as () => { layaGateThreshold?: unknown; layaSteerThreshold?: unknown }).call(settings) ?? {};
+		};
+		const merged = { ...readFlat("getGlobalSettings"), ...readFlat("getProjectSettings") };
 		return {
-			gateThreshold: gateEnv ?? clamp01((settings as { getLayaGateThreshold?: () => unknown }).getLayaGateThreshold?.call(settings)),
-			steerThreshold: steerEnv ?? clamp01((settings as { getLayaSteerThreshold?: () => unknown }).getLayaSteerThreshold?.call(settings)),
+			gateThreshold: gateEnv ?? clamp01(merged.layaGateThreshold),
+			steerThreshold: steerEnv ?? clamp01(merged.layaSteerThreshold),
 		};
 	} catch {
 		return { gateThreshold: gateEnv, steerThreshold: steerEnv };

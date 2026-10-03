@@ -363,7 +363,7 @@ function distillJob(memory: string): Record<string, unknown> {
 		modelId: "y",
 		project: "p",
 		session: "session-1",
-		gateLog: join(memory, "laya-gate.log"),
+		gateLog: join(memory, "sys1-gate.log"),
 	};
 }
 
@@ -385,7 +385,7 @@ test("distill mode stores the lesson and audits the intake read when laya scores
 		// The read reaches laya as a noul question and is audited to the gate log.
 		expect(laya.requests).toHaveLength(1);
 		expect(JSON.parse(laya.requests[0]).questions.durable.type).toBe("noul");
-		const audit = JSON.parse(readFileSync(join(memory, "laya-gate.log"), "utf8").trim().split("\n").at(-1)!);
+		const audit = JSON.parse(readFileSync(join(memory, "sys1-gate.log"), "utf8").trim().split("\n").at(-1)!);
 		expect(audit).toMatchObject({ type: "read", kind: "intake", p: 0.9 });
 	} finally {
 		await closeServer(laya.server);
@@ -407,7 +407,7 @@ test("distill mode stores nothing when the intake read scores below the threshol
 		expect(existsSync(join(memory, "lessons.jsonl"))).toBe(false);
 		expect(existsSync(join(memory, "state.json"))).toBe(false);
 		// The read itself is still audited (every laya read is).
-		const audit = JSON.parse(readFileSync(join(memory, "laya-gate.log"), "utf8").trim().split("\n").at(-1)!);
+		const audit = JSON.parse(readFileSync(join(memory, "sys1-gate.log"), "utf8").trim().split("\n").at(-1)!);
 		expect(audit).toMatchObject({ type: "read", kind: "intake", p: 0.3 });
 	} finally {
 		await closeServer(laya.server);
@@ -427,7 +427,7 @@ test("distill mode fails open when laya is unreachable or the intake read is swi
 			expect(runWorker("distill", jobPath)).toBe(0);
 		});
 		expect(readFileSync(join(memory, "lessons.jsonl"), "utf8")).toContain(LESSON);
-		expect(existsSync(join(memory, "laya-gate.log"))).toBe(false);
+		expect(existsSync(join(memory, "sys1-gate.log"))).toBe(false);
 	}
 });
 

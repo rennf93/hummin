@@ -588,8 +588,8 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 				}),
 			),
 			thinking: Type.Optional(Type.String({ description: "Thinking level for the child (off, minimal, low, medium, high, xhigh, max)." })),
-			reviewId: Type.Optional(Type.String({ description: "Exact Laya dispatch review ID to accept." })),
-			overrideReason: Type.Optional(Type.String({ description: "Reasoned override for the exact Laya dispatch review." })),
+			reviewId: Type.Optional(Type.String({ description: "Exact System-1 dispatch review ID to accept." })),
+			overrideReason: Type.Optional(Type.String({ description: "Reasoned override for the exact System-1 dispatch review." })),
 			timeout_sec: Type.Optional(Type.Number({ minimum: 1, maximum: 86400 })),
 			background: Type.Optional(Type.Boolean()),
 		}),
@@ -660,7 +660,7 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 				overrideReason: params.overrideReason,
 			}, { modelRegistry: ctx.modelRegistry }, { agentDir: getAgentDir() });
 			if (review.action === "block") throw new Error(review.reason ?? `Dispatch held for review ${review.reviewId ?? "unknown"}`);
-			if (review.action === "advisory") ctx.ui?.notify?.(review.reason ?? "Laya dispatch advisory", "warning");
+			if (review.action === "advisory") ctx.ui?.notify?.(review.reason ?? "System-1 dispatch advisory", "warning");
 			const model = resolveTaskModel(`${review.configuration.provider}/${review.configuration.modelId}`, ctx);
 			const thinking = review.configuration.thinking;
 			const summary = params.prompt.replace(/\s+/g, " ").trim();

@@ -15,15 +15,15 @@ import {
 	FRICTION_SESSION_STEER_AT,
 	type FrictionEvent,
 	parseFrictionLine,
-	parseLayaGateEntry,
+	parseSys1GateEntry,
 	readFrictionEvents,
-	readLayaGateLines,
+	readSys1GateLines,
 	resetSessionFrictionTally,
 	SessionFrictionTally,
 	sessionFrictionTally,
 	summarizeFriction,
-	summarizeLayaCalibration,
-	summarizeLayaGate,
+	summarizeSys1Calibration,
+	summarizeSys1Gate,
 } from "../extensions/lib/friction.ts";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 
@@ -185,7 +185,7 @@ describe("summarizeFriction", () => {
 
 describe("laya gate summary", () => {
 	it("counts block/confirmed/read and ignores unknown or corrupt lines", () => {
-		const summary = summarizeLayaGate([
+		const summary = summarizeSys1Gate([
 			'{"ts":"2026-09-24T10:00:00.000Z","type":"block","command":"rm -rf /","p":0.9}',
 			'{"ts":"2026-09-24T11:00:00.000Z","type":"confirmed","command":"rm -rf /"}',
 			'{"ts":"2026-09-24T12:00:00.000Z","type":"confirmed","command":"x"}',
@@ -198,13 +198,13 @@ describe("laya gate summary", () => {
 	});
 
 	it("reads a log tolerantly; missing file yields []", () => {
-		expect(readLayaGateLines(join(directory, "missing.log"))).toEqual([]);
-		const logPath = join(directory, "laya-gate.log");
+		expect(readSys1GateLines(join(directory, "missing.log"))).toEqual([]);
+		const logPath = join(directory, "sys1-gate.log");
 		writeFileSync(
 			logPath,
 			'{"ts":"2026-09-24T10:00:00.000Z","type":"block","command":"x"}\nnot json\n{"ts":"2026-09-24T11:00:00.000Z","type":"read"}\n',
 		);
-		expect(summarizeLayaGate(readLayaGateLines(logPath))).toEqual({ block: 1, confirmed: 0, read: 1 });
+		expect(summarizeSys1Gate(readSys1GateLines(logPath))).toEqual({ block: 1, confirmed: 0, read: 1 });
 	});
 });
 
@@ -245,7 +245,7 @@ describe("renderFrictionReport", () => {
 	});
 
 	it("appends the calibration section with a suggestion when the data warrants it", () => {
-		const calibration = summarizeLayaCalibration([block(0.76), confirmed(0.76), read("gate", 0.71)], {
+		const calibration = summarizeSys1Calibration([block(0.76), confirmed(0.76), read("gate", 0.71)], {
 			threshold: 0.75,
 		});
 		const text = renderFrictionReport(zeroSummary(), { block: 1, confirmed: 1, read: 1 }, calibration);
@@ -255,41 +255,41 @@ describe("renderFrictionReport", () => {
 	});
 
 	it("omits the calibration section when there is nothing to calibrate", () => {
-		const calibration = summarizeLayaCalibration([read("gate", 0.2)], { threshold: 0.75 });
+		const calibration = summarizeSys1Calibration([read("gate", 0.2)], { threshold: 0.75 });
 		const text = renderFrictionReport(zeroSummary(), { block: 1, confirmed: 0, read: 1 }, calibration);
 		expect(text).not.toContain("sys1 calibration");
 	});
 });
 
-describe("parseLayaGateEntry", () => {
+describe("parseSys1GateEntry", () => {
 	it("extracts type, kind, p, and command; corrupt lines yield undefined", () => {
-		expect(parseLayaGateEntry('{"ts":"t","type":"block","command":"rm -rf x","p":0.91}')).toEqual({
+		expect(parseSys1GateEntry('{"ts":"t","type":"block","command":"rm -rf x","p":0.91}')).toEqual({
 			ts: "t",
 			type: "block",
 			command: "rm -rf x",
 			p: 0.91,
 		});
-		expect(parseLayaGateEntry('{"type":"read","kind":"gate","p":0.62}')).toEqual({
+		expect(parseSys1GateEntry('{"type":"read","kind":"gate","p":0.62}')).toEqual({
 			type: "read",
 			kind: "gate",
 			p: 0.62,
 		});
-		expect(parseLayaGateEntry('{"type":"confirmed","command":"x"}')).toEqual({ type: "confirmed", command: "x" });
+		expect(parseSys1GateEntry('{"type":"confirmed","command":"x"}')).toEqual({ type: "confirmed", command: "x" });
 		// a non-numeric p is dropped rather than trusted
-		expect(parseLayaGateEntry('{"type":"read","kind":"gate","p":"high"}')).toEqual({ type: "read", kind: "gate" });
-		expect(parseLayaGateEntry("garbage")).toBeUndefined();
-		expect(parseLayaGateEntry('{"type":"nope"}')).toBeUndefined();
+		expect(parseSys1GateEntry('{"type":"read","kind":"gate","p":"high"}')).toEqual({ type: "read", kind: "gate" });
+		expect(parseSys1GateEntry("garbage")).toBeUndefined();
+		expect(parseSys1GateEntry('{"type":"nope"}')).toBeUndefined();
 	});
 });
 
-describe("summarizeLayaCalibration", () => {
+describe("summarizeSys1Calibration", () => {
 	const block = (p: number) => ({ type: "block" as const, p });
 	const confirmed = (p?: number) =>
 		p === undefined ? { type: "confirmed" as const } : { type: "confirmed" as const, p };
 	const read = (kind: string, p: number) => ({ type: "read" as const, kind, p });
 
 	it("summarizes the block score distribution and near-miss gate reads", () => {
-		const calibration = summarizeLayaCalibration(
+		const calibration = summarizeSys1Calibration(
 			[
 				block(0.9),
 				block(0.76),
@@ -314,7 +314,7 @@ describe("summarizeLayaCalibration", () => {
 	});
 
 	it("suggests just above the lowest confirmed score the threshold still blocks", () => {
-		const calibration = summarizeLayaCalibration(
+		const calibration = summarizeSys1Calibration(
 			[block(0.94), block(0.76), confirmed(0.76), confirmed(0.55), confirmed()],
 			{ threshold: 0.75 },
 		);
@@ -326,8 +326,8 @@ describe("summarizeLayaCalibration", () => {
 	});
 
 	it("clamps the suggestion at 0.99 and yields nothing without data", () => {
-		expect(summarizeLayaCalibration([confirmed(0.985)], { threshold: 0.75 }).suggestedThreshold).toBe(0.99);
-		const empty = summarizeLayaCalibration([], { threshold: 0.75 });
+		expect(summarizeSys1Calibration([confirmed(0.985)], { threshold: 0.75 }).suggestedThreshold).toBe(0.99);
+		const empty = summarizeSys1Calibration([], { threshold: 0.75 });
 		expect(empty.blocks).toBe(0);
 		expect(empty.blockP).toBeUndefined();
 		expect(empty.confirmed).toBe(0);
@@ -502,7 +502,7 @@ describe("/friction command", () => {
 		if (!command) return;
 		appendFriction({ kind: "tool_error", source: "guardrails", detail: "bash" });
 		writeFileSync(
-			join(directory, "laya-gate.log"),
+			join(directory, "sys1-gate.log"),
 			'{"ts":"2026-09-24T10:00:00.000Z","type":"block","command":"x"}\n',
 		);
 		const notified: string[] = [];

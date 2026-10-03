@@ -207,7 +207,7 @@ function buildDistillJob(sessionFile: string, cwd: string, tail: string, dir: st
 		session: basename(sessionFile),
 		vaultMode,
 		vaultDir: vaultDir(cachedSettings),
-		gateLog: join(agentDir(), "laya-gate.log"),
+		gateLog: join(agentDir(), "sys1-gate.log"),
 	};
 }
 

@@ -31,7 +31,7 @@ export interface MemoryDistillJob {
 	vaultMode?: boolean;
 	vaultDir?: string;
 	pendingPath?: string;
-	/** Path to the shared laya-gate.log; the worker appends the intake read's
+	/** Path to the shared sys1-gate.log; the worker appends the intake read's
 	 * audit line directly (the worker has no agent-dir lookup). */
 	gateLog?: string;
 	/** Present only while a dispatch hold keeps the job from running. A held
@@ -559,7 +559,7 @@ function markSessionProcessed(memoryDir) {
 	});
 }
 
-// Every System-1 read is audited to the shared laya-gate.log with the
+// Every System-1 read is audited to the shared sys1-gate.log with the
 // answering engine; the worker appends directly and never lets a logging
 // failure break the run. The parent injects the resolved engine routing as
 // env (HUMMIN_DECISION_*), so the worker needs no settings resolution.
@@ -586,7 +586,7 @@ function intakeThreshold() {
 // is unconfigured: skip the read entirely instead of falling back to the
 // legacy laya names, which would score lessons against a different engine
 // than the parent session (the one-engine contract).
-async function layaIntakeScore(lesson) {
+async function sys1IntakeScore(lesson) {
 	const intakeSwitch = String(process.env.HUMMIN_SYS1_INTAKE || process.env.HUMMIN_LAYA_INTAKE || "").trim().toLowerCase();
 	if (intakeSwitch === "off") return null;
 	const injectedUrl = process.env.HUMMIN_DECISION_URL;
@@ -681,7 +681,7 @@ async function distill() {
 		const kept = [];
 		const intakeLine = intakeThreshold();
 		for (const lesson of toStore) {
-			const intake = await layaIntakeScore(lesson);
+			const intake = await sys1IntakeScore(lesson);
 			if (intake !== null && intake < intakeLine) continue;
 			kept.push(lesson);
 		}

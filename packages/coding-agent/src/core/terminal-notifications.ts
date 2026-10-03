@@ -53,7 +53,7 @@ export function parseNotificationWhen(raw: unknown): TerminalNotificationWhen | 
 
 /**
  * Env wins over the stored setting; anything invalid falls through to the next
- * source and finally to the default. Mirrors the resolveLayaThreshold pattern.
+ * source and finally to the default. Mirrors the resolveThreshold01 pattern.
  */
 export function resolveNotificationChannel(env: unknown, setting: unknown): TerminalNotificationChannel {
 	return parseNotificationChannel(env) ?? parseNotificationChannel(setting) ?? DEFAULT_NOTIFICATION_CHANNEL;

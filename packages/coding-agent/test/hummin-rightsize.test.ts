@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import humminLaya from "../extensions/hummin-laya.ts";
+import humminLaya from "../extensions/hummin-sys1.ts";
 import {
 	buildCatalog,
 	decideRightSize,

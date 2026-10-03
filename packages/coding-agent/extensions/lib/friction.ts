@@ -51,15 +51,15 @@ export interface FrictionSummary {
 	perDay: { day: string; count: number }[];
 }
 
-export type LayaGateEntryType = "block" | "confirmed" | "read";
+export type Sys1GateEntryType = "block" | "confirmed" | "read";
 
-export interface LayaGateSummary {
+export interface Sys1GateSummary {
 	block: number;
 	confirmed: number;
 	read: number;
 }
 
-export const LAYA_GATE_ENTRY_TYPES: readonly LayaGateEntryType[] = ["block", "confirmed", "read"];
+export const SYS1_GATE_ENTRY_TYPES: readonly Sys1GateEntryType[] = ["block", "confirmed", "read"];
 
 /** Default day window for per-day buckets. */
 export const FRICTION_SUMMARY_DAYS = 7;
@@ -74,8 +74,8 @@ export function frictionLogPath(agentDir: string = getAgentDir()): string {
 	return join(agentDir, "friction.log");
 }
 
-export function layaGateLogPath(agentDir: string = getAgentDir()): string {
-	return join(agentDir, "laya-gate.log");
+export function sys1GateLogPath(agentDir: string = getAgentDir()): string {
+	return join(agentDir, "sys1-gate.log");
 }
 
 /** Clamp a detail string; empty or undefined stays undefined. */
@@ -232,14 +232,14 @@ export function summarizeFriction(
 	};
 }
 
-/** Parse one laya-gate.log line down to its entry type; undefined otherwise. */
-export function parseLayaGateLine(line: string): LayaGateEntryType | undefined {
-	return parseLayaGateEntry(line)?.type;
+/** Parse one sys1-gate.log line down to its entry type; undefined otherwise. */
+export function parseSys1GateLine(line: string): Sys1GateEntryType | undefined {
+	return parseSys1GateEntry(line)?.type;
 }
 
-export interface LayaGateEntry {
+export interface Sys1GateEntry {
 	ts?: string;
-	type: LayaGateEntryType;
+	type: Sys1GateEntryType;
 	/** "read" entries only: steer | gate | decide | triage | intake. */
 	kind?: string;
 	/** Blocks, joined confirmations, and reads carry a 0..1 score. */
@@ -250,15 +250,15 @@ export interface LayaGateEntry {
 	engine?: string;
 }
 
-/** Parse one laya-gate.log line into its useful fields; undefined otherwise. */
-export function parseLayaGateEntry(line: string): LayaGateEntry | undefined {
+/** Parse one sys1-gate.log line into its useful fields; undefined otherwise. */
+export function parseSys1GateEntry(line: string): Sys1GateEntry | undefined {
 	try {
 		const parsed: unknown = JSON.parse(line);
 		if (typeof parsed !== "object" || parsed === null) return undefined;
 		const record = parsed as Record<string, unknown>;
 		const type = record.type;
-		if (typeof type !== "string" || !LAYA_GATE_ENTRY_TYPES.includes(type as LayaGateEntryType)) return undefined;
-		const entry: LayaGateEntry = { type: type as LayaGateEntryType };
+		if (typeof type !== "string" || !SYS1_GATE_ENTRY_TYPES.includes(type as Sys1GateEntryType)) return undefined;
+		const entry: Sys1GateEntry = { type: type as Sys1GateEntryType };
 		if (typeof record.ts === "string") entry.ts = record.ts;
 		if (typeof record.kind === "string") entry.kind = record.kind;
 		if (typeof record.p === "number") entry.p = record.p;
@@ -270,28 +270,36 @@ export function parseLayaGateEntry(line: string): LayaGateEntry | undefined {
 	}
 }
 
-/** Count laya gate entries by type. Corrupt and unknown lines are ignored. */
-export function summarizeLayaGate(lines: readonly string[]): LayaGateSummary {
-	const summary: LayaGateSummary = { block: 0, confirmed: 0, read: 0 };
+/** Count sys1 gate entries by type. Corrupt and unknown lines are ignored. */
+export function summarizeSys1Gate(lines: readonly string[]): Sys1GateSummary {
+	const summary: Sys1GateSummary = { block: 0, confirmed: 0, read: 0 };
 	for (const line of lines) {
-		const type = parseLayaGateLine(line);
+		const type = parseSys1GateLine(line);
 		if (type !== undefined) summary[type] += 1;
 	}
 	return summary;
 }
 
-/** Raw laya-gate.log lines; a missing or unreadable log yields []. */
-export function readLayaGateLines(logPath: string = layaGateLogPath()): string[] {
-	try {
-		return readLogTail(logPath, READ_LIMIT_BYTES)
-			.split("\n")
-			.filter((line) => line.trim() !== "");
-	} catch {
-		return [];
+/** Raw sys1-gate.log lines; a missing or unreadable log yields []. Falls back
+ * to the pre-rename laya-gate.log when the new file does not exist yet, so
+ * historical blocks (confirm windows, calibration) survive the rename. */
+export function readSys1GateLines(logPath: string = sys1GateLogPath()): string[] {
+	const readOne = (path: string): string[] => {
+		try {
+			return readLogTail(path, READ_LIMIT_BYTES)
+				.split("\n")
+				.filter((line) => line.trim() !== "");
+		} catch {
+			return [];
+		}
+	};
+	const lines = readOne(logPath);
+	if (logPath === sys1GateLogPath() && lines.length === 0) {
+		return readOne(join(dirname(sys1GateLogPath()), "laya-gate.log"));
 	}
+	return lines;
 }
-
-export interface LayaCalibration {
+export interface Sys1Calibration {
 	/** The engine whose entries were summarized (undefined = all engines). */
 	engine?: string;
 	threshold: number;
@@ -440,10 +448,10 @@ export function resetSessionFrictionTally(): SessionFrictionTally {
  * is given, entries written by other engines are excluded: thresholds are
  * calibrated per engine, so mixing distributions would corrupt the view.
  */
-export function summarizeLayaCalibration(
-	entries: readonly LayaGateEntry[],
+export function summarizeSys1Calibration(
+	entries: readonly Sys1GateEntry[],
 	opts: { threshold: number; nearMissFloor?: number; engine?: string },
-): LayaCalibration {
+): Sys1Calibration {
 	const threshold = opts.threshold;
 	const floor = Math.min(opts.nearMissFloor ?? 0.5, threshold);
 	const relevant = opts.engine === undefined ? entries : entries.filter((entry) => (entry.engine ?? "laya") === opts.engine);

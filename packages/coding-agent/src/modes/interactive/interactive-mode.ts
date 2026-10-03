@@ -5240,10 +5240,10 @@ export class InteractiveMode {
 					memoryModelId: this.settingsManager.getMemoryModelId(),
 					localInstances: this.settingsManager.getLocalInstances(),
 					fleetAutoStart: this.settingsManager.getFleetAutoStart(),
-					layaRightSizeEnabled: this.settingsManager.getLayaRightSizeEnabled(),
-					layaRightSizeSwingThreshold: this.settingsManager.getLayaRightSizeSwingThreshold(),
-					layaRightSizeProfileCount: this.settingsManager.getLayaRightSizeProfiles().length,
-					layaRightSizeProfilesJson: JSON.stringify(this.settingsManager.getLayaRightSizeProfiles()),
+					rightSizeEnabled: this.settingsManager.getRightSizeEnabled(),
+					rightSizeSwingThreshold: this.settingsManager.getRightSizeSwingThreshold(),
+					rightSizeProfileCount: this.settingsManager.getRightSizeProfiles().length,
+					rightSizeProfilesJson: JSON.stringify(this.settingsManager.getRightSizeProfiles()),
 					editorMode: this.settingsManager.getEditorMode(),
 					externalEditor: this.settingsManager.getExternalEditorCommand(),
 					websocketConnectTimeoutMs: this.settingsManager.getWebSocketConnectTimeoutMs(),
@@ -5504,21 +5504,21 @@ export class InteractiveMode {
 					onFleetAutoStartChange: (enabled) => {
 						this.settingsManager.setFleetAutoStart(enabled);
 					},
-					onLayaRightSizeEnabledChange: (enabled) => {
-						this.settingsManager.setLayaRightSizeEnabled(enabled);
+					onRightSizeEnabledChange: (enabled) => {
+						this.settingsManager.setRightSizeEnabled(enabled);
 					},
-					onLayaRightSizeSwingThresholdChange: (threshold) => {
-						this.settingsManager.setLayaRightSizeSwingThreshold(threshold);
+					onRightSizeSwingThresholdChange: (threshold) => {
+						this.settingsManager.setRightSizeSwingThreshold(threshold);
 					},
-					onLayaRightSizeProfilesChange: (profilesJson) => {
+					onRightSizeProfilesChange: (profilesJson) => {
 						try {
-							this.settingsManager.setLayaRightSizeProfiles(JSON.parse(profilesJson));
+							this.settingsManager.setRightSizeProfiles(JSON.parse(profilesJson));
 							this.showStatus(
-								`Laya profiles: ${this.settingsManager.getLayaRightSizeProfiles().length} configured`,
+								`Right-size profiles: ${this.settingsManager.getRightSizeProfiles().length} configured`,
 							);
 						} catch (error) {
 							this.showStatus(
-								`Invalid Laya profiles (not saved): ${error instanceof Error ? error.message : String(error)}`,
+								`Invalid right-size profiles (not saved): ${error instanceof Error ? error.message : String(error)}`,
 							);
 						}
 					},

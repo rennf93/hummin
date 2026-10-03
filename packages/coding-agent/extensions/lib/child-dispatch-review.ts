@@ -82,8 +82,9 @@ export async function prepareChildDispatch(input: ChildDispatchInput, ctx: Ctx, 
    const raw = settings.getGlobalSettings() as SettingsManagerSettings;
    const project = settings.getProjectSettings() as SettingsManagerSettings;
    const source = { ...raw, ...project };
-   options.config ||= settings.getLayaRightSizeConfig();
-   options.profiles ||= Array.isArray(source.layaRightSize?.profiles) ? source.layaRightSize.profiles as ModelProfile[] : [];
+   options.config ||= settings.getRightSizeConfig();
+   const rightSizeSource = (source.rightSize ?? source.layaRightSize) as { profiles?: unknown } | undefined;
+   options.profiles ||= Array.isArray(rightSizeSource?.profiles) ? rightSizeSource.profiles as ModelProfile[] : [];
   } catch {
    options.config ||= { enabled: true, swingThreshold: 0.6 };
    options.profiles ||= [];
@@ -129,7 +130,7 @@ export async function prepareChildDispatch(input: ChildDispatchInput, ctx: Ctx, 
   return { action: "block" as const, reviewId: receipt.reviewId, reason, configuration };
  });
 }
-interface SettingsManagerSettings { layaRightSize?: { profiles?: unknown }; }
+interface SettingsManagerSettings { rightSize?: { profiles?: unknown }; layaRightSize?: { profiles?: unknown }; }
 export function listChildDispatchReviews(agentDir = getAgentDir()): Held[] { return read(agentDir); }
 export function resolveChildDispatchReview(reviewId: string, reason: string, agentDir = getAgentDir(), mode: "accept" | "override" = "override"): Held {
  const records = read(agentDir); const record = records.find((entry) => entry.receipt.reviewId === reviewId);

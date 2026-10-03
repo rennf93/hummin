@@ -223,8 +223,8 @@ export default function humminCron(pi: ExtensionAPI): void {
 			cwd: Type.Optional(Type.String({ description: "Working directory for the run (default: current)" })),
 			model: Type.Optional(Type.String({ description: 'Model for the run (default "fast")' })),
 			thinking: Type.Optional(Type.String({ description: "Thinking level for the run." })),
-			reviewId: Type.Optional(Type.String({ description: "Exact Laya dispatch review ID to accept." })),
-			overrideReason: Type.Optional(Type.String({ description: "Reasoned override for the exact Laya dispatch review." })),
+			reviewId: Type.Optional(Type.String({ description: "Exact System-1 dispatch review ID to accept." })),
+			overrideReason: Type.Optional(Type.String({ description: "Reasoned override for the exact System-1 dispatch review." })),
 		}),
 		async execute(_id, params, _signal, _update, ctx) {
 			if (DISABLED) return disabledResult();
@@ -242,7 +242,7 @@ export default function humminCron(pi: ExtensionAPI): void {
 				overrideReason: params.overrideReason,
 			}, { modelRegistry: ctx.modelRegistry }, { agentDir: getAgentDir() });
 			if (review.action === "block") throw new Error(review.reason ?? `Dispatch held for review ${review.reviewId ?? "unknown"}`);
-			if (review.action === "advisory") ctx.ui?.notify?.(review.reason ?? "Laya dispatch advisory", "warning");
+			if (review.action === "advisory") ctx.ui?.notify?.(review.reason ?? "System-1 dispatch advisory", "warning");
 			const entry: CronEntry = {
 				name: params.name,
 				schedule: params.schedule.trim(),

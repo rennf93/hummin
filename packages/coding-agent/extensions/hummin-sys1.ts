@@ -1,5 +1,5 @@
 /**
- * hummin-laya: the System-1 decision layer for the local fleet.
+ * hummin-sys1: the System-1 decision layer for the local fleet.
  *
  * Exactly one decision engine answers every System-1 read at a time (laya,
  * clef, or jev; see lib/decision-engine.ts for selection and per-engine
@@ -37,7 +37,7 @@ import {
 	sys1Fetch,
 	sys1Noul,
 } from "./lib/decision-engine.ts";
-import { readLayaGateLines } from "./lib/friction.ts";
+import { readSys1GateLines } from "./lib/friction.ts";
 import { registerChildDispatchReviewTool } from "./lib/child-dispatch-review.ts";
 
 const LOW_CONFIDENCE = 0.5;
@@ -62,7 +62,7 @@ interface Answer {
 	confidence?: number;
 }
 
-interface LayaResponse {
+interface Sys1Response {
 	answers?: Record<string, Answer>;
 	routing?: { model?: string };
 }
@@ -77,7 +77,7 @@ const pct = (n: number | undefined): string =>
 // and HUMMIN_SYS1_INTAKE/HUMMIN_LAYA_INTAKE=off the distill worker's intake
 // read. All fail open: if the engine is unreachable or slow, the turn, the
 // command, the tool result, and the lesson proceed untouched. Every read is
-// appended to laya-gate.log as {ts, type: "read", kind, p, engine}.
+// appended to sys1-gate.log as {ts, type: "read", kind, p, engine}.
 
 const STEER_MIN_PROMPT_CHARS = 24;
 /** Gray-zone block line, aligned with the settings-layer default (settings
@@ -100,12 +100,12 @@ const MAX_STATE_CHARS = 50_000;
  * decision.<engine>.*, then the engine default. Guarded for runtime binaries
  * whose SettingsManager predates the decision namespace; unreadable settings
  * fall back too. */
-export function layaGateThreshold(cwd: string = process.cwd()): number {
+export function sys1GateThreshold(cwd: string = process.cwd()): number {
 	return resolveDecisionEngine(cwd).gateThreshold;
 }
 
 /** The per-turn destructive steer threshold for the active engine. */
-export function layaSteerThreshold(cwd: string = process.cwd()): number {
+export function sys1SteerThreshold(cwd: string = process.cwd()): number {
 	return resolveDecisionEngine(cwd).steerThreshold;
 }
 
@@ -166,7 +166,7 @@ export function splitSegments(command: string): string[] {
 function auditGate(entry: { type: "block" | "confirmed" | "anomaly"; command: string; p?: number; rule?: string }, engine: string): void {
 	try {
 		appendFileSync(
-			join(getAgentDir(), "laya-gate.log"),
+			join(getAgentDir(), "sys1-gate.log"),
 			`${JSON.stringify({ ts: new Date().toISOString(), engine, ...entry })}\n`,
 		);
 	} catch {
@@ -184,7 +184,7 @@ const CONFIRM_WINDOW_MS = 24 * 60 * 60 * 1000;
  * Fail-silent. */
 function recentBlockFor(command: string, now: number): { p?: number } | undefined {
 	try {
-		const lines = readLayaGateLines();
+		const lines = readSys1GateLines();
 		for (let i = lines.length - 1; i >= 0; i--) {
 			try {
 				const entry = JSON.parse(lines[i]) as { type?: string; command?: string; p?: number; ts?: string };
@@ -208,7 +208,7 @@ function recentBlockFor(command: string, now: number): { p?: number } | undefine
 function auditRead(kind: "steer" | "gate" | "decide" | "triage", p: number, engine: string): void {
 	try {
 		appendFileSync(
-			join(getAgentDir(), "laya-gate.log"),
+			join(getAgentDir(), "sys1-gate.log"),
 			`${JSON.stringify({ ts: new Date().toISOString(), type: "read", kind, p, engine })}\n`,
 		);
 	} catch {
@@ -492,7 +492,7 @@ function triageState(command: string, resultText: string): string {
 //
 // exec and monitor spawn shells through ProcessManager without a bash
 // tool_call, so gating only the bash hook made them a standing bypass around
-// the destructive-command gate. layaGateCheck is the full decision for one
+// the destructive-command gate. sys1GateCheck is the full decision for one
 // command, shared by the bash hook and by background shells via
 // lib/shell-gate.ts. HUMMIN_SYS1_GATE=off (or the legacy HUMMIN_LAYA_GATE=off)
 // disables it everywhere.
@@ -587,7 +587,7 @@ function gateBlockReason(headline: string, repeatHint: string, repeat: boolean):
 	);
 }
 
-export interface LayaGateDecision {
+export interface Sys1GateDecision {
 	block: boolean;
 	reason?: string;
 }
@@ -604,11 +604,11 @@ export interface LayaGateDecision {
  * other command is audited as an anomaly and the stripped command runs the
  * full gate. Never blocks merely because a marker was unexpected.
  */
-export async function layaGateCheck(
+export async function sys1GateCheck(
 	rawCommand: string,
 	sys1Read?: (state: string, name: string, instructions: string) => Promise<{ noul: number } | null>,
 	cwd: string = process.cwd(),
-): Promise<LayaGateDecision | undefined> {
+): Promise<Sys1GateDecision | undefined> {
 	const engine = resolveDecisionEngine(cwd);
 	// The default read uses THIS call's engine snapshot: the block threshold,
 	// the audit engine tag, and the answering endpoint must come from one
@@ -648,7 +648,7 @@ export async function layaGateCheck(
 	// re-read per command so /settings edits apply without a restart.
 	let extra: ExtraGatePatterns = { safe: [], destructive: [] };
 	try {
-		extra = SettingsManager.create(cwd).getLayaGateExtraPatterns();
+		extra = SettingsManager.create(cwd).getSys1GateExtraPatterns();
 	} catch {
 		// unreadable settings: built-in lists only
 	}
@@ -692,7 +692,7 @@ export async function layaGateCheck(
 	};
 }
 
-export default function humminLaya(pi: ExtensionAPI): void {
+export default function humminSys1(pi: ExtensionAPI): void {
 	registerChildDispatchReviewTool(pi);
 	pi.registerTool({
 		name: "sys1_decide",
@@ -780,7 +780,7 @@ export default function humminLaya(pi: ExtensionAPI): void {
 				};
 			}
 
-			const payload = (await response.json()) as LayaResponse;
+			const payload = (await response.json()) as Sys1Response;
 			const lines: string[] = [];
 			for (const q of params.questions) {
 				const a = payload.answers?.[q.name];
@@ -845,7 +845,7 @@ export default function humminLaya(pi: ExtensionAPI): void {
 			if (event.toolName !== "bash") return undefined;
 			const command = (event.input as { command?: unknown }).command;
 			if (typeof command !== "string") return undefined;
-			const decision = await layaGateCheck(command);
+			const decision = await sys1GateCheck(command);
 			if (decision?.block) return { block: true, reason: decision.reason };
 			return undefined;
 		});

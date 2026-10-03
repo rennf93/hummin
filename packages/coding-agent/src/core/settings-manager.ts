@@ -218,6 +218,13 @@ export function parseStatuslineSegments(value: unknown): string[] {
 }
 
 export interface Settings {
+	/** hummin sys1: model right-size gate (task/cron child dispatch review). */
+	rightSize?: {
+		enabled?: boolean;
+		swingThreshold?: number;
+		profiles?: Array<Record<string, unknown>>;
+	};
+	/** @deprecated pre-rename key, read as a fallback for rightSize */
 	layaRightSize?: {
 		enabled?: boolean;
 		swingThreshold?: number;
@@ -257,16 +264,24 @@ export interface Settings {
 	memoryProvider?: string;
 	/** hummin: model id for vault fold + distillation calls (env HUMMIN_MEMORY_MODEL_ID overrides) */
 	memoryModelId?: string;
-	/** hummin laya: bash gate block threshold, 0..1 (env HUMMIN_LAYA_GATE_THRESHOLD overrides) */
+	/** @deprecated pre-decision flat key, read only by the laya-engine legacy
+	 * path; the live key is decision.<engine>.gateThreshold */
 	layaGateThreshold?: number;
-	/** hummin laya: bash gate extra classifier patterns (regex strings, applied per
+	/** hummin sys1: bash gate extra classifier patterns (regex strings, applied per
 	 * chain segment in addition to the built-in lists; invalid regexes are
-	 * skipped fail-open). extraSafe segments fast-pass, extraDestructive block. */
+	 * skipped fail-open). extraSafe segments fast-pass, extraDestructive block.
+	 * `layaGate` is kept as a pre-rename fallback. */
+	sys1Gate?: {
+		extraSafe?: string[];
+		extraDestructive?: string[];
+	};
+	/** @deprecated pre-rename key, read as a fallback for sys1Gate */
 	layaGate?: {
 		extraSafe?: string[];
 		extraDestructive?: string[];
 	};
-	/** hummin laya: per-turn destructive steer threshold, 0..1 (env HUMMIN_LAYA_STEER_THRESHOLD overrides) */
+	/** @deprecated pre-decision flat key, read only by the laya-engine legacy
+	 * path; the live key is decision.<engine>.steerThreshold */
 	layaSteerThreshold?: number;
 	/** hummin System-1 decision layer: which engine answers every System-1 read
 	 * (bash gate gray zone, steer, triage, memory intake, dispatch review,
@@ -386,10 +401,10 @@ function parseTimeoutSetting(value: unknown, settingName: string): number | unde
 	return undefined;
 }
 
-/** hummin laya thresholds: env string wins, then the stored setting, then the
+/** Clamp helper for 0..1 threshold settings: env string wins, then the stored setting, then the
  * built-in default. Anything outside 0..1 (or unparseable) is ignored rather
  * than trusted, so a typo can neither weld the gate shut nor open it. */
-function resolveLayaThreshold(envRaw: string | undefined, stored: number | undefined, fallback: number): number {
+function resolveThreshold01(envRaw: string | undefined, stored: number | undefined, fallback: number): number {
 	const clamp = (value: unknown): number | undefined => {
 		const n = typeof value === "number" ? value : Number(value);
 		return Number.isFinite(n) && n >= 0 && n <= 1 ? n : undefined;
@@ -404,41 +419,36 @@ function resolveLayaThreshold(envRaw: string | undefined, stored: number | undef
 /**
  * hummin System-1: model right-size gate config. Env `HUMMIN_SYS1_RIGHTSIZE`
  * (`HUMMIN_LAYA_RIGHTSIZE` kept as a legacy alias; 0 or off disables the gate)
- * > `layaRightSize.swingThreshold` (project > global) > defaults (enabled:
- * true, swing 0.6). The swing threshold is clamped to 0..1; the enabled flag
- * accepts 0/"0"/off/false to disable.
+ * > `rightSize.swingThreshold` (`layaRightSize` kept as a pre-rename fallback;
+ * project > global) > defaults (enabled: true, swing 0.6). The swing threshold
+ * is clamped to 0..1; the enabled flag accepts 0/"0"/off/false to disable.
  */
-type LayaRightSizeSettings = NonNullable<Settings["layaRightSize"]>;
+type RightSizeSettings = NonNullable<Settings["rightSize"]>;
 
-function resolveLayaRightSizeConfig(
+/** Pre-rename fallback: the stored right-size object of either key, project scope preferred. */
+function rightSizeOf(raw: unknown): { enabled?: unknown; swingThreshold?: unknown; profiles?: unknown } | undefined {
+	if (typeof raw !== "object" || raw === null) return undefined;
+	const record = raw as { rightSize?: unknown; layaRightSize?: unknown };
+	return (record.rightSize ?? record.layaRightSize) as ReturnType<typeof rightSizeOf> | undefined;
+}
+
+function resolveRightSizeConfig(
 	env: Readonly<Record<string, string | undefined>>,
 	globalRaw: unknown,
 	projectRaw: unknown,
 ): { enabled: boolean; swingThreshold: number; profiles: Array<Record<string, unknown>> } {
 	const rawEnabled = (env.HUMMIN_SYS1_RIGHTSIZE ?? env.HUMMIN_LAYA_RIGHTSIZE)?.trim().toLowerCase();
 	const enabled = rawEnabled === undefined || !["0", "off", "false"].includes(rawEnabled);
-	const projectValue =
-		typeof projectRaw === "object" && projectRaw !== null
-			? (projectRaw as { layaRightSize?: { swingThreshold?: unknown } }).layaRightSize?.swingThreshold
-			: undefined;
-	const globalValue =
-		typeof globalRaw === "object" && globalRaw !== null
-			? (globalRaw as { layaRightSize?: { swingThreshold?: unknown } }).layaRightSize?.swingThreshold
-			: undefined;
+	const projectValue = rightSizeOf(projectRaw)?.swingThreshold;
+	const globalValue = rightSizeOf(globalRaw)?.swingThreshold;
 	// project > global, then env > effective value > default (0.6).
-	const swing = resolveLayaThreshold(
+	const swing = resolveThreshold01(
 		env.HUMMIN_SYS1_RIGHTSIZE_SWING ?? env.HUMMIN_LAYA_RIGHTSIZE_SWING,
 		(projectValue ?? globalValue) as number | undefined,
 		0.6,
 	);
-	const projectProfiles =
-		typeof projectRaw === "object" && projectRaw !== null
-			? (projectRaw as { layaRightSize?: { profiles?: unknown } }).layaRightSize?.profiles
-			: undefined;
-	const globalProfiles =
-		typeof globalRaw === "object" && globalRaw !== null
-			? (globalRaw as { layaRightSize?: { profiles?: unknown } }).layaRightSize?.profiles
-			: undefined;
+	const projectProfiles = rightSizeOf(projectRaw)?.profiles;
+	const globalProfiles = rightSizeOf(globalRaw)?.profiles;
 	const profiles = Array.isArray(projectProfiles ?? globalProfiles)
 		? ((projectProfiles ?? globalProfiles) as Array<Record<string, unknown>>)
 		: [];
@@ -1395,14 +1405,10 @@ export class SettingsManager {
 	/** hummin laya: destructive-intent thresholds. Env wins, then settings,
 	 * then the built-in default. A stored value outside 0..1 is ignored so a
 	 * typo can neither weld the gate shut nor silently open it. */
-	getLayaGateThreshold(): number {
-		return resolveLayaThreshold(process.env.HUMMIN_LAYA_GATE_THRESHOLD, this.settings.layaGateThreshold, 0.75);
-	}
-
-	/** hummin laya: bash gate extra classifier patterns. Compiled per read so
+	/** hummin sys1: bash gate extra classifier patterns. Compiled per read so
 	 * /settings edits apply without a restart; invalid regex strings are
 	 * skipped fail-open. */
-	getLayaGateExtraPatterns(): { safe: RegExp[]; destructive: RegExp[] } {
+	getSys1GateExtraPatterns(): { safe: RegExp[]; destructive: RegExp[] } {
 		const compile = (raw: unknown): RegExp[] => {
 			if (!Array.isArray(raw)) return [];
 			const out: RegExp[] = [];
@@ -1416,7 +1422,7 @@ export class SettingsManager {
 			}
 			return out;
 		};
-		const ns = this.settings.layaGate;
+		const ns = this.settings.sys1Gate ?? this.settings.layaGate;
 		return {
 			safe: compile(ns?.extraSafe),
 			destructive: compile(ns?.extraDestructive),
@@ -1424,42 +1430,41 @@ export class SettingsManager {
 	}
 
 	/** hummin laya: model right-size gate config. Env > project > global > defaults. */
-	getLayaRightSizeConfig(): { enabled: boolean; swingThreshold: number; profiles: Array<Record<string, unknown>> } {
-		return resolveLayaRightSizeConfig(process.env, this.settings, this.projectSettings);
+	getRightSizeConfig(): { enabled: boolean; swingThreshold: number; profiles: Array<Record<string, unknown>> } {
+		return resolveRightSizeConfig(process.env, this.settings, this.projectSettings);
 	}
 
 	/** hummin laya: stored enabled flag (env may still override at gate time). */
-	getLayaRightSizeEnabled(): boolean {
-		return this.settings.layaRightSize?.enabled ?? true;
+	getRightSizeEnabled(): boolean {
+		return (this.settings.rightSize ?? this.settings.layaRightSize)?.enabled ?? true;
 	}
 
-	setLayaRightSizeEnabled(enabled: boolean, scope: "global" | "project" = "global"): void {
-		this.setLayaRightSize((settings) => {
+	setRightSizeEnabled(enabled: boolean, scope: "global" | "project" = "global"): void {
+		this.setRightSize((settings) => {
 			settings.enabled = enabled;
 		}, scope);
 	}
 
 	/** hummin laya: stored swing threshold (env may still override at gate time). */
-	getLayaRightSizeSwingThreshold(): number {
-		const value = this.settings.layaRightSize?.swingThreshold;
+	getRightSizeSwingThreshold(): number {
+		const value = (this.settings.rightSize ?? this.settings.layaRightSize)?.swingThreshold;
 		return typeof value === "number" && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0.6;
 	}
 
-	setLayaRightSizeSwingThreshold(threshold: number, scope: "global" | "project" = "global"): void {
-		this.setLayaRightSize((settings) => {
+	setRightSizeSwingThreshold(threshold: number, scope: "global" | "project" = "global"): void {
+		this.setRightSize((settings) => {
 			settings.swingThreshold = threshold;
 		}, scope);
 	}
 
 	/** hummin laya: stored model profiles (descriptive metadata for the review). */
-	getLayaRightSizeProfiles(): Array<Record<string, unknown>> {
-		return Array.isArray(this.settings.layaRightSize?.profiles)
-			? (this.settings.layaRightSize.profiles as Array<Record<string, unknown>>)
-			: [];
+	getRightSizeProfiles(): Array<Record<string, unknown>> {
+		const stored = this.settings.rightSize ?? this.settings.layaRightSize;
+		return Array.isArray(stored?.profiles) ? (stored.profiles as Array<Record<string, unknown>>) : [];
 	}
 
 	/** hummin laya: replace the model profiles; validates the minimal shape. */
-	setLayaRightSizeProfiles(profiles: unknown, scope: "global" | "project" = "global"): void {
+	setRightSizeProfiles(profiles: unknown, scope: "global" | "project" = "global"): void {
 		if (!Array.isArray(profiles)) throw new Error("profiles must be a JSON array");
 		for (const profile of profiles) {
 			const entry = profile as { provider?: unknown; modelId?: unknown } | null;
@@ -1474,27 +1479,23 @@ export class SettingsManager {
 				throw new Error("each profile needs non-empty provider and modelId strings");
 			}
 		}
-		this.setLayaRightSize((settings) => {
+		this.setRightSize((settings) => {
 			settings.profiles = profiles as Array<Record<string, unknown>>;
 		}, scope);
 	}
 
-	private setLayaRightSize(mutate: (settings: LayaRightSizeSettings) => void, scope: "global" | "project"): void {
+	private setRightSize(mutate: (settings: RightSizeSettings) => void, scope: "global" | "project"): void {
 		if (scope === "project") {
-			this.updateProjectSettings("layaRightSize", (settings) => {
-				settings.layaRightSize ??= {};
-				mutate(settings.layaRightSize);
+			this.updateProjectSettings("rightSize", (settings) => {
+				settings.rightSize ??= {};
+				mutate(settings.rightSize);
 			});
 			return;
 		}
-		this.globalSettings.layaRightSize ??= {};
-		mutate(this.globalSettings.layaRightSize);
-		this.markModified("layaRightSize");
+		this.globalSettings.rightSize ??= {};
+		mutate(this.globalSettings.rightSize);
+		this.markModified("rightSize");
 		this.save();
-	}
-
-	getLayaSteerThreshold(): number {
-		return resolveLayaThreshold(process.env.HUMMIN_LAYA_STEER_THRESHOLD, this.settings.layaSteerThreshold, 0.7);
 	}
 
 	/** hummin System-1 layer: the merged decision namespace (global + project).

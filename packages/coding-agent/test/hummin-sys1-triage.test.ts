@@ -1,13 +1,13 @@
 import { expect, test, vi } from "vitest";
 import {
 	GATE_BLOCK_THRESHOLD,
-	layaGateThreshold,
-	layaSteerThreshold,
 	looksLikeTestFailure,
 	looksLikeTestRun,
+	sys1GateThreshold,
+	sys1SteerThreshold,
 	triageAdvisory,
 	triageRateLimited,
-} from "../extensions/hummin-laya.ts";
+} from "../extensions/hummin-sys1.ts";
 
 // Pure matchers and decisions for the test-failure triage read. The laya call
 // itself is exercised only through the handler's fail-open path (live runs),
@@ -97,23 +97,23 @@ test("gate and steer thresholds resolve from env, ignoring invalid values", () =
 	}
 	vi.stubEnv("HUMMIN_LAYA_GATE_THRESHOLD", "0.9");
 	vi.stubEnv("HUMMIN_LAYA_STEER_THRESHOLD", "0.55");
-	expect(layaGateThreshold()).toBe(0.9);
-	expect(layaSteerThreshold()).toBe(0.55);
+	expect(sys1GateThreshold()).toBe(0.9);
+	expect(sys1SteerThreshold()).toBe(0.55);
 	// Unparseable and out-of-range env values are ignored, not trusted.
 	vi.stubEnv("HUMMIN_LAYA_GATE_THRESHOLD", "abc");
-	expect(layaGateThreshold()).toBe(0.75);
+	expect(sys1GateThreshold()).toBe(0.75);
 	vi.stubEnv("HUMMIN_LAYA_GATE_THRESHOLD", "1.5");
-	expect(layaGateThreshold()).toBe(0.75);
+	expect(sys1GateThreshold()).toBe(0.75);
 	vi.stubEnv("HUMMIN_LAYA_GATE_THRESHOLD", "");
-	expect(layaGateThreshold()).toBe(0.75);
+	expect(sys1GateThreshold()).toBe(0.75);
 	vi.unstubAllEnvs();
 	// No env, no laya keys in the test project's settings: built-in defaults.
-	expect(layaGateThreshold()).toBe(0.75);
-	expect(layaSteerThreshold()).toBe(0.7);
+	expect(sys1GateThreshold()).toBe(0.75);
+	expect(sys1SteerThreshold()).toBe(0.7);
 });
 
 test("the gate block fallback stays aligned with the settings-layer default", () => {
-	// hummin-laya falls back to GATE_BLOCK_THRESHOLD when settings are
+	// hummin-sys1 falls back to GATE_BLOCK_THRESHOLD when settings are
 	// unreadable; settings-manager's getLayaGateThreshold() defaults to the
 	// same 0.75, so blocking must not depend on settings readability.
 	expect(GATE_BLOCK_THRESHOLD).toBe(0.75);

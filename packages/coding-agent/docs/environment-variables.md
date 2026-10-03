@@ -156,7 +156,7 @@ These fork-specific variables are read by hummin and its bundled extensions. Whe
 
 ### System-1 decision layer
 
-One decision engine at a time answers every System-1 read: the bash gate's gray-zone scoring, the per-turn destructive steer, test-failure triage, memory intake, child-dispatch review, and the `sys1_decide` tool. Engines: `laya` (cheap local, 421M, default), `clef` (strong local, 9B, 16k context), `jev` (hosted, requires a configured URL). Every hook fails open: an unreachable or slow engine never blocks the turn, the command, or the lesson, and there is no auto-failover between engines. Every read is audited to `<agentDir>/laya-gate.log` with the answering engine and summarized by `/friction` (per engine).
+One decision engine at a time answers every System-1 read: the bash gate's gray-zone scoring, the per-turn destructive steer, test-failure triage, memory intake, child-dispatch review, and the `sys1_decide` tool. Engines: `laya` (cheap local, 421M, default), `clef` (strong local, 9B, 16k context), `jev` (hosted, requires a configured URL). Every hook fails open: an unreachable or slow engine never blocks the turn, the command, or the lesson, and there is no auto-failover between engines. Every read is audited to `<agentDir>/sys1-gate.log` (falling back to the pre-rename `laya-gate.log` for history) with the answering engine and summarized by `/friction` (per engine).
 
 Select the engine with `HUMMIN_DECISION_ENGINE` or settings `decision.engine`. Per-engine overrides live in settings under `decision.<engine>.url`, `.apiKey`, `.gateThreshold`, `.steerThreshold`, `.triageThreshold`, `.intakeThreshold`, `.gateTimeoutMs`, `.dispatchTimeoutMs`, `.decideTimeoutMs`, and `.warmTimeoutMs`.
 

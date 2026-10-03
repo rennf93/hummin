@@ -169,10 +169,10 @@ export interface SettingsConfig {
 	memoryModelId: string;
 	localInstances: string[];
 	fleetAutoStart: boolean;
-	layaRightSizeEnabled: boolean;
-	layaRightSizeSwingThreshold: number;
-	layaRightSizeProfileCount: number;
-	layaRightSizeProfilesJson: string;
+	rightSizeEnabled: boolean;
+	rightSizeSwingThreshold: number;
+	rightSizeProfileCount: number;
+	rightSizeProfilesJson: string;
 	editorMode: "default" | "vim";
 	externalEditor: string;
 	websocketConnectTimeoutMs: number | undefined;
@@ -234,9 +234,9 @@ export interface SettingsCallbacks {
 	onMemoryModelIdChange: (modelId: string) => void;
 	onLocalInstancesChange: (instances: string[]) => void;
 	onFleetAutoStartChange: (enabled: boolean) => void;
-	onLayaRightSizeEnabledChange: (enabled: boolean) => void;
-	onLayaRightSizeSwingThresholdChange: (threshold: number) => void;
-	onLayaRightSizeProfilesChange: (profilesJson: string) => void;
+	onRightSizeEnabledChange: (enabled: boolean) => void;
+	onRightSizeSwingThresholdChange: (threshold: number) => void;
+	onRightSizeProfilesChange: (profilesJson: string) => void;
 	onEditorModeChange: (mode: "default" | "vim") => void;
 	onExternalEditorChange: (command: string) => void;
 	onWebSocketConnectTimeoutMsChange: (timeoutMs: number | undefined) => void;
@@ -1268,7 +1268,7 @@ export class SettingsSelectorComponent extends Container {
 				label: "Laya right-size gate",
 				description:
 					"The System-1 engine reviews child dispatches (task, cron) against the model catalog and holds confident mismatches for review. HUMMIN_SYS1_RIGHTSIZE=off (legacy HUMMIN_LAYA_RIGHTSIZE) takes precedence.",
-				currentValue: config.layaRightSizeEnabled ? "true" : "false",
+				currentValue: config.rightSizeEnabled ? "true" : "false",
 				values: ["true", "false"],
 			},
 			{
@@ -1276,7 +1276,7 @@ export class SettingsSelectorComponent extends Container {
 				label: "Laya swing threshold",
 				description:
 					"Confidence margin between Laya's pick and the requested model that turns a mismatch into a dispatch hold. HUMMIN_LAYA_RIGHTSIZE_SWING takes precedence.",
-				currentValue: String(config.layaRightSizeSwingThreshold),
+				currentValue: String(config.rightSizeSwingThreshold),
 				values: ["0.25", "0.3", "0.35", "0.4", "0.45", "0.5", "0.6"],
 			},
 			{
@@ -1284,17 +1284,17 @@ export class SettingsSelectorComponent extends Container {
 				label: "Laya model profiles",
 				description:
 					"Per-model description/speed/cost metadata the right-size review sees. Enter to open the profile editor.",
-				currentValue: `${config.layaRightSizeProfileCount} configured`,
+				currentValue: `${config.rightSizeProfileCount} configured`,
 				submenu: (_current: string, done: (selectedValue?: string) => void) => {
 					let profiles: LayaProfile[];
 					try {
-						profiles = parseLayaProfiles(config.layaRightSizeProfilesJson);
+						profiles = parseLayaProfiles(config.rightSizeProfilesJson);
 					} catch {
 						profiles = [];
 					}
 					return new LayaProfilesSubmenu(
 						profiles,
-						(updated) => callbacks.onLayaRightSizeProfilesChange(JSON.stringify(updated)),
+						(updated) => callbacks.onRightSizeProfilesChange(JSON.stringify(updated)),
 						() => done(),
 					);
 				},
@@ -1633,10 +1633,10 @@ export class SettingsSelectorComponent extends Container {
 					callbacks.onFleetAutoStartChange(newValue === "true");
 					break;
 				case "laya-right-size":
-					callbacks.onLayaRightSizeEnabledChange(newValue === "true");
+					callbacks.onRightSizeEnabledChange(newValue === "true");
 					break;
 				case "laya-swing-threshold":
-					callbacks.onLayaRightSizeSwingThresholdChange(Number(newValue));
+					callbacks.onRightSizeSwingThresholdChange(Number(newValue));
 					break;
 				case "editor-mode":
 					callbacks.onEditorModeChange(newValue as "default" | "vim");

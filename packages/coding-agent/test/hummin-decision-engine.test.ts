@@ -219,6 +219,16 @@ test("a malformed decision namespace is ignored, not fatal", () => {
 	expect(resolveDecisionEngine(cwd).id).toBe("laya");
 });
 
+test("legacy flat settings keys: env beats stored, invalid env falls to stored", () => {
+	const cwd = projectWithSettings({ layaGateThreshold: 0.8, layaSteerThreshold: 0.6 });
+	process.env.HUMMIN_LAYA_GATE_THRESHOLD = "0.9";
+	process.env.HUMMIN_LAYA_STEER_THRESHOLD = "nonsense";
+	const engine = resolveDecisionEngine(cwd);
+	expect(engine.gateThreshold).toBe(0.9);
+	// invalid env falls through to the stored setting, not the default
+	expect(engine.steerThreshold).toBe(0.6);
+});
+
 test("env beats settings for engine selection", () => {
 	const cwd = projectWithSettings({ decision: { engine: "clef" } });
 	process.env.HUMMIN_DECISION_ENGINE = "laya";

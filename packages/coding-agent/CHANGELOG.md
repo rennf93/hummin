@@ -4,13 +4,13 @@
 
 ### Added
 
-- System-1 decision engine selector: one engine at a time (laya, clef, or jev) answers every System-1 read (bash gate gray zone, per-turn steer, test-failure triage, memory intake, child-dispatch review, decide tool), with per-engine settings (`decision.<engine>.url`/`.apiKey`/thresholds/timeouts), `HUMMIN_DECISION_*` env overrides, and an `engine` field in laya-gate.log entries. No per-read engine mixing and no auto-failover; thresholds stay per engine so calibration does not mix distributions.
+- System-1 decision engine selector: one engine at a time (laya, clef, or jev) answers every System-1 read (bash gate gray zone, per-turn steer, test-failure triage, memory intake, child-dispatch review, decide tool), with per-engine settings (`decision.<engine>.url`/`.apiKey`/thresholds/timeouts), `HUMMIN_DECISION_*` env overrides, and an `engine` field in sys1-gate.log entries (audit file renamed from laya-gate.log; readers fall back to the old file for history). No per-read engine mixing and no auto-failover; thresholds stay per engine so calibration does not mix distributions.
 - `/friction` calibration now scopes blocks, confirmations, and near-misses to the active engine and suggests `decision.<engine>.gateThreshold`; applying a suggestion persists the per-engine key.
 - Recalibrated the clef engine against the production gate rubric (53-probe matrix on the Mac MLX instance): gate line stays 0.75 (safe probes 0.016-0.03, destructive 0.85-0.97, gray-zone split at the line), steer moved 0.7 to 0.8 (a benign prompt scored 0.733), triage and intake keep the laya lines, gate timeout 6.5s to 8s (measured p95 ~6.5s). Unlike laya, clef reads the full rubric tail: a one-line rubric edit moved a score from 0.13 to 0.96.
 
 ### Changed
 
-- Renamed the `laya_decide` tool to `sys1_decide` so the second-opinion tool stays generic across the laya, clef, and jev engines. The `HUMMIN_LAYA_*` kill switches and URL/threshold envs keep working as legacy aliases of the `HUMMIN_SYS1_*`/`HUMMIN_DECISION_*` names (right-size switches included); the legacy laya URL and threshold envs steer the laya engine only.
+- Renamed the `laya_decide` tool to `sys1_decide` so the second-opinion tool stays generic across the laya, clef, and jev engines. The `HUMMIN_LAYA_*` kill switches and URL/threshold envs keep working as legacy aliases of the `HUMMIN_SYS1_*`/`HUMMIN_DECISION_*` names (right-size switches included); the legacy laya URL and threshold envs steer the laya engine only. The extension file, gate helpers, friction types, settings namespaces (`rightSize`, `sys1Gate`), and test files drop their laya prefixes; the flat `layaGateThreshold`/`layaSteerThreshold` settings keys and the `layaGate`/`layaRightSize` namespaces stay as read fallbacks.
 
 ## [1.2.10] - 2026-09-28
 

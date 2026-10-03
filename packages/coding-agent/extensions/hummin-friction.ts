@@ -1,8 +1,8 @@
 // hummin-friction: the /friction command. Prints the live per-source counts
 // for the current session (fed by hummin-guardrails via lib/friction.ts)
 // above a plain-text summary of the friction log (last 7 days): totals by
-// kind, per-day counts, plus laya gate activity and threshold calibration
-// from laya-gate.log. The calibration's suggested threshold can be applied
+// kind, per-day counts, plus sys1 gate activity and threshold calibration
+// from sys1-gate.log (falling back to the pre-rename laya-gate.log for history). The calibration's suggested threshold can be applied
 // directly from the command (persisted to global settings, atomic write).
 // Data collection lives in lib/friction.ts and is fail-silent; this file only
 // reads, renders, and registers the command.
@@ -12,16 +12,16 @@ import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil
 import { resolveDecisionEngine } from "./lib/decision-engine.ts";
 import {
 	FRICTION_KINDS,
-	parseLayaGateEntry,
+	parseSys1GateEntry,
 	readFrictionEvents,
-	readLayaGateLines,
+	readSys1GateLines,
 	sessionFrictionTally,
 	summarizeFriction,
-	summarizeLayaCalibration,
-	summarizeLayaGate,
+	summarizeSys1Calibration,
+	summarizeSys1Gate,
 	type FrictionSummary,
-	type LayaCalibration,
-	type LayaGateSummary,
+	type Sys1Calibration,
+	type Sys1GateSummary,
 	type SessionSourceCount,
 } from "./lib/friction.ts";
 
@@ -35,10 +35,10 @@ function formatRows(rows: ReadonlyArray<readonly [string, string]>): string {
 
 const pct2 = (n: number): string => n.toFixed(2);
 
-/** Calibration rows for the laya gate, or [] when there is nothing to
+/** Calibration rows for the sys1 gate, or [] when there is nothing to
  * calibrate on (no blocks, no confirms, no near-misses). Pure; exported for
  * tests via renderFrictionReport. */
-export function layaCalibrationRows(calibration: LayaCalibration): ReadonlyArray<readonly [string, string]> {
+export function gateCalibrationRows(calibration: Sys1Calibration): ReadonlyArray<readonly [string, string]> {
 	if (calibration.blocks === 0 && calibration.confirmed === 0 && calibration.nearMisses === 0) return [];
 	const rows: Array<readonly [string, string]> = [];
 	if (calibration.blockP) {
@@ -80,8 +80,8 @@ export function sessionSectionRows(counts: readonly SessionSourceCount[]): Reado
  * session counts render as the leading "this session" section. */
 export function renderFrictionReport(
 	friction: FrictionSummary,
-	laya: LayaGateSummary,
-	calibration?: LayaCalibration,
+	laya: Sys1GateSummary,
+	calibration?: Sys1Calibration,
 	session: readonly SessionSourceCount[] = [],
 ): string {
 	const hasSession = session.length > 0;
@@ -99,14 +99,14 @@ export function renderFrictionReport(
 		"sys1 gate (all time)",
 		formatRows(layaRows(laya)),
 	];
-	const calibrationRows = calibration ? layaCalibrationRows(calibration) : [];
+	const calibrationRows = calibration ? gateCalibrationRows(calibration) : [];
 	if (calibrationRows.length > 0) {
 		sections.push("", `sys1 calibration (engine ${calibration?.engine ?? "all"}, threshold ${pct2(calibration?.threshold ?? 0.75)})`, formatRows(calibrationRows));
 	}
 	return sections.join("\n");
 }
 
-function layaRows(laya: LayaGateSummary): ReadonlyArray<readonly [string, string]> {
+function layaRows(laya: Sys1GateSummary): ReadonlyArray<readonly [string, string]> {
 	return [
 		["block", String(laya.block)],
 		["confirmed", String(laya.confirmed)],
@@ -119,7 +119,7 @@ function layaRows(laya: LayaGateSummary): ReadonlyArray<readonly [string, string
  * (atomic tmp+rename, same pattern as the sandbox mode toggle). The gate
  * resolves the threshold from the engine config on every command, so the
  * change applies to new gate reads immediately. For the laya engine the
- * legacy flat `layaGateThreshold` key is removed: it shadows the per-engine
+ * legacy flat `sys1GateThreshold` key is removed: it shadows the per-engine
  * key in the resolution order, so leaving it would silently no-op the apply.
  */
 export async function applySuggestedThreshold(suggested: number, engine: string = "laya", agentDir: string = getAgentDir()): Promise<void> {
@@ -139,7 +139,7 @@ export async function applySuggestedThreshold(suggested: number, engine: string 
 	override.gateThreshold = suggested;
 	decision[engine] = override;
 	parsed.decision = decision;
-	if (engine === "laya" && "layaGateThreshold" in parsed) delete parsed.layaGateThreshold;
+	if (engine === "laya" && "sys1GateThreshold" in parsed) delete parsed.sys1GateThreshold;
 	const temp = `${path}.tmp-${process.pid}`;
 	await writeFile(temp, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
 	await rename(temp, path);
@@ -152,11 +152,11 @@ export default function humminFriction(pi: ExtensionAPI): void {
 		handler: async (_args, ctx: ExtensionContext) => {
 			const summary = summarizeFriction(readFrictionEvents(FRICTION_REPORT_DAYS), { days: FRICTION_REPORT_DAYS });
 			const session = sessionFrictionTally().snapshot();
-			const lines = readLayaGateLines();
-			const laya = summarizeLayaGate(lines);
+			const lines = readSys1GateLines();
+			const laya = summarizeSys1Gate(lines);
 			const engine = resolveDecisionEngine();
-			const calibration = summarizeLayaCalibration(
-				lines.map((line) => parseLayaGateEntry(line)).filter((entry): entry is NonNullable<typeof entry> => entry !== undefined),
+			const calibration = summarizeSys1Calibration(
+				lines.map((line) => parseSys1GateEntry(line)).filter((entry): entry is NonNullable<typeof entry> => entry !== undefined),
 				{ threshold: engine.gateThreshold, engine: engine.id },
 			);
 			ctx.ui.notify(renderFrictionReport(summary, laya, calibration, session), "info");
@@ -169,7 +169,7 @@ export default function humminFriction(pi: ExtensionAPI): void {
 			if (!choice || !choice.startsWith("Apply")) return;
 			try {
 				await applySuggestedThreshold(suggested, engine.id);
-				ctx.ui.notify(`decision.${engine.id}.gateThreshold ${suggested.toFixed(2)} written to global settings (a stale global layaGateThreshold key was removed). New gate reads use it unless a HUMMIN_DECISION_* env override, a project-level decision namespace, or a project-level legacy layaGateThreshold overrides it.`, "info");
+				ctx.ui.notify(`decision.${engine.id}.gateThreshold ${suggested.toFixed(2)} written to global settings (a stale global sys1GateThreshold key was removed). New gate reads use it unless a HUMMIN_DECISION_* env override, a project-level decision namespace, or a project-level legacy sys1GateThreshold overrides it.`, "info");
 			} catch (error) {
 				ctx.ui.notify(`friction: could not persist threshold (${error instanceof Error ? error.message : String(error)})`, "warning");
 			}

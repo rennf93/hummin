@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { default as humminLaya, type LayaGateDecision, layaGateCheck } from "../extensions/hummin-laya.ts";
+import { default as humminSys1, type Sys1GateDecision, sys1GateCheck } from "../extensions/hummin-sys1.ts";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 
-// Handler-level coverage for the hummin-laya extension: the sys1_decide tool
+// Handler-level coverage for the hummin-sys1 extension: the sys1_decide tool
 // execute path, per-turn steering, test-failure triage wiring, gate kill
-// switches, and the laya-gate.log audit trail. Network and env are pinned:
+// switches, and the sys1-gate.log audit trail. Network and env are pinned:
 // fetch is stubbed in every test and COLI_API_KEY / HUMMIN_LAYA_URL /
 // ENV_AGENT_DIR are stubbed so results never depend on whether the local decision
 // service happens to be running (the module reads these env values at call
@@ -50,7 +50,7 @@ const DECISION_ENV_NAMES = [
 const savedDecisionEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
-	agentDir = mkdtempSync(join(tmpdir(), "hummin-laya-handlers-"));
+	agentDir = mkdtempSync(join(tmpdir(), "hummin-sys1-handlers-"));
 	cleanups.push(agentDir);
 	vi.stubEnv(ENV_AGENT_DIR, agentDir);
 	vi.stubEnv("COLI_API_KEY", "test-key");
@@ -141,7 +141,7 @@ function fakePi(): FakePi {
  * one-time startup warm cannot hit the network. */
 function register(): FakePi {
 	const pi = fakePi();
-	humminLaya(pi.api);
+	humminSys1(pi.api);
 	return pi;
 }
 
@@ -153,7 +153,7 @@ function decideTool(pi: FakePi): RegisteredTool {
 }
 
 async function auditLines(): Promise<Array<Record<string, unknown>>> {
-	const path = join(agentDir, "laya-gate.log");
+	const path = join(agentDir, "sys1-gate.log");
 	if (!existsSync(path)) return [];
 	return readFileSync(path, "utf8")
 		.split("\n")
@@ -537,7 +537,7 @@ test("HUMMIN_LAYA_TRIAGE=off registers no triage hook", () => {
 test("HUMMIN_LAYA_GATE=off disables the gate entirely", async () => {
 	vi.stubEnv("HUMMIN_LAYA_GATE", "off");
 	let reads = 0;
-	const decision: LayaGateDecision | undefined = await layaGateCheck("git reset --hard", async () => {
+	const decision: Sys1GateDecision | undefined = await sys1GateCheck("git reset --hard", async () => {
 		reads++;
 		return { noul: 0.99 };
 	});
@@ -548,12 +548,12 @@ test("HUMMIN_LAYA_GATE=off disables the gate entirely", async () => {
 test("scored and rule blocks leave matching audit entries", async () => {
 	let reads = 0;
 	// Deterministic rule block: no laya read, the audit line carries the rule.
-	await layaGateCheck("git reset --hard", async () => {
+	await sys1GateCheck("git reset --hard", async () => {
 		reads++;
 		return { noul: 0.5 };
 	});
 	// Gray-zone block: one laya read, audited, and the block carries the score.
-	await layaGateCheck("deploy-tool --env prod", async () => {
+	await sys1GateCheck("deploy-tool --env prod", async () => {
 		reads++;
 		return { noul: 0.91 };
 	});
@@ -573,8 +573,8 @@ test("scored and rule blocks leave matching audit entries", async () => {
 test("the repeat escalation asks for ask_user on the second block", async () => {
 	const high = async (): Promise<{ noul: number } | null> => ({ noul: 0.93 });
 	const cmd = "deploy-tool --nuke-prod-cache";
-	const first = await layaGateCheck(cmd, high);
-	const repeat = await layaGateCheck(cmd, high);
+	const first = await sys1GateCheck(cmd, high);
+	const repeat = await sys1GateCheck(cmd, high);
 	expect(first?.block).toBe(true);
 	expect(first?.reason).not.toContain("already blocked once");
 	expect(repeat?.block).toBe(true);
@@ -604,11 +604,11 @@ test("test-runner commands fast-pass without a laya read", async () => {
 		"cargo test --lib",
 		"python -m pytest tests/",
 	]) {
-		await expect(layaGateCheck(cmd, unreachable), cmd).resolves.toBeUndefined();
+		await expect(sys1GateCheck(cmd, unreachable), cmd).resolves.toBeUndefined();
 	}
 	expect(reads).toBe(0);
 	// A test run in a chain does not whiten the rest of the chain.
-	const decision = await layaGateCheck("npm test && deploy-tool --env prod", unreachable);
+	const decision = await sys1GateCheck("npm test && deploy-tool --env prod", unreachable);
 	expect(decision?.block).toBe(true);
 });
 
@@ -631,7 +631,7 @@ test("write redirects behind read-only commands still reach laya", async () => {
 		"git diff > patch.diff",
 		"npm run check > build.log",
 	]) {
-		const decision = await layaGateCheck(cmd, high);
+		const decision = await sys1GateCheck(cmd, high);
 		expect(decision?.block, cmd).toBe(true);
 	}
 	expect(reads).toBe(5);
@@ -643,10 +643,10 @@ test("fd dups and /dev/null redirects keep the read-only fast path", async () =>
 		reads++;
 		return { noul: 0.99 };
 	};
-	await expect(layaGateCheck("echo keep 2>&1 | tail -1", unreachable)).resolves.toBeUndefined();
-	await expect(layaGateCheck("echo hi 2>/dev/null", unreachable)).resolves.toBeUndefined();
+	await expect(sys1GateCheck("echo keep 2>&1 | tail -1", unreachable)).resolves.toBeUndefined();
+	await expect(sys1GateCheck("echo hi 2>/dev/null", unreachable)).resolves.toBeUndefined();
 	// Single-flag curl is allowlisted; -sS is not (the trailing \b in
 	// READ_ONLY_BASH fails after a second flag char), so it would be gray zone.
-	await expect(layaGateCheck("curl -s https://x >/dev/null", unreachable)).resolves.toBeUndefined();
+	await expect(sys1GateCheck("curl -s https://x >/dev/null", unreachable)).resolves.toBeUndefined();
 	expect(reads).toBe(0);
 });
