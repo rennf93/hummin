@@ -25,6 +25,7 @@ import {
 	type DefaultProjectTrust,
 	type FullscreenExitOutput,
 	type MermaidRenderingMode,
+	type QuietStartup,
 	type TuiMode,
 	type WarningSettings,
 } from "../../../core/settings-manager.ts";
@@ -149,7 +150,7 @@ export interface SettingsConfig {
 	editorPaddingX: number;
 	outputPad: 0 | 1;
 	autocompleteMaxVisible: number;
-	quietStartup: boolean;
+	quietStartup: boolean | "header";
 	defaultProjectTrust: DefaultProjectTrust;
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
@@ -159,6 +160,7 @@ export interface SettingsConfig {
 	fullscreenExitOutput: FullscreenExitOutput;
 	fullscreenScrollbar: ScrollViewScrollbar;
 	fullscreenCopyOnSelect: boolean;
+	fullscreenWheelScrollLines: "auto" | number;
 	warnings: WarningSettings;
 	providersShowAll: boolean;
 	retryEnabled: boolean;
@@ -206,8 +208,9 @@ export interface SettingsCallbacks {
 	onMermaidRenderingModeChange: (mode: MermaidRenderingMode) => void;
 	onShowCacheMissNoticesChange: (shown: boolean) => void;
 	onCollapseChangelogChange: (collapsed: boolean) => void;
+	onFullscreenWheelScrollLinesChange: (lines: "auto" | number) => void;
 	onEnableInstallTelemetryChange: (enabled: boolean) => void;
-	onQuietStartupChange: (enabled: boolean) => void;
+	onQuietStartupChange: (quiet: QuietStartup) => void;
 	onDefaultProjectTrustChange: (defaultProjectTrust: DefaultProjectTrust) => void;
 	onDoubleEscapeActionChange: (action: "fork" | "tree" | "none") => void;
 	onTreeFilterModeChange: (mode: "default" | "no-tools" | "user-only" | "labeled-only" | "all") => void;
@@ -964,9 +967,9 @@ export class SettingsSelectorComponent extends Container {
 			{
 				id: "quiet-startup",
 				label: "Quiet startup",
-				description: "Disable verbose printing at startup",
-				currentValue: config.quietStartup ? "true" : "false",
-				values: ["true", "false"],
+				description: "Disable verbose printing at startup (header: keep only the startup header)",
+				currentValue: String(config.quietStartup),
+				values: ["true", "header", "false"],
 			},
 			{
 				id: "collapse-changelog",
@@ -1392,6 +1395,20 @@ export class SettingsSelectorComponent extends Container {
 				values: ["true", "false"],
 			},
 			{
+				id: "fullscreen-wheel-scroll-lines",
+				label: "Fullscreen wheel scrolling",
+				description:
+					"Lines per mouse-wheel event in fullscreen mode; 'auto' speeds up fast wheel spins where the terminal does not",
+				currentValue: String(config.fullscreenWheelScrollLines),
+				values: [
+					"auto",
+					...[...new Set([1, 2, 3, 5, 10, config.fullscreenWheelScrollLines])]
+						.filter((lines) => lines !== "auto")
+						.sort((a, b) => a - b)
+						.map(String),
+				],
+			},
+			{
 				id: "clear-on-shrink",
 				label: "Clear on shrink",
 				description: "Clear empty rows when content shrinks (may cause flicker)",
@@ -1557,7 +1574,7 @@ export class SettingsSelectorComponent extends Container {
 		const onChange = (id: string, newValue: string) => {
 			switch (id) {
 				case "quiet-startup":
-					callbacks.onQuietStartupChange(newValue === "true");
+					callbacks.onQuietStartupChange(newValue === "header" ? "header" : newValue === "true");
 					break;
 				case "collapse-changelog":
 					callbacks.onCollapseChangelogChange(newValue === "true");
@@ -1675,6 +1692,9 @@ export class SettingsSelectorComponent extends Container {
 					break;
 				case "fullscreen-copy-on-select":
 					callbacks.onFullscreenCopyOnSelectChange(newValue === "true");
+					break;
+				case "fullscreen-wheel-scroll-lines":
+					callbacks.onFullscreenWheelScrollLinesChange(newValue === "auto" ? "auto" : parseInt(newValue, 10));
 					break;
 				case "clear-on-shrink":
 					callbacks.onClearOnShrinkChange(newValue === "true");

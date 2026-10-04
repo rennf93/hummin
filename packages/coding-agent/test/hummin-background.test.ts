@@ -6,7 +6,7 @@ import monitorExtension from "../extensions/hummin-monitor.ts";
 import planExtension from "../extensions/hummin-plan.ts";
 import subagentExtension from "../extensions/hummin-subagents.ts";
 import { ENV_AGENT_DIR } from "../src/config.ts";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../src/index.ts";
+import type { ExtensionAPI, ExtensionToolContext, ToolDefinition } from "../src/index.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 const directories: string[] = [];
@@ -43,7 +43,7 @@ function load(extension: (pi: ExtensionAPI) => void) {
 				{ provider: "fleet-host", id: "Org/Model", reasoning: true, thinkingLevelMap: { high: "high" } },
 			],
 		},
-	} as unknown as ExtensionContext;
+	} as unknown as ExtensionToolContext;
 	return { cwd, tools, sendMessage, ctx, shutdown: () => shutdown() };
 }
 

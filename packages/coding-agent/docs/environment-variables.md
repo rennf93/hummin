@@ -8,7 +8,7 @@ hummin uses environment variables in three ways:
 
 Fork-specific `HUMMIN_*` variables are documented in [hummin Process Configuration](#hummin-process-configuration) below. Unless noted there, a `HUMMIN_*` variable overrides the corresponding settings.json value (env beats settings).
 
-Provider API-key variables are documented separately in [Provider Authentication](providers.md#use-an-api-key-from-the-environment).
+Provider API-key variables are documented separately in [Providers](providers.md#use-an-api-key-from-the-environment).
 
 ## Process Marker
 

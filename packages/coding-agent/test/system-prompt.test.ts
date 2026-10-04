@@ -157,7 +157,7 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).toContain(
 				"- When reading hummin docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory",
 			);
-			expect(prompt).toContain("environment variables (docs/environment-variables.md)");
+			expect(prompt).toContain("environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md)");
 		});
 	});
 

@@ -58,16 +58,16 @@ describe("Together models", () => {
 			thinkingFormat: "openai",
 		});
 
-		// The refreshed Together catalog dropped DeepSeek-V4-Pro; Pro-0813 keeps
-		// the together thinking format but no longer maps a high reasoning level.
-		const deepSeekV4Pro = getModel("together", "deepseek-ai/DeepSeek-V4-Pro-0813");
-		expect(deepSeekV4Pro.thinkingLevelMap).toEqual({
+		const deepSeekV4 = getModel("together", "deepseek-ai/DeepSeek-V4-Pro-0813");
+		expect(deepSeekV4.thinkingLevelMap).toEqual({
 			minimal: null,
 			low: null,
 			medium: null,
+			high: "high",
+			xhigh: null,
 		});
-		expect(deepSeekV4Pro.compat).toMatchObject({
-			supportsReasoningEffort: false,
+		expect(deepSeekV4.compat).toMatchObject({
+			supportsReasoningEffort: true,
 			thinkingFormat: "together",
 		});
 

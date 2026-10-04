@@ -328,6 +328,15 @@ export class FooterComponent implements Component {
 			const thinkingLevel = state.thinkingLevel || "off";
 			modelParts.push(theme.fg("dim", thinkingLevel === "off" ? "no thinking" : thinkingLevel));
 		}
+		// A virtual model routes each request; show where the latest response went.
+		// Appended to the last segment so the " + " joiner does not split the arrow.
+		const routed = this.session.routedModel;
+		if (routed) {
+			const routedLevel = routed.thinkingLevel ? ` \u2022 ${routed.thinkingLevel}` : "";
+			const routedText = theme.fg("dim", ` \u2192 ${routed.model.id}${routedLevel}`);
+			if (modelParts.length > 0) modelParts[modelParts.length - 1] += routedText;
+			else modelParts.push(theme.fg("dim", `\u2192 ${routed.model.id}${routedLevel}`));
+		}
 		const modelLine = modelParts.join(theme.fg("dim", " + "));
 
 		// Row 2: diff | git | tokens   |   ctx bar

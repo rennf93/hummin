@@ -106,6 +106,7 @@ import {
 } from "../../core/footer-data-provider.ts";
 import { applyHttpProxySettings, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
+import type { McpHttpServerConfig } from "../../core/mcp-servers.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
 import {
 	defaultModelPerProvider,
@@ -114,6 +115,7 @@ import {
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { DefaultPackageManager } from "../../core/package-manager.ts";
+import { RADIUS_MCP_URL, RADIUS_PROVIDER_ID } from "../../core/radius.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import {
@@ -138,10 +140,12 @@ import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { configureHttpDispatcher } from "../../core/undici-runtime.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
+import { addMcpServerConfig, loadMcpConfig } from "../../extensions/mcp/config.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
-import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
+import { copyToClipboard, readClipboardFilePaths, readClipboardText } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
+import { ensurePngTranscoder } from "../../utils/image-convert.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
@@ -160,9 +164,9 @@ import { CompactionSummaryMessageComponent } from "./components/compaction-summa
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
-import { DaxnutsComponent } from "./components/daxnuts.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
 import { EarendilAnnouncementComponent } from "./components/earendil-announcement.ts";
+import { playArmin3d } from "./components/easter-egg-3d.lazy.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
@@ -173,10 +177,12 @@ import { createMermaidMarkdownTransformer } from "./components/mermaid.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
 import {
 	type AuthSelectorProvider,
+	formatAuthSelectorProviderStatus,
 	formatAuthSelectorProviderType,
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
 import { type QueuedMessageEntry, QueueManagerComponent } from "./components/queue-manager.ts";
+import { createLoginMenuSelector } from "./components/radius-login-selector.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
@@ -258,6 +264,10 @@ export function findMarkerJumpTarget(
 /** Interface for components that can be expanded/collapsed */
 interface Expandable {
 	setExpanded(expanded: boolean): void;
+}
+
+interface ActiveEditor extends EditorComponent {
+	getCursor?(): { line: number; col: number };
 }
 
 interface WorkingStatusEditor extends EditorComponent {
@@ -466,7 +476,10 @@ type LoginProviderCompletionOption = {
 	id: string;
 	name: string;
 	authTypes: AuthSelectorProvider["authType"][];
+	subscription?: boolean;
 };
+
+const RADIUS_LOGIN_INTRO = "Radius is a service crafted for Pi by the builders of Pi, Earendil Works";
 
 const AUTH_TYPE_ORDER = { oauth: 0, api_key: 1 } satisfies Record<AuthSelectorProvider["authType"], number>;
 
@@ -498,6 +511,7 @@ function getLoginProviderCompletionOptions(
 			id: provider.id,
 			name: provider.name,
 			authTypes: [provider.authType],
+			subscription: provider.subscription,
 		});
 	}
 	return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
@@ -505,13 +519,15 @@ function getLoginProviderCompletionOptions(
 
 function getLoginProviderSearchText(provider: LoginProviderCompletionOption): string {
 	const authTypes = provider.authTypes
-		.map((authType) => `${authType} ${formatAuthSelectorProviderType(authType)}`)
+		.map((authType) => `${authType} ${formatAuthSelectorProviderType(authType, provider.subscription)}`)
 		.join(" ");
 	return `${provider.id} ${provider.name} ${authTypes}`;
 }
 
 function formatLoginProviderCompletionDescription(provider: LoginProviderCompletionOption): string {
-	const authTypes = provider.authTypes.map(formatAuthSelectorProviderType).join("/");
+	const authTypes = provider.authTypes
+		.map((authType) => formatAuthSelectorProviderType(authType, provider.subscription))
+		.join("/");
 	return provider.name === provider.id ? authTypes : `${provider.name} · ${authTypes}`;
 }
 
@@ -557,7 +573,7 @@ export class InteractiveMode {
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
 	private defaultEditor: CustomEditor;
-	private editor: EditorComponent;
+	private editor: ActiveEditor;
 	private editorComponentFactory: EditorFactory | undefined;
 	private autocompleteProvider: AutocompleteProvider | undefined;
 	private autocompleteProviderWrappers: AutocompleteProviderFactory[] = [];
@@ -725,6 +741,7 @@ export class InteractiveMode {
 			terminal: options.terminal,
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
+			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
@@ -782,7 +799,8 @@ export class InteractiveMode {
 	}
 
 	private getAutocompleteSourceTag(sourceInfo?: SourceInfo): string | undefined {
-		if (!sourceInfo) {
+		// Built-in extension commands are untagged, like built-in commands.
+		if (!sourceInfo || sourceInfo.source === "builtin") {
 			return undefined;
 		}
 
@@ -1032,6 +1050,7 @@ export class InteractiveMode {
 			terminal,
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
+			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
 		});
 		nextUi.setClearOnShrink(clearOnShrink);
 		nextUi.onDebug = onDebug;
@@ -1065,7 +1084,7 @@ export class InteractiveMode {
 		// Load changelog (only show new entries, skip for resumed sessions)
 		this.changelogMarkdown = this.getChangelogForDisplay();
 
-		if (this.session.scopedModels.length > 0 && (this.options.verbose || !this.settingsManager.getQuietStartup())) {
+		if (this.session.scopedModels.length > 0 && this.shouldShowStartupDetails()) {
 			const modelList = this.session.scopedModels
 				.map((sm) => {
 					const thinkingStr = sm.thinkingLevel ? `:${sm.thinkingLevel}` : "";
@@ -1119,6 +1138,7 @@ export class InteractiveMode {
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
 		this.ui.start();
 		this.isInitialized = true;
+		this.ensurePngTranscoder();
 
 		this.themeController.applyFromSettings();
 		// The header and startup notices bake theme colors into their text, so build them once the terminal
@@ -1189,7 +1209,7 @@ export class InteractiveMode {
 				rawKeyHint("!!", "to run bash (no context)"),
 				hint("app.message.followUp", "to queue follow-up"),
 				hint("app.message.dequeue", "to edit all queued messages"),
-				hint("app.clipboard.pasteImage", "to paste image (with text fallback)"),
+				hint("app.clipboard.pasteImage", "to paste files on macOS, images, or text"),
 				rawKeyHint("drop files", "to attach"),
 			].join("\n");
 			const compactInstructions = [
@@ -1207,7 +1227,6 @@ export class InteractiveMode {
 				1,
 				0,
 			);
-
 			// Setup UI layout
 			this.headerContainer.addChild(new Spacer(1));
 			this.headerContainer.addChild(this.builtInHeader);
@@ -1555,6 +1574,19 @@ export class InteractiveMode {
 
 	private getStartupExpansionState(): boolean {
 		return this.options.verbose || this.toolOutputExpanded;
+	}
+
+	/** hummin curation: the startup header (logo, version, key hints) is part of the
+	 * product's identity and is always shown; quietStartup only gates the loaded
+	 * resources listing (see shouldShowStartupDetails). Kept as an explicit
+	 * divergence point from upstream, which hides the header on quietStartup. */
+	shouldShowStartupHeader(): boolean {
+		return true;
+	}
+
+	/** Startup details (model scope, loaded resources). Hidden by quietStartup: true or "header". */
+	private shouldShowStartupDetails(): boolean {
+		return this.options.verbose === true || this.settingsManager.getQuietStartup() === false;
 	}
 
 	/**
@@ -1905,7 +1937,7 @@ export class InteractiveMode {
 		// Resource rendering is idempotent; chat clears no longer clear this separate container.
 		this.loadedResourcesContainer.clear();
 
-		const showListing = options?.force || this.options.verbose || !this.settingsManager.getQuietStartup();
+		const showListing = options?.force || this.shouldShowStartupDetails();
 		const showDiagnostics = showListing || options?.showDiagnosticsWhenQuiet === true;
 		if (!showListing && !showDiagnostics) {
 			return;
@@ -2181,12 +2213,22 @@ export class InteractiveMode {
 		this.transcriptScrollView?.setScrollbar(this.settingsManager.getFullscreenScrollbar());
 	}
 
+	/** Lets extension images use the PNG transcoder; tool results register it themselves. */
+	private ensurePngTranscoder(): void {
+		ensurePngTranscoder(() => {
+			this.ui.invalidate();
+			this.ui.requestRender();
+		});
+	}
+
 	private applyRuntimeSettings(): void {
 		setCapabilityOverrides(this.settingsManager.getTerminalCapabilityOverrides());
+		this.ensurePngTranscoder();
 		configureHttpDispatcher(this.settingsManager.getHttpIdleTimeoutMs());
 		this.applyFullscreenScrollbarSetting();
 		if (this.renderer instanceof TuiAltScreen) {
 			this.renderer.setCopyOnSelect(this.settingsManager.getFullscreenCopyOnSelect());
+			this.renderer.setWheelScrollLines(this.settingsManager.getFullscreenWheelScrollLines());
 		}
 		this.footer.setSession(this.session);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
@@ -2326,7 +2368,9 @@ export class InteractiveMode {
 	 * whatever this returns, so they never reach into the tool registry themselves.
 	 */
 	private getRegisteredToolDefinition(toolName: string) {
-		return withBuiltInRenderers(toolName, this.session.getToolDefinition(toolName));
+		return this.session.extensionRunner.resolveToolRenderers(toolName, () =>
+			withBuiltInRenderers(toolName, this.session.getToolDefinition(toolName)),
+		);
 	}
 
 	private getMarkdownTransformers(): MarkdownTransformer[] {
@@ -3228,8 +3272,8 @@ export class InteractiveMode {
 			}
 		};
 
-		// Handle clipboard paste (triggered on Ctrl+V). Images are attached by path;
-		// otherwise, paste plain text from the system clipboard.
+		// Handle clipboard paste (triggered on Ctrl+V). Copied files use their original paths,
+		// images are attached via temporary files, and plain text is the final fallback.
 		this.defaultEditor.onPasteImage = () => {
 			void this.handleClipboardPaste();
 		};
@@ -3251,6 +3295,23 @@ export class InteractiveMode {
 
 	private async handleClipboardPaste(): Promise<void> {
 		try {
+			const filePaths = await readClipboardFilePaths();
+			if (filePaths) {
+				if (filePaths.some((filePath) => /\p{Cc}/u.test(filePath))) {
+					throw new Error("Clipboard file path contains control characters");
+				}
+				const paths = this.isBashMode ? filePaths.map(quoteIfNeeded).join(" ") : filePaths.join("\n");
+				const cursor = this.editor.getCursor?.();
+				const currentLine = cursor ? (this.editor.getText().split("\n")[cursor.line] ?? "") : "";
+				const characterBeforeCursor = cursor && cursor.col > 0 ? currentLine[cursor.col - 1] : "";
+				const characterAfterCursor = cursor ? currentLine[cursor.col] : "";
+				const leadingSpace = characterBeforeCursor && !/\s/.test(characterBeforeCursor) ? " " : "";
+				const trailingSpace = characterAfterCursor && !/\s/.test(characterAfterCursor) ? " " : "";
+				this.editor.insertTextAtCursor?.(`${leadingSpace}${paths}${trailingSpace}`);
+				this.ui.requestRender();
+				return;
+			}
+
 			const image = await readClipboardImage();
 			if (image) {
 				const tmpDir = os.tmpdir();
@@ -3269,8 +3330,8 @@ export class InteractiveMode {
 				this.editor.insertTextAtCursor?.(text);
 				this.ui.requestRender();
 			}
-		} catch {
-			// Silently ignore clipboard errors (may not have permission, etc.)
+		} catch (error) {
+			this.showError(`Failed to paste from clipboard: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
 
@@ -3697,6 +3758,8 @@ export class InteractiveMode {
 				break;
 
 			case "tool_execution_start": {
+				// Nested calls (from codemode scripts) are shown inside their parent's row.
+				if (event.parentToolCallId) break;
 				let component = this.pendingTools.get(event.toolCallId);
 				if (!component) {
 					component = new ToolExecutionComponent(
@@ -5230,6 +5293,7 @@ export class InteractiveMode {
 					fullscreenExitOutput: this.settingsManager.getFullscreenExitOutput(),
 					fullscreenScrollbar: this.settingsManager.getFullscreenScrollbar(),
 					fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
+					fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
 					warnings: this.settingsManager.getWarnings(),
 					providersShowAll: this.settingsManager.getProvidersShowAll(),
 					retryEnabled: this.settingsManager.getRetryEnabled(),
@@ -5367,8 +5431,8 @@ export class InteractiveMode {
 					onEnableInstallTelemetryChange: (enabled) => {
 						this.settingsManager.setEnableInstallTelemetry(enabled);
 					},
-					onQuietStartupChange: (enabled) => {
-						this.settingsManager.setQuietStartup(enabled);
+					onQuietStartupChange: (quiet) => {
+						this.settingsManager.setQuietStartup(quiet);
 					},
 					onDefaultProjectTrustChange: (defaultProjectTrust) => {
 						this.settingsManager.setDefaultProjectTrust(defaultProjectTrust);
@@ -5467,6 +5531,10 @@ export class InteractiveMode {
 					onFullscreenCopyOnSelectChange: (enabled) => {
 						this.settingsManager.setFullscreenCopyOnSelect(enabled);
 						if (this.renderer instanceof TuiAltScreen) this.renderer.setCopyOnSelect(enabled);
+					},
+					onFullscreenWheelScrollLinesChange: (lines) => {
+						this.settingsManager.setFullscreenWheelScrollLines(lines);
+						if (this.renderer instanceof TuiAltScreen) this.renderer.setWheelScrollLines(lines);
 					},
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
@@ -5623,7 +5691,6 @@ export class InteractiveMode {
 				this.updateEditorBorderColor();
 				this.showStatus(`Model: ${model.id}`);
 				void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
-				this.checkDaxnutsEasterEgg(model);
 			} catch (error) {
 				this.showError(error instanceof Error ? error.message : String(error));
 			}
@@ -5769,7 +5836,6 @@ export class InteractiveMode {
 					done();
 					this.showStatus(persist ? `Default model: ${model.provider}/${model.id}` : `Model: ${model.id}`);
 					void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
-					this.checkDaxnutsEasterEgg(model);
 				} catch (error) {
 					done();
 					this.showError(error instanceof Error ? error.message : String(error));
@@ -6342,6 +6408,7 @@ export class InteractiveMode {
 						source: authStatus.label ?? authStatus.source,
 					}
 				: undefined;
+			const subscription = provider.auth.oauth?.isSubscription === true;
 			if ((!authType || authType === "oauth") && provider.auth.oauth) {
 				options.push({
 					id: provider.id,
@@ -6349,6 +6416,7 @@ export class InteractiveMode {
 					authType: "oauth",
 					method: provider.auth.oauth,
 					status,
+					subscription,
 				});
 			}
 			if ((!authType || authType === "api_key") && provider.auth.apiKey) {
@@ -6358,6 +6426,7 @@ export class InteractiveMode {
 					authType: "api_key",
 					method: provider.auth.apiKey,
 					status,
+					subscription,
 				});
 			}
 		}
@@ -6376,12 +6445,16 @@ export class InteractiveMode {
 
 	private async getLogoutProviderOptions(): Promise<AuthSelectorProvider[]> {
 		return (await this.session.modelRuntime.listCredentials({ signal: AbortSignal.timeout(15_000) }))
-			.map(({ providerId, type }) => ({
-				id: providerId,
-				name: this.session.modelRuntime.getProvider(providerId)?.name ?? providerId,
-				authType: type,
-				status: { type, source: "stored credential" },
-			}))
+			.map(({ providerId, type }) => {
+				const provider = this.session.modelRuntime.getProvider(providerId);
+				return {
+					id: providerId,
+					name: provider?.name ?? providerId,
+					authType: type,
+					status: { type, source: "stored credential" },
+					subscription: provider?.auth.oauth?.isSubscription === true,
+				};
+			})
 			.sort((a, b) => a.name.localeCompare(b.name));
 	}
 
@@ -6421,17 +6494,24 @@ export class InteractiveMode {
 		this.showLoginProviderSelector(undefined, providerRef);
 	}
 
-	private async startProviderLogin(providerOption: AuthSelectorProvider): Promise<void> {
+	/** `onBack` reopens the selector the login was started from when the user cancels it. */
+	private async startProviderLogin(providerOption: AuthSelectorProvider, onBack?: () => void): Promise<void> {
 		if (providerOption.authType === "oauth") {
-			await this.showLoginDialog(providerOption.id, providerOption.name);
+			await this.showLoginDialog(providerOption.id, providerOption.name, onBack);
 		} else if (providerOption.method?.login) {
-			await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
+			await this.showApiKeyLoginDialog(providerOption.id, providerOption.name, onBack);
 		} else {
-			this.showAmbientAuthDialog(providerOption);
+			this.showAmbientAuthDialog(providerOption, onBack);
 		}
 	}
 
 	private showLoginAuthTypeSelector(providerOptions?: AuthSelectorProvider[]): void {
+		// The top-level selector offers Radius directly, as its last option.
+		const radiusOption = providerOptions
+			? undefined
+			: this.getLoginProviderOptions("oauth").find((provider) => provider.id === RADIUS_PROVIDER_ID);
+		const radiusText = radiusOption ? `Sign in with ${radiusOption.name}` : undefined;
+		const radiusLabel = radiusOption ? `${radiusText}${formatAuthSelectorProviderStatus(radiusOption)}` : undefined;
 		const oauthProvider = providerOptions?.find((provider) => provider.authType === "oauth");
 		const oauthLoginLabel =
 			oauthProvider?.method && "loginLabel" in oauthProvider.method ? oauthProvider.method.loginLabel : undefined;
@@ -6447,6 +6527,7 @@ export class InteractiveMode {
 		if (availableAuthTypes.has("api_key")) {
 			options.push(apiKeyLabel);
 		}
+		if (radiusLabel) options.push(radiusLabel);
 
 		if (options.length === 0) {
 			this.showStatus("No login methods available.");
@@ -6465,27 +6546,38 @@ export class InteractiveMode {
 			? `Select authentication method for ${providerOptions[0].name}:`
 			: "Select authentication method:";
 		this.showSelector((done) => {
-			const selector = new ExtensionSelectorComponent(
-				title,
-				options,
-				(option) => {
-					done();
-					const authType = option === subscriptionLabel ? "oauth" : "api_key";
-					if (providerOptions) {
-						const providerOption = providerOptions.find((provider) => provider.authType === authType);
-						if (providerOption) {
-							void this.startProviderLogin(providerOption);
-						}
-						return;
+			const onSelect = (option: string) => {
+				done();
+				if (radiusOption && option === radiusLabel) {
+					void this.startProviderLogin(radiusOption, () => this.showLoginAuthTypeSelector());
+					return;
+				}
+				const authType = option === subscriptionLabel ? "oauth" : "api_key";
+				if (providerOptions) {
+					const providerOption = providerOptions.find((provider) => provider.authType === authType);
+					if (providerOption) {
+						void this.startProviderLogin(providerOption, () => this.showLoginAuthTypeSelector(providerOptions));
 					}
-					this.showLoginProviderSelector(authType);
-				},
-				() => {
-					done();
-					this.ui.requestRender();
-				},
-			);
-			return { component: selector, focus: selector };
+					return;
+				}
+				this.showLoginProviderSelector(authType);
+			};
+			const onCancel = () => {
+				done();
+				this.ui.requestRender();
+			};
+			const selector =
+				radiusLabel && radiusText
+					? createLoginMenuSelector(
+							this.ui,
+							title,
+							options,
+							{ label: radiusLabel, text: radiusText },
+							onSelect,
+							onCancel,
+						)
+					: new ExtensionSelectorComponent(title, options, onSelect, onCancel);
+			return { component: selector, focus: selector, dispose: () => selector.dispose() };
 		});
 	}
 
@@ -6494,7 +6586,7 @@ export class InteractiveMode {
 		if (providerOptions.length === 0) {
 			const message =
 				authType === "oauth"
-					? "No subscription providers available."
+					? "No account providers available."
 					: authType === "api_key"
 						? "No API key providers available."
 						: "No login providers available.";
@@ -6516,7 +6608,9 @@ export class InteractiveMode {
 						return;
 					}
 
-					await this.startProviderLogin(providerOption);
+					await this.startProviderLogin(providerOption, () =>
+						this.showLoginProviderSelector(authType, initialSearchInput),
+					);
 				},
 				() => {
 					done();
@@ -6647,7 +6741,6 @@ export class InteractiveMode {
 			if (selectedModel) {
 				this.showStatus(`${actionLabel}. Selected ${selectedModel.id}. Credentials saved to ${getAuthPath()}`);
 				void this.maybeWarnAboutAnthropicSubscriptionAuth(selectedModel);
-				this.checkDaxnutsEasterEgg(selectedModel);
 			} else {
 				this.showStatus(`${actionLabel}. Credentials saved to ${getAuthPath()}`);
 				if (selectionError) {
@@ -6689,7 +6782,7 @@ export class InteractiveMode {
 			.finally(() => clearTimeout(timeout));
 	}
 
-	private showAmbientAuthDialog(providerOption: AuthSelectorProvider): void {
+	private showAmbientAuthDialog(providerOption: AuthSelectorProvider, onBack?: () => void): void {
 		const restoreEditor = () => {
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.editor);
@@ -6700,7 +6793,10 @@ export class InteractiveMode {
 		const dialog = new LoginDialogComponent(
 			this.ui,
 			providerOption.id,
-			() => restoreEditor(),
+			() => {
+				restoreEditor();
+				onBack?.();
+			},
 			providerOption.name,
 			`${providerOption.name} setup`,
 		);
@@ -6716,7 +6812,7 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private async showApiKeyLoginDialog(providerId: string, providerName: string): Promise<void> {
+	private async showApiKeyLoginDialog(providerId: string, providerName: string, onBack?: () => void): Promise<void> {
 		const previousModel = this.session.model;
 
 		const dialog = new LoginDialogComponent(
@@ -6759,7 +6855,9 @@ export class InteractiveMode {
 				this.showError(
 					`Saved API key for ${providerName}, but local model state could not be synchronized: ${errorMsg}`,
 				);
-			} else if (errorMsg !== "Login cancelled") {
+			} else if (errorMsg === "Login cancelled") {
+				onBack?.();
+			} else {
 				this.showError(`Failed to save API key for ${providerName}: ${errorMsg}`);
 			}
 		}
@@ -6768,6 +6866,7 @@ export class InteractiveMode {
 	private showAuthSelect(
 		dialog: LoginDialogComponent,
 		prompt: Extract<AuthPrompt, { type: "select" }>,
+		providerId: string,
 	): Promise<string> {
 		return new Promise((resolve, reject) => {
 			const restoreDialog = () => {
@@ -6790,6 +6889,7 @@ export class InteractiveMode {
 					restoreDialog();
 					reject(new Error("Login cancelled"));
 				},
+				{ description: providerId === RADIUS_PROVIDER_ID ? RADIUS_LOGIN_INTRO : undefined },
 			);
 			this.editorContainer.clear();
 			this.editorContainer.addChild(selector);
@@ -6798,10 +6898,10 @@ export class InteractiveMode {
 		});
 	}
 
-	private async showAuthPrompt(dialog: LoginDialogComponent, prompt: AuthPrompt): Promise<string> {
+	private async showAuthPrompt(dialog: LoginDialogComponent, prompt: AuthPrompt, providerId: string): Promise<string> {
 		let response: Promise<string>;
 		if (prompt.type === "select") {
-			response = this.showAuthSelect(dialog, prompt);
+			response = this.showAuthSelect(dialog, prompt, providerId);
 		} else if (prompt.type === "manual_code") {
 			response = dialog.showManualInput(prompt.message);
 		} else {
@@ -6840,14 +6940,19 @@ export class InteractiveMode {
 		providerId: string,
 		method: "api_key" | "oauth",
 	): Promise<void> {
-		await this.session.modelRuntime.login(providerId, method, {
-			signal: dialog.signal,
-			prompt: (prompt) => this.showAuthPrompt(dialog, prompt),
-			notify: (event) => this.notifyAuthDialog(dialog, event),
-		});
+		await this.session.modelRuntime.login(
+			providerId,
+			method,
+			{
+				signal: dialog.signal,
+				prompt: (prompt) => this.showAuthPrompt(dialog, prompt, providerId),
+				notify: (event) => this.notifyAuthDialog(dialog, event),
+			},
+			{ getDeviceId: () => this.settingsManager.getOrCreateDeviceId() },
+		);
 	}
 
-	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {
+	private async showLoginDialog(providerId: string, providerName: string, onBack?: () => void): Promise<void> {
 		const previousModel = this.session.model;
 		const dialog = new LoginDialogComponent(this.ui, providerId, (_success, _message) => {}, providerName);
 		this.editorContainer.clear();
@@ -6866,6 +6971,7 @@ export class InteractiveMode {
 			await this.loginProvider(dialog, providerId, "oauth");
 			restoreEditor();
 			await this.completeProviderAuthentication(providerId, providerName, "oauth", previousModel);
+			if (providerId === RADIUS_PROVIDER_ID) this.offerRadiusMcpServer(providerId, providerName);
 		} catch (error: unknown) {
 			restoreEditor();
 			const errorMsg = error instanceof Error ? error.message : String(error);
@@ -6873,10 +6979,65 @@ export class InteractiveMode {
 				this.showError(
 					`Logged in to ${providerName}, but local model state could not be synchronized: ${errorMsg}`,
 				);
-			} else if (errorMsg !== "Login cancelled") {
+			} else if (errorMsg === "Login cancelled") {
+				onBack?.();
+			} else {
 				this.showError(`Failed to login to ${providerName}: ${errorMsg}`);
 			}
 		}
+	}
+
+	/**
+	 * Offer to point the Radius MCP server in the global mcp.json at the Radius login, adding the server
+	 * when missing. Nothing is asked when a global server already uses this login.
+	 */
+	private offerRadiusMcpServer(providerId: string, providerName: string): void {
+		const mcpPath = path.join(getAgentDir(), "mcp.json");
+		const normalizeUrl = (url: string) => url.replace(/\/+$/u, "");
+		const { servers } = loadMcpConfig({
+			agentDir: getAgentDir(),
+			cwd: this.sessionManager.getCwd(),
+			projectTrusted: false,
+		});
+		const existing = servers.find(
+			(server) => "url" in server.config && normalizeUrl(server.config.url) === normalizeUrl(RADIUS_MCP_URL),
+		);
+		if (existing && "url" in existing.config && existing.config.auth?.provider === providerId) return;
+
+		let name = existing?.name ?? "radius";
+		if (!existing && servers.some((server) => server.name === name)) name = "radius-mcp";
+		const config: McpHttpServerConfig =
+			existing && "url" in existing.config
+				? { ...existing.config, auth: { provider: providerId } }
+				: { url: RADIUS_MCP_URL, auth: { provider: providerId } };
+		// `auth` replaces the MCP OAuth sign-in.
+		delete config.oauth;
+
+		this.showSelector((done) => {
+			const selector = new ExtensionSelectorComponent(
+				`Configure ${providerName} MCP in ${mcpPath}?`,
+				["Yes", "No"],
+				(option) => {
+					done();
+					if (option !== "Yes") return;
+					try {
+						addMcpServerConfig(mcpPath, name, config);
+					} catch (error: unknown) {
+						this.showError(
+							`Could not update ${mcpPath}: ${error instanceof Error ? error.message : String(error)}`,
+						);
+						return;
+					}
+					// The MCP extension reads mcp.json when the session starts.
+					void this.handleReloadCommand();
+				},
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+			);
+			return { component: selector, focus: selector };
+		});
 	}
 
 	// =========================================================================
@@ -7176,6 +7337,8 @@ export class InteractiveMode {
 		// Snapshot the stats; the text is built on demand so it follows theme changes.
 		const cacheWarmingStatus = this.session.cacheWarmingStatus;
 		const cacheWarmingMode = this.settingsManager.getCacheWarmingMode();
+		const model = this.session.model;
+		const selectedModelKey = `${model?.provider}/${model?.id}`;
 		const renderInfo = (): string => {
 			let info = `${theme.bold("Session Info")}\n\n`;
 			if (sessionName) {
@@ -7218,7 +7381,8 @@ export class InteractiveMode {
 			if (stats.cost > 0 || cacheWaste.missedTokens > 0) {
 				info += `\n${theme.bold("Cost")}\n`;
 				info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}`;
-				if (usageBreakdown.length > 1) {
+				// A single entry repeats the total, unless it names a model other than the selected one.
+				if (usageBreakdown.length > 1 || usageBreakdown[0]?.key !== selectedModelKey) {
 					for (const entry of usageBreakdown) {
 						info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
 					}
@@ -7361,7 +7525,7 @@ export class InteractiveMode {
 | \`${copyMessage}\` | Copy selection or last assistant message |
 | \`${followUp}\` | Queue follow-up message |
 | \`${dequeue}\` | Restore queued messages |
-| \`${pasteImage}\` | Paste image or text from clipboard |
+| \`${pasteImage}\` | Paste files on macOS, images, or text from clipboard |
 | \`/\` | Slash commands |
 | \`!\` | Run bash command |
 | \`!!\` | Run bash command (excluded from context) |
@@ -7525,6 +7689,7 @@ export class InteractiveMode {
 	}
 
 	private handleArminSaysHi(): void {
+		if (playArmin3d(this.renderer)) return;
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new ArminComponent(this.ui));
 		this.ui.requestRender();
@@ -7534,18 +7699,6 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new EarendilAnnouncementComponent());
 		this.ui.requestRender();
-	}
-
-	private handleDaxnuts(): void {
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new DaxnutsComponent(this.ui));
-		this.ui.requestRender();
-	}
-
-	private checkDaxnutsEasterEgg(model: { provider: string; id: string }): void {
-		if (model.provider === "opencode" && model.id.toLowerCase().includes("kimi-k2.5")) {
-			this.handleDaxnuts();
-		}
 	}
 
 	private async handleBashCommand(command: string, excludeFromContext = false): Promise<void> {
