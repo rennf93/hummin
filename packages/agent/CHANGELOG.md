@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Removed the experimental harness from `@earendil-works/pi-agent-core`: `AgentHarness`, sessions and session storage, the durable runtime, pico3, harness tools, compaction, skills, prompt templates, system prompt helpers, telemetry schemas, the search service types, and the `uuidv7` and telemetry re-exports. The `./node`, `./harness/*`, and `./experimental/pico3` subpath exports are gone. The package now contains only `Agent`, the agent loop, the proxy stream, and their types. Use `@earendil-works/pi-durable` for durable sessions.
+
 ## [1.2.10] - 2026-09-28
 
 ## [1.2.9] - 2026-09-28

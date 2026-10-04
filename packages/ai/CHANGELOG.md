@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added per-thinking-level sampling parameter overrides (`samplingParamsByThinkingLevel`) for `openai-completions`, `openai-responses`, and `azure-openai-responses` requests ([#9776](https://github.com/earendil-works/pi/pull/9776) by [@mrexodia](https://github.com/mrexodia)).
+- Added Cloudflare's Clef and Clef Flash classifier models (`@cf/cloudflare/clef`, `@cf/cloudflare/clef-flash`) to the `cloudflare-workers-ai` provider ([#10316](https://github.com/earendil-works/pi/pull/10316) by [@ndisidore](https://github.com/ndisidore)).
+- Added Anthropic workload identity federation from the SDK environment variables `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, and `ANTHROPIC_IDENTITY_TOKEN_FILE` (plus optional `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_WORKSPACE_ID`); API keys and `ANTHROPIC_AUTH_TOKEN` take precedence ([#10242](https://github.com/earendil-works/pi/pull/10242) by [@philfreo](https://github.com/philfreo)).
+- Added the lightweight `@earendil-works/pi-ai/models` entry point for model collections and provider construction without loading TypeBox, built-in catalogs, or provider SDKs.
+- Added GPT-6.1 Sol (`gpt-6.1-sol`) to the OpenAI, Azure OpenAI Responses, and OpenAI Codex providers; it is now the default Codex model.
+- Added Claude Sonnet 5.5 for Anthropic with adaptive thinking and a 1M context window.
+- Added Jev classifier models on Vercel AI Gateway and OpenCode Zen through their TypeSafe-compatible System One endpoints.
+- Added `usage` to `ClassifierResult`: System One classifications report token counts, priced from the model catalog like chat usage.
+- Added a copy code login method to Anthropic OAuth for headless setups ([#10194](https://github.com/earendil-works/pi/pull/10194) by [@lucasmeijer](https://github.com/lucasmeijer)).
+
+### Changed
+
+- Anthropic models with native mid-conversation tool changes now use the `inline-tools-2026-09-15` beta: later tools are defined by value in `tool_addition` blocks instead of being appended to the top-level tool list, so redefining a tool under the same name no longer resends the full tool list and the prompt cache survives it. Upgraded `@anthropic-ai/sdk` to 0.129.0 and deprecated `hasToolRedefinitions()`.
+
+### Fixed
+
+- Fixed Amazon Bedrock Claude requests failing with "Invalid `signature` in `thinking` block" after the system prompt or tools changed; Claude Opus 4.7+, Sonnet 5+, and Fable 5 now drop stale thinking blocks like the Anthropic provider ([#10324](https://github.com/earendil-works/pi/issues/10324)).
+- Fixed OpenAI Responses requests failing with `Expected an ID that begins with 'ctc'` when replaying grammar tool calls, such as `codemode`, from another provider or gateway.
+- Fixed OpenAI Responses requests running unfinished tool calls from a previous response instead of rejecting them.
+- Fixed context overflow detection for Z.AI CN endpoint `Prompt exceeds max length` errors ([#10208](https://github.com/earendil-works/pi/issues/10208)).
+- Fixed Anthropic requests failing when a tool schema uses keywords Anthropic strict tool use rejects, such as `minimum`/`maximum`; such tools are now sent non-strict ([#9953](https://github.com/earendil-works/pi/issues/9953)).
+- Fixed provider retries firing immediately when a `Retry-After` header contains an unparseable date; they now use exponential backoff ([#9571](https://github.com/earendil-works/pi/issues/9571)).
+- Fixed "Selected model is at capacity" provider errors ending the turn instead of being retried ([#10278](https://github.com/earendil-works/pi/issues/10278)).
+- Fixed Cloudflare AI Gateway Claude models failing with a 404 by using dashed model IDs (`claude-opus-5-5`), which Anthropic requires.
+- Fixed Amazon Bedrock OpenAI models costing requests above 272k input tokens at the short-context rate; Bedrock models now include the pricing tiers listed on models.dev ([#10326](https://github.com/earendil-works/pi/issues/10326)).
+- Fixed Together DeepSeek V4 Pro losing its thinking level controls after Together renamed it to `deepseek-ai/DeepSeek-V4-Pro-0813` ([#10336](https://github.com/earendil-works/pi/pull/10336) by [@cv](https://github.com/cv)).
+- Fixed Sign in with ChatGPT continuing when its callback port is taken by another login; it now fails with a port-in-use error ([#10265](https://github.com/earendil-works/pi/issues/10265)).
+
 ## [1.2.10] - 2026-09-28
 
 ### Added

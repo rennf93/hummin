@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The package now tracks the rewritten upstream durable runtime: a durable task runtime with an openable Harness (registry and conversation config), first chat and tool turns, conversation abort with ownership cascades and subagent handles, structured concurrency (task ownership, waiting and completing holds, bottom-up abort), asynchronous SQLite storage (queries executed by SQL text with per-connection statement caching, transaction handles for callbacks), compaction and overflow, extensions and per-conversation agents, lifecycle conformance, and a task graph view. Distinct provider session identities are persisted per conversation and forwarded for prompt-cache and session affinity.
+
 ## [1.2.10] - 2026-09-28
 
 ### Added
