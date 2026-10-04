@@ -80,6 +80,7 @@ import {
 	validateExtensionProvider,
 } from "./provider-composer.ts";
 import { withRemoteCatalog } from "./remote-catalog-provider.ts";
+import { type ReplayTrimSettings, resolveReplayTrimSettings, trimReplayContext } from "./replay-trim.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
 import {
 	createVirtualModel,
@@ -193,6 +194,25 @@ export class ModelRuntime implements Models {
 	private readonly providerAvailabilitySeq = new Map<string, number>();
 	private availabilityError: string | undefined;
 	private readonly credentialOperations = new Map<string, Promise<unknown>>();
+	/** hummin: live settings source for replay trimming; unset = no trimming. */
+	private replayTrimSettingsSource: (() => ReplayTrimSettings | undefined) | undefined;
+
+	/**
+	 * hummin: register a live settings source for replay trimming (see
+	 * replay-trim.ts). Re-read per request, so settings changes apply without a
+	 * restart. Unset/unavailable settings disable trimming.
+	 */
+	setReplayTrimSettingsSource(source: (() => ReplayTrimSettings | undefined) | undefined): void {
+		this.replayTrimSettingsSource = source;
+	}
+
+	private applyReplayTrim<T extends Context>(transcript: T, model: Model<Api>): T {
+		// Unwired runtimes keep exact upstream behavior; wired runtimes trim even
+		// when the settings key is absent (resolveReplayTrimSettings applies the
+		// defaults: thinking strip and tool-result pruning both on).
+		if (!this.replayTrimSettingsSource) return transcript;
+		return trimReplayContext(transcript, model.api, resolveReplayTrimSettings(this.replayTrimSettingsSource()));
+	}
 
 	private constructor(
 		credentials: RuntimeCredentials,
@@ -700,7 +720,11 @@ export class ModelRuntime implements Models {
 				model,
 				options as (StreamOptions & ModelsRequestTransforms) | undefined,
 			);
-			return prepared.provider.stream(prepared.model, transcript, prepared.options as ApiStreamOptions<TApi>);
+			return prepared.provider.stream(
+				prepared.model,
+				this.applyReplayTrim(transcript, model),
+				prepared.options as ApiStreamOptions<TApi>,
+			);
 		});
 	}
 
@@ -736,7 +760,11 @@ export class ModelRuntime implements Models {
 		return lazyStream(model, async () => {
 			assertChatModel(model);
 			const prepared = await this.prepareRequest(model, options);
-			return prepared.provider.streamSimple(prepared.model, transcript, prepared.options as SimpleStreamOptions);
+			return prepared.provider.streamSimple(
+				prepared.model,
+				this.applyReplayTrim(transcript, model),
+				prepared.options as SimpleStreamOptions,
+			);
 		});
 	}
 

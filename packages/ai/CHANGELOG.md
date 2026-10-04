@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Exported `isOpenAICompletionsReasoningField` from `api/openai-completions` (subpath import) so consumers can classify thinking-block signatures that replay as plain reasoning fields.
+
 ## [1.3.1] - 2026-10-04
 
 ## [1.3.0] - 2026-10-04

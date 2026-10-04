@@ -15,6 +15,7 @@ import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
+import type { ReplayTrimSettings } from "./replay-trim.ts";
 import {
 	resolveNotificationChannel,
 	resolveNotificationWhen,
@@ -261,6 +262,15 @@ export interface Settings {
 	messageTimestamps?: boolean;
 	/** Compact prompt mode: condense tool descriptions and system-prompt guidance to cut fixed prompt overhead (useful for slow-prefill local models). */
 	compactPrompt?: boolean;
+	/** hummin: trim resent context on every LLM request. Completed turns (everything
+	 * before the latest user message) are rewritten per request: replayed reasoning
+	 * blocks are dropped and old tool results are pruned to head+marker+tail (set
+	 * replayTrim.toolResults: false for lossless replay). Session history is never
+	 * modified - only what goes over the wire. Thinking blocks that carry
+	 * structured/encrypted replay signatures and the active tool loop always pass
+	 * through, and endpoints that require the reasoning field get an empty one
+	 * re-added by the AI layer. Default: { thinking: true, toolResults: true }. */
+	replayTrim?: ReplayTrimSettings;
 	theme?: string;
 	compaction?: CompactionSettings;
 	branchSummary?: BranchSummarySettings;

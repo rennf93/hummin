@@ -274,7 +274,7 @@ const OPENAI_COMPLETIONS_REASONING_FIELDS = ["reasoning", "reasoning_content", "
 
 type OpenAICompletionsReasoningField = (typeof OPENAI_COMPLETIONS_REASONING_FIELDS)[number];
 
-function isOpenAICompletionsReasoningField(field: string): field is OpenAICompletionsReasoningField {
+export function isOpenAICompletionsReasoningField(field: string): field is OpenAICompletionsReasoningField {
 	return OPENAI_COMPLETIONS_REASONING_FIELDS.includes(field as OpenAICompletionsReasoningField);
 }
 
