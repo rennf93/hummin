@@ -12,30 +12,11 @@ name: Nix
 # systems build, the stable branch is fast-forwarded to the tag so that
 # `nix run github:earendil-works/pi/stable` runs the latest release.
 
+# hummin: gated to manual dispatch. The flake has never been exercised against
+# the fork's dependency tree (importNpmLock's offline install fails on it), and
+# upstream's tag/catalog/schedule triggers would run it against a tree it
+# cannot build. Revert this `on:` block to upstream's to re-enable.
 on:
-  push:
-    tags:
-      - 'v*.*.*'
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/nix.yml'
-      - 'flake.lock'
-      - 'flake.nix'
-      - 'nix/**'
-      - 'package-lock.json'
-      - 'packages/*/package.json'
-      - 'packages/coding-agent/install-lock/**'
-      - 'packages/ai/scripts/hydrate-model-catalog.ts'
-      - 'scripts/update-model-catalog-pin.mjs'
-  workflow_run:
-    workflows:
-      - Publish Model Catalog
-    types:
-      - completed
-  # Catches packaging drift from changes pushed to main without a pull request.
-  schedule:
-    - cron: '43 5 * * *'
   workflow_dispatch:
 
 permissions: {}
