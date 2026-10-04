@@ -254,7 +254,12 @@ export function resolveDecisionEngine(cwd: string = process.cwd()): DecisionEngi
 	// legacy HUMMIN_LAYA_URL names the laya engine specifically, so it must
 	// not leak into clef/jev URL resolution.
 	const url = envStr("HUMMIN_DECISION_URL") ?? (id === "laya" ? envStr("HUMMIN_LAYA_URL") : undefined) ?? str(override.url) ?? base.url;
-	const apiKey = envStr("HUMMIN_DECISION_API_KEY") ?? str(override.apiKey) ?? envStr("COLI_API_KEY") ?? base.apiKey;
+	// COLI_API_KEY is the legacy shared credential for the LOCAL fleet engines
+	// (laya/clef). It must never be sent to a hosted endpoint: selecting jev
+	// would otherwise attach a local fleet secret to every remote read. Hosted
+	// auth is explicit: HUMMIN_DECISION_API_KEY or decision.jev.apiKey.
+	const legacyFleetKey = id === "jev" ? undefined : envStr("COLI_API_KEY");
+	const apiKey = envStr("HUMMIN_DECISION_API_KEY") ?? str(override.apiKey) ?? legacyFleetKey ?? base.apiKey;
 	const gateThreshold = clamp01(envStr("HUMMIN_DECISION_GATE_THRESHOLD")) ?? legacy.gateThreshold ?? clamp01(override.gateThreshold) ?? base.gateThreshold;
 	const steerThreshold = clamp01(envStr("HUMMIN_DECISION_STEER_THRESHOLD")) ?? legacy.steerThreshold ?? clamp01(override.steerThreshold) ?? base.steerThreshold;
 	const triageThreshold = clamp01(envStr("HUMMIN_DECISION_TRIAGE_THRESHOLD")) ?? clamp01(override.triageThreshold) ?? base.triageThreshold;

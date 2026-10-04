@@ -63,6 +63,7 @@ interface Answer {
 }
 
 interface Sys1Response {
+	model?: string;
 	answers?: Record<string, Answer>;
 	routing?: { model?: string };
 }
@@ -410,6 +411,19 @@ async function warmEngine(config: DecisionEngineConfig): Promise<void> {
 	} catch {
 		// best-effort: leave the flag clear so a later call can retry the load
 	}
+}
+
+/** The engine-reported answer confidence. Laya serves answer_confidence /
+ * confidence on every answer; the Mac MLX clef instance serves confidence on
+ * choice/score but ONLY {type, noul} on noul answers, so fall back to the
+ * sure mass max(noul, 1-noul) there. Without this, noul-only decide reads on
+ * clef would audit nothing and could never trigger the low-confidence note. */
+function answerConfidence(a: Answer | undefined): number | undefined {
+	if (!a) return undefined;
+	if (typeof a.answer_confidence === "number") return a.answer_confidence;
+	if (typeof a.confidence === "number") return a.confidence;
+	if (typeof a.noul === "number") return Math.max(a.noul, 1 - a.noul);
+	return undefined;
 }
 
 function formatAnswer(name: string, q: QuestionInput, a: Answer): string {
@@ -788,7 +802,7 @@ export default function humminSys1(pi: ExtensionAPI): void {
 			}
 			const weakest = Math.min(
 				...params.questions
-					.map((q) => payload.answers?.[q.name]?.answer_confidence ?? payload.answers?.[q.name]?.confidence)
+					.map((q) => answerConfidence(payload.answers?.[q.name]))
 					.filter((c): c is number => typeof c === "number"),
 			);
 			// For the multi-question tool read, the audited p is the weakest
@@ -799,9 +813,12 @@ export default function humminSys1(pi: ExtensionAPI): void {
 					`note: weakest answer confidence ${pct(weakest)} is below ${pct(LOW_CONFIDENCE)}; weigh your own judgment and the state text more than the engine here`,
 				);
 			}
-			if (payload.routing?.model) {
-				lines.push(`(sys1 engine ${engine.id}: ${payload.routing.model})`);
-			}
+		// laya serves the serving model under routing.model; clef serves it at
+		// the top level. Prefer routing for parity, fall back to model.
+		const servedModel = payload.routing?.model ?? payload.model;
+		if (servedModel) {
+			lines.push(`(sys1 engine ${engine.id}: ${servedModel})`);
+		}
 			return { content: [{ type: "text", text: lines.join("\n") }], details: {} };
 		},
 	});

@@ -11,6 +11,13 @@
 ### Changed
 
 - Renamed the `laya_decide` tool to `sys1_decide` so the second-opinion tool stays generic across the laya, clef, and jev engines. The `HUMMIN_LAYA_*` kill switches and URL/threshold envs keep working as legacy aliases of the `HUMMIN_SYS1_*`/`HUMMIN_DECISION_*` names (right-size switches included); the legacy laya URL and threshold envs steer the laya engine only. The extension file, gate helpers, friction types, settings namespaces (`rightSize`, `sys1Gate`), and test files drop their laya prefixes; the flat `layaGateThreshold`/`layaSteerThreshold` settings keys and the `layaGate`/`layaRightSize` namespaces stay as read fallbacks.
+- `COLI_API_KEY` no longer applies to the hosted jev engine (it remains the legacy shared credential for the local laya/clef fleet). Hosted auth is explicit: `HUMMIN_DECISION_API_KEY` or `decision.jev.apiKey`. A local fleet secret was previously attached to every remote read.
+
+### Fixed
+
+- `sys1_decide` noul answers that carry no confidence field (the Mac MLX clef instance serves `{type, noul}` only) now audit a `decide` read and feed the weakest-confidence signal via the sure mass `max(noul, 1-noul)` instead of auditing nothing. The sub-50% trust note stays reserved for engines that report a confidence.
+- The `sys1_decide` result now names the serving model on engines that report it at the top level (clef) instead of only via `routing.model` (laya).
+- Background `exec`/`monitor` spawns no longer fail with `check is not a function` when the deployed extension dir mixes rename-era files: the deployed `lib/shell-gate.ts` still imported `layaGateCheck` from the retired `hummin-laya.ts` stub. (Deployment sync fix; the repo copy was already correct.)
 
 ## [1.2.10] - 2026-09-28
 

@@ -408,6 +408,28 @@ test("state is truncated to 50k chars and the weakest confidence is audited", as
 	expect(lines.at(-1)).toMatchObject({ type: "read", kind: "decide", p: 0.8 });
 });
 
+test("clef-shaped noul answers audit via the sure-mass fallback and name the served model", async () => {
+	// Found by live probing 2026-10: the Mac MLX clef instance serves noul
+	// answers as {type, noul} with NO confidence field, and the served model at
+	// the top level instead of routing.model. Before the fallback, noul-only
+	// decide reads on clef audited nothing; the attribution line never rendered.
+	stubFetch(() =>
+		okResponse({
+			model: "clef-flash-4bit",
+			answers: { risky: { type: "noul", noul: 0.2 } },
+		}),
+	);
+	const pi = register();
+	const result = await decideTool(pi).execute("t1", {
+		state: "s",
+		questions: [{ name: "risky", type: "noul", instructions: "i" }],
+	});
+	expect(result.content[0]?.text).toContain("risky: P(true) 0.200 -> lean no (80% sure)");
+	expect(result.content[0]?.text).toContain("(sys1 engine laya: clef-flash-4bit)");
+	const lines = await auditLines();
+	expect(lines.at(-1)).toMatchObject({ type: "read", kind: "decide", p: 0.8 });
+});
+
 // --- Per-turn steering ---------------------------------------------------------
 
 const steerEvent = (prompt: string) => ({

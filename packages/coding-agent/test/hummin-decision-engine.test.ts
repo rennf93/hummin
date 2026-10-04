@@ -149,10 +149,18 @@ test("out-of-range env thresholds are ignored, not trusted", () => {
 	expect(resolveDecisionEngine().gateThreshold).toBe(0.75);
 });
 
-test("COLI_API_KEY is the shared fleet key for every engine", () => {
+test("COLI_API_KEY is the legacy fleet key for local engines, never for hosted jev", () => {
 	process.env.COLI_API_KEY = "shared-key";
 	process.env.HUMMIN_DECISION_ENGINE = "clef";
 	expect(resolveDecisionEngine().apiKey).toBe("shared-key");
+	delete process.env.HUMMIN_DECISION_ENGINE;
+	expect(resolveDecisionEngine().apiKey).toBe("shared-key");
+	// A local fleet credential must not leak to a hosted endpoint.
+	process.env.HUMMIN_DECISION_ENGINE = "jev";
+	expect(resolveDecisionEngine().apiKey).toBe("");
+	// Hosted auth stays explicit.
+	process.env.HUMMIN_DECISION_API_KEY = "jev-key";
+	expect(resolveDecisionEngine().apiKey).toBe("jev-key");
 });
 
 test("sys1Disabled honors the canonical name over the legacy alias", () => {
