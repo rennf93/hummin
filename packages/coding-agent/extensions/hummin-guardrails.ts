@@ -236,7 +236,7 @@ export const VERIFY_NUDGE_CUSTOM_TYPE = "hummin-verify-nudge";
 export const VERIFY_NUDGE_MESSAGE =
 	"[Verify] This session edited code files, but no verification command (tests, typecheck, build check) ran after the last edit. Before handing back: run the project's check or test suite, and fix or report what it surfaces.";
 
-/** Settings gate for the nudge. Guarded like the laya thresholds: unreadable
+/** Settings gate for the nudge. Guarded like the sys1 thresholds: unreadable
  * settings or an older binary without the getter default to on. */
 function verifyNudgeEnabled(): boolean {
 	try {

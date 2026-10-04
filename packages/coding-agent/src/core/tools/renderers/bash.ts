@@ -14,18 +14,6 @@ import { formatToolLabel, getTextOutput, invalidArgText, str } from "../render-u
 import { DEFAULT_MAX_BYTES, formatSize } from "../truncate.ts";
 
 export const BASH_UPDATE_THROTTLE_MS = 100;
-type BashResultRenderState = {
-	cachedWidth: number | undefined;
-	cachedLines: string[] | undefined;
-	cachedSkipped: number | undefined;
-};
-class BashResultRenderComponent extends Container {
-	state: BashResultRenderState = {
-		cachedWidth: undefined,
-		cachedLines: undefined,
-		cachedSkipped: undefined,
-	};
-}
 function formatDuration(ms: number): string {
 	const seconds = ms / 1000;
 	if (seconds < 60) return `${seconds.toFixed(1)}s`;
@@ -148,7 +136,7 @@ function shellTruncationWarnings(
 	return theme.fg("warning", `[${warnings.join(". ")}]`);
 }
 function rebuildBashResultRenderComponent(
-	component: BashResultRenderComponent,
+	component: Container,
 	result: {
 		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 		details?: BashToolDetails;
@@ -239,8 +227,7 @@ export function createShellRenderers(toolName: string): Pick<ToolDefinition<any,
 					state.interval = undefined;
 				}
 			}
-			const component =
-				(context.lastComponent as BashResultRenderComponent | undefined) ?? new BashResultRenderComponent();
+			const component = (context.lastComponent as Container | undefined) ?? new Container();
 			rebuildBashResultRenderComponent(component, result as any, options, context.showImages, context.isError);
 			component.invalidate();
 			return component;

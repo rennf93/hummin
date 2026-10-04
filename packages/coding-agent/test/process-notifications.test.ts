@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import subagentExtension from "../extensions/hummin-subagents.ts";
 import { ProcessManager } from "../extensions/lib/processes.ts";
 import { ENV_AGENT_DIR } from "../src/config.ts";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../src/index.ts";
+import type { ExtensionAPI, ExtensionToolContext, ToolDefinition } from "../src/index.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 const directories: string[] = [];
@@ -84,7 +84,7 @@ it("delivers a background completion once, via followUp only (no duplicate notif
 		cwd: dir,
 		ui: { notify, setStatus: () => {} },
 		modelRegistry: { getAvailable: () => [{ provider: "fleet-host", id: "Org/Model" }] },
-	} as unknown as ExtensionContext;
+	} as unknown as ExtensionToolContext;
 	const binary = join(dir, "hummin");
 	writeFileSync(binary, `#!${process.execPath}\nconsole.log("child output");\n`);
 	chmodSync(binary, 0o755);
@@ -116,7 +116,7 @@ it("background task survives turn-signal abort (signal not forwarded)", async ()
 		cwd: dir,
 		ui: { notify, setStatus: () => {} },
 		modelRegistry: { getAvailable: () => [{ provider: "fleet-host", id: "Org/Model" }] },
-	} as unknown as ExtensionContext;
+	} as unknown as ExtensionToolContext;
 	const binary = join(dir, "hummin");
 	// Child runs long enough for the abort to land mid-run.
 	writeFileSync(binary, `#!${process.execPath}\nsetTimeout(() => { console.log("child output"); }, 300);\n`);

@@ -1,6 +1,11 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { DEFAULT_MAX_AGENT_RETRY_DELAY_MS, type Model, type Transport } from "@earendil-works/pi-ai";
-import type { TuiMode as RendererTuiMode, ScrollViewScrollbar, TerminalCapabilities } from "@earendil-works/pi-tui";
+import type {
+	TuiMode as RendererTuiMode,
+	ScrollViewScrollbar,
+	TerminalCapabilities,
+	WheelScrollLines,
+} from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
@@ -103,7 +108,25 @@ export interface WarningSettings {
 	anthropicExtraUsage?: boolean; // default: true
 }
 
+/**
+ * How the codemode tool presents tools while it is active.
+ * - `on`: declared tools that scripts can call get a note on calling them from scripts appended to
+ *   their description; the codemode description lists only the tools without `direct` exposure.
+ * - `only`: the codemode description lists every tool scripts can call, and active `direct` tools are
+ *   not declared to the model.
+ */
+export type CodemodeMode = "on" | "only";
+
+export interface CodemodeSettings {
+	/** Default: `on`. */
+	mode?: CodemodeMode;
+	/** Estimated tokens (characters / 4) the codemode description may spend on tool declarations. Default: 3000. */
+	inlineBudget?: number;
+}
+
 export type DefaultProjectTrust = "ask" | "always" | "never";
+/** true hides all startup output, "header" keeps only the startup header. */
+export type QuietStartup = boolean | "header";
 
 export type TransportSetting = Transport;
 
@@ -218,6 +241,13 @@ export function parseStatuslineSegments(value: unknown): string[] {
 }
 
 export interface Settings {
+	/** hummin sys1: model right-size gate (task/cron child dispatch review). */
+	rightSize?: {
+		enabled?: boolean;
+		swingThreshold?: number;
+		profiles?: Array<Record<string, unknown>>;
+	};
+	/** @deprecated pre-rename key, read as a fallback for rightSize */
 	layaRightSize?: {
 		enabled?: boolean;
 		swingThreshold?: number;
@@ -246,7 +276,6 @@ export interface Settings {
 	showCacheMissNotices?: boolean; // default: false - show cache cost and provider recovery notices
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
-	quietStartup?: boolean;
 	/** hummin: project-memory distillation + vault (env HUMMIN_MEMORY overrides) */
 	memoryEnabled?: boolean;
 	/** hummin: lesson (default) or vault */
@@ -257,17 +286,31 @@ export interface Settings {
 	memoryProvider?: string;
 	/** hummin: model id for vault fold + distillation calls (env HUMMIN_MEMORY_MODEL_ID overrides) */
 	memoryModelId?: string;
-	/** hummin laya: bash gate block threshold, 0..1 (env HUMMIN_LAYA_GATE_THRESHOLD overrides) */
+	/** @deprecated pre-decision flat key, read only by the laya-engine legacy
+	 * path; the live key is decision.<engine>.gateThreshold */
 	layaGateThreshold?: number;
-	/** hummin laya: bash gate extra classifier patterns (regex strings, applied per
+	/** hummin sys1: bash gate extra classifier patterns (regex strings, applied per
 	 * chain segment in addition to the built-in lists; invalid regexes are
-	 * skipped fail-open). extraSafe segments fast-pass, extraDestructive block. */
+	 * skipped fail-open). extraSafe segments fast-pass, extraDestructive block.
+	 * `layaGate` is kept as a pre-rename fallback. */
+	sys1Gate?: {
+		extraSafe?: string[];
+		extraDestructive?: string[];
+	};
+	/** @deprecated pre-rename key, read as a fallback for sys1Gate */
 	layaGate?: {
 		extraSafe?: string[];
 		extraDestructive?: string[];
 	};
-	/** hummin laya: per-turn destructive steer threshold, 0..1 (env HUMMIN_LAYA_STEER_THRESHOLD overrides) */
+	/** @deprecated pre-decision flat key, read only by the laya-engine legacy
+	 * path; the live key is decision.<engine>.steerThreshold */
 	layaSteerThreshold?: number;
+	/** hummin System-1 decision layer: which engine answers every System-1 read
+	 * (bash gate gray zone, steer, triage, memory intake, dispatch review,
+	 * sys1_decide) plus per-engine overrides. One engine at a time: no per-read
+	 * mixing and no auto-failover; an unreachable engine fails open per read.
+	 * env HUMMIN_DECISION_ENGINE / HUMMIN_DECISION_* override the fields. */
+	decision?: DecisionSettings;
 	/** hummin guardrails: nudge at agent end when code files were edited but no
 	 * verification command (tests, typecheck) ran after the last edit. Default true. */
 	verifyNudge?: boolean;
@@ -277,6 +320,7 @@ export interface Settings {
 	colibriInstances?: string[];
 	/** hummin: local inference fleet (ordered list = priority). Drives /fleet, /status, and the hummin provider's instance list + staged-model catalog. */
 	fleet?: FleetSettings;
+	quietStartup?: QuietStartup; // default: false; upstream "header-only" mode supported
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
@@ -284,6 +328,7 @@ export interface Settings {
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
 	enableAnalytics?: boolean; // default: false - opt-in analytics data sharing
 	trackingId?: string; // analytics tracking identifier, generated when analytics is enabled
+	deviceId?: string; // stable UUID of this installation, created when a login first needs it; global setting only
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
 	extensions?: string[]; // Array of local extension file paths or directories
 	skills?: string[]; // Array of local skill file paths or directories
@@ -293,7 +338,7 @@ export interface Settings {
 	terminal?: TerminalSettings;
 	images?: ImageSettings;
 	enabledModels?: string[]; // Model patterns for cycling (same format as --models CLI flag)
-	defaultTools?: string[]; // Initial built-in tool selection
+	defaultTools?: string[]; // Initial tool selection; `+name`/`-name` entries add to or remove from the inherited selection
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
@@ -305,17 +350,42 @@ export interface Settings {
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
 	warnings?: WarningSettings;
+	codemode?: CodemodeSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	cacheWarming?: CacheWarmingMode; // default: "streaming"; global only because each refresh costs money
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
-	tuiMode?: TuiMode; // default: "regular"
+	tuiMode?: TuiMode; // default: "fullscreen"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
 	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
+	fullscreenWheelScrollLines?: WheelScrollLines; // default: "auto"; lines per wheel event, 1-100
 	/** hummin: custom statusline segment layout (see STATUSLINE_TOKENS); empty = default footer */
 	statusline?: StatuslineSettings;
+}
+
+/** hummin System-1 layer: per-engine connection and calibration overrides.
+ * Every field is optional; unset fields fall back to the engine's built-in
+ * defaults (see extensions/lib/decision-engine.ts). */
+export interface DecisionEngineOverride {
+	url?: string;
+	apiKey?: string;
+	gateThreshold?: number;
+	steerThreshold?: number;
+	triageThreshold?: number;
+	intakeThreshold?: number;
+	gateTimeoutMs?: number;
+	dispatchTimeoutMs?: number;
+	decideTimeoutMs?: number;
+	warmTimeoutMs?: number;
+}
+
+export interface DecisionSettings {
+	engine?: "laya" | "clef" | "jev";
+	laya?: DecisionEngineOverride;
+	clef?: DecisionEngineOverride;
+	jev?: DecisionEngineOverride;
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -341,9 +411,46 @@ function deepMergeObjects(base: Record<string, unknown>, overrides: Record<strin
 	return result;
 }
 
+/** Tools enabled at startup when `defaultTools` does not change them. */
+export const DEFAULT_TOOL_NAMES: readonly string[] = ["read", "bash", "edit", "write"];
+
+function isToolModifier(entry: unknown): boolean {
+	return typeof entry === "string" && (entry.startsWith("+") || entry.startsWith("-"));
+}
+
+/**
+ * Merge `defaultTools` of two settings layers. A list with plain tool names replaces the inherited
+ * one; a list of only `+name`/`-name` entries is appended, so it modifies the inherited selection.
+ */
+function mergeDefaultTools(base: string[] | undefined, overrides: string[] | undefined): string[] | undefined {
+	if (overrides === undefined) return base;
+	// Settings files are not validated; a malformed value replaces instead of throwing here.
+	if (!Array.isArray(base) || !Array.isArray(overrides) || !overrides.every(isToolModifier)) return overrides;
+	return [...base, ...overrides];
+}
+
+/**
+ * Resolve a merged `defaultTools` list: plain names replace `DEFAULT_TOOL_NAMES`, then `+name` adds
+ * and `-name` removes a tool, in list order.
+ */
+function resolveDefaultTools(entries: string[]): string[] {
+	const plain = entries.filter((entry) => !isToolModifier(entry));
+	const tools = plain.length > 0 || entries.length === 0 ? plain : [...DEFAULT_TOOL_NAMES];
+	for (const entry of entries) {
+		if (!isToolModifier(entry)) continue;
+		const name = entry.slice(1);
+		const index = tools.indexOf(name);
+		if (entry.startsWith("+") && index === -1 && name) tools.push(name);
+		else if (entry.startsWith("-") && index !== -1) tools.splice(index, 1);
+	}
+	return tools;
+}
+
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
 function deepMergeSettings(base: Settings, overrides: Settings): Settings {
-	return deepMergeObjects(base as Record<string, unknown>, overrides as Record<string, unknown>) as Settings;
+	const merged = deepMergeObjects(base as Record<string, unknown>, overrides as Record<string, unknown>) as Settings;
+	const defaultTools = mergeDefaultTools(base.defaultTools, overrides.defaultTools);
+	return defaultTools === undefined ? merged : { ...merged, defaultTools };
 }
 
 function parseTimeoutSetting(value: unknown, settingName: string): number | undefined {
@@ -357,10 +464,10 @@ function parseTimeoutSetting(value: unknown, settingName: string): number | unde
 	return undefined;
 }
 
-/** hummin laya thresholds: env string wins, then the stored setting, then the
+/** Clamp helper for 0..1 threshold settings: env string wins, then the stored setting, then the
  * built-in default. Anything outside 0..1 (or unparseable) is ignored rather
  * than trusted, so a typo can neither weld the gate shut nor open it. */
-function resolveLayaThreshold(envRaw: string | undefined, stored: number | undefined, fallback: number): number {
+function resolveThreshold01(envRaw: string | undefined, stored: number | undefined, fallback: number): number {
 	const clamp = (value: unknown): number | undefined => {
 		const n = typeof value === "number" ? value : Number(value);
 		return Number.isFinite(n) && n >= 0 && n <= 1 ? n : undefined;
@@ -373,42 +480,38 @@ function resolveLayaThreshold(envRaw: string | undefined, stored: number | undef
 }
 
 /**
- * hummin laya: model right-size gate config. Env `HUMMIN_LAYA_RIGHTSIZE` (0 or
- * off disables the gate) > `layaRightSize.swingThreshold` (project > global) >
- * defaults (enabled: true, swing 0.6). The swing threshold is clamped
- * to 0..1; the enabled flag accepts 0/"0"/off/false to disable.
+ * hummin System-1: model right-size gate config. Env `HUMMIN_SYS1_RIGHTSIZE`
+ * (`HUMMIN_LAYA_RIGHTSIZE` kept as a legacy alias; 0 or off disables the gate)
+ * > `rightSize.swingThreshold` (`layaRightSize` kept as a pre-rename fallback;
+ * project > global) > defaults (enabled: true, swing 0.6). The swing threshold
+ * is clamped to 0..1; the enabled flag accepts 0/"0"/off/false to disable.
  */
-type LayaRightSizeSettings = NonNullable<Settings["layaRightSize"]>;
+type RightSizeSettings = NonNullable<Settings["rightSize"]>;
 
-function resolveLayaRightSizeConfig(
+/** Pre-rename fallback: the stored right-size object of either key, project scope preferred. */
+function rightSizeOf(raw: unknown): { enabled?: unknown; swingThreshold?: unknown; profiles?: unknown } | undefined {
+	if (typeof raw !== "object" || raw === null) return undefined;
+	const record = raw as { rightSize?: unknown; layaRightSize?: unknown };
+	return (record.rightSize ?? record.layaRightSize) as ReturnType<typeof rightSizeOf> | undefined;
+}
+
+function resolveRightSizeConfig(
 	env: Readonly<Record<string, string | undefined>>,
 	globalRaw: unknown,
 	projectRaw: unknown,
 ): { enabled: boolean; swingThreshold: number; profiles: Array<Record<string, unknown>> } {
-	const rawEnabled = env.HUMMIN_LAYA_RIGHTSIZE?.trim().toLowerCase();
+	const rawEnabled = (env.HUMMIN_SYS1_RIGHTSIZE ?? env.HUMMIN_LAYA_RIGHTSIZE)?.trim().toLowerCase();
 	const enabled = rawEnabled === undefined || !["0", "off", "false"].includes(rawEnabled);
-	const projectValue =
-		typeof projectRaw === "object" && projectRaw !== null
-			? (projectRaw as { layaRightSize?: { swingThreshold?: unknown } }).layaRightSize?.swingThreshold
-			: undefined;
-	const globalValue =
-		typeof globalRaw === "object" && globalRaw !== null
-			? (globalRaw as { layaRightSize?: { swingThreshold?: unknown } }).layaRightSize?.swingThreshold
-			: undefined;
+	const projectValue = rightSizeOf(projectRaw)?.swingThreshold;
+	const globalValue = rightSizeOf(globalRaw)?.swingThreshold;
 	// project > global, then env > effective value > default (0.6).
-	const swing = resolveLayaThreshold(
-		env.HUMMIN_LAYA_RIGHTSIZE_SWING,
+	const swing = resolveThreshold01(
+		env.HUMMIN_SYS1_RIGHTSIZE_SWING ?? env.HUMMIN_LAYA_RIGHTSIZE_SWING,
 		(projectValue ?? globalValue) as number | undefined,
 		0.6,
 	);
-	const projectProfiles =
-		typeof projectRaw === "object" && projectRaw !== null
-			? (projectRaw as { layaRightSize?: { profiles?: unknown } }).layaRightSize?.profiles
-			: undefined;
-	const globalProfiles =
-		typeof globalRaw === "object" && globalRaw !== null
-			? (globalRaw as { layaRightSize?: { profiles?: unknown } }).layaRightSize?.profiles
-			: undefined;
+	const projectProfiles = rightSizeOf(projectRaw)?.profiles;
+	const globalProfiles = rightSizeOf(globalRaw)?.profiles;
 	const profiles = Array.isArray(projectProfiles ?? globalProfiles)
 		? ((projectProfiles ?? globalProfiles) as Array<Record<string, unknown>>)
 		: [];
@@ -711,6 +814,11 @@ export class SettingsManager {
 		}
 
 		return settings as Settings;
+	}
+
+	/** A copy of the effective settings: global and project settings merged, with overrides. */
+	getSettings(): Settings {
+		return structuredClone(this.settings);
 	}
 
 	getGlobalSettings(): Settings {
@@ -1316,9 +1424,10 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getQuietStartup(): boolean {
+	getQuietStartup(): QuietStartup {
 		// hummin curation: clean startup by default - the Skills/Extensions/
-		// Context listing stays available behind ctrl+o and /settings.
+		// Context listing stays available behind ctrl+o and /settings. Explicit
+		// false and "header" are honored.
 		return this.settings.quietStartup ?? true;
 	}
 
@@ -1362,17 +1471,10 @@ export class SettingsManager {
 		return this.settings.memoryModelId ?? "glm-5.3-flash";
 	}
 
-	/** hummin laya: destructive-intent thresholds. Env wins, then settings,
-	 * then the built-in default. A stored value outside 0..1 is ignored so a
-	 * typo can neither weld the gate shut nor silently open it. */
-	getLayaGateThreshold(): number {
-		return resolveLayaThreshold(process.env.HUMMIN_LAYA_GATE_THRESHOLD, this.settings.layaGateThreshold, 0.75);
-	}
-
-	/** hummin laya: bash gate extra classifier patterns. Compiled per read so
+	/** hummin sys1: bash gate extra classifier patterns. Compiled per read so
 	 * /settings edits apply without a restart; invalid regex strings are
 	 * skipped fail-open. */
-	getLayaGateExtraPatterns(): { safe: RegExp[]; destructive: RegExp[] } {
+	getSys1GateExtraPatterns(): { safe: RegExp[]; destructive: RegExp[] } {
 		const compile = (raw: unknown): RegExp[] => {
 			if (!Array.isArray(raw)) return [];
 			const out: RegExp[] = [];
@@ -1386,7 +1488,7 @@ export class SettingsManager {
 			}
 			return out;
 		};
-		const ns = this.settings.layaGate;
+		const ns = this.settings.sys1Gate ?? this.settings.layaGate;
 		return {
 			safe: compile(ns?.extraSafe),
 			destructive: compile(ns?.extraDestructive),
@@ -1394,42 +1496,41 @@ export class SettingsManager {
 	}
 
 	/** hummin laya: model right-size gate config. Env > project > global > defaults. */
-	getLayaRightSizeConfig(): { enabled: boolean; swingThreshold: number; profiles: Array<Record<string, unknown>> } {
-		return resolveLayaRightSizeConfig(process.env, this.settings, this.projectSettings);
+	getRightSizeConfig(): { enabled: boolean; swingThreshold: number; profiles: Array<Record<string, unknown>> } {
+		return resolveRightSizeConfig(process.env, this.settings, this.projectSettings);
 	}
 
 	/** hummin laya: stored enabled flag (env may still override at gate time). */
-	getLayaRightSizeEnabled(): boolean {
-		return this.settings.layaRightSize?.enabled ?? true;
+	getRightSizeEnabled(): boolean {
+		return (this.settings.rightSize ?? this.settings.layaRightSize)?.enabled ?? true;
 	}
 
-	setLayaRightSizeEnabled(enabled: boolean, scope: "global" | "project" = "global"): void {
-		this.setLayaRightSize((settings) => {
+	setRightSizeEnabled(enabled: boolean, scope: "global" | "project" = "global"): void {
+		this.setRightSize((settings) => {
 			settings.enabled = enabled;
 		}, scope);
 	}
 
 	/** hummin laya: stored swing threshold (env may still override at gate time). */
-	getLayaRightSizeSwingThreshold(): number {
-		const value = this.settings.layaRightSize?.swingThreshold;
+	getRightSizeSwingThreshold(): number {
+		const value = (this.settings.rightSize ?? this.settings.layaRightSize)?.swingThreshold;
 		return typeof value === "number" && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0.6;
 	}
 
-	setLayaRightSizeSwingThreshold(threshold: number, scope: "global" | "project" = "global"): void {
-		this.setLayaRightSize((settings) => {
+	setRightSizeSwingThreshold(threshold: number, scope: "global" | "project" = "global"): void {
+		this.setRightSize((settings) => {
 			settings.swingThreshold = threshold;
 		}, scope);
 	}
 
 	/** hummin laya: stored model profiles (descriptive metadata for the review). */
-	getLayaRightSizeProfiles(): Array<Record<string, unknown>> {
-		return Array.isArray(this.settings.layaRightSize?.profiles)
-			? (this.settings.layaRightSize.profiles as Array<Record<string, unknown>>)
-			: [];
+	getRightSizeProfiles(): Array<Record<string, unknown>> {
+		const stored = this.settings.rightSize ?? this.settings.layaRightSize;
+		return Array.isArray(stored?.profiles) ? (stored.profiles as Array<Record<string, unknown>>) : [];
 	}
 
 	/** hummin laya: replace the model profiles; validates the minimal shape. */
-	setLayaRightSizeProfiles(profiles: unknown, scope: "global" | "project" = "global"): void {
+	setRightSizeProfiles(profiles: unknown, scope: "global" | "project" = "global"): void {
 		if (!Array.isArray(profiles)) throw new Error("profiles must be a JSON array");
 		for (const profile of profiles) {
 			const entry = profile as { provider?: unknown; modelId?: unknown } | null;
@@ -1444,27 +1545,32 @@ export class SettingsManager {
 				throw new Error("each profile needs non-empty provider and modelId strings");
 			}
 		}
-		this.setLayaRightSize((settings) => {
+		this.setRightSize((settings) => {
 			settings.profiles = profiles as Array<Record<string, unknown>>;
 		}, scope);
 	}
 
-	private setLayaRightSize(mutate: (settings: LayaRightSizeSettings) => void, scope: "global" | "project"): void {
+	private setRightSize(mutate: (settings: RightSizeSettings) => void, scope: "global" | "project"): void {
 		if (scope === "project") {
-			this.updateProjectSettings("layaRightSize", (settings) => {
-				settings.layaRightSize ??= {};
-				mutate(settings.layaRightSize);
+			this.updateProjectSettings("rightSize", (settings) => {
+				settings.rightSize ??= {};
+				mutate(settings.rightSize);
 			});
 			return;
 		}
-		this.globalSettings.layaRightSize ??= {};
-		mutate(this.globalSettings.layaRightSize);
-		this.markModified("layaRightSize");
+		this.globalSettings.rightSize ??= {};
+		mutate(this.globalSettings.rightSize);
+		this.markModified("rightSize");
 		this.save();
 	}
 
-	getLayaSteerThreshold(): number {
-		return resolveLayaThreshold(process.env.HUMMIN_LAYA_STEER_THRESHOLD, this.settings.layaSteerThreshold, 0.7);
+	/** hummin System-1 layer: the merged decision namespace (global + project).
+	 * Extensions validate and resolve it against env and engine defaults; a
+	 * stored shape that is not an object is ignored by the caller. */
+	getDecisionEngineSettings(): DecisionSettings | undefined {
+		const value: unknown = this.settings.decision;
+		if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+		return value as DecisionSettings;
 	}
 
 	/** hummin guardrails: verify-nudge enabled (default true). */
@@ -1630,7 +1736,7 @@ export class SettingsManager {
 		this.save();
 	}
 
-	setQuietStartup(quiet: boolean): void {
+	setQuietStartup(quiet: QuietStartup): void {
 		this.globalSettings.quietStartup = quiet;
 		this.markModified("quietStartup");
 		this.save();
@@ -1704,6 +1810,20 @@ export class SettingsManager {
 			this.markModified("trackingId");
 		}
 		this.save();
+	}
+
+	/**
+	 * Stable ID of this installation, e.g. sent to OpenAI as its agent host ID.
+	 * Created on first use. Project settings are ignored so a committed project
+	 * settings file cannot give every clone the same ID.
+	 */
+	getOrCreateDeviceId(): string {
+		if (!this.globalSettings.deviceId) {
+			this.globalSettings.deviceId = randomUUID();
+			this.markModified("deviceId");
+			this.save();
+		}
+		return this.globalSettings.deviceId;
 	}
 
 	getPackages(): PackageSource[] {
@@ -1899,7 +2019,7 @@ export class SettingsManager {
 	}
 
 	getTuiMode(): TuiMode {
-		return this.settings.tuiMode === "fullscreen" ? "fullscreen" : "regular";
+		return this.settings.tuiMode === "regular" ? "regular" : "fullscreen";
 	}
 
 	setTuiMode(mode: TuiMode): void {
@@ -1939,6 +2059,20 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getFullscreenWheelScrollLines(): WheelScrollLines {
+		const lines = this.settings.fullscreenWheelScrollLines;
+		return typeof lines === "number" && Number.isFinite(lines)
+			? Math.max(1, Math.min(100, Math.floor(lines)))
+			: "auto";
+	}
+
+	setFullscreenWheelScrollLines(lines: WheelScrollLines): void {
+		this.globalSettings.fullscreenWheelScrollLines =
+			lines === "auto" ? lines : Math.max(1, Math.min(100, Math.floor(lines)));
+		this.markModified("fullscreenWheelScrollLines");
+		this.save();
+	}
+
 	getImageAutoResize(): boolean {
 		return this.settings.images?.autoResize ?? true;
 	}
@@ -1969,9 +2103,11 @@ export class SettingsManager {
 		return this.settings.enabledModels;
 	}
 
+	/** The resolved `defaultTools` selection, or undefined when no settings layer sets it. */
 	getDefaultTools(): string[] | undefined {
 		const tools = this.settings.defaultTools;
-		return tools ? [...tools] : undefined;
+		if (tools === undefined) return undefined;
+		return resolveDefaultTools(Array.isArray(tools) ? tools.filter((tool) => typeof tool === "string") : []);
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

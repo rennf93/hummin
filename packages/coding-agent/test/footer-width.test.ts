@@ -28,6 +28,7 @@ function createSession(options: {
 	usingSubscription?: boolean;
 	priced?: boolean;
 	queueCount?: number;
+	routedModel?: { model: { id: string }; thinkingLevel?: string };
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
@@ -80,10 +81,14 @@ function createSession(options: {
 		},
 		sessionManager: {
 			getEntries: () => entries,
+			getEntryCount: () => entries.length,
+			getSessionId: () => "test-session",
+			getLeafId: () => null,
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		routedModel: options.routedModel,
 		modelRuntime: {
 			isUsingSubscription: () => options.usingSubscription ?? false,
 			getProvider: () => undefined,
@@ -180,6 +185,22 @@ describe("FooterComponent width handling", () => {
 		}
 	});
 
+	it("shows the physical model a virtual model routed to", () => {
+		const session = createSession({
+			sessionName: "",
+			modelId: "auto",
+			reasoning: true,
+			thinkingLevel: "high",
+			routedModel: { model: { id: "gpt-5.6-luna" }, thinkingLevel: "medium" },
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		// hummin's footer puts the model on the id row and joins segments with " + ".
+		const modelLine = stripAnsi(footer.render(120)[0]);
+
+		expect(modelLine).toContain("auto + high \u2192 gpt-5.6-luna \u2022 medium");
+	});
+
 	it("includes summary and tool result usage in the total cost", () => {
 		const session = createSession({
 			sessionName: "",
@@ -216,6 +237,17 @@ describe("FooterComponent width handling", () => {
 
 		const statsLine = stripAnsi(footer.render(120)[2]);
 		expect(statsLine).toContain("$1.250");
+	});
+
+	it("updates cached usage totals after an entry is appended", () => {
+		const usage = { input: 10, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0.5 } };
+		const session = createSession({ sessionName: "", usage });
+		const footer = new FooterComponent(session, createFooterData(1));
+		// hummin's stats row is line 2 (id row, blank spacer, stats).
+		expect(stripAnsi(footer.render(120)[2])).toContain("$0.500");
+
+		session.sessionManager.getEntries().push({ type: "message", message: { role: "assistant", usage } } as never);
+		expect(stripAnsi(footer.render(120)[2])).toContain("$1.000");
 	});
 
 	it("shows the latest cache hit rate when cache usage is present", () => {

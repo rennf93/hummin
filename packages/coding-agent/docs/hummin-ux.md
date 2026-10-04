@@ -154,7 +154,7 @@ configuration plus a review ID; the parent may continue only with an explicit
 override reason tied to that review. A lower-confidence mismatch is advisory
 and the child runs with the requested configuration. If Laya is disabled,
 unavailable, times out, or returns an unusable answer, the review fails open and
-the child proceeds. The audit is recorded in `laya-gate.log`.
+the child proceeds. The audit is recorded in `sys1-gate.log`.
 
 This is a Hummin feature. Pi is the upstream project Hummin is built on; Pi's
 own model-selection documentation does not define this Laya review or the
@@ -186,7 +186,7 @@ yes/no read and blocked once at P >= 0.7 (`layaGateThreshold` setting,
 directory. A block tells the model to confirm with the user or verify the
 target is backed up, then re-run with a `# laya-gate: confirmed` marker;
 confirmations and rule-tagged deterministic blocks are audited in
-`laya-gate.log`. All failure modes fail open: dead Laya never blocks.
+`sys1-gate.log`. All failure modes fail open: a dead engine never blocks.
 
 Installations can extend both classifier lists without forking:
 `layaGate.extraSafe` and `layaGate.extraDestructive` in settings take regex

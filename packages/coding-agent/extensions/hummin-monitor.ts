@@ -114,8 +114,8 @@ function validateName(raw: string | undefined, kind: string, names: Map<string, 
 /**
  * Gate and sandbox-plan one background shell command. exec and monitor
  * spawn through ProcessManager without a bash tool_call, so without this
- * they bypassed bashguard, the laya gate, and the sandbox entirely. The
- * gate mirrors the bash tool's pipeline (bashguard first, then the laya
+ * they bypassed bashguard, the sys1 gate, and the sandbox entirely. The
+ * gate mirrors the bash tool's pipeline (bashguard first, then the sys1
  * gate); the sandbox bridge, when workspace mode is on, runs the command
  * under the same profile the bash tool uses or blocks it. Throws with the
  * block reason when the command must not run.

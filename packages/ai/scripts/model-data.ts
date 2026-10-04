@@ -69,7 +69,7 @@ function readJsonObject(path: string, description: string, errors: string[]): Re
 	return parsed;
 }
 
-function readProviderStructure(path: string, providerId: string): Record<string, string> {
+export function readProviderStructure(path: string, providerId: string): Record<string, string> {
 	const errors: string[] = [];
 	const groups = readJsonObject(path, `${providerId}.json`, errors);
 	if (!groups) throw new Error(errors.join("\n"));
@@ -85,6 +85,12 @@ function readProviderStructure(path: string, providerId: string): Record<string,
 	if (models.size === 0) throw new Error(`${path} contains no generated model data`);
 	return sortedRecord(models);
 }
+
+/** hummin: providers whose data/<id>.json is committed in this fork and is NOT
+ * sourced from the public models.dev catalog (which has no entry for them).
+ * Catalog hydration carries their bytes through unchanged; catalog pin
+ * validation skips them when checking catalog coverage. */
+export const STATIC_MODEL_DATA_PROVIDERS: ReadonlySet<string> = new Set(["zai-api"]);
 
 export function readModelDataProviderIds(packageRoot: string): string[] {
 	const aggregatorPath = join(packageRoot, "src", "models.generated.ts");
@@ -303,4 +309,34 @@ export function validateModelDataDirectory(structure: ModelDataStructure, dataDi
 export function validateGeneratedModelData(packageRoot: string): void {
 	const structure = readModelDataStructure(packageRoot);
 	validateModelDataDirectory(structure, join(packageRoot, "src", "providers", "data"));
+}
+
+export interface ModelCatalogEntry {
+	type: string;
+	id: string;
+	api: string;
+}
+
+/**
+ * Group one provider's typed catalog entries by API and key them by `type:id`,
+ * the layout of `src/providers/data/<provider>.json`.
+ */
+export function groupProviderModelData<T extends ModelCatalogEntry>(
+	providerId: string,
+	models: readonly T[],
+): { groups: Record<string, Record<string, T>>; structure: Record<string, string> } {
+	const groups: Record<string, Record<string, T>> = {};
+	const structure: Record<string, string> = {};
+	for (const api of Array.from(new Set(models.map((model) => model.api))).sort()) {
+		const group: Record<string, T> = {};
+		for (const model of models) {
+			if (model.api !== api) continue;
+			const identity = `${model.type}:${model.id}`;
+			if (group[identity]) throw new Error(`${providerId}/${identity} has duplicate ${api} catalog entries`);
+			group[identity] = model;
+			structure[identity] = api;
+		}
+		groups[api] = group;
+	}
+	return { groups, structure };
 }

@@ -76,6 +76,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { appendVectorRecords, cosineSimilarity, embedInputs, loadVectorIndex, roundVector } from "./lib/embeddings-client.ts";
+import { resolveDecisionEngine } from "./lib/decision-engine.ts";
 import { MEMORY_WORKER_SOURCE, type MemoryDistillJob, type MemoryFoldJob } from "./lib/memory-workers.ts";
 import { prepareChildDispatch, type DispatchReceipt } from "./lib/child-dispatch-review.ts";
 import { humminArgv, humminBinCommand } from "./lib/hummin-bin.ts";
@@ -151,8 +152,9 @@ type MemoryDispatchContext = {
 
 function prepareMemoryDispatch(input: Parameters<typeof prepareChildDispatch>[0], ctx: MemoryDispatchContext): ReturnType<typeof prepareChildDispatch> {
 	// Memory distill/fold are background hygiene, so the review wait is held to
-	// 1.5s (vs the interactive 4s default) and fails open on timeout.
-	return (ctx.dispatch ?? prepareChildDispatch)(input, ctx, { agentDir: ctx.agentDir ?? agentDir(), layaTimeoutMs: 1500 });
+	// the active engine's dispatch timeout (1.5s on laya, 4s on the slower
+	// clef/jev engines) and fails open on timeout.
+	return (ctx.dispatch ?? prepareChildDispatch)(input, ctx, { agentDir: ctx.agentDir ?? agentDir(), sys1TimeoutMs: resolveDecisionEngine().dispatchTimeoutMs });
 }
 
 /** Review-fingerprint prompt for distill dispatches (both fresh and held
@@ -167,11 +169,21 @@ type DistillJobFile = MemoryDistillJob;
 function spawnDistillWorker(pendingPath: string): void {
 	// HUMMIN_MEMORY=0 or the child's own shutdown handler distills again,
 	// recursing without bound. The worker's argv is <mode> <job.json>, matching
-	// the fold invocation in enqueueFold.
+	// the fold invocation in enqueueFold. The resolved decision-engine routing
+	// is injected so the worker's intake reads answer from the same engine as
+	// the parent session (the worker itself reads env only).
+	const engine = resolveDecisionEngine();
 	const child = spawn(process.execPath, [ensureMemoryWorker(), "distill", pendingPath], {
 		detached: true,
 		stdio: "ignore",
-		env: { ...process.env, HUMMIN_MEMORY: "0" },
+		env: {
+			...process.env,
+			HUMMIN_MEMORY: "0",
+			HUMMIN_DECISION_ENGINE: engine.id,
+			HUMMIN_DECISION_URL: engine.url,
+			HUMMIN_DECISION_API_KEY: engine.apiKey,
+			HUMMIN_DECISION_INTAKE_THRESHOLD: String(engine.intakeThreshold),
+		},
 	});
 	child.unref();
 }
@@ -195,7 +207,7 @@ function buildDistillJob(sessionFile: string, cwd: string, tail: string, dir: st
 		session: basename(sessionFile),
 		vaultMode,
 		vaultDir: vaultDir(cachedSettings),
-		gateLog: join(agentDir(), "laya-gate.log"),
+		gateLog: join(agentDir(), "sys1-gate.log"),
 	};
 }
 
@@ -1738,7 +1750,8 @@ export default function humminMemory(pi: ExtensionAPI): void {
 			// Distillation runs in a detached worker; shutdown never blocks on
 			// the model call (fail-open: memory must never break shutdown). The
 			// dispatch review before it adds a bounded, fail-open wait of at
-			// most ~1.5s (prepareMemoryDispatch's layaTimeoutMs).
+			// most the active engine's dispatch timeout
+			// (prepareMemoryDispatch's sys1TimeoutMs).
 			await enqueueDistill(sessionFile, cwd, settings.getMemoryMode() === "vault", ctx);
 		} catch {
 			// fail-open: memory must never block shutdown

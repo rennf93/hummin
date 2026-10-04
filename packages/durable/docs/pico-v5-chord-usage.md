@@ -1,6 +1,7 @@
 # Pico5 documents through Chord
 
-This guide uses the contracts in the [Pico5 specification](pico-v5.md).
+This guide uses the contracts in the [Pico5 specification](spec.md). Its code
+compiles and runs as `test/chord-guide.test.ts`; keep the two in sync.
 
 - **Session:** a durable container for conversations, entries, tasks, and documents;
   it serializes mutations on one commit line.
@@ -26,24 +27,23 @@ terminal and never participate in conversation forks.
 
 ## Imports and the adapter boundary
 
-Examples build on one another. Pico5 names (`defineDoc`, `defineDocFamily`,
-`Session`, `DocumentState`, `Id`, `TaskRuntime`, `DocumentObserver`)
-refer to normative contracts, without a specified import path or runnable Pico5
-package. In those contracts, `ConversationRecord`, `EntryRecord`, and
+Examples build on one another. `ConversationRecord`, `EntryRecord`, and
 `TaskRecord` are persisted records, while `Conversation` is the public
-conversation object and `Entry`/`Task` are typed definitions. The Chord imports
-below are the concrete APIs used by the examples:
+conversation object and `Entry`/`Task` are typed definitions. The imports:
 
 ```ts
 import {
   createFacetHost, createRemoteServiceBinding, defineFacet, defineService,
-  type Context, type Facet, type JsonValue, type RemoteServiceTransport,
-  type ReplicatedState,
+  type Context, type Facet, type FacetHost, type RemoteServiceTransport, type ReplicatedState,
 } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-// The Pico specification calls this object-root constraint JsonObject.
-type JsonObject = { [key: string]: JsonValue };
+import {
+  type ConversationId, defineDoc, defineDocFamily, type DocumentObserver,
+  type Harness, type Session, type TaskId, type TaskRuntime,
+} from "@earendil-works/pi-durable";
 ```
+
+A `Harness` is a `Session`, so every function below also takes an open Harness.
 
 `documentState()` performs Chord adoption internally: it atomically captures a
 committed snapshot, registers for every later exact frame, and returns an already
@@ -126,10 +126,11 @@ async function runCanvasExample(session: Session): Promise<void> {
 The application owns the open Session. Acquire the document state asynchronously
 before synchronous `setup`, then transfer its disposal to the facet;
 `env.provide` cannot run in `onActivate`. Install one provider per
-Session host. Chord may reload presentation facets independently, but v1 does
-not use facet reload to replace Session-side task or hook implementations. A
-host extension code change closes and reopens the Harness with the new
-definition set.
+Session host. Chord may reload presentation facets independently. Session-side
+tools, hooks, tasks, and prompt sections reload through the Harness
+registry: install the replacement extension under the same name (spec section 7.5).
+Work already running keeps the old code, so the facet manages its old resources'
+lifetime itself.
 
 Remote clients supply a `RemoteServiceTransport` connected to the host's `services`
 provider; Chord prescribes no socket protocol. `CanvasConsumer` also works unchanged
@@ -168,6 +169,19 @@ conversation fork -> still uses this same Session canvas
 Use persistent storage for restart survival. The memory backend is not persistent.
 A method's successful commit does not promise every remote callback has run yet.
 
+Shut down in reverse: detach clients and dispose the facet host, which withdraws
+its services and disposes the document states it owns, then close the Harness.
+Closing the Harness first would end the states under still-connected clients:
+they keep the last value and never update again.
+
+```ts
+async function shutdown(host: FacetHost, detachClients: () => Promise<void>, harness: Harness, context: Context) {
+  await detachClients();
+  await host.dispose();
+  await harness.close(context);
+}
+```
+
 ## 2. Conversation-scoped diff reviews
 
 A **document family** uses one definition for many instances. The logical key is
@@ -186,13 +200,13 @@ const ReviewDoc = defineDocFamily<ReviewState, ReviewInput>({
 });
 interface DiffReviewService {
   readonly state: ReplicatedState<ReviewState | null>;
-  identity(context: Context): Promise<{ conversationId: Id; key: string }>;
+  identity(context: Context): Promise<{ conversationId: ConversationId; key: string }>;
   addComment(comment: ReviewComment, context: Context): Promise<void>;
 }
 const DiffReviews = defineService<DiffReviewService>("app.diff-reviews");
 
 function reviewFacet(
-  session: Session, conversationId: Id,
+  session: Session, conversationId: ConversationId,
   reviews: readonly { key: string; seed: ReviewInput }[], context: Context,
 ): Facet {
   return defineFacet({
@@ -261,7 +275,7 @@ const JobOutputDoc = defineDoc<JobOutput>({
   checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 99,
 });
 async function appendJobOutput(
-  runtime: TaskRuntime<JobInput, { phase: "running" }, null, {}>,
+  runtime: TaskRuntime<JobInput, { phase: "running" }, null, object>,
   chunk: string, context: Context,
 ): Promise<void> {
   // Read process output outside this callback. The runtime gates the live task.
@@ -272,7 +286,7 @@ async function appendJobOutput(
   }, context);
 }
 async function observeJob(
-  api: DocumentObserver, producerTaskId: Id,
+  api: DocumentObserver, producerTaskId: TaskId,
   finished: Promise<void>, context: Context,
 ): Promise<void> {
   const watch = await api.watchDoc(JobOutputDoc, producerTaskId, context);
@@ -325,11 +339,11 @@ under `docs` by stable document kind, not numeric incarnation ID. The spec's
 illustrative path mapping is:
 
 ```text
-document ["s", ["message"], value]
- -> view ["s", ["docs", "pi.live", "message"], value]
+document ["s", ["generation", "message"], value]
+ -> view ["s", ["docs", "pi.live", "generation", "message"], value]
 ```
 
-Built-in kinds and fields await approval; `pi.live` is illustrative, not an available API.
+`pi.live` is specified in `spec.md` section 8.2.
 The mount publishes one batch per complete Session commit: entry/head changes and
 changed mounted documents together, without a tracker or semantic projection.
 Third-party documents are **not automatically mounted**; use their own Chord
@@ -338,7 +352,7 @@ dynamic service should then withdraw its instance rather than expose stale data.
 
 ```text
 addStroke -> hold Session mutation line -> await tx.doc -> mutate tracker change draft
-callback succeeds -> tracker prepare: immutable candidate + frozen ops
+callback succeeds -> tracker prepare: immutable candidate + immutable ops
 Session checkpoint predicate selects a base or delta exactly once
 atomic storage commit: persist selected document and record writes
 storage succeeds -> adopt candidate + enqueue candidate/ops, still on line

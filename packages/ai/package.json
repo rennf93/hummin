@@ -15,6 +15,10 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
+		"./models": {
+			"types": "./dist/models.d.ts",
+			"import": "./dist/models.js"
+		},
 		"./compat": {
 			"types": "./dist/compat.d.ts",
 			"import": "./dist/compat.js"
@@ -56,15 +60,15 @@
 		"generate-models": "node scripts/generate-models.ts --strict",
 		"hydrate-model-data": "node scripts/generate-models.ts --strict --data-only",
 		"generate-model-catalog": "node scripts/generate-models.ts --strict --json-only --json-output ../../.artifacts/model-catalog",
-		"generate-image-models": "node scripts/generate-image-models.ts --strict",
 		"check:model-data": "node scripts/check-model-data.ts",
 		"build": "npm run generate-models && npm run build:offline",
 		"build:offline": "npm run check:model-data && tsc -p tsconfig.build.json && shx rm -rf dist/providers/data && shx cp -r src/providers/data dist/providers/data",
 		"test": "vitest --run",
-		"prepublishOnly": "npm run clean && npm run build"
+		"prepublishOnly": "npm run clean && npm run build",
+		"generate-image-models": "node scripts/generate-image-models.ts --strict"
 	},
 	"dependencies": {
-		"@anthropic-ai/sdk": "0.124.0",
+		"@anthropic-ai/sdk": "0.129.0",
 		"@aws-sdk/client-bedrock-runtime": "3.1127.0",
 		"@earendil-works/pi-telemetry": "^1.2.10",
 		"@google/genai": "2.21.0",
@@ -98,6 +102,6 @@
 	"devDependencies": {
 		"@types/node": "22.19.19",
 		"canvas": "3.2.3",
-		"vitest": "4.1.9"
+		"vitest": "4.1.11"
 	}
 }

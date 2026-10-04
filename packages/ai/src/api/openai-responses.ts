@@ -26,11 +26,25 @@ import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
-import { buildBaseOptions } from "./simple-options.ts";
+import { buildBaseOptions, resolveSamplingParams } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 // OpenAI Responses rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
 const OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
+const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
+
+/**
+ * OpenAI API keys start with `sk-`; a different credential sent directly to OpenAI
+ * is a Sign in with ChatGPT access token.
+ */
+function isChatGPTSignIn(model: Model<"openai-responses">, apiKey: string | undefined): boolean {
+	return (
+		model.provider === "openai" &&
+		model.baseUrl === "https://api.openai.com/v1" &&
+		apiKey !== undefined &&
+		!apiKey.startsWith("sk-")
+	);
+}
 
 function hasHeader(headers: ProviderHeaders | undefined, name: string): boolean {
 	if (!headers) return false;
@@ -205,10 +219,14 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				delete (block as { customInput?: unknown }).customInput;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatProviderError(
+			const errorMessage = formatProviderError(
 				normalizeProviderError(error),
 				`${model.provider === "openai" ? "OpenAI" : model.provider} API error`,
 			);
+			// Sign in with ChatGPT shares the subscription's usage limit with other apps.
+			output.errorMessage = errorMessage.includes("subscription_sharing_usage_limit_exceeded")
+				? `${errorMessage}\nCheck your ChatGPT usage: ${CHATGPT_USAGE_URL}`
+				: errorMessage;
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -307,21 +325,23 @@ function buildParams(
 	});
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
+	// Sign in with ChatGPT rejects these request fields.
+	const omitUnsupportedFields = isChatGPTSignIn(model, options?.apiKey);
 	const params: ResponseCreateParamsStreaming = {
 		model: model.id,
 		input: messages,
 		stream: true,
 		prompt_cache_key: cacheRetention === "none" ? undefined : clampOpenAIPromptCacheKey(options?.sessionId),
-		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
-		prompt_cache_options: getPromptCacheOptions(compat, cacheRetention),
+		prompt_cache_retention: omitUnsupportedFields ? undefined : getPromptCacheRetention(compat, cacheRetention),
+		prompt_cache_options: omitUnsupportedFields ? undefined : getPromptCacheOptions(compat, cacheRetention),
 		store: false,
 	};
 
-	if (options?.maxTokens && compat.supportsMaxOutputTokens) {
+	if (options?.maxTokens && compat.supportsMaxOutputTokens && !omitUnsupportedFields) {
 		params.max_output_tokens = Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS);
 	}
 
-	if (options?.temperature !== undefined) {
+	if (options?.temperature !== undefined && !omitUnsupportedFields) {
 		params.temperature = options?.temperature;
 	}
 
@@ -340,11 +360,12 @@ function buildParams(
 		params.tool_choice = options.toolChoice;
 	}
 
+	const reasoningEffort = options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined);
 	if (model.reasoning) {
-		if (options?.reasoningEffort || options?.reasoningSummary) {
+		if (reasoningEffort) {
 			const effort = options?.reasoningEffort
 				? (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort)
-				: "medium";
+				: reasoningEffort;
 			params.reasoning = {
 				effort: effort as NonNullable<typeof params.reasoning>["effort"],
 				summary: options?.reasoningSummary || "auto",
@@ -358,8 +379,11 @@ function buildParams(
 		if (model.provider === "xai") params.include = ["reasoning.encrypted_content"];
 	}
 
-	// Last so custom keys override the named request fields. Per-request keys override model defaults.
-	Object.assign(params, model.samplingParams, options?.samplingParams);
+	// Last so model and request sampling parameters override named request fields.
+	const samplingParams = resolveSamplingParams(model, reasoningEffort ?? "off", options?.samplingParams);
+	if (samplingParams) {
+		Object.assign(params, samplingParams);
+	}
 
 	return params;
 }

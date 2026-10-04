@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import humminLaya from "../extensions/hummin-laya.ts";
+import humminLaya from "../extensions/hummin-sys1.ts";
 import {
 	buildCatalog,
 	decideRightSize,
-	type LayScoreCall,
 	type ModelLike,
 	resolveRequestedModel,
+	type Sys1ScoreCall,
 } from "../extensions/lib/model-rightsize.ts";
 import type { ExtensionAPI } from "../src/core/extensions/types.ts";
 
@@ -108,7 +108,7 @@ const catalog = buildCatalog(runtimeModels, [
 ]);
 const enabled = { enabled: true, swingThreshold: 0.6 };
 const answer =
-	(configuration: string, p: number): LayScoreCall =>
+	(configuration: string, p: number): Sys1ScoreCall =>
 	async () => [{ answer: configuration, p }];
 const label = (provider: string, model: string, thinking: string) => `${provider}/${model} [thinking=${thinking}]`;
 
@@ -143,9 +143,9 @@ describe("model right-size catalog and decisions", () => {
 		expect(resolveRequestedModel("invented-model", catalog).matched).toBe(false);
 	});
 
-	it("disabled and empty requests do not consult Laya", async () => {
+	it("disabled and empty requests do not consult the engine", async () => {
 		let calls = 0;
-		const laya: LayScoreCall = async () => {
+		const sys1: Sys1ScoreCall = async () => {
 			calls += 1;
 			return [{ answer: "garbage", p: 1 }];
 		};
@@ -157,11 +157,11 @@ describe("model right-size catalog and decisions", () => {
 					thinking: "low",
 					catalog,
 					config: { enabled: false, swingThreshold: 0.6 },
-					laya,
+					sys1,
 				})
 			).action,
 		).toBe("allow");
-		expect((await decideRightSize({ subtask: "", requested: FLASH, catalog, config: enabled, laya })).action).toBe(
+		expect((await decideRightSize({ subtask: "", requested: FLASH, catalog, config: enabled, sys1 })).action).toBe(
 			"allow",
 		);
 		expect(calls).toBe(0);
@@ -174,7 +174,7 @@ describe("model right-size catalog and decisions", () => {
 			thinking: "low",
 			catalog,
 			config: enabled,
-			laya: answer(label("zai", FLASH, "low"), 0.9),
+			sys1: answer(label("zai", FLASH, "low"), 0.9),
 		});
 		expect(result.action).toBe("allow");
 		expect(result.consulted).toBe(true);
@@ -187,7 +187,7 @@ describe("model right-size catalog and decisions", () => {
 			thinking: "xhigh",
 			catalog,
 			config: enabled,
-			laya: answer(label("zai", FLASH, "low"), 0.95),
+			sys1: answer(label("zai", FLASH, "low"), 0.95),
 		});
 		expect(result.action).toBe("block");
 		expect(result.suggestedModel).toEqual({ provider: "zai", modelId: FLASH, thinking: "low" });
@@ -201,7 +201,7 @@ describe("model right-size catalog and decisions", () => {
 			thinking: "low",
 			catalog,
 			config: enabled,
-			laya: answer(label("zai", MAX, "xhigh"), 0.95),
+			sys1: answer(label("zai", MAX, "xhigh"), 0.95),
 		});
 		expect(result.action).toBe("block");
 		expect(result.suggestedModel?.provider).toBe("zai");
@@ -215,7 +215,7 @@ describe("model right-size catalog and decisions", () => {
 			thinking: "high",
 			catalog,
 			config: enabled,
-			laya: answer(label("zai", FLASH, "low"), 0.55),
+			sys1: answer(label("zai", FLASH, "low"), 0.55),
 		});
 		expect(result.action).toBe("advisory");
 	});
@@ -224,7 +224,7 @@ describe("model right-size catalog and decisions", () => {
 		const selected = label("zai", FLASH, "low");
 		const requested = label("zai", MAX, "xhigh");
 		const distribution: Record<string, number> = { [selected]: 0.4, [requested]: 0.2 };
-		const laya: LayScoreCall = async () => [
+		const sys1: Sys1ScoreCall = async () => [
 			{
 				answer: selected,
 				p: 0.4,
@@ -236,7 +236,7 @@ describe("model right-size catalog and decisions", () => {
 			requested: `zai/${MAX}`,
 			thinking: "xhigh" as const,
 			catalog,
-			laya,
+			sys1,
 		};
 		// Margin 0.4 - 0.2 = 0.2: advisory at 0.35 even though absolute p is only 0.4.
 		expect((await decideRightSize({ ...base, config: { enabled: true, swingThreshold: 0.35 } })).action).toBe(
@@ -248,8 +248,8 @@ describe("model right-size catalog and decisions", () => {
 		);
 	});
 
-	it("malformed and unavailable Laya responses fail open", async () => {
-		for (const laya of [
+	it("malformed and unavailable System-1 responses fail open", async () => {
+		for (const sys1 of [
 			answer("not a listed candidate", 0.99),
 			async () => {
 				throw new Error("offline");
@@ -261,7 +261,7 @@ describe("model right-size catalog and decisions", () => {
 				thinking: "low",
 				catalog,
 				config: enabled,
-				laya,
+				sys1,
 			});
 			expect(result.action).toBe("allow");
 		}

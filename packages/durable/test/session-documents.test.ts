@@ -351,8 +351,8 @@ describe("Session document transactions", () => {
 
 	it("rejects Tx use after the callback settles", async () => {
 		const { session, conversationId } = await setupLive();
-		let captured: Parameters<Parameters<typeof session.commit>[0]>[0] | undefined;
-		await session.commit((tx) => {
+		let captured: Parameters<Parameters<typeof session.commitWith>[0]>[0] | undefined;
+		await session.commitWith((tx) => {
 			captured = tx;
 		}, context);
 		await expect(captured!.doc(LiveDoc, conversationId)).rejects.toThrow("Transaction has settled");
@@ -411,7 +411,7 @@ describe("Session document transactions", () => {
 		const counter = await session.snapshot(CounterDoc, context);
 		const commits = storage.commits.length;
 		await expect(
-			session.commit(async (tx) => {
+			session.commitWith(async (tx) => {
 				(await tx.doc(LiveDoc, conversationId)).message = "lost";
 				(await tx.doc(CounterDoc)).count = 2;
 				// Replacing a missing task fails during assembly, after every change was prepared.
@@ -421,7 +421,6 @@ describe("Session document transactions", () => {
 					kind: "missing",
 					version: 1,
 					input: null,
-					after: [],
 					background: false,
 					abortRequested: false,
 					state: { status: "pending", checkpoint: { phase: "start" } },

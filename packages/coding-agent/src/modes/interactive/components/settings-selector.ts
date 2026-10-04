@@ -25,6 +25,7 @@ import {
 	type DefaultProjectTrust,
 	type FullscreenExitOutput,
 	type MermaidRenderingMode,
+	type QuietStartup,
 	type TuiMode,
 	type WarningSettings,
 } from "../../../core/settings-manager.ts";
@@ -149,7 +150,7 @@ export interface SettingsConfig {
 	editorPaddingX: number;
 	outputPad: 0 | 1;
 	autocompleteMaxVisible: number;
-	quietStartup: boolean;
+	quietStartup: boolean | "header";
 	defaultProjectTrust: DefaultProjectTrust;
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
@@ -159,6 +160,7 @@ export interface SettingsConfig {
 	fullscreenExitOutput: FullscreenExitOutput;
 	fullscreenScrollbar: ScrollViewScrollbar;
 	fullscreenCopyOnSelect: boolean;
+	fullscreenWheelScrollLines: "auto" | number;
 	warnings: WarningSettings;
 	providersShowAll: boolean;
 	retryEnabled: boolean;
@@ -169,10 +171,10 @@ export interface SettingsConfig {
 	memoryModelId: string;
 	localInstances: string[];
 	fleetAutoStart: boolean;
-	layaRightSizeEnabled: boolean;
-	layaRightSizeSwingThreshold: number;
-	layaRightSizeProfileCount: number;
-	layaRightSizeProfilesJson: string;
+	rightSizeEnabled: boolean;
+	rightSizeSwingThreshold: number;
+	rightSizeProfileCount: number;
+	rightSizeProfilesJson: string;
 	editorMode: "default" | "vim";
 	externalEditor: string;
 	websocketConnectTimeoutMs: number | undefined;
@@ -206,8 +208,9 @@ export interface SettingsCallbacks {
 	onMermaidRenderingModeChange: (mode: MermaidRenderingMode) => void;
 	onShowCacheMissNoticesChange: (shown: boolean) => void;
 	onCollapseChangelogChange: (collapsed: boolean) => void;
+	onFullscreenWheelScrollLinesChange: (lines: "auto" | number) => void;
 	onEnableInstallTelemetryChange: (enabled: boolean) => void;
-	onQuietStartupChange: (enabled: boolean) => void;
+	onQuietStartupChange: (quiet: QuietStartup) => void;
 	onDefaultProjectTrustChange: (defaultProjectTrust: DefaultProjectTrust) => void;
 	onDoubleEscapeActionChange: (action: "fork" | "tree" | "none") => void;
 	onTreeFilterModeChange: (mode: "default" | "no-tools" | "user-only" | "labeled-only" | "all") => void;
@@ -234,9 +237,9 @@ export interface SettingsCallbacks {
 	onMemoryModelIdChange: (modelId: string) => void;
 	onLocalInstancesChange: (instances: string[]) => void;
 	onFleetAutoStartChange: (enabled: boolean) => void;
-	onLayaRightSizeEnabledChange: (enabled: boolean) => void;
-	onLayaRightSizeSwingThresholdChange: (threshold: number) => void;
-	onLayaRightSizeProfilesChange: (profilesJson: string) => void;
+	onRightSizeEnabledChange: (enabled: boolean) => void;
+	onRightSizeSwingThresholdChange: (threshold: number) => void;
+	onRightSizeProfilesChange: (profilesJson: string) => void;
 	onEditorModeChange: (mode: "default" | "vim") => void;
 	onExternalEditorChange: (command: string) => void;
 	onWebSocketConnectTimeoutMsChange: (timeoutMs: number | undefined) => void;
@@ -617,8 +620,8 @@ class TextInputSubmenu extends Container {
 	}
 }
 
-/** A laya right-size model profile: identity plus optional review metadata. */
-interface LayaProfile extends Record<string, unknown> {
+/** A right-size model profile: identity plus optional review metadata. */
+interface RightSizeProfile extends Record<string, unknown> {
 	provider: string;
 	modelId: string;
 	description?: string;
@@ -631,11 +634,11 @@ const LAYA_SPEED_VALUES = ["—", "fast", "normal", "slow"];
 const LAYA_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** Parse and shape-check the stored profiles JSON. Throws with a user-facing message. */
-function parseLayaProfiles(json: string): LayaProfile[] {
+function parseRightSizeProfiles(json: string): RightSizeProfile[] {
 	const parsed: unknown = JSON.parse(json);
 	if (!Array.isArray(parsed)) throw new Error("profiles must be a JSON array");
 	return parsed.map((entry) => {
-		const profile = entry as LayaProfile;
+		const profile = entry as RightSizeProfile;
 		if (
 			typeof profile?.provider !== "string" ||
 			!profile.provider.trim() ||
@@ -651,12 +654,12 @@ function parseLayaProfiles(json: string): LayaProfile[] {
 /** Field editor for one profile: named rows, text or toggle, delete action. */
 class ProfileFieldsSubmenu extends Container {
 	private settingsList!: SettingsList;
-	private readonly profile: LayaProfile;
+	private readonly profile: RightSizeProfile;
 	private readonly onChanged: () => void;
 	private readonly onDelete: () => void;
 	private readonly onBack: () => void;
 
-	constructor(profile: LayaProfile, onChanged: () => void, onDelete: () => void, onBack: () => void) {
+	constructor(profile: RightSizeProfile, onChanged: () => void, onDelete: () => void, onBack: () => void) {
 		super();
 		this.profile = profile;
 		this.onChanged = onChanged;
@@ -785,13 +788,13 @@ class ProfileFieldsSubmenu extends Container {
 }
 
 /** Profiles screen: one row per profile plus an add action; Esc returns. */
-class LayaProfilesSubmenu extends Container {
+class RightSizeProfilesSubmenu extends Container {
 	private settingsList!: SettingsList;
-	private readonly profiles: LayaProfile[];
-	private readonly persist: (profiles: LayaProfile[]) => void;
+	private readonly profiles: RightSizeProfile[];
+	private readonly persist: (profiles: RightSizeProfile[]) => void;
 	private readonly onCancel: () => void;
 
-	constructor(profiles: LayaProfile[], persist: (profiles: LayaProfile[]) => void, onCancel: () => void) {
+	constructor(profiles: RightSizeProfile[], persist: (profiles: RightSizeProfile[]) => void, onCancel: () => void) {
 		super();
 		this.profiles = profiles;
 		this.persist = persist;
@@ -801,7 +804,7 @@ class LayaProfilesSubmenu extends Container {
 
 	private rebuild(): void {
 		this.clear();
-		this.addChild(new Text(theme.bold(theme.fg("accent", "Laya model profiles")), 0, 0));
+		this.addChild(new Text(theme.bold(theme.fg("accent", "Right-size model profiles")), 0, 0));
 		this.addChild(new Text(theme.fg("muted", "What the right-size review knows about each model"), 0, 0));
 		this.addChild(new Spacer(1));
 		const items: SettingItem[] = this.profiles.map((profile) => ({
@@ -964,9 +967,9 @@ export class SettingsSelectorComponent extends Container {
 			{
 				id: "quiet-startup",
 				label: "Quiet startup",
-				description: "Disable verbose printing at startup",
-				currentValue: config.quietStartup ? "true" : "false",
-				values: ["true", "false"],
+				description: "Disable verbose printing at startup (header: keep only the startup header)",
+				currentValue: String(config.quietStartup),
+				values: ["true", "header", "false"],
 			},
 			{
 				id: "collapse-changelog",
@@ -1264,37 +1267,37 @@ export class SettingsSelectorComponent extends Container {
 				values: ["true", "false"],
 			},
 			{
-				id: "laya-right-size",
-				label: "Laya right-size gate",
+				id: "right-size-gate",
+				label: "Right-size gate",
 				description:
-					"Laya reviews child dispatches (task, cron) against the model catalog and holds confident mismatches for review. HUMMIN_LAYA_RIGHTSIZE=off takes precedence.",
-				currentValue: config.layaRightSizeEnabled ? "true" : "false",
+					"The System-1 engine reviews child dispatches (task, cron) against the model catalog and holds confident mismatches for review. HUMMIN_SYS1_RIGHTSIZE=off (legacy HUMMIN_LAYA_RIGHTSIZE) takes precedence.",
+				currentValue: config.rightSizeEnabled ? "true" : "false",
 				values: ["true", "false"],
 			},
 			{
-				id: "laya-swing-threshold",
-				label: "Laya swing threshold",
+				id: "right-size-swing-threshold",
+				label: "Right-size swing threshold",
 				description:
-					"Confidence margin between Laya's pick and the requested model that turns a mismatch into a dispatch hold. HUMMIN_LAYA_RIGHTSIZE_SWING takes precedence.",
-				currentValue: String(config.layaRightSizeSwingThreshold),
+					"Confidence margin between the engine's pick and the requested model that turns a mismatch into a dispatch hold. HUMMIN_SYS1_RIGHTSIZE_SWING takes precedence.",
+				currentValue: String(config.rightSizeSwingThreshold),
 				values: ["0.25", "0.3", "0.35", "0.4", "0.45", "0.5", "0.6"],
 			},
 			{
-				id: "laya-profiles",
-				label: "Laya model profiles",
+				id: "right-size-profiles",
+				label: "Right-size model profiles",
 				description:
 					"Per-model description/speed/cost metadata the right-size review sees. Enter to open the profile editor.",
-				currentValue: `${config.layaRightSizeProfileCount} configured`,
+				currentValue: `${config.rightSizeProfileCount} configured`,
 				submenu: (_current: string, done: (selectedValue?: string) => void) => {
-					let profiles: LayaProfile[];
+					let profiles: RightSizeProfile[];
 					try {
-						profiles = parseLayaProfiles(config.layaRightSizeProfilesJson);
+						profiles = parseRightSizeProfiles(config.rightSizeProfilesJson);
 					} catch {
 						profiles = [];
 					}
-					return new LayaProfilesSubmenu(
+					return new RightSizeProfilesSubmenu(
 						profiles,
-						(updated) => callbacks.onLayaRightSizeProfilesChange(JSON.stringify(updated)),
+						(updated) => callbacks.onRightSizeProfilesChange(JSON.stringify(updated)),
 						() => done(),
 					);
 				},
@@ -1390,6 +1393,20 @@ export class SettingsSelectorComponent extends Container {
 				description: "Automatically copy selected text in fullscreen mode; disable to copy selections with Ctrl+X",
 				currentValue: config.fullscreenCopyOnSelect ? "true" : "false",
 				values: ["true", "false"],
+			},
+			{
+				id: "fullscreen-wheel-scroll-lines",
+				label: "Fullscreen wheel scrolling",
+				description:
+					"Lines per mouse-wheel event in fullscreen mode; 'auto' speeds up fast wheel spins where the terminal does not",
+				currentValue: String(config.fullscreenWheelScrollLines),
+				values: [
+					"auto",
+					...[...new Set([1, 2, 3, 5, 10, config.fullscreenWheelScrollLines])]
+						.filter((lines) => lines !== "auto")
+						.sort((a, b) => a - b)
+						.map(String),
+				],
 			},
 			{
 				id: "clear-on-shrink",
@@ -1557,7 +1574,7 @@ export class SettingsSelectorComponent extends Container {
 		const onChange = (id: string, newValue: string) => {
 			switch (id) {
 				case "quiet-startup":
-					callbacks.onQuietStartupChange(newValue === "true");
+					callbacks.onQuietStartupChange(newValue === "header" ? "header" : newValue === "true");
 					break;
 				case "collapse-changelog":
 					callbacks.onCollapseChangelogChange(newValue === "true");
@@ -1632,11 +1649,11 @@ export class SettingsSelectorComponent extends Container {
 				case "fleet-auto-start":
 					callbacks.onFleetAutoStartChange(newValue === "true");
 					break;
-				case "laya-right-size":
-					callbacks.onLayaRightSizeEnabledChange(newValue === "true");
+				case "right-size-gate":
+					callbacks.onRightSizeEnabledChange(newValue === "true");
 					break;
-				case "laya-swing-threshold":
-					callbacks.onLayaRightSizeSwingThresholdChange(Number(newValue));
+				case "right-size-swing-threshold":
+					callbacks.onRightSizeSwingThresholdChange(Number(newValue));
 					break;
 				case "editor-mode":
 					callbacks.onEditorModeChange(newValue as "default" | "vim");
@@ -1675,6 +1692,9 @@ export class SettingsSelectorComponent extends Container {
 					break;
 				case "fullscreen-copy-on-select":
 					callbacks.onFullscreenCopyOnSelectChange(newValue === "true");
+					break;
+				case "fullscreen-wheel-scroll-lines":
+					callbacks.onFullscreenWheelScrollLinesChange(newValue === "auto" ? "auto" : parseInt(newValue, 10));
 					break;
 				case "clear-on-shrink":
 					callbacks.onClearOnShrinkChange(newValue === "true");

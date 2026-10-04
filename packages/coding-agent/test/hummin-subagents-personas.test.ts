@@ -10,7 +10,7 @@ import subagentExtension, {
 } from "../extensions/hummin-subagents.ts";
 import { ProcessManager } from "../extensions/lib/processes.ts";
 import { CONFIG_DIR_NAME, ENV_AGENT_DIR } from "../src/config.ts";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../src/index.ts";
+import type { ExtensionAPI, ExtensionToolContext, ToolDefinition } from "../src/index.ts";
 
 // Personas and chaining for the task tool: pure composer/interpolator tests,
 // persona file resolution, and the after_task_id wiring at the execute seam.
@@ -40,7 +40,7 @@ function loadTaskTool(cwd: string): ToolDefinition {
 	return tools.get("task")!;
 }
 
-function chainCtx(cwd: string): ExtensionContext {
+function chainCtx(cwd: string): ExtensionToolContext {
 	return {
 		cwd,
 		isProjectTrusted: () => true,
@@ -51,7 +51,7 @@ function chainCtx(cwd: string): ExtensionContext {
 				{ provider: "fleet-host", id: "Org/Model", reasoning: true, thinkingLevelMap: { high: "high" } },
 			],
 		},
-	} as unknown as ExtensionContext;
+	} as unknown as ExtensionToolContext;
 }
 
 it("interpolates {previous} everywhere it occurs", () => {

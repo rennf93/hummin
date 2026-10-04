@@ -8,7 +8,7 @@ hummin uses environment variables in three ways:
 
 Fork-specific `HUMMIN_*` variables are documented in [hummin Process Configuration](#hummin-process-configuration) below. Unless noted there, a `HUMMIN_*` variable overrides the corresponding settings.json value (env beats settings).
 
-Provider API-key variables are documented separately in [Provider Authentication](providers.md#use-an-api-key-from-the-environment).
+Provider API-key variables are documented separately in [Providers](providers.md#use-an-api-key-from-the-environment).
 
 ## Process Marker
 
@@ -154,19 +154,27 @@ These fork-specific variables are read by hummin and its bundled extensions. Whe
 | `HUMMIN_NOTIFY` | Notification channel: `off`, `bell`, `osc9`, `desktop`, or `all` (default `bell`, overrides `terminal.notifications`) |
 | `HUMMIN_NOTIFY_WHEN` | When notifications fire: `always`, or `unfocused` (default, overrides `terminal.notificationsWhen`) |
 
-### Laya System-1 layer
+### System-1 decision layer
 
-The laya service (default `http://127.0.0.1:9989/v1/systemone`) provides calibrated second opinions for four automatic hooks and the `laya_decide` tool. Every hook fails open: an unreachable or slow laya never blocks the turn, the command, or the lesson. Every read is audited to `<agentDir>/laya-gate.log` and summarized by `/friction`.
+One decision engine at a time answers every System-1 read: the bash gate's gray-zone scoring, the per-turn destructive steer, test-failure triage, memory intake, child-dispatch review, and the `sys1_decide` tool. Engines: `laya` (cheap local, 421M, default), `clef` (strong local, 9B, 16k context), `jev` (hosted, requires a configured URL). Every hook fails open: an unreachable or slow engine never blocks the turn, the command, or the lesson, and there is no auto-failover between engines. Every read is audited to `<agentDir>/sys1-gate.log` (falling back to the pre-rename `laya-gate.log` for history) with the answering engine and summarized by `/friction` (per engine).
+
+Select the engine with `HUMMIN_DECISION_ENGINE` or settings `decision.engine`. Per-engine overrides live in settings under `decision.<engine>.url`, `.apiKey`, `.gateThreshold`, `.steerThreshold`, `.triageThreshold`, `.intakeThreshold`, `.gateTimeoutMs`, `.dispatchTimeoutMs`, `.decideTimeoutMs`, and `.warmTimeoutMs`.
 
 | Variable | Description |
 |----------|-------------|
-| `HUMMIN_LAYA_URL` | Overrides the laya service endpoint (default `http://127.0.0.1:9989/v1/systemone`); the service authenticates with `COLI_API_KEY` (the shared fleet key) |
-| `HUMMIN_LAYA_GATE` | `off` disables the bash destructive-command gate everywhere (the bash tool hook and background exec/monitor shells) |
-| `HUMMIN_LAYA_GATE_THRESHOLD` | Gray-zone block threshold on P(destructive), `0` to `1`; default `0.75`, overrides `layaGateThreshold` |
-| `HUMMIN_LAYA_STEER` | `off` disables the per-turn destructive-intent steer |
-| `HUMMIN_LAYA_STEER_THRESHOLD` | Destructive-intent steer threshold, `0` to `1`; default `0.7`, overrides `layaSteerThreshold` |
-| `HUMMIN_LAYA_TRIAGE` | `off` disables the test-failure triage advisory |
-| `HUMMIN_LAYA_INTAKE` | `off` skips the distill worker's per-lesson intake score (lessons are stored unconditionally) |
+| `HUMMIN_DECISION_ENGINE` | Active engine: `laya`, `clef`, or `jev` (default `laya`, overrides `decision.engine`); an invalid value falls back to `laya` with a warning |
+| `HUMMIN_DECISION_URL` | Overrides the active engine's SystemOne endpoint (engine defaults: laya `http://127.0.0.1:9989/v1/systemone`, clef `http://127.0.0.1:9987/v1/systemone`, jev unset) |
+| `HUMMIN_DECISION_API_KEY` | Overrides the active engine's bearer key (default `COLI_API_KEY`, the shared fleet key; no-auth engines work with it unset) |
+| `HUMMIN_DECISION_GATE_THRESHOLD` | Gray-zone block threshold on P(destructive), `0` to `1` (default `0.75`) |
+| `HUMMIN_DECISION_STEER_THRESHOLD` | Destructive-intent steer threshold, `0` to `1` (engine defaults: laya `0.7`, clef `0.8`) |
+| `HUMMIN_DECISION_TRIAGE_THRESHOLD` | Triage advisory threshold, `0` to `1` (default `0.45`) |
+| `HUMMIN_DECISION_INTAKE_THRESHOLD` | Memory lesson intake threshold, `0` to `1` (default `0.5`) |
+| `HUMMIN_SYS1_GATE` | `off` disables the bash destructive-command gate everywhere (the bash tool hook and background exec/monitor shells) |
+| `HUMMIN_SYS1_STEER` | `off` disables the per-turn destructive-intent steer |
+| `HUMMIN_SYS1_TRIAGE` | `off` disables the test-failure triage advisory |
+| `HUMMIN_SYS1_INTAKE` | `off` skips the distill worker's per-lesson intake score (lessons are stored unconditionally) |
+
+Legacy names (kept for the laya engine so existing shells and scripts keep working): `HUMMIN_LAYA_URL`, `HUMMIN_LAYA_GATE`, `HUMMIN_LAYA_GATE_THRESHOLD`, `HUMMIN_LAYA_STEER`, `HUMMIN_LAYA_STEER_THRESHOLD`, `HUMMIN_LAYA_TRIAGE`, `HUMMIN_LAYA_INTAKE`. The legacy URL and threshold variables steer the laya engine only; the `HUMMIN_SYS1_*` and `HUMMIN_LAYA_*` switch aliases both disable their behavior.
 
 ### Guardrails tool-call budget
 

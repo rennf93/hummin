@@ -95,6 +95,10 @@
             {
               "title": "hummin UX",
               "path": "hummin-ux.md"
+            },
+            {
+              "title": "Connect MCP Servers",
+              "path": "mcp.md"
             }
           ]
         },
@@ -108,6 +112,10 @@
             {
               "title": "Add Custom Providers",
               "path": "custom-provider.md"
+            },
+            {
+              "title": "Route with Virtual Models",
+              "path": "virtual-models.md"
             },
             {
               "title": "Build Terminal UI Components",
@@ -133,6 +141,10 @@
           "path": "cli.md"
         },
         {
+          "title": "Codemode",
+          "path": "codemode.md"
+        },
+        {
           "title": "Slash Commands",
           "path": "slash-commands.md"
         },
@@ -149,7 +161,7 @@
           "path": "keybindings.md"
         },
         {
-          "title": "Provider Authentication",
+          "title": "Providers",
           "path": "providers.md"
         },
         {
