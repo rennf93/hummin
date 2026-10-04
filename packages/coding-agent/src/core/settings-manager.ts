@@ -1402,9 +1402,6 @@ export class SettingsManager {
 		return this.settings.memoryModelId ?? "glm-5.3-flash";
 	}
 
-	/** hummin laya: destructive-intent thresholds. Env wins, then settings,
-	 * then the built-in default. A stored value outside 0..1 is ignored so a
-	 * typo can neither weld the gate shut nor silently open it. */
 	/** hummin sys1: bash gate extra classifier patterns. Compiled per read so
 	 * /settings edits apply without a restart; invalid regex strings are
 	 * skipped fail-open. */

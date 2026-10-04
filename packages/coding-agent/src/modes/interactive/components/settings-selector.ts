@@ -617,8 +617,8 @@ class TextInputSubmenu extends Container {
 	}
 }
 
-/** A laya right-size model profile: identity plus optional review metadata. */
-interface LayaProfile extends Record<string, unknown> {
+/** A right-size model profile: identity plus optional review metadata. */
+interface RightSizeProfile extends Record<string, unknown> {
 	provider: string;
 	modelId: string;
 	description?: string;
@@ -631,11 +631,11 @@ const LAYA_SPEED_VALUES = ["—", "fast", "normal", "slow"];
 const LAYA_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** Parse and shape-check the stored profiles JSON. Throws with a user-facing message. */
-function parseLayaProfiles(json: string): LayaProfile[] {
+function parseRightSizeProfiles(json: string): RightSizeProfile[] {
 	const parsed: unknown = JSON.parse(json);
 	if (!Array.isArray(parsed)) throw new Error("profiles must be a JSON array");
 	return parsed.map((entry) => {
-		const profile = entry as LayaProfile;
+		const profile = entry as RightSizeProfile;
 		if (
 			typeof profile?.provider !== "string" ||
 			!profile.provider.trim() ||
@@ -651,12 +651,12 @@ function parseLayaProfiles(json: string): LayaProfile[] {
 /** Field editor for one profile: named rows, text or toggle, delete action. */
 class ProfileFieldsSubmenu extends Container {
 	private settingsList!: SettingsList;
-	private readonly profile: LayaProfile;
+	private readonly profile: RightSizeProfile;
 	private readonly onChanged: () => void;
 	private readonly onDelete: () => void;
 	private readonly onBack: () => void;
 
-	constructor(profile: LayaProfile, onChanged: () => void, onDelete: () => void, onBack: () => void) {
+	constructor(profile: RightSizeProfile, onChanged: () => void, onDelete: () => void, onBack: () => void) {
 		super();
 		this.profile = profile;
 		this.onChanged = onChanged;
@@ -785,13 +785,13 @@ class ProfileFieldsSubmenu extends Container {
 }
 
 /** Profiles screen: one row per profile plus an add action; Esc returns. */
-class LayaProfilesSubmenu extends Container {
+class RightSizeProfilesSubmenu extends Container {
 	private settingsList!: SettingsList;
-	private readonly profiles: LayaProfile[];
-	private readonly persist: (profiles: LayaProfile[]) => void;
+	private readonly profiles: RightSizeProfile[];
+	private readonly persist: (profiles: RightSizeProfile[]) => void;
 	private readonly onCancel: () => void;
 
-	constructor(profiles: LayaProfile[], persist: (profiles: LayaProfile[]) => void, onCancel: () => void) {
+	constructor(profiles: RightSizeProfile[], persist: (profiles: RightSizeProfile[]) => void, onCancel: () => void) {
 		super();
 		this.profiles = profiles;
 		this.persist = persist;
@@ -801,7 +801,7 @@ class LayaProfilesSubmenu extends Container {
 
 	private rebuild(): void {
 		this.clear();
-		this.addChild(new Text(theme.bold(theme.fg("accent", "Laya model profiles")), 0, 0));
+		this.addChild(new Text(theme.bold(theme.fg("accent", "Right-size model profiles")), 0, 0));
 		this.addChild(new Text(theme.fg("muted", "What the right-size review knows about each model"), 0, 0));
 		this.addChild(new Spacer(1));
 		const items: SettingItem[] = this.profiles.map((profile) => ({
@@ -1264,35 +1264,35 @@ export class SettingsSelectorComponent extends Container {
 				values: ["true", "false"],
 			},
 			{
-				id: "laya-right-size",
-				label: "Laya right-size gate",
+				id: "right-size-gate",
+				label: "Right-size gate",
 				description:
 					"The System-1 engine reviews child dispatches (task, cron) against the model catalog and holds confident mismatches for review. HUMMIN_SYS1_RIGHTSIZE=off (legacy HUMMIN_LAYA_RIGHTSIZE) takes precedence.",
 				currentValue: config.rightSizeEnabled ? "true" : "false",
 				values: ["true", "false"],
 			},
 			{
-				id: "laya-swing-threshold",
-				label: "Laya swing threshold",
+				id: "right-size-swing-threshold",
+				label: "Right-size swing threshold",
 				description:
-					"Confidence margin between Laya's pick and the requested model that turns a mismatch into a dispatch hold. HUMMIN_LAYA_RIGHTSIZE_SWING takes precedence.",
+					"Confidence margin between the engine's pick and the requested model that turns a mismatch into a dispatch hold. HUMMIN_SYS1_RIGHTSIZE_SWING takes precedence.",
 				currentValue: String(config.rightSizeSwingThreshold),
 				values: ["0.25", "0.3", "0.35", "0.4", "0.45", "0.5", "0.6"],
 			},
 			{
-				id: "laya-profiles",
-				label: "Laya model profiles",
+				id: "right-size-profiles",
+				label: "Right-size model profiles",
 				description:
 					"Per-model description/speed/cost metadata the right-size review sees. Enter to open the profile editor.",
 				currentValue: `${config.rightSizeProfileCount} configured`,
 				submenu: (_current: string, done: (selectedValue?: string) => void) => {
-					let profiles: LayaProfile[];
+					let profiles: RightSizeProfile[];
 					try {
-						profiles = parseLayaProfiles(config.rightSizeProfilesJson);
+						profiles = parseRightSizeProfiles(config.rightSizeProfilesJson);
 					} catch {
 						profiles = [];
 					}
-					return new LayaProfilesSubmenu(
+					return new RightSizeProfilesSubmenu(
 						profiles,
 						(updated) => callbacks.onRightSizeProfilesChange(JSON.stringify(updated)),
 						() => done(),
@@ -1632,10 +1632,10 @@ export class SettingsSelectorComponent extends Container {
 				case "fleet-auto-start":
 					callbacks.onFleetAutoStartChange(newValue === "true");
 					break;
-				case "laya-right-size":
+				case "right-size-gate":
 					callbacks.onRightSizeEnabledChange(newValue === "true");
 					break;
-				case "laya-swing-threshold":
+				case "right-size-swing-threshold":
 					callbacks.onRightSizeSwingThresholdChange(Number(newValue));
 					break;
 				case "editor-mode":
