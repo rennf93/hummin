@@ -133,7 +133,10 @@ async function main() {
 			cwd: tempDir,
 			env: {
 				...process.env,
+				// hummin renamed the agent-dir env (HUMMIN_CODING_AGENT_DIR); keep
+				// PI_CODING_AGENT_DIR for upstream pi parity.
 				PI_CODING_AGENT_DIR: tempDir,
+				HUMMIN_CODING_AGENT_DIR: tempDir,
 				PI_OFFLINE: "1",
 			},
 			stdio: ["ignore", "pipe", "pipe"],
