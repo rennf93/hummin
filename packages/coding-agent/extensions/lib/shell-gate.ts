@@ -3,7 +3,7 @@
  *
  * The bash tool is gated by tool_call hooks (bashguard, sandbox, sys1 gate),
  * but exec and monitor spawn their shells through ProcessManager directly.
- * That made them a standing bypass around bashguard advisories and the laya
+ * That made them a standing bypass around bashguard advisories and the sys1
  * destructive gate (and around the sandbox wrapper, handled separately below).
  * gateBackgroundShell composes the same classification pipeline for background
  * shells: bashguard classification first (matching tool_call hook order), then

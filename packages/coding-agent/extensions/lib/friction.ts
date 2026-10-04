@@ -246,8 +246,6 @@ export interface Sys1GateEntry {
 	p?: number;
 	/** Block and confirmation entries carry the command. */
 	command?: string;
-	/** Which decision engine produced the line (absent in older entries). */
-	engine?: string;
 }
 
 /** Parse one sys1-gate.log line into its useful fields; undefined otherwise. */
@@ -263,7 +261,6 @@ export function parseSys1GateEntry(line: string): Sys1GateEntry | undefined {
 		if (typeof record.kind === "string") entry.kind = record.kind;
 		if (typeof record.p === "number") entry.p = record.p;
 		if (typeof record.command === "string") entry.command = record.command;
-		if (typeof record.engine === "string" && record.engine !== "") entry.engine = record.engine;
 		return entry;
 	} catch {
 		return undefined;
@@ -280,28 +277,17 @@ export function summarizeSys1Gate(lines: readonly string[]): Sys1GateSummary {
 	return summary;
 }
 
-/** Raw sys1-gate.log lines; a missing or unreadable log yields []. Falls back
- * to the pre-rename laya-gate.log when the new file does not exist yet, so
- * historical blocks (confirm windows, calibration) survive the rename. */
+/** Raw sys1-gate.log lines; a missing or unreadable log yields []. */
 export function readSys1GateLines(logPath: string = sys1GateLogPath()): string[] {
-	const readOne = (path: string): string[] => {
-		try {
-			return readLogTail(path, READ_LIMIT_BYTES)
-				.split("\n")
-				.filter((line) => line.trim() !== "");
-		} catch {
-			return [];
-		}
-	};
-	const lines = readOne(logPath);
-	if (logPath === sys1GateLogPath() && lines.length === 0) {
-		return readOne(join(dirname(sys1GateLogPath()), "laya-gate.log"));
+	try {
+		return readLogTail(logPath, READ_LIMIT_BYTES)
+			.split("\n")
+			.filter((line) => line.trim() !== "");
+	} catch {
+		return [];
 	}
-	return lines;
 }
 export interface Sys1Calibration {
-	/** The engine whose entries were summarized (undefined = all engines). */
-	engine?: string;
 	threshold: number;
 	/** Blocks whose logged score is known. */
 	blocks: number;
@@ -315,7 +301,7 @@ export interface Sys1Calibration {
 	 * threshold: the only signal that a threshold may be too high. */
 	nearMisses: number;
 	nearMissMax: number | undefined;
-	/** Suggested decision.<engine>.gateThreshold setting, or undefined when
+	/** Suggested decision.gateThreshold setting, or undefined when
 	 * the data does not suggest a change. Never auto-applied. */
 	suggestedThreshold: number | undefined;
 }
@@ -441,20 +427,18 @@ export function resetSessionFrictionTally(): SessionFrictionTally {
 }
 
 /**
- * Pure calibration view over laya-gate entries. The suggestion comes from
+ * Pure calibration view over sys1-gate entries. The suggestion comes from
  * ground truth: a confirmed block was a false positive at its score, so the
  * lowest confirmed score the current threshold would still block is the
- * binding constraint; suggest just above it (capped at 0.99). When `engine`
- * is given, entries written by other engines are excluded: thresholds are
- * calibrated per engine, so mixing distributions would corrupt the view.
+ * binding constraint; suggest just above it (capped at 0.99).
  */
 export function summarizeSys1Calibration(
 	entries: readonly Sys1GateEntry[],
-	opts: { threshold: number; nearMissFloor?: number; engine?: string },
+	opts: { threshold: number; nearMissFloor?: number },
 ): Sys1Calibration {
 	const threshold = opts.threshold;
 	const floor = Math.min(opts.nearMissFloor ?? 0.5, threshold);
-	const relevant = opts.engine === undefined ? entries : entries.filter((entry) => (entry.engine ?? "laya") === opts.engine);
+	const relevant = entries;
 	const blockScores: number[] = [];
 	const confirmedScores: number[] = [];
 	let nearMisses = 0;
@@ -472,7 +456,6 @@ export function summarizeSys1Calibration(
 	blockScores.sort((a, b) => a - b);
 	const binding = confirmedScores.filter((p) => p >= threshold).sort((a, b) => a - b)[0];
 	return {
-		engine: opts.engine,
 		threshold,
 		blocks: blockScores.length,
 		blockP:

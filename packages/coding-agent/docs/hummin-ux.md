@@ -110,12 +110,12 @@ cancellable. The lock uses the endpoint origin as its key: configure the same
 hostname consistently. Different machines and non-hummin clients still depend
 on server-side serialization. A crashed holder's lease expires after two minutes.
 
-### Laya child-dispatch review
+### Sys1 child-dispatch review
 
 When enabled, Hummin reviews `task` and `cron_create` before the child starts.
-The review gives the Laya System-1 service the child prompt and the named
+The review gives the sys1 System-1 service the child prompt and the named
 provider/model/thinking configurations available from the real runtime catalog.
-Laya chooses one of those configurations using the profile description, speed,
+The engine chooses one of those configurations using the profile description, speed,
 cost, and thinking depth. `fast`, `local`, and an omitted model resolve through
 the normal child-model selection rules; the review does not invent model IDs or
 cross providers to manufacture a recommendation.
@@ -138,29 +138,29 @@ The profile fields are descriptive metadata: `description`, `speed`, numeric
 `cost.input` and `cost.output`, and the supported `thinkingLevels`. They are
 matched by exact `provider` and `modelId`; the runtime catalog remains the
 source of truth and an unknown model is never fabricated. The settings key
-`layaRightSize.swingThreshold` (default `0.6`, global or project) controls when a
-mismatch blocks: the gate compares the confidence mass of Laya's pick against
+`rightSize.swingThreshold` (default `0.6`, global or project) controls when a
+mismatch blocks: the gate compares the confidence mass of the engine's pick against
 the requested configuration's mass (its margin) and blocks when the margin meets
 the threshold. With no per-label probabilities the margin degrades to absolute
 confidence. `/settings` exposes the gate under Fleet: enabled flag, swing
 threshold, and a profile editor (add, delete, and per-profile text/toggle
-fields). `HUMMIN_LAYA_RIGHTSIZE=off` and
-`HUMMIN_LAYA_RIGHTSIZE_SWING` override the setting for one process.
+fields). `HUMMIN_SYS1_RIGHTSIZE=off` and
+`HUMMIN_SYS1_RIGHTSIZE_SWING` override the setting for one process.
 
 The selected child thinking level is passed through to `hummin -p`. A review can
 therefore identify a thinking-level or model-profile mismatch.
 A high-confidence mismatch pauses dispatch and reports the suggested real
 configuration plus a review ID; the parent may continue only with an explicit
 override reason tied to that review. A lower-confidence mismatch is advisory
-and the child runs with the requested configuration. If Laya is disabled,
+and the child runs with the requested configuration. If the engine is disabled,
 unavailable, times out, or returns an unusable answer, the review fails open and
 the child proceeds. The audit is recorded in `sys1-gate.log`.
 
 This is a Hummin feature. Pi is the upstream project Hummin is built on; Pi's
-own model-selection documentation does not define this Laya review or the
+own model-selection documentation does not define this sys1 review or the
 Hummin fleet capability metadata.
 
-### Laya bash gate
+### Sys1 bash gate
 
 Before a bash command runs, the gate classifies it in three tiers. Read-only
 allowlist commands (`ls`, `git log`, `curl` GET, `npm run check`, ...) pass
@@ -176,32 +176,32 @@ read: git discard verbs (`git reset --hard`, `git clean -f`,
 `terraform`/`pulumi destroy`), disk-level writes (`mkfs`, `dd` to a device),
 recursive `chmod`/`chown` on system roots, and `rm -rf` outside disposable
 dirs. `sudo`-prefixed commands never fast-pass; they block when their inner
-command is destructive and otherwise go to laya. Commands with a `>` or `>>`
+command is destructive and otherwise go to the engine. Commands with a `>` or `>>`
 write redirect (to anything but `/dev/null`) are never fast-passed either -
 `echo x > important.txt` cannot hide behind `echo`'s read-only listing.
 
-Everything else - unfamiliar commands and mixed chains - is scored by a Laya
-yes/no read and blocked once at P >= 0.7 (`layaGateThreshold` setting,
-`HUMMIN_LAYA_GATE_THRESHOLD` env). The read state includes the working
+Everything else - unfamiliar commands and mixed chains - is scored by a sys1
+yes/no read and blocked once at P >= 0.75 (`decision.gateThreshold` setting,
+`HUMMIN_DECISION_GATE_THRESHOLD` env). The read state includes the working
 directory. A block tells the model to confirm with the user or verify the
-target is backed up, then re-run with a `# laya-gate: confirmed` marker;
+target is backed up, then re-run with a `# sys1-gate: confirmed` marker;
 confirmations and rule-tagged deterministic blocks are audited in
 `sys1-gate.log`. All failure modes fail open: a dead engine never blocks.
 
 Installations can extend both classifier lists without forking:
-`layaGate.extraSafe` and `layaGate.extraDestructive` in settings take regex
+`sys1Gate.extraSafe` and `sys1Gate.extraDestructive` in settings take regex
 strings applied per chain segment (invalid patterns are skipped). For example:
 
 ```json
 {
-  "layaGate": {
+  "sys1Gate": {
     "extraSafe": ["^mytool\\s+sync"],
     "extraDestructive": ["^mytool\\s+nuke"]
   }
 }
 ```
 
-Measured constraint (laya 0.3.20): gate reads route to the english checkpoint
+Measured constraint (engine 0.3.20): gate reads route to the english checkpoint
 (512-token context), so long rubrics truncate from the tail, and instruction
 edits past the head do not move scores. The deterministic classifiers, not the
 prompt, carry the precision; routing reads to the multilingual checkpoint

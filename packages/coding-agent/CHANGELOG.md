@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- The System-1 decision layer has exactly one engine, named `sys1`. The laya/clef/jev engine selector is gone: `decision.engine` and the per-engine `decision.laya.*` / `decision.clef.*` / `decision.jev.*` settings namespaces are replaced by a flat `decision.*` namespace (`decision.url`, `.apiKey`, `.gateThreshold`, `.steerThreshold`, `.triageThreshold`, `.intakeThreshold`, and the four timeout fields). Defaults are the clef-calibrated profile (gate 0.75, steer 0.8, `http://127.0.0.1:9987/v1/systemone`). The legacy `HUMMIN_LAYA_URL`, `HUMMIN_LAYA_GATE`, `HUMMIN_LAYA_STEER`, `HUMMIN_LAYA_GATE_THRESHOLD`, `HUMMIN_LAYA_STEER_THRESHOLD`, `HUMMIN_LAYA_TRIAGE`, `HUMMIN_LAYA_INTAKE` env variables and `HUMMIN_DECISION_ENGINE` are no longer read — set `HUMMIN_DECISION_URL` (or settings `decision.url`) to point at a different server. `COLI_API_KEY` still serves as the local-fleet credential fallback.
+- The bash gate's confirm marker is `# sys1-gate: confirmed` (was `# laya-gate: confirmed`); the gate's block message always names the current marker.
+- Dropped the pre-rename settings fallback keys `layaGateThreshold`, `layaSteerThreshold`, `layaGate`, and `layaRightSize` (use `decision.*`, `sys1Gate`, and `rightSize`), and the legacy `HUMMIN_LAYA_RIGHTSIZE` / `HUMMIN_LAYA_RIGHTSIZE_SWING` env aliases.
+
+### Fixed
+
+- Fixed `hummin-cli@1.3.0` being uninstallable from npm: the staged package pinned upstream `@earendil-works/*` dependencies to `^0.87.1`, a line the new `pi-codemode`/`pi-mcp`/`pi-durable` dependencies never had. Ranges now track the merged upstream release (`^1.0.2`).
+
 ## [1.3.0] - 2026-10-04
 
 ### New Features

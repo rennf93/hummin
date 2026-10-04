@@ -559,14 +559,13 @@ function markSessionProcessed(memoryDir) {
 	});
 }
 
-// Every System-1 read is audited to the shared sys1-gate.log with the
-// answering engine; the worker appends directly and never lets a logging
-// failure break the run. The parent injects the resolved engine routing as
-// env (HUMMIN_DECISION_*), so the worker needs no settings resolution.
+// Every System-1 read is audited to the shared sys1-gate.log; the worker
+// appends directly and never lets a logging failure break the run. The parent
+// injects the resolved engine routing as env (HUMMIN_DECISION_*), so the
+// worker needs no settings resolution.
 function auditRead(gateLog, kind, p) {
 	if (typeof gateLog !== "string") return;
-	const engine = String(process.env.HUMMIN_DECISION_ENGINE || "laya").trim() || "laya";
-	try { appendFileSync(gateLog, JSON.stringify({ ts: new Date().toISOString(), type: "read", kind, p, engine }) + "\n"); } catch {}
+	try { appendFileSync(gateLog, JSON.stringify({ ts: new Date().toISOString(), type: "read", kind, p }) + "\n"); } catch {}
 }
 
 // The parent injects the active engine's intake threshold (0..1); an absent,
@@ -580,19 +579,18 @@ function intakeThreshold() {
 // One System-1 read gating lesson intake: a score >= threshold stores the
 // lesson, below drops it exactly like a NONE reply. Any failure (unreachable,
 // timeout, parse) returns null and the lesson is stored - fail open.
-// HUMMIN_SYS1_INTAKE=off (or the legacy HUMMIN_LAYA_INTAKE=off) skips the
-// read entirely. The parent injects HUMMIN_DECISION_URL / _API_KEY /
-// _INTAKE_THRESHOLD. A defined-but-empty injected URL means the active engine
-// is unconfigured: skip the read entirely instead of falling back to the
-// legacy laya names, which would score lessons against a different engine
-// than the parent session (the one-engine contract).
+// HUMMIN_SYS1_INTAKE=off skips the read entirely. The parent injects
+// HUMMIN_DECISION_URL / _API_KEY / _INTAKE_THRESHOLD. A defined-but-empty
+// injected URL means the engine is unconfigured: skip the read entirely
+// instead of falling back to defaults, which would score lessons against a
+// different engine than the parent session (the one-engine contract).
 async function sys1IntakeScore(lesson) {
-	const intakeSwitch = String(process.env.HUMMIN_SYS1_INTAKE || process.env.HUMMIN_LAYA_INTAKE || "").trim().toLowerCase();
+	const intakeSwitch = String(process.env.HUMMIN_SYS1_INTAKE || "").trim().toLowerCase();
 	if (intakeSwitch === "off") return null;
 	const injectedUrl = process.env.HUMMIN_DECISION_URL;
 	if (typeof injectedUrl === "string" && injectedUrl.trim() === "") return null;
 	const apiKey = String(process.env.HUMMIN_DECISION_API_KEY || process.env.COLI_API_KEY || "").trim();
-	const url = injectedUrl !== undefined && injectedUrl.trim() !== "" ? injectedUrl.trim() : (String(process.env.HUMMIN_LAYA_URL || "").trim() || "http://127.0.0.1:9989/v1/systemone");
+	const url = injectedUrl !== undefined && injectedUrl.trim() !== "" ? injectedUrl.trim() : "http://127.0.0.1:9987/v1/systemone";
 	const state = "A coding agent distilled the following lesson from a finished session in " + job.cwd + ". Decide whether it is durable project knowledge.\n\n" + lesson.slice(0, 4000);
 	try {
 		const response = await fetch(url, {

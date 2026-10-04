@@ -9,9 +9,9 @@ import { gateBackgroundShell } from "../extensions/lib/shell-gate.ts";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 
 // The shared shell gate: exec and monitor spawn through ProcessManager, so
-// their commands must pass the same laya-gate and bashguard classification
+// their commands must pass the same sys1-gate and bashguard classification
 // the bash tool gets. These tests pin the deterministic decisions without any
-// network: the laya read is injected everywhere.
+// network: the engine read is injected everywhere.
 
 const cleanups: string[] = [];
 afterEach(() => {
@@ -19,18 +19,18 @@ afterEach(() => {
 	vi.unstubAllEnvs();
 });
 
-/** A laya read that must never be reached (deterministic paths only). */
+/** A engine read that must never be reached (deterministic paths only). */
 const unreachable = (): Promise<{ noul: number } | null> => {
-	throw new Error("laya read must not run for deterministic commands");
+	throw new Error("engine read must not run for deterministic commands");
 };
 
 /** A real sys1GateCheck with the network read injected: deterministic rules
- * and the read-only fast path stay live in tests, only laya is faked. */
+ * and the read-only fast path stay live in tests, only the engine read is faked. */
 function gated(cwd: string, read: () => Promise<{ noul: number } | null>) {
 	return (command: string) => sys1GateCheck(command, read, cwd);
 }
 
-/** Hermetic settings: an empty agent dir so global layaGate extras cannot leak in. */
+/** Hermetic settings: an empty agent dir so global sys1Gate extras cannot leak in. */
 function isolatedCwd(): string {
 	const agentDir = mkdtempSync(join(tmpdir(), "hummin-shell-gate-"));
 	cleanups.push(agentDir);
@@ -51,7 +51,7 @@ test("plan mode blocks exec and cron scheduling alongside the other shell paths"
 	}
 });
 
-test("sys1GateCheck blocks canonical destructive commands without a laya read", async () => {
+test("sys1GateCheck blocks canonical destructive commands without an engine read", async () => {
 	isolatedCwd();
 	const decision = await sys1GateCheck("git reset --hard", unreachable);
 	expect(decision).toMatchObject({ block: true });
@@ -66,7 +66,7 @@ test("sys1GateCheck blocks canonical destructive commands without a laya read", 
 test("sys1GateCheck lets the confirm marker through and audits nothing on plain rerun", async () => {
 	const cwd = isolatedCwd();
 	await expect(sys1GateCheck("git reset --hard", unreachable)).resolves.toMatchObject({ block: true });
-	const confirmed = await sys1GateCheck("git reset --hard # laya-gate: confirmed", unreachable, cwd);
+	const confirmed = await sys1GateCheck("git reset --hard # sys1-gate: confirmed", unreachable, cwd);
 	expect(confirmed).toBeUndefined();
 	// The bare command (marker stripped) clears the repeat latch.
 	const afterConfirm = await sys1GateCheck("git reset --hard", unreachable, cwd);
@@ -78,20 +78,20 @@ test("sys1GateCheck passes read-only commands and scores the gray zone", async (
 	const cwd = isolatedCwd();
 	await expect(sys1GateCheck("ls src && cat package.json", unreachable, cwd)).resolves.toBeUndefined();
 	// A safe command with a write redirect is downgraded to the gray zone: the
-	// redirect hides from segment classification, so laya must see it.
+	// redirect hides from segment classification, so the engine must see it.
 	const high = async (): Promise<{ noul: number } | null> => ({ noul: 0.9 });
 	const low = async (): Promise<{ noul: number } | null> => ({ noul: 0.1 });
 	const blocked = await sys1GateCheck("git add file > log.txt", high, cwd);
 	expect(blocked).toMatchObject({ block: true });
 	expect(blocked?.reason).toContain("P=0.90");
 	await expect(sys1GateCheck("git add file > log.txt", low, cwd)).resolves.toBeUndefined();
-	// A non-read-only segment reaches laya without the redirect downgrade.
+	// A non-read-only segment reaches the engine without the redirect downgrade.
 	await expect(sys1GateCheck("node build.js > out.log", high, cwd)).resolves.toMatchObject({ block: true });
 });
 
-test("gateBackgroundShell propagates bashguard blocks, advisories, and laya blocks", async () => {
+test("gateBackgroundShell propagates bashguard blocks, advisories, and engine blocks", async () => {
 	const cwd = isolatedCwd();
-	// bashguard block config wins before laya is consulted.
+	// bashguard block config wins before the engine is consulted.
 	const blocked = await gateBackgroundShell("git reset --hard", cwd, {
 		bashguardConfig: readOnlyConfig({ block: true }),
 		sys1Check: gated(cwd, unreachable),
@@ -105,13 +105,13 @@ test("gateBackgroundShell propagates bashguard blocks, advisories, and laya bloc
 	});
 	expect(advised.blocked).toBeUndefined();
 	expect(advised.advisory).toContain("sed -i");
-	// laya block reason passes through verbatim.
-	const layaBlocked = await gateBackgroundShell("echo update > important.txt", cwd, {
+	// engine block reason passes through verbatim.
+	const engineBlocked = await gateBackgroundShell("echo update > important.txt", cwd, {
 		bashguardConfig: readOnlyConfig(),
-		sys1Check: async () => ({ block: true, reason: "[laya gate] scored destructive" }),
+		sys1Check: async () => ({ block: true, reason: "[sys1 gate] scored destructive" }),
 	});
-	expect(layaBlocked.blocked).toBe("[laya gate] scored destructive");
-	// read-only background command: no block, no advisory, no laya read.
+	expect(engineBlocked.blocked).toBe("[sys1 gate] scored destructive");
+	// read-only background command: no block, no advisory, no engine read.
 	const clean = await gateBackgroundShell("sleep 2 && gh run view 1", cwd, {
 		bashguardConfig: readOnlyConfig(),
 		sys1Check: gated(cwd, unreachable),
@@ -120,7 +120,7 @@ test("gateBackgroundShell propagates bashguard blocks, advisories, and laya bloc
 	expect(clean.advisory).toBeUndefined();
 });
 
-test("gateBackgroundShell sends escape-shaped gray-zone execs to laya and blocks", async () => {
+test("gateBackgroundShell sends escape-shaped gray-zone execs to the engine and blocks", async () => {
 	const cwd = isolatedCwd();
 	const decision = await gateBackgroundShell("exec 'rm' '-rf' '~/.ssh'", cwd, {
 		bashguardConfig: readOnlyConfig(),

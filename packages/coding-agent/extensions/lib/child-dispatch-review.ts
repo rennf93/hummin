@@ -83,7 +83,7 @@ export async function prepareChildDispatch(input: ChildDispatchInput, ctx: Ctx, 
    const project = settings.getProjectSettings() as SettingsManagerSettings;
    const source = { ...raw, ...project };
    options.config ||= settings.getRightSizeConfig();
-   const rightSizeSource = (source.rightSize ?? source.layaRightSize) as { profiles?: unknown } | undefined;
+   const rightSizeSource = source.rightSize as { profiles?: unknown } | undefined;
    options.profiles ||= Array.isArray(rightSizeSource?.profiles) ? rightSizeSource.profiles as ModelProfile[] : [];
   } catch {
    options.config ||= { enabled: true, swingThreshold: 0.6 };
@@ -112,7 +112,7 @@ export async function prepareChildDispatch(input: ChildDispatchInput, ctx: Ctx, 
   const receipt: DispatchReceipt = { reviewId: randomUUID(), fingerprint: id, kind: input.kind, prompt: input.prompt, cwd: input.cwd, configuration };
   const candidates = ctx.modelRegistry.getAvailable().map((entry) => ({ provider: entry.provider, id: entry.id, reasoning: entry.reasoning, cost: entry.cost, thinkingLevels: ("thinkingLevels" in entry && entry.thinkingLevels ? entry.thinkingLevels : getSupportedThinkingLevels(entry as Model<Api>)) as ThinkingLevel[] }));
   let decision; try { decision = await decideRightSize({ subtask: input.prompt, requested: model.provider + "/" + model.id, thinking, catalog: buildCatalog(candidates as ModelLike[], options.profiles), config: options.config || { enabled: true, swingThreshold: 0.6 }, sys1: options.sys1 || (async () => { throw new Error("System-1 unavailable"); }) }); } catch { return { action: "advisory" as const, reason: "System-1 engine unavailable; dispatch allowed.", configuration }; }
-  // Re-read after the Laya await: a sync writer (resolveChildDispatchReview)
+  // Re-read after the sys1 await: a sync writer (resolveChildDispatchReview)
   // may have updated the store while this review was in flight; its update
   // must not be clobbered by the stale pre-await snapshot.
   const latest = options.agentDir ? read(options.agentDir) : records;
@@ -125,12 +125,12 @@ export async function prepareChildDispatch(input: ChildDispatchInput, ctx: Ctx, 
    return { action: decision.action, reviewId: receipt.reviewId, reason: decision.reason, configuration, receipt };
   }
   receipt.recommendation = decision.suggestedModel;
-  const reason = (decision.reason || "Laya held dispatch.") + " Review ID: " + receipt.reviewId;
+  const reason = (decision.reason || "The sys1 gate held dispatch.") + " Review ID: " + receipt.reviewId;
   if (options.agentDir) { write(options.agentDir, latest.concat({ receipt, reason, status: "pending" })); audit(options.agentDir, { reviewId: receipt.reviewId, action: "hold", kind: input.kind }); }
   return { action: "block" as const, reviewId: receipt.reviewId, reason, configuration };
  });
 }
-interface SettingsManagerSettings { rightSize?: { profiles?: unknown }; layaRightSize?: { profiles?: unknown }; }
+interface SettingsManagerSettings { rightSize?: { profiles?: unknown }; }
 export function listChildDispatchReviews(agentDir = getAgentDir()): Held[] { return read(agentDir); }
 export function resolveChildDispatchReview(reviewId: string, reason: string, agentDir = getAgentDir(), mode: "accept" | "override" = "override"): Held {
  const records = read(agentDir); const record = records.find((entry) => entry.receipt.reviewId === reviewId);

@@ -316,7 +316,7 @@ describe("version on the status row", () => {
 		const session = createSession({ sessionName: "" });
 		const data = {
 			...createFooterData(1),
-			getTodoSummary: () => "1/7 · Verify live laya service health",
+			getTodoSummary: () => "1/7 · Verify live sys1 service health",
 		} as unknown as ReadonlyFooterDataProvider;
 		const footer = new FooterComponent(session, data);
 

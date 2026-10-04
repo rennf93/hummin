@@ -1,22 +1,16 @@
 /**
- * hummin-sys1: the System-1 decision layer for the local fleet.
+ * hummin-sys1: the System-1 decision layer.
  *
- * Exactly one decision engine answers every System-1 read at a time (laya,
- * clef, or jev; see lib/decision-engine.ts for selection and per-engine
- * settings). sys1_decide sends a state plus typed questions (choice / score /
- * noul) to the active engine and returns calibrated answers in a single
- * forward pass. The engine generates no text, so it cannot hallucinate an
- * answer: it is a fast second opinion for the main model when it is torn
- * between options, unsure whether to proceed, or wants a confidence check
- * before acting.
+ * One decision engine answers every System-1 read (see lib/decision-engine.ts
+ * for connection, calibration, and settings). sys1_decide sends a state plus
+ * typed questions (choice / score / noul) to the engine and returns
+ * calibrated answers in a single forward pass. The engine generates no text,
+ * so it cannot hallucinate an answer: it is a fast second opinion for the
+ * main model when it is torn between options, unsure whether to proceed, or
+ * wants a confidence check before acting.
  *
- * Default engine laya: launchd com.hummin.laya, port 9989, served by
- * ~/colibri/serve-laya.sh. Clef: com.hummin.clef-mlx (Mac MLX, port 9987),
- * com.hummin.clef (Mac bf16 reference, port 9988), GGUF services on the NAS
- * (9993) and the laptop (9985).
- *
- * Logs: ~/Library/Logs/laya-server.log
- * Restart: launchctl kickstart -k gui/501/com.hummin.laya
+ * The engine serves GET /health on its port; restart it with
+ * `launchctl kickstart -k gui/501/<service-name>`.
  */
 
 import { appendFileSync } from "node:fs";
@@ -72,40 +66,33 @@ const pct = (n: number | undefined): string =>
 	typeof n === "number" ? `${Math.round(n * 100)}%` : "?";
 
 // --- Automatic System-1 reads (no model opt-in required) ---
-// Kill switches: HUMMIN_SYS1_STEER=off (or the legacy HUMMIN_LAYA_STEER=off)
-// disables the per-turn read, HUMMIN_SYS1_GATE/HUMMIN_LAYA_GATE=off the bash
-// tripwire, HUMMIN_SYS1_TRIAGE/HUMMIN_LAYA_TRIAGE=off the test-failure triage,
-// and HUMMIN_SYS1_INTAKE/HUMMIN_LAYA_INTAKE=off the distill worker's intake
+// Kill switches: HUMMIN_SYS1_STEER=off disables the per-turn read,
+// HUMMIN_SYS1_GATE=off the bash tripwire, HUMMIN_SYS1_TRIAGE=off the
+// test-failure triage, and HUMMIN_SYS1_INTAKE=off the distill worker's intake
 // read. All fail open: if the engine is unreachable or slow, the turn, the
 // command, the tool result, and the lesson proceed untouched. Every read is
-// appended to sys1-gate.log as {ts, type: "read", kind, p, engine}.
+// appended to sys1-gate.log as {ts, type: "read", kind, p}.
 
 const STEER_MIN_PROMPT_CHARS = 24;
 /** Gray-zone block line, aligned with the settings-layer default (settings
- * getLayaGateThreshold(), 0.75) so blocking does not depend on settings being
+ * decision.gateThreshold, 0.75) so blocking does not depend on settings being
  * readable. The deterministic classifiers own the unambiguous cases, so the
- * engine only judges unfamiliar commands. (Live probes in 2026-09 showed the
- * 0.71-0.75 band carries real signal on laya; the settings default was still
- * chosen as the single shared line to avoid one threshold for configured
- * installs and another for unreadable settings.) Each engine profile carries
- * its own calibrated default; clef's lines come from the 2026-10-03 probe
- * matrix (see lib/decision-engine.ts). */
+ * engine only judges unfamiliar commands. The line comes from the
+ * 2026-10-03 probe matrix (see lib/decision-engine.ts). */
 export const GATE_BLOCK_THRESHOLD = 0.75;
-export const GATE_CONFIRM_MARKER = "# laya-gate: confirmed";
+export const GATE_CONFIRM_MARKER = "# sys1-gate: confirmed";
 const MAX_QUESTIONS = 8;
 const MAX_STATE_CHARS = 50_000;
 
-/** Threshold + timeout resolution for the active engine. Resolution order
- * (see lib/decision-engine.ts): HUMMIN_DECISION_* env, then legacy
- * HUMMIN_LAYA_* env and flat laya settings for the laya engine, then settings
- * decision.<engine>.*, then the engine default. Guarded for runtime binaries
- * whose SettingsManager predates the decision namespace; unreadable settings
- * fall back too. */
+/** Threshold + timeout resolution for the engine. Resolution order (see
+ * lib/decision-engine.ts): HUMMIN_DECISION_* env, then settings decision.*,
+ * then the defaults. Guarded for runtime binaries whose SettingsManager
+ * predates the decision namespace; unreadable settings fall back too. */
 export function sys1GateThreshold(cwd: string = process.cwd()): number {
 	return resolveDecisionEngine(cwd).gateThreshold;
 }
 
-/** The per-turn destructive steer threshold for the active engine. */
+/** The per-turn destructive steer threshold. */
 export function sys1SteerThreshold(cwd: string = process.cwd()): number {
 	return resolveDecisionEngine(cwd).steerThreshold;
 }
@@ -163,12 +150,12 @@ export function splitSegments(command: string): string[] {
 /** Audit trail for the bash gate: one JSON line per block, per marker
  * confirmation, and per self-served marker anomaly, so bypasses are visible
  * after the fact. Deterministic classifier blocks carry a `rule` instead of a
- * score. Every line carries the answering engine. */
-function auditGate(entry: { type: "block" | "confirmed" | "anomaly"; command: string; p?: number; rule?: string }, engine: string): void {
+ * score. */
+function auditGate(entry: { type: "block" | "confirmed" | "anomaly"; command: string; p?: number; rule?: string }): void {
 	try {
 		appendFileSync(
 			join(getAgentDir(), "sys1-gate.log"),
-			`${JSON.stringify({ ts: new Date().toISOString(), engine, ...entry })}\n`,
+			`${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`,
 		);
 	} catch {
 		// Audit logging must never break the gate itself.
@@ -204,13 +191,13 @@ function recentBlockFor(command: string, now: number): { p?: number } | undefine
 }
 
 /** Audit trail for automatic System-1 reads: one JSON line per read that
- * returned a score, tagged with the answering engine. The distill worker logs
- * its own intake read (same shape) directly. */
-function auditRead(kind: "steer" | "gate" | "decide" | "triage", p: number, engine: string): void {
+ * returned a score. The distill worker logs its own intake read (same shape)
+ * directly. */
+function auditRead(kind: "steer" | "gate" | "decide" | "triage", p: number): void {
 	try {
 		appendFileSync(
 			join(getAgentDir(), "sys1-gate.log"),
-			`${JSON.stringify({ ts: new Date().toISOString(), type: "read", kind, p, engine })}\n`,
+			`${JSON.stringify({ ts: new Date().toISOString(), type: "read", kind, p })}\n`,
 		);
 	} catch {
 		// Audit logging must never break the reader.
@@ -219,12 +206,12 @@ function auditRead(kind: "steer" | "gate" | "decide" | "triage", p: number, engi
 
 // --- Bash gate deterministic verdicts -------------------------------------------------------
 //
-// The laya checkpoint saturates around P 0.5-0.9 and cannot reliably separate
+// The checkpoint saturates around P 0.5-0.9 and cannot reliably separate
 // canonical destructive git/filesystem operations from routine writes at the
 // block line (measured 2026-09: identical scores across rubric rewrites).
 // These classifiers handle the enumerable ends of the spectrum
-// deterministically, in the same spirit as READ_ONLY_BASH above; laya scores
-// only the gray zone between them.
+// deterministically, in the same spirit as READ_ONLY_BASH above; the engine
+// scores only the gray zone between them.
 
 export type GateSegmentVerdict =
 	| { kind: "safe" }
@@ -232,8 +219,8 @@ export type GateSegmentVerdict =
 	| { kind: "destructive"; rule: string };
 
 /** Canonical, unambiguous discards. Matched per segment before anything else
- * runs; a match blocks without a laya read. Deliberately conservative: when
- * in doubt a command stays in the laya gray zone. */
+ * runs; a match blocks without an engine read. Deliberately conservative:
+ * when in doubt a command stays in the gray zone. */
 const DESTRUCTIVE_SEGMENT: readonly { rule: string; re: RegExp }[] = [
 	{ rule: "git reset --hard", re: /\bgit reset\s+--hard\b/ },
 	{ rule: "git clean -f", re: /\bgit clean\b[^|;&]*-[a-zA-Z]*f/ },
@@ -311,7 +298,7 @@ export function hasWriteRedirect(command: string): boolean {
 }
 
 /** Extra per-installation classifier patterns from settings
- * (layaGate.extraSafe / layaGate.extraDestructive regex strings). */
+ * (sys1Gate.extraSafe / sys1Gate.extraDestructive regex strings). */
 export interface ExtraGatePatterns {
 	safe: RegExp[];
 	destructive: RegExp[];
@@ -354,12 +341,12 @@ export function gateSegmentVerdict(segment: string, extra: ExtraGatePatterns = {
 	if (privileged) return { kind: "review" };
 	// Read-only segments are already vetted by the READ_ONLY_BASH allowlist.
 	// This matters inside chains: `git add x && git status` was blocked because
-	// only whole-command read-only checks ran before laya.
+	// only whole-command read-only checks ran before the scored layer.
 	if (READ_ONLY_BASH.test(s)) return { kind: "safe" };
 	// Test, build, and check invocations write only regenerable outputs (the
-	// rubric scores them LOW) but live probing (2026-09) showed laya scoring
-	// plain `./test.sh` at P 0.83 anyway (the checkpoint cannot reliably follow
-	// the rubric tail), so they fast-pass deterministically instead.
+	// rubric scores them LOW) but live probing (2026-09) showed the engine
+	// scoring plain `./test.sh` at P 0.83 anyway (the checkpoint cannot reliably
+	// follow the rubric tail), so they fast-pass deterministically instead.
 	if (looksLikeTestRun(s)) return { kind: "safe" };
 	// Additive writes and repo-relative installs are safe fast-path segments.
 	// git switch of a plain branch is safe too: it refuses to discard local
@@ -379,7 +366,7 @@ export function gateSegmentVerdict(segment: string, extra: ExtraGatePatterns = {
 }
 
 /** Whole-command verdict: destructive if any segment is, safe only when every
- * segment is, otherwise the command goes to laya for scoring. */
+ * segment is, otherwise the command goes to the engine for scoring. */
 export function gateVerdict(segments: readonly string[], extra: ExtraGatePatterns = { safe: [], destructive: [] }): GateSegmentVerdict {
 	let allSafe = true;
 	for (const segment of segments) {
@@ -398,26 +385,26 @@ const DISPOSABLE_DIR = /^(?:\.\/)?(?:build|dist|node_modules|coverage|out|tmp|te
 // --- Engine reads (gate/steer/triage share these) ----------------------------
 
 let warmedFor: string | undefined;
-/** Best-effort single load of the active engine's checkpoint. Called once at
+/** Best-effort single load of the engine's checkpoint. Called once at
  * startup and awaited on the first agent turn if the startup prime has not
  * finished; fails silently so an unreachable server never blocks the turn.
- * Keyed by engine id + url so a mid-session engine switch re-warms. */
+ * Keyed by url so a mid-session url switch re-warms. */
 async function warmEngine(config: DecisionEngineConfig): Promise<void> {
-	const key = `${config.id}:${config.url}`;
-	if (config.unconfigured || warmedFor === key) return;
+	if (config.unconfigured || warmedFor === config.url) return;
 	try {
 		await sys1Fetch(config, JSON.stringify({ state: "warmup", questions: { warmup: { type: "noul", instructions: "Warmup." } } }), config.warmTimeoutMs);
-		warmedFor = key;
+		warmedFor = config.url;
 	} catch {
 		// best-effort: leave the flag clear so a later call can retry the load
 	}
 }
 
-/** The engine-reported answer confidence. Laya serves answer_confidence /
- * confidence on every answer; the Mac MLX clef instance serves confidence on
- * choice/score but ONLY {type, noul} on noul answers, so fall back to the
- * sure mass max(noul, 1-noul) there. Without this, noul-only decide reads on
- * clef would audit nothing and could never trigger the low-confidence note. */
+/** The engine-reported answer confidence. Some servers serve
+ * answer_confidence / confidence on every answer; the default local instance
+ * serves confidence on choice/score but ONLY {type, noul} on noul answers, so
+ * fall back to the sure mass max(noul, 1-noul) there. Without this, noul-only
+ * decide reads would audit nothing and could never trigger the
+ * low-confidence note. */
 function answerConfidence(a: Answer | undefined): number | undefined {
 	if (!a) return undefined;
 	if (typeof a.answer_confidence === "number") return a.answer_confidence;
@@ -460,7 +447,7 @@ function formatAnswer(name: string, q: QuestionInput, a: Answer): string {
 // read estimates the probability that the failure was caused by the agent's
 // current change. Below TRIAGE_ADVISORY_BELOW, a hidden advisory tells the
 // model to verify the failure reproduces on HEAD before fixing anything. Kill
-// switch: HUMMIN_SYS1_TRIAGE=off (or the legacy HUMMIN_LAYA_TRIAGE=off). Fail
+// switch: HUMMIN_SYS1_TRIAGE=off. Fail
 // open: the read result never modifies the tool result and any error is
 // swallowed.
 
@@ -508,8 +495,7 @@ function triageState(command: string, resultText: string): string {
 // tool_call, so gating only the bash hook made them a standing bypass around
 // the destructive-command gate. sys1GateCheck is the full decision for one
 // command, shared by the bash hook and by background shells via
-// lib/shell-gate.ts. HUMMIN_SYS1_GATE=off (or the legacy HUMMIN_LAYA_GATE=off)
-// disables it everywhere.
+// lib/shell-gate.ts. HUMMIN_SYS1_GATE=off disables it everywhere.
 
 // The rubric below is the gate's actual quality: it is a decision spec, not
 // a hint. It states the one question being decided, anchors both ends of
@@ -519,8 +505,8 @@ function triageState(command: string, resultText: string): string {
 // trains distrust of the gate; every miss is bounded by the
 // confirm-marker step.
 //
-// Known constraint (measured 2026-09, laya 0.3.20): gate reads route to the
-// english checkpoint (512-token context), so with a long command the tail
+// Known constraint (measured 2026-09, engine 0.3.20): gate reads route to
+// the english checkpoint (512-token context), so with a long command the tail
 // of this rubric is truncated. That is acceptable and stable - the early
 // lines carry the bias and reproduce to 4 decimals across runs - but it
 // means rubric edits deep in the list may not change scores. Do not switch
@@ -629,7 +615,7 @@ export async function sys1GateCheck(
 	// resolution, or a different-cwd caller (shell-gate) could threshold on
 	// one project's settings while querying another's engine URL.
 	const doRead = sys1Read ?? ((state: string, name: string, instructions: string) => sys1Noul(engine, state, name, instructions, engine.gateTimeoutMs));
-	if (sys1Disabled("HUMMIN_SYS1_GATE", "HUMMIN_LAYA_GATE")) return undefined;
+	if (sys1Disabled("HUMMIN_SYS1_GATE")) return undefined;
 	const trimmed = rawCommand.trim();
 	if (!trimmed) return undefined;
 	let command = trimmed;
@@ -638,11 +624,11 @@ export async function sys1GateCheck(
 		if (!bare) return undefined;
 		const block = recentBlockFor(bare, Date.now());
 		if (block) {
-			auditGate({ type: "confirmed", command: bare, p: block.p }, engine.id);
+			auditGate({ type: "confirmed", command: bare, p: block.p });
 			blockedOnce.delete(bare);
 			return undefined;
 		}
-		auditGate({ type: "anomaly", command: bare }, engine.id);
+		auditGate({ type: "anomaly", command: bare });
 		command = bare;
 	}
 	const segments = splitSegments(command);
@@ -658,7 +644,7 @@ export async function sys1GateCheck(
 	// Deterministic verdicts first: canonical destructive commands block
 	// without an engine read; fully additive commands pass without one. Only
 	// the gray zone pays the engine latency. Settings extras
-	// (layaGate.extraSafe / layaGate.extraDestructive regex strings) are
+	// (sys1Gate.extraSafe / sys1Gate.extraDestructive regex strings) are
 	// re-read per command so /settings edits apply without a restart.
 	let extra: ExtraGatePatterns = { safe: [], destructive: [] };
 	try {
@@ -674,7 +660,7 @@ export async function sys1GateCheck(
 	if (verdict.kind === "destructive") {
 		const repeat = blockedOnce.has(command);
 		rememberBlocked(command);
-		auditGate({ type: "block", command, rule: verdict.rule }, engine.id);
+		auditGate({ type: "block", command, rule: verdict.rule });
 		notifyGateBlock(command, cwd);
 		return {
 			block: true,
@@ -691,18 +677,18 @@ export async function sys1GateCheck(
 		GATE_INSTRUCTIONS,
 	);
 	if (!read) return undefined;
-	auditRead("gate", read.noul, engine.id);
+	auditRead("gate", read.noul);
 	if (read.noul < engine.gateThreshold) {
 		blockedOnce.delete(command);
 		return undefined;
 	}
 	const repeat = blockedOnce.has(command);
 	rememberBlocked(command);
-	auditGate({ type: "block", command, p: read.noul }, engine.id);
+	auditGate({ type: "block", command, p: read.noul });
 	notifyGateBlock(command, cwd);
 	return {
 		block: true,
-		reason: gateBlockReason(`the ${engine.id} engine scores this command P=${read.noul.toFixed(2)} as irreversibly destructive`, "score", repeat),
+		reason: gateBlockReason(`the sys1 engine scores this command P=${read.noul.toFixed(2)} as irreversibly destructive`, "score", repeat),
 	};
 }
 
@@ -714,7 +700,7 @@ export default function humminSys1(pi: ExtensionAPI): void {
 		description:
 			"Fast calibrated second opinion (System-1) on structured decisions: pick between named options, a yes/no judgment with P(true), or a rating on an ordinal rubric. One forward pass, no text generation, so it cannot make things up. Consult it when you are torn between options, unsure whether to proceed with a risky action, or want an independent confidence check on a decision. It cannot do open Q&A, reasoning, or more than ~20 options.",
 		promptSnippet:
-			"sys1_decide: ask the System-1 decision engine (laya, clef, or jev - whichever is configured) for a calibrated second opinion on a choice, yes/no gate, or rubric score before committing to a decision",
+			"sys1_decide: ask the System-1 decision engine for a calibrated second opinion on a choice, yes/no gate, or rubric score before committing to a decision",
 		parameters: Type.Object({
 			state: Type.String({
 				description:
@@ -741,7 +727,7 @@ export default function humminSys1(pi: ExtensionAPI): void {
 			const engine = resolveDecisionEngine();
 			if (engine.unconfigured) {
 				return {
-					content: [{ type: "text", text: `Error: the '${engine.id}' decision engine has no url configured. Set settings decision.${engine.id}.url or env HUMMIN_DECISION_URL, or switch engines with HUMMIN_DECISION_ENGINE=laya.` }],
+					content: [{ type: "text", text: "Error: the sys1 decision engine has no url configured. Set settings decision.url or env HUMMIN_DECISION_URL." }],
 					isError: true,
 					details: {},
 				};
@@ -772,12 +758,12 @@ export default function humminSys1(pi: ExtensionAPI): void {
 				response = await sys1Fetch(engine, JSON.stringify({ state: params.state.slice(0, MAX_STATE_CHARS), questions }), engine.decideTimeoutMs);
 			} catch (err) {
 				const msg = err instanceof Error && /abort|timeout/i.test(err.message)
-					? `the ${engine.id} engine did not answer within ${engine.decideTimeoutMs / 1000}s (cold checkpoint may still be loading)`
-					: `the ${engine.id} engine is unreachable at ${engine.url}`;
+					? `the sys1 engine did not answer within ${engine.decideTimeoutMs / 1000}s (cold checkpoint may still be loading)`
+					: `the sys1 engine is unreachable at ${engine.url}`;
 				return {
 					content: [{
 						type: "text",
-						text: `${msg}. Every engine serves GET /health on its port; the Mac laya instance restarts with: launchctl kickstart -k gui/501/com.hummin.laya`,
+						text: `${msg}. The engine serves GET /health on its port; restart it with: launchctl kickstart -k gui/501/<service-name>`,
 					}],
 					isError: true,
 					details: {},
@@ -786,9 +772,9 @@ export default function humminSys1(pi: ExtensionAPI): void {
 
 			if (!response.ok) {
 				const detail = (await response.text()).slice(0, 300);
-				const auth = response.status === 401 && !engine.apiKey ? " (no API key is configured: set HUMMIN_DECISION_API_KEY or decision.<engine>.apiKey)" : "";
+				const auth = response.status === 401 && !engine.apiKey ? " (no API key is configured: set HUMMIN_DECISION_API_KEY or decision.apiKey)" : "";
 				return {
-					content: [{ type: "text", text: `the ${engine.id} engine returned HTTP ${response.status}${auth}: ${detail}` }],
+					content: [{ type: "text", text: `the sys1 engine returned HTTP ${response.status}${auth}: ${detail}` }],
 					isError: true,
 					details: {},
 				};
@@ -807,17 +793,17 @@ export default function humminSys1(pi: ExtensionAPI): void {
 			);
 			// For the multi-question tool read, the audited p is the weakest
 			// answer confidence - the same signal the result text surfaces.
-			if (isFinite(weakest)) auditRead("decide", weakest, engine.id);
+			if (isFinite(weakest)) auditRead("decide", weakest);
 			if (isFinite(weakest) && weakest < LOW_CONFIDENCE) {
 				lines.push(
 					`note: weakest answer confidence ${pct(weakest)} is below ${pct(LOW_CONFIDENCE)}; weigh your own judgment and the state text more than the engine here`,
 				);
 			}
-		// laya serves the serving model under routing.model; clef serves it at
+		// Some servers serve the serving model under routing.model, others at
 		// the top level. Prefer routing for parity, fall back to model.
 		const servedModel = payload.routing?.model ?? payload.model;
 		if (servedModel) {
-			lines.push(`(sys1 engine ${engine.id}: ${servedModel})`);
+			lines.push(`(sys1 engine: ${servedModel})`);
 		}
 			return { content: [{ type: "text", text: lines.join("\n") }], details: {} };
 		},
@@ -832,7 +818,7 @@ export default function humminSys1(pi: ExtensionAPI): void {
 	// when the engine is confident the request involves destructive action,
 	// inject a quiet context message steering the model to verify and confirm
 	// first.
-	if (!sys1Disabled("HUMMIN_SYS1_STEER", "HUMMIN_LAYA_STEER")) {
+	if (!sys1Disabled("HUMMIN_SYS1_STEER")) {
 		pi.on("before_agent_start", async (event) => {
 			const prompt = event.prompt.trim();
 			if (prompt.length < STEER_MIN_PROMPT_CHARS || prompt.startsWith("/")) return undefined;
@@ -844,12 +830,12 @@ export default function humminSys1(pi: ExtensionAPI): void {
 				"destructive_intent",
 				"Fulfilling this request requires destructive or hard-to-reverse actions such as deleting, overwriting, force-pushing, or dropping data.",
 			);
-			if (read) auditRead("steer", read.noul, engine.id);
+			if (read) auditRead("steer", read.noul);
 			if (!read || read.noul < engine.steerThreshold) return undefined;
 			return {
 				message: {
 					customType: "sys1-read",
-					content: `[sys1 read via ${engine.id}, P=${read.noul.toFixed(2)}] This request may require destructive or hard-to-reverse actions. Before deleting, overwriting, or dropping anything: verify the exact target, check it is backed up or reproducible, and ask the user if the scope is not explicit.`,
+					content: `[sys1 read, P=${read.noul.toFixed(2)}] This request may require destructive or hard-to-reverse actions. Before deleting, overwriting, or dropping anything: verify the exact target, check it is backed up or reproducible, and ask the user if the scope is not explicit.`,
 					display: false,
 					details: {},
 				},
@@ -857,7 +843,7 @@ export default function humminSys1(pi: ExtensionAPI): void {
 		});
 	}
 
-	if (!sys1Disabled("HUMMIN_SYS1_GATE", "HUMMIN_LAYA_GATE")) {
+	if (!sys1Disabled("HUMMIN_SYS1_GATE")) {
 		pi.on("tool_call", async (event) => {
 			if (event.toolName !== "bash") return undefined;
 			const command = (event.input as { command?: unknown }).command;
@@ -871,7 +857,7 @@ export default function humminSys1(pi: ExtensionAPI): void {
 	// Test-failure triage: after a failing test run, one System-1 read judges
 	// whether the failure predates the agent's change. All failure modes fail
 	// open; nothing here may throw into the tool result path.
-	if (!sys1Disabled("HUMMIN_SYS1_TRIAGE", "HUMMIN_LAYA_TRIAGE")) {
+	if (!sys1Disabled("HUMMIN_SYS1_TRIAGE")) {
 		pi.on("tool_result", async (event) => {
 			try {
 				if (event.toolName !== "bash") return;
@@ -896,7 +882,7 @@ export default function humminSys1(pi: ExtensionAPI): void {
 					"Score the probability that this test failure was caused by the coding agent's current changes rather than by pre-existing breakage, flaky tests, or environment problems.",
 				);
 				if (!read) return;
-				auditRead("triage", read.noul, engine.id);
+				auditRead("triage", read.noul);
 				const advisory = triageAdvisory(read.noul, engine.triageThreshold);
 				if (advisory === undefined) return;
 				pi.sendMessage({ customType: "hummin-sys1-triage", content: advisory, display: false, details: {} });

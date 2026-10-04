@@ -92,24 +92,24 @@ test("triageRateLimited allows one read per 10 minutes", () => {
 
 test("gate and steer thresholds resolve from env, ignoring invalid values", () => {
 	// The decision-era names win over the legacy ones, so clear them first.
-	for (const name of ["HUMMIN_DECISION_GATE_THRESHOLD", "HUMMIN_DECISION_STEER_THRESHOLD", "HUMMIN_DECISION_ENGINE"]) {
+	for (const name of ["HUMMIN_DECISION_GATE_THRESHOLD", "HUMMIN_DECISION_STEER_THRESHOLD"]) {
 		delete process.env[name];
 	}
-	vi.stubEnv("HUMMIN_LAYA_GATE_THRESHOLD", "0.9");
-	vi.stubEnv("HUMMIN_LAYA_STEER_THRESHOLD", "0.55");
+	vi.stubEnv("HUMMIN_DECISION_GATE_THRESHOLD", "0.9");
+	vi.stubEnv("HUMMIN_DECISION_STEER_THRESHOLD", "0.55");
 	expect(sys1GateThreshold()).toBe(0.9);
 	expect(sys1SteerThreshold()).toBe(0.55);
 	// Unparseable and out-of-range env values are ignored, not trusted.
-	vi.stubEnv("HUMMIN_LAYA_GATE_THRESHOLD", "abc");
+	vi.stubEnv("HUMMIN_DECISION_GATE_THRESHOLD", "abc");
 	expect(sys1GateThreshold()).toBe(0.75);
-	vi.stubEnv("HUMMIN_LAYA_GATE_THRESHOLD", "1.5");
+	vi.stubEnv("HUMMIN_DECISION_GATE_THRESHOLD", "1.5");
 	expect(sys1GateThreshold()).toBe(0.75);
-	vi.stubEnv("HUMMIN_LAYA_GATE_THRESHOLD", "");
+	vi.stubEnv("HUMMIN_DECISION_GATE_THRESHOLD", "");
 	expect(sys1GateThreshold()).toBe(0.75);
 	vi.unstubAllEnvs();
-	// No env, no laya keys in the test project's settings: built-in defaults.
+	// No env, no decision keys in the test project's settings: built-in defaults.
 	expect(sys1GateThreshold()).toBe(0.75);
-	expect(sys1SteerThreshold()).toBe(0.7);
+	expect(sys1SteerThreshold()).toBe(0.8);
 });
 
 test("the gate block fallback stays aligned with the settings-layer default", () => {

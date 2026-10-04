@@ -104,7 +104,7 @@ async function initProject(ctx: ExtensionContext): Promise<void> {
 	ctx.ui.notify(`wrote ${path}`, "info");
 }
 
-/** HUMMIN_* env vars that silently beat settings.json, plus the laya
+/** HUMMIN_* env vars that silently beat settings.json, plus the fleet
  * credential (presence only). Names verified against settings-manager.ts and
  * the hummin extensions; /doctor surfaces them so "why is my setting ignored"
  * has an answer. Pre-rename fallbacks (HUMMIN_COLIBRI_INSTANCES,
@@ -123,17 +123,13 @@ const ENV_OVERRIDES: EnvOverride[] = [
 	{ name: "HUMMIN_MEMORY_VAULT_DIR", overrides: "memory vault dir" },
 	{ name: "HUMMIN_MEMORY_PROVIDER", overrides: "memory provider" },
 	{ name: "HUMMIN_MEMORY_MODEL_ID", overrides: "memory model id" },
-	{ name: "HUMMIN_LAYA_URL", overrides: "laya service URL (legacy; engine laya only)" },
-	{ name: "HUMMIN_LAYA_GATE", overrides: "laya bash tripwire switch (legacy)" },
-	{ name: "HUMMIN_LAYA_STEER", overrides: "laya per-turn steering switch (legacy)" },
-	{ name: "HUMMIN_LAYA_GATE_THRESHOLD", overrides: "laya gate block threshold (legacy; engine laya only)" },
-	{ name: "HUMMIN_LAYA_STEER_THRESHOLD", overrides: "laya steer threshold (legacy; engine laya only)" },
-	{ name: "HUMMIN_LAYA_TRIAGE", overrides: "laya test-failure triage switch (legacy)" },
-	{ name: "HUMMIN_LAYA_INTAKE", overrides: "laya lesson-intake gate switch (legacy)" },
-	{ name: "HUMMIN_SYS1_RIGHTSIZE", overrides: "model right-size gate switch (task/cron_create; legacy HUMMIN_LAYA_RIGHTSIZE alias)" },
-	{ name: "HUMMIN_SYS1_RIGHTSIZE_SWING", overrides: "right-size swing threshold (settings layaRightSize.swingThreshold)" },
-	{ name: "HUMMIN_DECISION_ENGINE", overrides: "active System-1 decision engine (laya | clef | jev)" },
-	{ name: "HUMMIN_DECISION_URL", overrides: "active System-1 engine URL" },
+	{ name: "HUMMIN_SYS1_RIGHTSIZE", overrides: "model right-size gate switch (task/cron_create)" },
+	{ name: "HUMMIN_SYS1_RIGHTSIZE_SWING", overrides: "right-size swing threshold (settings rightSize.swingThreshold)" },
+	{ name: "HUMMIN_SYS1_GATE", overrides: "bash destructive-command gate switch" },
+	{ name: "HUMMIN_SYS1_STEER", overrides: "per-turn destructive-intent steer switch" },
+	{ name: "HUMMIN_SYS1_TRIAGE", overrides: "test-failure triage switch" },
+	{ name: "HUMMIN_SYS1_INTAKE", overrides: "memory lesson intake gate switch" },
+	{ name: "HUMMIN_DECISION_URL", overrides: "System-1 engine URL" },
 	{ name: "HUMMIN_DECISION_API_KEY", overrides: "active System-1 engine API key", secret: true },
 	{ name: "HUMMIN_DECISION_GATE_THRESHOLD", overrides: "active System-1 engine gate block threshold" },
 	{ name: "HUMMIN_DECISION_STEER_THRESHOLD", overrides: "active System-1 engine steer threshold" },

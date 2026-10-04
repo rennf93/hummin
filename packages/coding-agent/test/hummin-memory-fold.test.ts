@@ -267,12 +267,12 @@ test("parseDistilledLessons keeps a single one-line reply intact", () => {
 	expect(parseDistilledLessons(LESSON)).toEqual([LESSON]);
 });
 
-// --- Distill mode: laya-gated lesson intake -----------------------------------
+// --- Distill mode: engine-gated lesson intake -----------------------------------
 
 const LESSON = "Problem: one. Approach: two. Gotcha: three.";
 
-/** Local stand-in for the laya service answering the intake question. */
-function startLayaStub(noul: number): Promise<{ server: Server; url: string; requests: string[] }> {
+/** Local stand-in for the engine service answering the intake question. */
+function startEngineStub(noul: number): Promise<{ server: Server; url: string; requests: string[] }> {
 	return new Promise((resolve) => {
 		const requests: string[] = [];
 		const server = createServer((req, res) => {
@@ -299,7 +299,7 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 /**
- * Async twin of runWorker for the intake tests: the laya stub lives in this
+ * Async twin of runWorker for the intake tests: the engine stub lives in this
  * test process, and a blocking spawnSync would freeze the event loop so the
  * stub could never answer the worker's request.
  */
@@ -367,14 +367,14 @@ function distillJob(memory: string): Record<string, unknown> {
 	};
 }
 
-test("distill mode stores the lesson and audits the intake read when laya scores at the threshold or above", async () => {
+test("distill mode stores the lesson and audits the intake read when the engine scores at the threshold or above", async () => {
 	stubHummin(LESSON);
 	const memory = process.env.HUMMIN_MEMORY_DIR!;
-	const laya = await startLayaStub(0.9);
+	const engine = await startEngineStub(0.9);
 	try {
 		const jobPath = writeWorkerAndJob(distillJob(memory));
 		await withEnv(
-			{ COLI_API_KEY: "test-key", HUMMIN_LAYA_URL: laya.url, HUMMIN_LAYA_INTAKE: undefined },
+			{ COLI_API_KEY: "test-key", HUMMIN_DECISION_URL: engine.url, HUMMIN_SYS1_INTAKE: undefined },
 			async () => {
 				expect(await runWorkerAsync("distill", jobPath)).toBe(0);
 			},
@@ -382,43 +382,43 @@ test("distill mode stores the lesson and audits the intake read when laya scores
 		const lines = readFileSync(join(memory, "lessons.jsonl"), "utf8").trim().split("\n");
 		expect(lines).toHaveLength(1);
 		expect(JSON.parse(lines[0]).lesson).toBe(LESSON);
-		// The read reaches laya as a noul question and is audited to the gate log.
-		expect(laya.requests).toHaveLength(1);
-		expect(JSON.parse(laya.requests[0]).questions.durable.type).toBe("noul");
+		// The read reaches the engine as a noul question and is audited to the gate log.
+		expect(engine.requests).toHaveLength(1);
+		expect(JSON.parse(engine.requests[0]).questions.durable.type).toBe("noul");
 		const audit = JSON.parse(readFileSync(join(memory, "sys1-gate.log"), "utf8").trim().split("\n").at(-1)!);
 		expect(audit).toMatchObject({ type: "read", kind: "intake", p: 0.9 });
 	} finally {
-		await closeServer(laya.server);
+		await closeServer(engine.server);
 	}
 });
 
 test("distill mode stores nothing when the intake read scores below the threshold, like the NONE gate", async () => {
 	stubHummin(LESSON);
 	const memory = process.env.HUMMIN_MEMORY_DIR!;
-	const laya = await startLayaStub(0.3);
+	const engine = await startEngineStub(0.3);
 	try {
 		const jobPath = writeWorkerAndJob(distillJob(memory));
 		await withEnv(
-			{ COLI_API_KEY: "test-key", HUMMIN_LAYA_URL: laya.url, HUMMIN_LAYA_INTAKE: undefined },
+			{ COLI_API_KEY: "test-key", HUMMIN_DECISION_URL: engine.url, HUMMIN_SYS1_INTAKE: undefined },
 			async () => {
 				expect(await runWorkerAsync("distill", jobPath)).toBe(0);
 			},
 		);
 		expect(existsSync(join(memory, "lessons.jsonl"))).toBe(false);
 		expect(existsSync(join(memory, "state.json"))).toBe(false);
-		// The read itself is still audited (every laya read is).
+		// The read itself is still audited (every engine read is).
 		const audit = JSON.parse(readFileSync(join(memory, "sys1-gate.log"), "utf8").trim().split("\n").at(-1)!);
 		expect(audit).toMatchObject({ type: "read", kind: "intake", p: 0.3 });
 	} finally {
-		await closeServer(laya.server);
+		await closeServer(engine.server);
 	}
 });
 
-test("distill mode fails open when laya is unreachable or the intake read is switched off", () => {
+test("distill mode fails open when the engine is unreachable or the intake read is switched off", () => {
 	for (const env of [
-		{ COLI_API_KEY: "test-key", HUMMIN_LAYA_URL: "http://127.0.0.1:9/v1/systemone", HUMMIN_LAYA_INTAKE: undefined },
-		{ COLI_API_KEY: undefined, HUMMIN_LAYA_URL: undefined, HUMMIN_LAYA_INTAKE: undefined },
-		{ COLI_API_KEY: "test-key", HUMMIN_LAYA_URL: undefined, HUMMIN_LAYA_INTAKE: "off" },
+		{ COLI_API_KEY: "test-key", HUMMIN_DECISION_URL: "http://127.0.0.1:9/v1/systemone", HUMMIN_SYS1_INTAKE: "off" },
+		{ COLI_API_KEY: undefined, HUMMIN_DECISION_URL: undefined, HUMMIN_SYS1_INTAKE: "off" },
+		{ COLI_API_KEY: "test-key", HUMMIN_DECISION_URL: undefined, HUMMIN_SYS1_INTAKE: "off" },
 	]) {
 		stubHummin(LESSON);
 		const memory = process.env.HUMMIN_MEMORY_DIR!;
@@ -444,12 +444,12 @@ test("distill mode stores each lesson of a multi-lesson reply independently", ()
 	);
 	const memory = process.env.HUMMIN_MEMORY_DIR!;
 	const vault = process.env.HUMMIN_MEMORY_VAULT_DIR!;
-	// No laya env in play: the intake gate fails open and both lessons store.
-	// Pin the gate env OFF - a developer env with COLI_API_KEY and a live laya
+	// No engine env in play: the intake gate fails open and both lessons store.
+	// Pin the gate env OFF - a developer env with COLI_API_KEY and a live engine
 	// on the default port would otherwise really score these fake lessons and
 	// drop them.
 	const jobPath = writeWorkerAndJob({ ...distillJob(memory), vaultMode: true, vaultDir: vault });
-	withEnvSync({ COLI_API_KEY: undefined, HUMMIN_LAYA_URL: undefined, HUMMIN_LAYA_INTAKE: undefined }, () => {
+	withEnvSync({ COLI_API_KEY: undefined, HUMMIN_DECISION_URL: undefined, HUMMIN_SYS1_INTAKE: "off" }, () => {
 		expect(runWorker("distill", jobPath)).toBe(0);
 	});
 	const lines = readFileSync(join(memory, "lessons.jsonl"), "utf8").trim().split("\n");
@@ -520,8 +520,8 @@ test("distill mode prepends the last compaction checkpoint to the prompt", () =>
 	);
 	const jobPath = writeWorkerAndJob({ ...distillJob(memory), sessionFile });
 	// Gate env pinned off: the assertions here are about the prompt, and a
-	// developer-env laya must not be contacted from this test.
-	withEnvSync({ COLI_API_KEY: undefined, HUMMIN_LAYA_URL: undefined, HUMMIN_LAYA_INTAKE: undefined }, () => {
+	// developer-env engine must not be contacted from this test.
+	withEnvSync({ COLI_API_KEY: undefined, HUMMIN_DECISION_URL: undefined, HUMMIN_SYS1_INTAKE: "off" }, () => {
 		expect(runWorker("distill", jobPath)).toBe(0);
 	});
 	const prompt = readFileSync(lastHumminArgsPath!, "utf8");
@@ -535,10 +535,10 @@ test("distill mode omits the checkpoint section when the session has none", () =
 	const memory = process.env.HUMMIN_MEMORY_DIR!;
 	// distillJob points sessionFile at the nonexistent /p/session-1.jsonl: the
 	// scan fails open and the prompt carries only the transcript tail. The gate
-	// env is pinned off so a developer-env laya cannot drop the lesson (see the
+	// env is pinned off so a developer-env engine cannot drop the lesson (see the
 	// multi-lesson test above).
 	const jobPath = writeWorkerAndJob(distillJob(memory));
-	withEnvSync({ COLI_API_KEY: undefined, HUMMIN_LAYA_URL: undefined, HUMMIN_LAYA_INTAKE: undefined }, () => {
+	withEnvSync({ COLI_API_KEY: undefined, HUMMIN_DECISION_URL: undefined, HUMMIN_SYS1_INTAKE: "off" }, () => {
 		expect(runWorker("distill", jobPath)).toBe(0);
 	});
 	expect(readFileSync(lastHumminArgsPath!, "utf8")).not.toContain("Earlier session checkpoint");

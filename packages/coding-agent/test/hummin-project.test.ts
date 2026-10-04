@@ -14,14 +14,14 @@ describe("environmentOverridesSection", () => {
 		const lines = environmentOverridesSection({
 			HUMMIN_INSTANCES: "http://127.0.0.1:8080",
 			HUMMIN_CTX: "128000",
-			HUMMIN_LAYA_GATE: "off",
+			HUMMIN_SYS1_GATE: "off",
 			COLI_API_KEY: "secret-value-do-not-print",
 			HUMMIN_MEMORY_VAULT_DIR: "   ",
 		});
 		expect(lines[0]).toBe("environment overrides:");
 		expect(lines).toContain("  HUMMIN_INSTANCES: http://127.0.0.1:8080 (ordered fleet servers)");
 		expect(lines).toContain("  HUMMIN_CTX: 128000 (per-model context window fallback)");
-		expect(lines).toContain("  HUMMIN_LAYA_GATE: off (laya bash tripwire switch (legacy))");
+		expect(lines).toContain("  HUMMIN_SYS1_GATE: off (bash destructive-command gate switch)");
 		expect(lines).toContain("  COLI_API_KEY: (set) (shared local-fleet API key)");
 		expect(lines.join("\n")).not.toContain("secret-value-do-not-print");
 		// Whitespace-only values count as unset.

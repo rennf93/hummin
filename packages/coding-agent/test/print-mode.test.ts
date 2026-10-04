@@ -160,9 +160,9 @@ describe("runPrintMode", () => {
 		const { session } = runtimeHost;
 		const unsubscribe = onNotificationSent(() => {});
 		session.prompt = vi.fn(async () => {
-			// Simulates the laya gate firing mid-turn while headless: the bus
+			// Simulates the sys1 gate firing mid-turn while headless: the bus
 			// event must surface as a JSON line, with no BEL/OSC bytes written.
-			sendTerminalNotification("bell", "hummin: laya gate blocked rm -rf x");
+			sendTerminalNotification("bell", "hummin: sys1 gate blocked rm -rf x");
 		});
 
 		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
@@ -178,7 +178,7 @@ describe("runPrintMode", () => {
 		const notification = events.find((event) => event.type === "notification") as
 			| { type: string; message: string; channel: string }
 			| undefined;
-		expect(notification?.message).toBe("hummin: laya gate blocked rm -rf x");
+		expect(notification?.message).toBe("hummin: sys1 gate blocked rm -rf x");
 		expect(notification?.channel).toBe("bell");
 		// Stream purity: every line is JSON, so no raw BEL/OSC reached stdout.
 		for (const line of lines) expect(() => JSON.parse(line)).not.toThrow();

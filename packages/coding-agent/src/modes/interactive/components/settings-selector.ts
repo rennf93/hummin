@@ -630,8 +630,8 @@ interface RightSizeProfile extends Record<string, unknown> {
 	cost?: { input?: number; output?: number };
 }
 
-const LAYA_SPEED_VALUES = ["—", "fast", "normal", "slow"];
-const LAYA_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const RIGHT_SIZE_SPEED_VALUES = ["—", "fast", "normal", "slow"];
+const RIGHT_SIZE_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** Parse and shape-check the stored profiles JSON. Throws with a user-facing message. */
 function parseRightSizeProfiles(json: string): RightSizeProfile[] {
@@ -723,11 +723,11 @@ class ProfileFieldsSubmenu extends Container {
 				label: "Speed",
 				description: "Serving-latency hint for the review (how fast the model answers), not thinking depth",
 				currentValue: profile.speed ?? "—",
-				values: LAYA_SPEED_VALUES,
+				values: RIGHT_SIZE_SPEED_VALUES,
 			},
 		];
 		items.push({ id: "thinking-heading", label: "Thinking levels", heading: true, currentValue: "" });
-		for (const level of LAYA_THINKING_LEVELS) {
+		for (const level of RIGHT_SIZE_THINKING_LEVELS) {
 			items.push({
 				id: `thinking-${level}`,
 				label: level,
@@ -771,7 +771,7 @@ class ProfileFieldsSubmenu extends Container {
 					if (newValue === "on") levels.add(level);
 					else levels.delete(level);
 					if (levels.size === 0) delete profile.thinkingLevels;
-					else profile.thinkingLevels = LAYA_THINKING_LEVELS.filter((entry) => levels.has(entry));
+					else profile.thinkingLevels = RIGHT_SIZE_THINKING_LEVELS.filter((entry) => levels.has(entry));
 					this.onChanged();
 				}
 			},
@@ -1270,7 +1270,7 @@ export class SettingsSelectorComponent extends Container {
 				id: "right-size-gate",
 				label: "Right-size gate",
 				description:
-					"The System-1 engine reviews child dispatches (task, cron) against the model catalog and holds confident mismatches for review. HUMMIN_SYS1_RIGHTSIZE=off (legacy HUMMIN_LAYA_RIGHTSIZE) takes precedence.",
+					"The System-1 engine reviews child dispatches (task, cron) against the model catalog and holds confident mismatches for review. HUMMIN_SYS1_RIGHTSIZE=off takes precedence.",
 				currentValue: config.rightSizeEnabled ? "true" : "false",
 				values: ["true", "false"],
 			},

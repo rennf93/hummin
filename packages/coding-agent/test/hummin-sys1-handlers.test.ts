@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -9,7 +9,7 @@ import { ENV_AGENT_DIR } from "../src/config.ts";
 // Handler-level coverage for the hummin-sys1 extension: the sys1_decide tool
 // execute path, per-turn steering, test-failure triage wiring, gate kill
 // switches, and the sys1-gate.log audit trail. Network and env are pinned:
-// fetch is stubbed in every test and COLI_API_KEY / HUMMIN_LAYA_URL /
+// fetch is stubbed in every test and COLI_API_KEY / HUMMIN_DECISION_URL /
 // ENV_AGENT_DIR are stubbed so results never depend on whether the local decision
 // service happens to be running (the module reads these env values at call
 // time precisely so this pinning is possible).
@@ -19,7 +19,7 @@ import { ENV_AGENT_DIR } from "../src/config.ts";
 // - the first registration warms the checkpoint, so later registrations and
 //   steer handlers issue no warm fetch;
 // - the first triage attempt consumes the shared 10-minute rate window, so
-//   exactly one triage test may reach laya and the next asserts the limit.
+//   exactly one triage test may reach the engine and the next asserts the limit.
 
 interface FakeResponse {
 	ok: boolean;
@@ -37,10 +37,9 @@ const cleanups: string[] = [];
 let agentDir: string;
 
 /** The decision-era env names must be cleared so a developer shell exporting
- * e.g. HUMMIN_DECISION_ENGINE cannot flip engine identity or thresholds
+ * e.g. HUMMIN_DECISION_URL cannot flip engine identity or thresholds
  * under this suite's assertions. */
 const DECISION_ENV_NAMES = [
-	"HUMMIN_DECISION_ENGINE",
 	"HUMMIN_DECISION_URL",
 	"HUMMIN_DECISION_API_KEY",
 	"HUMMIN_DECISION_GATE_THRESHOLD",
@@ -54,7 +53,7 @@ beforeEach(() => {
 	cleanups.push(agentDir);
 	vi.stubEnv(ENV_AGENT_DIR, agentDir);
 	vi.stubEnv("COLI_API_KEY", "test-key");
-	vi.stubEnv("HUMMIN_LAYA_URL", "http://laya.test/v1/systemone");
+	vi.stubEnv("HUMMIN_DECISION_URL", "http://127.0.0.1:9987/v1/systemone");
 	vi.stubEnv("HUMMIN_NOTIFY", "off");
 	for (const name of DECISION_ENV_NAMES) {
 		savedDecisionEnv[name] = process.env[name];
@@ -72,7 +71,7 @@ afterEach(() => {
 	for (const dir of cleanups.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/** Minimal ok response with a laya-shaped payload. */
+/** Minimal ok response with an engine-shaped payload. */
 const okResponse = (payload: unknown): FakeResponse => ({
 	ok: true,
 	status: 200,
@@ -80,7 +79,7 @@ const okResponse = (payload: unknown): FakeResponse => ({
 	text: async () => JSON.stringify(payload),
 });
 
-/** A laya noul answer payload for one question. */
+/** A noul answer payload for one question. */
 const noulPayload = (name: string, noul: number): unknown => ({
 	answers: { [name]: { type: "noul", noul, answer_confidence: noul, confidence: noul } },
 });
@@ -170,13 +169,13 @@ test("registration primes the active engine with a warmup read", async () => {
 	const body = JSON.parse(calls[0]?.body ?? "{}") as { state: string; questions: Record<string, { type: string }> };
 	expect(body.state).toBe("warmup");
 	expect(body.questions.warmup?.type).toBe("noul");
-	expect(calls[0]?.url).toBe("http://laya.test/v1/systemone");
+	expect(calls[0]?.url).toBe("http://127.0.0.1:9987/v1/systemone");
 });
 
 // --- sys1_decide input validation --------------------------------------------
 
 test("a missing API key does not fail fast: no-auth engines answer, 401 surfaces auth", async () => {
-	// No-auth engines (the Mac MLX clef instance) must work with zero config,
+	// No-auth engines (the default local instance) must work with zero config,
 	// so an empty key goes through and a success response is honored.
 	const calls = stubFetch(() => okResponse(noulPayload("q", 0.5)));
 	vi.stubEnv("COLI_API_KEY", "");
@@ -202,9 +201,9 @@ test("a missing API key does not fail fast: no-auth engines answer, 401 surfaces
 
 test("an unconfigured engine fails the tool with a configure hint", async () => {
 	stubFetch(() => okResponse(noulPayload("q", 0.5)));
-	vi.stubEnv("HUMMIN_DECISION_ENGINE", "jev");
-	vi.stubEnv("HUMMIN_DECISION_URL", "");
-	vi.stubEnv("HUMMIN_LAYA_URL", "");
+	// An explicitly empty settings url opts out: env must not override it.
+	delete process.env.HUMMIN_DECISION_URL;
+	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ decision: { url: "" } }));
 	const pi = register();
 	const result = await decideTool(pi).execute("t1", {
 		state: "s",
@@ -212,7 +211,7 @@ test("an unconfigured engine fails the tool with a configure hint", async () => 
 	});
 	expect(result.isError).toBe(true);
 	expect(result.content[0]?.text).toContain("no url configured");
-	expect(result.content[0]?.text).toContain("decision.jev.url");
+	expect(result.content[0]?.text).toContain("decision.url");
 });
 
 test("empty state and empty questions are rejected before any fetch", async () => {
@@ -256,11 +255,11 @@ test("timeout after the retry is reported as a cold-checkpoint hint", async () =
 		questions: [{ name: "q", type: "noul", instructions: "i" }],
 	});
 	expect(result.isError).toBe(true);
-	expect(result.content[0]?.text).toContain("the laya engine did not answer within 15s");
+	expect(result.content[0]?.text).toContain("the sys1 engine did not answer within 120s");
 	expect(result.content[0]?.text).toContain("cold checkpoint");
 });
 
-test("transport errors name the configured laya URL", async () => {
+test("transport errors name the configured engine URL", async () => {
 	stubFetch(() => {
 		throw new Error("fetch failed");
 	});
@@ -270,7 +269,7 @@ test("transport errors name the configured laya URL", async () => {
 		questions: [{ name: "q", type: "noul", instructions: "i" }],
 	});
 	expect(result.isError).toBe(true);
-	expect(result.content[0]?.text).toContain("the laya engine is unreachable at http://laya.test/v1/systemone");
+	expect(result.content[0]?.text).toContain("the sys1 engine is unreachable at http://127.0.0.1:9987/v1/systemone");
 });
 
 test("HTTP error status is surfaced with its detail body", async () => {
@@ -281,7 +280,7 @@ test("HTTP error status is surfaced with its detail body", async () => {
 		questions: [{ name: "q", type: "noul", instructions: "i" }],
 	});
 	expect(result.isError).toBe(true);
-	expect(result.content[0]?.text).toBe("the laya engine returned HTTP 503: checkpoint loading");
+	expect(result.content[0]?.text).toBe("the sys1 engine returned HTTP 503: checkpoint loading");
 });
 
 test("an abort mid-flight is retried once before succeeding", async () => {
@@ -369,7 +368,7 @@ test("missing answers and routing are rendered per line", async () => {
 	const lines = result.content[0]?.text.split("\n") ?? [];
 	expect(lines[0]).toContain("present: P(true) 0.900 -> lean yes");
 	expect(lines[1]).toBe("absent: (no answer returned)");
-	expect(lines).toContain("(sys1 engine laya: english)");
+	expect(lines).toContain("(sys1 engine: english)");
 });
 
 test("a weakest confidence below 0.5 adds the trust-the-model note", async () => {
@@ -408,14 +407,14 @@ test("state is truncated to 50k chars and the weakest confidence is audited", as
 	expect(lines.at(-1)).toMatchObject({ type: "read", kind: "decide", p: 0.8 });
 });
 
-test("clef-shaped noul answers audit via the sure-mass fallback and name the served model", async () => {
-	// Found by live probing 2026-10: the Mac MLX clef instance serves noul
+test("noul-only answers audit via the sure-mass fallback and name the served model", async () => {
+	// Found by live probing 2026-10: the default local instance serves noul
 	// answers as {type, noul} with NO confidence field, and the served model at
 	// the top level instead of routing.model. Before the fallback, noul-only
-	// decide reads on clef audited nothing; the attribution line never rendered.
+	// decide reads audited nothing; the attribution line never rendered.
 	stubFetch(() =>
 		okResponse({
-			model: "clef-flash-4bit",
+			model: "english-4bit",
 			answers: { risky: { type: "noul", noul: 0.2 } },
 		}),
 	);
@@ -425,7 +424,7 @@ test("clef-shaped noul answers audit via the sure-mass fallback and name the ser
 		questions: [{ name: "risky", type: "noul", instructions: "i" }],
 	});
 	expect(result.content[0]?.text).toContain("risky: P(true) 0.200 -> lean no (80% sure)");
-	expect(result.content[0]?.text).toContain("(sys1 engine laya: clef-flash-4bit)");
+	expect(result.content[0]?.text).toContain("(sys1 engine: english-4bit)");
 	const lines = await auditLines();
 	expect(lines.at(-1)).toMatchObject({ type: "read", kind: "decide", p: 0.8 });
 });
@@ -439,7 +438,7 @@ const steerEvent = (prompt: string) => ({
 	systemPromptOptions: {},
 });
 
-test("steer skips short or slash prompts without consulting laya", async () => {
+test("steer skips short or slash prompts without consulting the engine", async () => {
 	const calls = stubFetch(() => okResponse(noulPayload("destructive_intent", 0.99)));
 	const pi = register();
 	const handler = pi.handlers.get("before_agent_start")?.[0];
@@ -471,7 +470,7 @@ test("a below-threshold or missing read leaves the turn untouched", async () => 
 	const handler = pi.handlers.get("before_agent_start")?.[0];
 	const prompt = "please rename the exported helper functions across the package";
 	expect(await handler?.(steerEvent(prompt), {})).toBeUndefined();
-	// Fail open: an unreachable laya must not throw or inject anything.
+	// Fail open: an unreachable engine must not throw or inject anything.
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async () => {
@@ -481,8 +480,8 @@ test("a below-threshold or missing read leaves the turn untouched", async () => 
 	expect(await handler?.(steerEvent(prompt), {})).toBeUndefined();
 });
 
-test("HUMMIN_LAYA_STEER=off registers no steering hook", () => {
-	vi.stubEnv("HUMMIN_LAYA_STEER", "off");
+test("HUMMIN_SYS1_STEER=off registers no steering hook", () => {
+	vi.stubEnv("HUMMIN_SYS1_STEER", "off");
 	stubFetch(() => okResponse(noulPayload("warmup", 0.5)));
 	const pi = register();
 	expect(pi.handlers.has("before_agent_start")).toBe(false);
@@ -525,7 +524,7 @@ test("the triage read is rate limited to one attempt per window", async () => {
 	expect(pi.sent).toHaveLength(0);
 });
 
-test("non-bash results, passing runs, and non-test commands never reach laya", async () => {
+test("non-bash results, passing runs, and non-test commands never reach the engine", async () => {
 	const calls = stubFetch(() => okResponse(noulPayload("caused_by_change", 0.17)));
 	const pi = register();
 	const handler = pi.handlers.get("tool_result")?.[0];
@@ -547,8 +546,8 @@ test("a throwing handler never propagates into the tool result path", async () =
 	).resolves.toBeUndefined();
 });
 
-test("HUMMIN_LAYA_TRIAGE=off registers no triage hook", () => {
-	vi.stubEnv("HUMMIN_LAYA_TRIAGE", "off");
+test("HUMMIN_SYS1_TRIAGE=off registers no triage hook", () => {
+	vi.stubEnv("HUMMIN_SYS1_TRIAGE", "off");
 	stubFetch(() => okResponse(noulPayload("warmup", 0.5)));
 	const pi = register();
 	expect(pi.handlers.has("tool_result")).toBe(false);
@@ -556,8 +555,8 @@ test("HUMMIN_LAYA_TRIAGE=off registers no triage hook", () => {
 
 // --- Gate kill switch and audit trail ---------------------------------------------
 
-test("HUMMIN_LAYA_GATE=off disables the gate entirely", async () => {
-	vi.stubEnv("HUMMIN_LAYA_GATE", "off");
+test("HUMMIN_SYS1_GATE=off disables the gate entirely", async () => {
+	vi.stubEnv("HUMMIN_SYS1_GATE", "off");
 	let reads = 0;
 	const decision: Sys1GateDecision | undefined = await sys1GateCheck("git reset --hard", async () => {
 		reads++;
@@ -569,12 +568,12 @@ test("HUMMIN_LAYA_GATE=off disables the gate entirely", async () => {
 
 test("scored and rule blocks leave matching audit entries", async () => {
 	let reads = 0;
-	// Deterministic rule block: no laya read, the audit line carries the rule.
+	// Deterministic rule block: no engine read, the audit line carries the rule.
 	await sys1GateCheck("git reset --hard", async () => {
 		reads++;
 		return { noul: 0.5 };
 	});
-	// Gray-zone block: one laya read, audited, and the block carries the score.
+	// Gray-zone block: one engine read, audited, and the block carries the score.
 	await sys1GateCheck("deploy-tool --env prod", async () => {
 		reads++;
 		return { noul: 0.91 };
@@ -589,7 +588,7 @@ test("scored and rule blocks leave matching audit entries", async () => {
 	expect(lines.filter((line) => line.type === "read" && line.kind === "gate")).toHaveLength(1);
 	// Every gate line names the answering engine so /friction can calibrate
 	// per engine.
-	expect(lines.every((line) => line.engine === "laya")).toBe(true);
+	expect(lines.every((line) => "engine" in line === false)).toBe(true);
 });
 
 test("the repeat escalation asks for ask_user on the second block", async () => {
@@ -607,10 +606,10 @@ test("the repeat escalation asks for ask_user on the second block", async () => 
 // --- Test-runner fast path ---------------------------------------------------
 //
 // The rubric scores test/build/check scripts LOW, but live probing (2026-09)
-// showed laya scoring plain `./test.sh` at P=0.83 - above the block line - so
+// showed the engine scoring plain `./test.sh` at P=0.83 - above the block line - so
 // they fast-pass deterministically via the same matcher the triage uses.
 
-test("test-runner commands fast-pass without a laya read", async () => {
+test("test-runner commands fast-pass without an engine read", async () => {
 	let reads = 0;
 	const unreachable = async (): Promise<{ noul: number } | null> => {
 		reads++;
@@ -618,7 +617,7 @@ test("test-runner commands fast-pass without a laya read", async () => {
 	};
 	for (const cmd of [
 		"./test.sh",
-		"./test.sh --filter laya",
+		"./test.sh --filter gray",
 		"npm test",
 		"npm run test",
 		"npx vitest run test/x.test.ts",
@@ -638,9 +637,9 @@ test("test-runner commands fast-pass without a laya read", async () => {
 //
 // splitSegments strips redirects from segments, so the whole-command read-only
 // fast path used to wave `echo x > important.txt` through before the redirect
-// downgrade could send it to laya (found by live probing, 2026-09).
+// downgrade could send it to the engine (found by live probing, 2026-09).
 
-test("write redirects behind read-only commands still reach laya", async () => {
+test("write redirects behind read-only commands still reach the engine", async () => {
 	let reads = 0;
 	const high = async (): Promise<{ noul: number } | null> => {
 		reads++;

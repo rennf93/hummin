@@ -152,8 +152,7 @@ type MemoryDispatchContext = {
 
 function prepareMemoryDispatch(input: Parameters<typeof prepareChildDispatch>[0], ctx: MemoryDispatchContext): ReturnType<typeof prepareChildDispatch> {
 	// Memory distill/fold are background hygiene, so the review wait is held to
-	// the active engine's dispatch timeout (1.5s on laya, 4s on the slower
-	// clef/jev engines) and fails open on timeout.
+	// the engine's dispatch timeout and fails open on timeout.
 	return (ctx.dispatch ?? prepareChildDispatch)(input, ctx, { agentDir: ctx.agentDir ?? agentDir(), sys1TimeoutMs: resolveDecisionEngine().dispatchTimeoutMs });
 }
 
@@ -179,7 +178,6 @@ function spawnDistillWorker(pendingPath: string): void {
 		env: {
 			...process.env,
 			HUMMIN_MEMORY: "0",
-			HUMMIN_DECISION_ENGINE: engine.id,
 			HUMMIN_DECISION_URL: engine.url,
 			HUMMIN_DECISION_API_KEY: engine.apiKey,
 			HUMMIN_DECISION_INTAKE_THRESHOLD: String(engine.intakeThreshold),

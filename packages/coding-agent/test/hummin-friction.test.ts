@@ -183,7 +183,7 @@ describe("summarizeFriction", () => {
 	});
 });
 
-describe("laya gate summary", () => {
+describe("sys1 gate summary", () => {
 	it("counts block/confirmed/read and ignores unknown or corrupt lines", () => {
 		const summary = summarizeSys1Gate([
 			'{"ts":"2026-09-24T10:00:00.000Z","type":"block","command":"rm -rf /","p":0.9}',
@@ -221,7 +221,7 @@ describe("renderFrictionReport", () => {
 		);
 	});
 
-	it("renders kind totals, per-day counts, and the laya gate section", () => {
+	it("renders kind totals, per-day counts, and the sys1 gate section", () => {
 		const friction = summarizeFriction(
 			[
 				{ ts: iso(NOW), kind: "tool_error", source: "guardrails" },
@@ -238,7 +238,7 @@ describe("renderFrictionReport", () => {
 		expect(text).toContain("confirmed");
 	});
 
-	it("still shows the laya gate section when friction is empty", () => {
+	it("still shows the sys1 gate section when friction is empty", () => {
 		const text = renderFrictionReport(zeroSummary(), { block: 1, confirmed: 0, read: 0 });
 		expect(text).toContain("total 0");
 		expect(text).toContain("sys1 gate");
@@ -249,9 +249,9 @@ describe("renderFrictionReport", () => {
 			threshold: 0.75,
 		});
 		const text = renderFrictionReport(zeroSummary(), { block: 1, confirmed: 1, read: 1 }, calibration);
-		expect(text).toContain("sys1 calibration (engine all, threshold 0.75)");
+		expect(text).toContain("sys1 calibration (threshold 0.75)");
 		expect(text).toContain("near-miss reads");
-		expect(text).toContain("consider settings decision.laya.gateThreshold 0.78");
+		expect(text).toContain("consider settings decision.gateThreshold 0.78");
 	});
 
 	it("omits the calibration section when there is nothing to calibrate", () => {
