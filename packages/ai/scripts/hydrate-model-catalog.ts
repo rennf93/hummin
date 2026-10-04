@@ -10,6 +10,8 @@ import {
 	type ModelCatalogEntry,
 	type ModelDataStructure,
 	readModelDataProviderIds,
+	readProviderStructure,
+	STATIC_MODEL_DATA_PROVIDERS,
 	validateModelDataDirectory,
 } from "./model-data.ts";
 
@@ -45,6 +47,15 @@ export function hydrateModelCatalog(
 	const files: Record<string, string> = {};
 	const structure: ModelDataStructure = {};
 	for (const provider of readModelDataProviderIds(packageRoot)) {
+		if (STATIC_MODEL_DATA_PROVIDERS.has(provider)) {
+			// hummin overlay: self-committed provider data; carry the checkout's
+			// bytes through hydration unchanged so the data dir swap keeps them.
+			const committedPath = join(packageRoot, "src", "providers", "data", `${provider}.json`);
+			const committed = readFileSync(committedPath, "utf8");
+			structure[provider] = readProviderStructure(committedPath, provider);
+			files[`${provider}.json`] = committed;
+			continue;
+		}
 		const models = catalog[provider];
 		if (models === undefined) throw new Error(`Model catalog is missing provider: ${provider}`);
 		if (!Array.isArray(models) || models.length === 0) {

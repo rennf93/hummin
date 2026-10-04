@@ -69,7 +69,7 @@ function readJsonObject(path: string, description: string, errors: string[]): Re
 	return parsed;
 }
 
-function readProviderStructure(path: string, providerId: string): Record<string, string> {
+export function readProviderStructure(path: string, providerId: string): Record<string, string> {
 	const errors: string[] = [];
 	const groups = readJsonObject(path, `${providerId}.json`, errors);
 	if (!groups) throw new Error(errors.join("\n"));
@@ -85,6 +85,12 @@ function readProviderStructure(path: string, providerId: string): Record<string,
 	if (models.size === 0) throw new Error(`${path} contains no generated model data`);
 	return sortedRecord(models);
 }
+
+/** hummin: providers whose data/<id>.json is committed in this fork and is NOT
+ * sourced from the public models.dev catalog (which has no entry for them).
+ * Catalog hydration carries their bytes through unchanged; catalog pin
+ * validation skips them when checking catalog coverage. */
+export const STATIC_MODEL_DATA_PROVIDERS: ReadonlySet<string> = new Set(["zai-api"]);
 
 export function readModelDataProviderIds(packageRoot: string): string[] {
 	const aggregatorPath = join(packageRoot, "src", "models.generated.ts");

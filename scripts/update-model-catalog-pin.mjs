@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { hydrateModelCatalog } from "../packages/ai/scripts/hydrate-model-catalog.ts";
-import { readModelDataProviderIds } from "../packages/ai/scripts/model-data.ts";
+import { readModelDataProviderIds, STATIC_MODEL_DATA_PROVIDERS } from "../packages/ai/scripts/model-data.ts";
 
 // Request the typed catalog; its bytes are what a revision hashes.
 const MODEL_TYPES = "types=chat,image,classifier";
@@ -48,6 +48,7 @@ function modelTypeGroups(root, bytes) {
 	const catalog = JSON.parse(bytes.toString("utf8"));
 	const groups = new Set();
 	for (const provider of readModelDataProviderIds(join(root, "packages/ai"))) {
+		if (STATIC_MODEL_DATA_PROVIDERS.has(provider)) continue;
 		for (const model of catalog[provider] ?? []) groups.add(`${provider}/${model.type}`);
 	}
 	return groups;
