@@ -4,6 +4,10 @@
 
 ### Added
 
+- cc-tg-hub Telegram bridge (`hummin-tg-hub` extension, opt-in via `TG_HUB=1` or the `tgHub` setting): the session registers with a running [cc-tg-hub](https://github.com/rennf93/cc-tg-hub) broker and becomes drivable from its Telegram topic - inbound messages are injected as user messages (steer while working, follow-up when idle), a `tg_reply` tool answers the topic, and tools listed in `tgHub.askTools` / `TG_HUB_ASK_TOOLS` raise Allow/Deny buttons (Deny blocks the call; Allow never bypasses a terminal dialog). Broker respawn, reconnect, and re-register mirror cc-tg-hub's own client, so Claude Code sessions and hummin sessions can share one broker. Default off, so child/cron sessions never register.
+
+### Added
+
 - Replay trimming (settings key `replayTrim`): completed turns are rewritten per LLM request before reaching the provider - replayed reasoning/thinking blocks are dropped and old tool results are pruned to head+marker+tail with a rerun hint (both on by default, matching the standalone zcode-token-proxy's `all` mode; `replayTrim.toolResults: false` keeps old tool results lossless). Session history is never modified; the active tool loop, redacted thinking, and thinking blocks carrying structured/encrypted replay signatures always pass through. Applies to `anthropic-messages` and `openai-completions` models via a single trim point in `ModelRuntime` (interactive, SDK, and cache-warmer paths included); other APIs are left untouched until verified.
 
 ## [1.3.1] - 2026-10-04

@@ -271,6 +271,21 @@ export interface Settings {
 	 * through, and endpoints that require the reasoning field get an empty one
 	 * re-added by the AI layer. Default: { thinking: true, toolResults: true }. */
 	replayTrim?: ReplayTrimSettings;
+	/** hummin: cc-tg-hub Telegram bridge (opt-in, default off). When enabled, the
+	 * session registers with a running cc-tg-hub broker (github.com/rennf93/
+	 * cc-tg-hub) and becomes drivable from its Telegram topic: inbound messages
+	 * are injected as user messages, a tg_reply tool answers the topic, and tools
+	 * named in tgHub.askTools raise Allow/Deny buttons (Deny blocks; Allow never
+	 * bypasses a terminal dialog). CAUTION: settings are global - enabling here
+	 * also registers child/cron sessions; prefer the TG_HUB=1 env switch for
+	 * interactive use. */
+	tgHub?: {
+		enabled?: boolean;
+		/** Broker socket path. Default: ~/.claude/cc-tg-hub/broker.sock */
+		socketPath?: string;
+		/** Tool names forwarded to Telegram as Allow/Deny prompts. Default: none. */
+		askTools?: string[];
+	};
 	theme?: string;
 	compaction?: CompactionSettings;
 	branchSummary?: BranchSummarySettings;
