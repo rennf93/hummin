@@ -5,10 +5,18 @@
 ### Added
 
 - cc-tg-hub Telegram bridge (`hummin-tg-hub` extension, opt-in via `TG_HUB=1` or the `tgHub` setting): the session registers with a running [cc-tg-hub](https://github.com/rennf93/cc-tg-hub) broker and becomes drivable from its Telegram topic - inbound messages are injected as user messages (steer while working, follow-up when idle), a `tg_reply` tool answers the topic, and tools listed in `tgHub.askTools` / `TG_HUB_ASK_TOOLS` raise Allow/Deny buttons (Deny blocks the call; Allow never bypasses a terminal dialog). Broker respawn, reconnect, and re-register mirror cc-tg-hub's own client, so Claude Code sessions and hummin sessions can share one broker. Default off, so child/cron sessions never register.
-
-### Added
-
 - Replay trimming (settings key `replayTrim`): completed turns are rewritten per LLM request before reaching the provider - replayed reasoning/thinking blocks are dropped and old tool results are pruned to head+marker+tail with a rerun hint (both on by default, matching the standalone zcode-token-proxy's `all` mode; `replayTrim.toolResults: false` keeps old tool results lossless). Session history is never modified; the active tool loop, redacted thinking, and thinking blocks carrying structured/encrypted replay signatures always pass through. Applies to `anthropic-messages` and `openai-completions` models via a single trim point in `ModelRuntime` (interactive, SDK, and cache-warmer paths included); other APIs are left untouched until verified.
+
+### Changed
+
+- Codemode `image()` now also saves each image to a temp file and names the path in the result, so later turns can copy or move generated images ([#10310](https://github.com/earendil-works/pi/issues/10310))
+- Output files (full text of truncated tool output, binary MCP resources, codemode images) are now readable only by the user
+
+### Fixed
+
+- Fixed subscription logins such as Sign in with ChatGPT failing with `refresh_token_invalidated` after a request was cancelled during an OAuth token refresh
+- Fixed codemode failing for the rest of a session after a pnpm global update removed the running install, and added a restart hint when errors occur after pi was updated or removed on disk ([#10439](https://github.com/earendil-works/pi/issues/10439))
+- Fixed interactive sessions reporting a `read EIO` or `setRawMode EIO` crash (and asking to run /bug) when the terminal went away, e.g. after closing the window or resuming a suspended pi in a closed terminal
 
 ## [1.3.1] - 2026-10-04
 
