@@ -1018,6 +1018,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#system-1-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        System-1 gate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#hooks" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1363,6 +1374,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#system-1-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        System-1 gate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#hooks" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1439,6 +1461,13 @@
 <li><strong>Per-tool circuit breaker</strong>: stops a misbehaving tool instead of the whole session.</li>
 <li><strong>Optional cumulative tool budget</strong> (disabled by default) for hard cost control.</li>
 <li>Post-mortems after a guardrail trips, so the failure is legible.</li>
+</ul>
+<h2 id="system-1-gate">System-1 gate<a class="headerlink" href="#system-1-gate" title="Permanent link">&para;</a></h2>
+<p>One decision engine (default a local Clef endpoint, configurable via <code>decision.url</code>) backs four automatic hooks: a <strong>bash gate</strong> (deterministic classifiers for clear cases, a scored gray zone for everything else), <strong>destructive-intent steer</strong> per turn, <strong>test-failure triage</strong>, and <strong>memory intake scoring</strong>.</p>
+<ul>
+<li>Blocked commands name the reason and carry an escape hatch: rerun the same command with <code># sys1-gate: confirmed</code> appended once you've verified the target.</li>
+<li>Every read fails open - an unreachable engine never blocks a session.</li>
+<li>Calibrate with <code>decision.*</code> thresholds; inspect what hummin picked up via <code>/doctor</code>.</li>
 </ul>
 <h2 id="hooks">Hooks<a class="headerlink" href="#hooks" title="Permanent link">&para;</a></h2>
 <p><code>hooks.json</code> runs shell hooks on four lifecycle events. <code>tool_call</code> hooks can <strong>block a tool with a reason</strong> before it executes. Fail-open by design, with a loaded-hooks table and reload at <code>/hooks</code>.</p>

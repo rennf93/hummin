@@ -1210,6 +1210,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#replay-trimming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replay trimming
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#system-1-decision-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        System-1 decision layer
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#telegram-bridge-cc-tg-hub" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Telegram bridge (cc-tg-hub)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#behavior" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1385,6 +1418,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#replay-trimming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replay trimming
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#system-1-decision-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        System-1 decision layer
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#telegram-bridge-cc-tg-hub" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Telegram bridge (cc-tg-hub)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#behavior" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1527,6 +1593,91 @@
 </tr>
 </tbody>
 </table>
+<h2 id="replay-trimming">Replay trimming<a class="headerlink" href="#replay-trimming" title="Permanent link">&para;</a></h2>
+<p>Completed turns are rewritten per request before the provider sees them, so GLM-family endpoints stop resending reasoning and stale tool output (z.ai recommends not resending reasoning). Session history is never modified; the active tool loop, redacted thinking, and thinking blocks with structured replay signatures always pass through.</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>replayTrim.thinking</code></td>
+<td><code>true</code></td>
+<td>Drop replayed reasoning from completed turns</td>
+</tr>
+<tr>
+<td><code>replayTrim.toolResults</code></td>
+<td><code>true</code></td>
+<td>Prune old tool results to head + marker + tail (<code>false</code> = lossless replay)</td>
+</tr>
+<tr>
+<td><code>replayTrim.toolResultCap</code> / <code>toolResultTail</code></td>
+<td>2000 / 200</td>
+<td>Head/tail characters kept when pruning</td>
+</tr>
+</tbody>
+</table>
+<p>Applies to <code>anthropic-messages</code> and <code>openai-completions</code> models; other APIs are left untouched.</p>
+<h2 id="system-1-decision-layer">System-1 decision layer<a class="headerlink" href="#system-1-decision-layer" title="Permanent link">&para;</a></h2>
+<p>One decision engine backs four automatic hooks (bash gate, destructive-intent steer, test-failure triage, memory intake). A single engine, no failover; every read fails open, so an unreachable engine never blocks a session.</p>
+<table>
+<thead>
+<tr>
+<th>Setting / env</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>decision.url</code></td>
+<td>Engine endpoint (default <code>http://127.0.0.1:9987/v1/systemone</code>)</td>
+</tr>
+<tr>
+<td><code>decision.apiKey</code></td>
+<td>Engine auth (<code>COLI_API_KEY</code> works as fallback)</td>
+</tr>
+<tr>
+<td><code>decision.gateThreshold</code> / <code>steerThreshold</code> / <code>triageThreshold</code> / <code>intakeThreshold</code></td>
+<td>Calibrate the four hooks</td>
+</tr>
+<tr>
+<td><code>sys1Gate.extraSafe</code> / <code>extraDestructive</code></td>
+<td>Regex lists layered onto the bash gate</td>
+</tr>
+<tr>
+<td><code>HUMMIN_SYS1_RIGHTSIZE</code> / <code>HUMMIN_SYS1_RIGHTSIZE_SWING</code></td>
+<td>Model right-sizing for child dispatches</td>
+</tr>
+</tbody>
+</table>
+<h2 id="telegram-bridge-cc-tg-hub">Telegram bridge (cc-tg-hub)<a class="headerlink" href="#telegram-bridge-cc-tg-hub" title="Permanent link">&para;</a></h2>
+<p>Requires a running <a href="https://github.com/rennf93/cc-tg-hub">cc-tg-hub</a> broker (one per machine; install with <code>bunx cc-tg-hub setup</code>). See docs/features/integrations.md.</p>
+<table>
+<thead>
+<tr>
+<th>Setting / env</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tgHub.enabled</code> / <code>TG_HUB=1</code></td>
+<td>Opt in. The env switch is per-session - prefer it (the setting is global and would register child/cron sessions too)</td>
+</tr>
+<tr>
+<td><code>tgHub.socketPath</code> / <code>TG_HUB_SOCKET</code></td>
+<td>Broker socket (default <code>~/.claude/cc-tg-hub/broker.sock</code>)</td>
+</tr>
+<tr>
+<td><code>tgHub.askTools</code> / <code>TG_HUB_ASK_TOOLS</code></td>
+<td>Tools that raise Allow/Deny buttons in Telegram (Deny blocks; Allow never bypasses a terminal dialog)</td>
+</tr>
+</tbody>
+</table>
 <h2 id="behavior">Behavior<a class="headerlink" href="#behavior" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1539,6 +1690,14 @@
 <tr>
 <td><code>editorMode</code></td>
 <td>Vim editing mode</td>
+</tr>
+<tr>
+<td><code>compactPrompt</code></td>
+<td>Condense tool descriptions and system-prompt guidance (useful for slow-prefill local models)</td>
+</tr>
+<tr>
+<td><code>cacheWarming</code></td>
+<td><code>off</code> / <code>streaming</code> / <code>idle</code> / <code>always</code> provider-side prompt-cache warming</td>
 </tr>
 <tr>
 <td><code>statusline.left</code>, <code>statusline.right</code></td>

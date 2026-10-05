@@ -1046,6 +1046,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cc-tg-hub-telegram-bridge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cc-tg-hub Telegram bridge
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#extensions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1363,6 +1374,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cc-tg-hub-telegram-bridge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cc-tg-hub Telegram bridge
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#extensions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1456,6 +1478,14 @@
 <li><code>web_search</code> - DuckDuckGo search</li>
 <li><code>web_fetch</code> - fetch with an <strong>SSRF guard</strong> (internal addresses and metadata endpoints are refused)</li>
 </ul>
+<h2 id="cc-tg-hub-telegram-bridge">cc-tg-hub Telegram bridge<a class="headerlink" href="#cc-tg-hub-telegram-bridge" title="Permanent link">&para;</a></h2>
+<p>With a <a href="https://github.com/rennf93/cc-tg-hub">cc-tg-hub</a> broker running (installed once with <code>bunx cc-tg-hub setup</code>), <code>TG_HUB=1 hummin</code> registers the session with the broker and makes it drivable from your phone:</p>
+<ul>
+<li>One Telegram forum topic per session; messages arrive as user input (steering the current turn when one is running).</li>
+<li>A <code>tg_reply</code> tool answers the topic.</li>
+<li>Tools listed in <code>TG_HUB_ASK_TOOLS</code> (or <code>tgHub.askTools</code>) raise <strong>Allow/Deny</strong> buttons before they run - Deny blocks the call; Allow never bypasses a terminal dialog, so pair it with <code>--approve</code> for fully unattended use.</li>
+</ul>
+<p>Claude Code sessions and hummin sessions can share one broker, one bot, one poller. One broker per machine (Telegram allows one <code>getUpdates</code> poller per bot token). Claude Code sessions need their own flag: <code>claude --dangerously-load-development-channels server:cc-tg-hub</code>.</p>
 <h2 id="extensions">Extensions<a class="headerlink" href="#extensions" title="Permanent link">&para;</a></h2>
 <p>TypeScript extensions in <code>~/.hummin/agent/extensions/</code> autoload at startup with hot reload and a transform cache. This is the mechanism behind the local fleet provider - see <a href="../../local-models/fleet/">Connecting to hummin</a> - and it is the same API available to yours.</p>
 <h2 id="prompt-templates-skills-packages">Prompt templates, skills, packages<a class="headerlink" href="#prompt-templates-skills-packages" title="Permanent link">&para;</a></h2>
