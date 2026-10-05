@@ -70,6 +70,14 @@ The complete command surface, grouped by area. Built-in upstream commands ship a
 | `/hooks` | Loaded hooks table + reload |
 | `/mcp` | MCP server status + restart |
 | `/lsp` | TypeScript LSP status + restart |
+| `/remote-control` | Browser control endpoint (loopback + token; stop disconnects) |
+
+## Observability (hummin)
+
+| Command | Purpose |
+|---|---|
+| `/stats` | Telemetry dashboards |
+| `/friction` | Friction log with per-engine sys1-gate calibration |
 
 ## Memory (hummin)
 

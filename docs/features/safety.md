@@ -29,6 +29,14 @@ Status and config: `/bashguard`.
 - **Optional cumulative tool budget** (disabled by default) for hard cost control.
 - Post-mortems after a guardrail trips, so the failure is legible.
 
+## System-1 gate
+
+One decision engine (default a local Clef endpoint, configurable via `decision.url`) backs four automatic hooks: a **bash gate** (deterministic classifiers for clear cases, a scored gray zone for everything else), **destructive-intent steer** per turn, **test-failure triage**, and **memory intake scoring**.
+
+- Blocked commands name the reason and carry an escape hatch: rerun the same command with `# sys1-gate: confirmed` appended once you've verified the target.
+- Every read fails open - an unreachable engine never blocks a session.
+- Calibrate with `decision.*` thresholds; inspect what hummin picked up via `/doctor`.
+
 ## Hooks
 
 `hooks.json` runs shell hooks on four lifecycle events. `tool_call` hooks can **block a tool with a reason** before it executes. Fail-open by design, with a loaded-hooks table and reload at `/hooks`.

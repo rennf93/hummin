@@ -30,6 +30,16 @@ When `typescript-language-server` is available, the model gets real language too
 - `web_search` - DuckDuckGo search
 - `web_fetch` - fetch with an **SSRF guard** (internal addresses and metadata endpoints are refused)
 
+## cc-tg-hub Telegram bridge
+
+With a [cc-tg-hub](https://github.com/rennf93/cc-tg-hub) broker running (installed once with `bunx cc-tg-hub setup`), `TG_HUB=1 hummin` registers the session with the broker and makes it drivable from your phone:
+
+- One Telegram forum topic per session; messages arrive as user input (steering the current turn when one is running).
+- A `tg_reply` tool answers the topic.
+- Tools listed in `TG_HUB_ASK_TOOLS` (or `tgHub.askTools`) raise **Allow/Deny** buttons before they run - Deny blocks the call; Allow never bypasses a terminal dialog, so pair it with `--approve` for fully unattended use.
+
+Claude Code sessions and hummin sessions can share one broker, one bot, one poller. One broker per machine (Telegram allows one `getUpdates` poller per bot token). Claude Code sessions need their own flag: `claude --dangerously-load-development-channels server:cc-tg-hub`.
+
 ## Extensions
 
 TypeScript extensions in `~/.hummin/agent/extensions/` autoload at startup with hot reload and a transform cache. This is the mechanism behind the local fleet provider - see [Connecting to hummin](../local-models/fleet.md) - and it is the same API available to yours.
