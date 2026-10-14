@@ -6,6 +6,7 @@ import {
 	type Component,
 	CURSOR_MARKER,
 	type Focusable,
+	renderFakeCursor,
 	type TUI,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
@@ -711,7 +712,7 @@ export class Editor implements Component, Focusable {
 					const afterGraphemes = [...this.segment(after, "grapheme")];
 					const firstGrapheme = afterGraphemes[0]?.segment || "";
 					const restAfter = after.slice(firstGrapheme.length);
-					const cursor = `\x1b[7m${firstGrapheme}\x1b[0m`;
+					const cursor = renderFakeCursor(firstGrapheme);
 					// Highlight the text around the cursor separately; state across the seam is
 					// best-effort (tokens spanning the caret may color differently on one line).
 					displayText =
@@ -722,7 +723,7 @@ export class Editor implements Component, Focusable {
 					// lineVisibleWidth stays the same - we're replacing, not adding
 				} else {
 					// Cursor is at the end - add highlighted space
-					const cursor = "\x1b[7m \x1b[0m";
+					const cursor = renderFakeCursor(" ");
 					displayText = (highlighter ? highlighter(displayText) : displayText) + marker + cursor;
 					lineVisibleWidth = lineVisibleWidth + 1;
 					// If cursor overflows content width into the padding, flag it

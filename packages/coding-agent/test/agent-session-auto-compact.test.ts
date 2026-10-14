@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "@earendil-works/pi-agent-core";
-import { type AssistantMessage, type AssistantMessageEvent, EventStream, getModel } from "@earendil-works/pi-ai/compat";
+import { type AssistantMessage, createAssistantMessageEventStream, getModel } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -12,19 +12,6 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 import { AUTO_COMPACT_CONTEXT_WINDOW } from "../src/core/system-prompt.ts";
 import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestResourceLoader } from "./utilities.ts";
-
-class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
-	constructor() {
-		super(
-			(event) => event.type === "done" || event.type === "error",
-			(event) => {
-				if (event.type === "done") return event.message;
-				if (event.type === "error") return event.error;
-				throw new Error("Unexpected event type");
-			},
-		);
-	}
-}
 
 function createAssistantMessage(text: string): AssistantMessage {
 	return {
@@ -80,7 +67,7 @@ describe("AgentSession auto compact prompt", () => {
 			getApiKey: () => "test-key",
 			initialState: { model, systemPrompt: "Test", tools: [] },
 			streamFn: () => {
-				const stream = new MockAssistantStream();
+				const stream = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					const message = createAssistantMessage("ok");
 					stream.push({ type: "start", partial: message });

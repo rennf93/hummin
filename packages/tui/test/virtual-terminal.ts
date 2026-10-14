@@ -101,6 +101,7 @@ export class VirtualTerminal implements Terminal {
 	}
 
 	setProgress(_active: boolean): void {}
+	setProgramStatus(): void {}
 
 	isFocused(): boolean | undefined {
 		return true;

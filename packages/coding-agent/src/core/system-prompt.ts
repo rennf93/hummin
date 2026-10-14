@@ -14,6 +14,11 @@ export interface BuildSystemPromptOptions {
 	forceSystemPrompt?: string;
 	/** Tools to include in prompt. Default: DEFAULT_SELECTED_TOOLS (read, bash, edit, write, grep). */
 	selectedTools?: string[];
+	/**
+	 * Selected tools whose declarations requests leave out (`prepareLoadout` hidden declarations).
+	 * They are reachable only through another tool, so the tool list and rules leave them out too.
+	 */
+	hiddenTools?: string[];
 	/** Optional one-line tool snippets keyed by tool name. */
 	toolSnippets?: Record<string, string>;
 	/** Guideline bullets contributed by each tool, keyed by tool name. */
@@ -36,6 +41,7 @@ export interface BuildSystemPromptOptions {
 
 export type NormalizedBuildSystemPromptOptions = BuildSystemPromptOptions & {
 	selectedTools: string[];
+	hiddenTools: string[];
 	toolSnippets: Record<string, string>;
 	toolGuidelines: Record<string, string[]>;
 	promptGuidelines: string[];
@@ -76,6 +82,7 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptOption
 		customPrompt: input.customPrompt,
 		forceSystemPrompt: input.forceSystemPrompt,
 		selectedTools: [...(input.selectedTools ?? DEFAULT_SELECTED_TOOLS)],
+		hiddenTools: [...(input.hiddenTools ?? [])],
 		toolSnippets: { ...(input.toolSnippets ?? {}) },
 		toolGuidelines: Object.fromEntries(
 			Object.entries(input.toolGuidelines ?? {}).map(([name, guidelines]) => [name, [...guidelines]]),
@@ -150,6 +157,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 	const {
 		customPrompt,
 		selectedTools,
+		hiddenTools,
 		toolSnippets,
 		toolGuidelines,
 		promptGuidelines,
@@ -167,17 +175,18 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 		}
 	}
 
+	const declaredTools = selectedTools.filter((name) => !hiddenTools.includes(name));
 	const promptSections: Record<string, string> = {};
 	if (customPrompt) {
 		promptSections.preamble = customPrompt;
 	} else {
 		promptSections.preamble =
 			"You are hummin, an expert coding assistant operating inside the hummin coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
-		const visibleTools = selectedTools.filter((name) => !!toolSnippets[name]);
+		const visibleTools = declaredTools.filter((name) => !!toolSnippets[name]);
 		const tools =
 			visibleTools.length > 0 ? visibleTools.map((name) => `- ${name}: ${toolSnippets[name]}`).join("\n") : "(none)";
 		promptSections.tools = `${tools}\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.`;
-		promptSections.rules = buildRules(selectedTools, toolGuidelines, promptGuidelines);
+		promptSections.rules = buildRules(declaredTools, toolGuidelines, promptGuidelines);
 		promptSections.docs = compact
 			? `hummin docs (only if the user asks about hummin itself): README ${getReadmePath()}, docs ${getDocsPath()}, examples ${getExamplesPath()}. Read .md files fully and follow their cross-references.`
 			: `hummin documentation (read only when the user asks about hummin itself, its SDK, extensions, themes, skills, or TUI):
@@ -192,7 +201,11 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 
 	if (appendSystemPrompt) promptSections.addendum = appendSystemPrompt;
 	if (contextFiles.length > 0) promptSections.project_context = renderProjectContext(contextFiles);
-	const skillFileReadTool = (["read", "bash"] as const).find((tool) => selectedTools.includes(tool));
+	// A hidden reader is still reachable through another tool, so skills stay but the hint names no tool.
+	const readers = ["read", "bash"] as const;
+	const skillFileReadTool =
+		readers.find((tool) => declaredTools.includes(tool)) ??
+		(readers.some((tool) => selectedTools.includes(tool)) ? "indirect" : undefined);
 	if (skillFileReadTool && skills.length > 0) {
 		const skillsPrompt = formatSkillsForPrompt(skills, skillFileReadTool).trim();
 		if (skillsPrompt) promptSections.skills = skillsPrompt;

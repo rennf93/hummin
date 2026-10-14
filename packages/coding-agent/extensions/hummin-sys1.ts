@@ -820,6 +820,7 @@ export default function humminSys1(pi: ExtensionAPI): void {
 	// first.
 	if (!sys1Disabled("HUMMIN_SYS1_STEER")) {
 		pi.on("before_agent_start", async (event) => {
+			if (event.messageType === "custom") return undefined;
 			const prompt = event.prompt.trim();
 			if (prompt.length < STEER_MIN_PROMPT_CHARS || prompt.startsWith("/")) return undefined;
 			const engine = resolveDecisionEngine();

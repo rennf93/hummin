@@ -56,13 +56,17 @@ it("delivers relevant memory without unrelated cross-project notes and keeps rel
 	const harness = await createHarness({
 		extensionFactories: [
 			(pi) => {
-				pi.on("before_agent_start", (event, ctx) => ({
-					message: {
-						customType: "memory-eval",
-						display: false,
-						content: recallLessons(ctx.cwd, event.prompt).join("\n"),
-					},
-				}));
+				pi.on("before_agent_start", (event, ctx) =>
+					event.messageType === "user"
+						? {
+								message: {
+									customType: "memory-eval",
+									display: false,
+									content: recallLessons(ctx.cwd, event.prompt).join("\n"),
+								},
+							}
+						: undefined,
+				);
 			},
 		],
 	});

@@ -39,6 +39,7 @@ type RenderSessionContextThis = {
 	footerDataProvider: { scheduleGitStatusRefresh(): void };
 	chatContainer: Container;
 	footer: { invalidate(): void };
+	programStatus: { handleEvent(): void };
 	ui: TUI;
 	settingsManager: {
 		getShowImages(): boolean;
@@ -72,6 +73,7 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		footerDataProvider: { scheduleGitStatusRefresh() {} },
 		chatContainer,
 		footer: { invalidate: vi.fn() },
+		programStatus: { handleEvent: vi.fn() },
 		ui: { requestRender: vi.fn() } as unknown as TUI,
 		settingsManager: {
 			getShowImages: () => false,

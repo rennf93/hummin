@@ -26,6 +26,7 @@ const baseConfig = {
 	messageTimestamps: false,
 	compactPrompt: false,
 	transport: "auto",
+	sessionShareDestination: "auto",
 	httpIdleTimeoutMs: 300000,
 	thinkingLevel: "medium",
 	currentTheme: "dark",
@@ -149,6 +150,29 @@ describe("SettingsSelectorComponent", () => {
 		generalList.handleInput("\r");
 		generalList.handleInput("\r");
 		expect(onMessageTimestampsChange.mock.calls.flat()).toEqual([false, true]);
+	});
+
+	it("cycles through share destinations", () => {
+		const onSessionShareDestinationChange = vi.fn();
+		const config = {
+			...baseConfig,
+			sessionShareDestination: "auto",
+			warnings: {},
+			defaultModel: "not set",
+			availableDefaultModels: [],
+			availableThinkingLevels: [],
+			modelThinkingLevels: {},
+			availableThemes: [],
+		} as unknown as SettingsConfig;
+		const callbacks = {
+			onSessionShareDestinationChange,
+		} as unknown as SettingsCallbacks;
+		const list = new SettingsSelectorComponent(config, callbacks).getList("network");
+		list.selectItem("share-destination");
+
+		for (let i = 0; i < 3; i++) list.handleInput("\r");
+
+		expect(onSessionShareDestinationChange.mock.calls.flat()).toEqual(["gist", "radius", "auto"]);
 	});
 
 	it("keeps the configured fixed theme marked while browsing", () => {

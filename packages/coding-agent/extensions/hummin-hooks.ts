@@ -415,6 +415,7 @@ export default function humminHooks(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		if (event.messageType === "custom") return;
 		await runHooks("user_prompt_submit", { prompt: event.prompt }, ctx);
 	});
 

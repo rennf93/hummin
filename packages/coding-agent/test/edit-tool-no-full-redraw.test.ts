@@ -28,6 +28,7 @@ class FakeTerminal implements Terminal {
 	clearScreen(): void {}
 	setTitle(_title: string): void {}
 	setProgress(_active: boolean): void {}
+	setProgramStatus(): void {}
 	isFocused(): boolean | undefined {
 		return true;
 	}

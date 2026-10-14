@@ -433,6 +433,7 @@ test("noul-only answers audit via the sure-mass fallback and name the served mod
 
 const steerEvent = (prompt: string) => ({
 	type: "before_agent_start",
+	messageType: "user",
 	prompt,
 	systemPrompt: "",
 	systemPromptOptions: {},

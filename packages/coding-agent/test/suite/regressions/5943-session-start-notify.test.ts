@@ -41,6 +41,7 @@ type LoadedResourcesContext = {
 type RebindContext = {
 	unsubscribe?: () => void;
 	applyRuntimeSettings: () => void;
+	programStatus: { reset(): void };
 	loadPromptHistory: () => void;
 	renderCurrentSessionState: () => void;
 	bindCurrentSessionExtensions: () => Promise<void>;
@@ -253,6 +254,7 @@ describe("regression #5943: session_start transient UI", () => {
 		try {
 			const context: RebindContext = {
 				applyRuntimeSettings: () => events.push("apply"),
+				programStatus: { reset: () => {} },
 				loadPromptHistory: () => events.push("history"),
 				renderCurrentSessionState: () => events.push("render"),
 				bindCurrentSessionExtensions: async () => {
@@ -295,6 +297,7 @@ describe("regression #5943: session_start transient UI", () => {
 		try {
 			const context: RebindContext = {
 				applyRuntimeSettings: () => {},
+				programStatus: { reset: () => {} },
 				loadPromptHistory: () => {},
 				renderCurrentSessionState: () => events.push("render"),
 				bindCurrentSessionExtensions: async () => {
@@ -348,6 +351,7 @@ describe("regression #5943: session_start transient UI", () => {
 		try {
 			const context: RebindContext = {
 				applyRuntimeSettings: () => {},
+				programStatus: { reset: () => {} },
 				loadPromptHistory: () => {},
 				renderCurrentSessionState: () => events.push("render"),
 				bindCurrentSessionExtensions: async () => {

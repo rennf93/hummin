@@ -20,6 +20,7 @@ function renderContext(overrides: Record<string, unknown> = {}) {
 		expanded: false,
 		showImages: false,
 		isError: false,
+		outputPad: 1,
 		invalidate: () => {},
 		...overrides,
 	} as any;

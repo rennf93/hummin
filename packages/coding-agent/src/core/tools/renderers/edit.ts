@@ -147,8 +147,10 @@ function buildEditCallComponent(
 	theme: Theme,
 	cwd: string,
 	expanded: boolean,
+	outputPad: number,
 ): EditCallRenderComponent {
 	component.setBgFn(getEditHeaderBg(component.preview, component.settledError, theme));
+	component.setPaddingX(outputPad);
 	component.clear();
 	const stat =
 		component.preview && !("error" in component.preview) ? countDiffStat(component.preview.diff) : undefined;
@@ -215,6 +217,7 @@ export const editRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "rende
 			theme,
 			context.cwd,
 			context.expanded,
+			context.outputPad,
 		);
 	},
 	renderResult(result, options, theme, context) {
@@ -244,6 +247,7 @@ export const editRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "rende
 					theme,
 					context.cwd,
 					options.expanded,
+					context.outputPad,
 				);
 			}
 		}
@@ -262,7 +266,7 @@ export const editRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "rende
 			return component;
 		}
 		component.addChild(new Spacer(1));
-		component.addChild(new Text(output, 1, 0));
+		component.addChild(new Text(output, context.outputPad, 0));
 		return component;
 	},
 };

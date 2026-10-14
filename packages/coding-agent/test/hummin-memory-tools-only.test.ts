@@ -142,7 +142,7 @@ describe("humminMemory tools-only mode", () => {
 				cwd: PROJ,
 				sessionManager: { getSessionId: () => "s1", getEntries: () => [] },
 			};
-			await emit("before_agent_start", { prompt: "docker compose quotas" }, ctx);
+			await emit("before_agent_start", { messageType: "user", prompt: "docker compose quotas" }, ctx);
 			const injected = events.find((event) => event.name === "memory_lessons_injected");
 			expect(injected?.attributes?.count).toBe(1);
 			expect(injected?.attributes?.ids).toEqual([expect.stringMatching(/^[0-9a-f]{16}$/)]);

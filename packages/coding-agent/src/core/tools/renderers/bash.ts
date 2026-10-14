@@ -10,32 +10,18 @@ import { type Component, Container, Text, truncateToWidth, visibleWidth } from "
 import { theme } from "../../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
 import type { BashToolDetails } from "../bash.ts";
-import { formatToolLabel, getTextOutput, invalidArgText, str } from "../render-utils.ts";
+import { formatToolLabel, getTextOutput, invalidArgText, startToolTimer, str, toolTimerText } from "../render-utils.ts";
 import { DEFAULT_MAX_BYTES, formatSize } from "../truncate.ts";
 
 export const BASH_UPDATE_THROTTLE_MS = 100;
-function formatDuration(ms: number): string {
-	const seconds = ms / 1000;
-	if (seconds < 60) return `${seconds.toFixed(1)}s`;
-
-	const totalSeconds = Math.floor(seconds);
-	const minutes = Math.floor(totalSeconds / 60);
-	const remainder = totalSeconds % 60;
-	if (minutes < 60) return `${minutes}m ${remainder}s`;
-
-	return `${Math.floor(minutes / 60)}h ${minutes % 60}m ${remainder}s`;
-}
-/** Dim `· duration` suffix for the call row; live while the command runs. */
-function formatShellStatusSuffix(
-	state: { startedAt?: number; endedAt?: number } | undefined,
-	isError: boolean,
-	isPartial: boolean,
-): string {
-	if (!state || state.startedAt === undefined) return "";
-	const end = isPartial ? Date.now() : (state.endedAt ?? Date.now());
-	// Upstream wording (elapsed while running, took once settled) on the hummin dim dot suffix.
-	const phase = isPartial ? "Elapsed" : "Took";
-	let suffix = `  ${theme.fg("muted", `· ${phase} ${formatDuration(end - state.startedAt)}`)}`;
+/**
+ * Dim `· duration` suffix for the call row; live while the command runs. `timerText` is upstream's
+ * shared tool timer (Elapsed while running, Took once settled, from the recorded duration when known)
+ * shown on the hummin dim dot suffix instead of a separate result line.
+ */
+function formatShellStatusSuffix(timerText: string | undefined, isError: boolean): string {
+	if (!timerText) return "";
+	let suffix = `  ${theme.fg("muted", `· ${timerText}`)}`;
 	if (isError) suffix += ` ${theme.fg("error", "(failed)")}`;
 	return suffix;
 }
@@ -72,17 +58,16 @@ function buildShellCallComponent(
 	component: ShellCallRenderComponent | undefined,
 	args: { command?: string; timeout?: number } | undefined,
 	toolName: string,
-	state: { startedAt?: number; endedAt?: number } | undefined,
+	timerText: string | undefined,
 	isError: boolean,
 	expanded: boolean,
-	isPartial: boolean,
 ): ShellCallRenderComponent {
 	const shellComponent = component ?? new ShellCallRenderComponent();
 	const label = theme.fg("toolTitle", theme.bold(formatToolLabel(toolName)));
 	const command = str(args?.command);
 	const timeout = args?.timeout as number | undefined;
 	const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
-	const suffix = timeoutSuffix + formatShellStatusSuffix(state, isError, isPartial);
+	const suffix = timeoutSuffix + formatShellStatusSuffix(timerText, isError);
 	if (command === null) {
 		const invalid = invalidArgText(theme);
 		shellComponent.setExpandedText(`${label}  ${invalid}${timeoutSuffix}`);
@@ -190,43 +175,24 @@ function rebuildBashResultRenderComponent(
 
 /** Shell renderers are shared by shell tools, which differ only in the tool name they display. */
 export function createShellRenderers(toolName: string): Pick<ToolDefinition<any, any>, "renderCall" | "renderResult"> {
-	interface ShellRenderState {
-		startedAt?: number;
-		endedAt?: number;
-		interval?: ReturnType<typeof setInterval>;
-	}
 	return {
 		renderCall(args, _theme, context) {
-			const state = context.state as ShellRenderState;
-			if (context.executionStarted && state.startedAt === undefined) {
-				state.startedAt = Date.now();
-				state.endedAt = undefined;
-			}
+			startToolTimer(context);
 			const component =
 				(context.lastComponent as ShellCallRenderComponent | undefined) ?? new ShellCallRenderComponent();
 			buildShellCallComponent(
 				component,
 				args as { command?: string; timeout?: number } | undefined,
 				toolName,
-				state,
+				toolTimerText(context, context.isPartial),
 				context.isError,
 				context.expanded,
-				context.isPartial,
 			);
 			return component;
 		},
 		renderResult(result, options, _theme, context) {
-			const state = context.state as ShellRenderState;
-			if (state.startedAt !== undefined && options.isPartial && !state.interval) {
-				state.interval = setInterval(() => context.invalidate(), 1000);
-			}
-			if (!options.isPartial || context.isError) {
-				state.endedAt ??= Date.now();
-				if (state.interval) {
-					clearInterval(state.interval);
-					state.interval = undefined;
-				}
-			}
+			// Keeps the shared timer's per-second redraw and end time in step with the result.
+			toolTimerText(context, options.isPartial);
 			const component = (context.lastComponent as Container | undefined) ?? new Container();
 			rebuildBashResultRenderComponent(component, result as any, options, context.showImages, context.isError);
 			component.invalidate();

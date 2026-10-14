@@ -1698,6 +1698,7 @@ export default function humminMemory(pi: ExtensionAPI): void {
 	const injectedBySession = new Map<string, Set<string>>();
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		if (event.messageType === "custom") return undefined;
 		const prompt = event.prompt.trim();
 		if (prompt.startsWith("/")) return undefined;
 		// Empty corpus: nothing can match, skip both the expansion call and the
