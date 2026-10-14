@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### New Features
+
+- **Per-key OpenRouter model lists**: with an OpenRouter key, hummin lists only the models that key may use, with the key's context size, max output, and prices. hummin narrows its shipped catalog and does not fetch the pi.dev catalog. See [OpenRouter](docs/providers.md#openrouter).
+- **Claude Haiku 5.5**: `anthropic/claude-haiku-5-5`, with adaptive thinking up to `xhigh`/`max` effort.
+- **`--tools` modifiers and patterns**: `--tools` entries like `+codemode,-write` change the default selection instead of replacing it, `--tools` and `--exclude-tools` accept `*` patterns such as `'mcp__radius__*'`, and `--no-mcp` disables the built-in MCP support for one run. See [Tools](docs/cli.md#tools).
+- **Native llama.cpp decision models and GPT-6 Luna**: Julia-1, Laya, Kev, lev, and OpenJev served by llama.cpp 0.6.0 or later run natively as classifiers, OpenAI's GPT-6 Luna is available as a classifier through the Decisions API, and codemode's `models.classify()` accepts images. See [Classification](docs/llama-cpp.md#classification) and [Use classifier models](docs/models.md#use-classifier-models).
+- **Program status reporting**: terminals and agent dashboards that support OSC 7501 see whether hummin is working, blocked on a dialog or login, done, or failed. See [Program status](docs/terminal-setup.md#program-status).
+
 ### Breaking Changes
 
 - Renamed the Azure provider from `azure-openai-responses` to `azure`. Rename the provider key in `auth.json` (or run `/login` again), in `models.json`, and in `settings.json` (`defaultProvider`, `enabledModels` patterns, and `modelThinkingLevels` keys). Sessions that used the old provider fall back to another model when resumed, and their prompt cache is not reused. The `AZURE_OPENAI_*` environment variables are unchanged ([#9714](https://github.com/earendil-works/pi/pull/9714) by [@jsanter27](https://github.com/jsanter27))
