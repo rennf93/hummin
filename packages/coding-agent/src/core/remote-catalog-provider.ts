@@ -225,13 +225,17 @@ export function withPersonalizedCatalog(
 			}
 			if (!context.allowNetwork || context.signal.aborted) return;
 
-			const response = await requestCatalog(provider.id, catalogBaseUrl, context.signal);
-			if (context.signal.aborted) return;
 			let remote: readonly AnyModel[] = [];
-			if (response.status !== 404 && response.status !== 501) {
-				if (!response.ok) throw new Error(`Model catalog request failed for ${provider.id}: ${response.status}`);
-				const catalog = await readCatalog(provider.id, response);
-				if (isNewer(catalog.lastModified, localGeneratedAt)) remote = catalog.models;
+			// fork: same gate as withRemoteCatalog. Without the default pi.dev catalog, personalization
+			// narrows the shipped static catalog instead.
+			if (REMOTE_CATALOG_ENABLED || catalogBaseUrl !== DEFAULT_CATALOG_BASE_URL) {
+				const response = await requestCatalog(provider.id, catalogBaseUrl, context.signal);
+				if (context.signal.aborted) return;
+				if (response.status !== 404 && response.status !== 501) {
+					if (!response.ok) throw new Error(`Model catalog request failed for ${provider.id}: ${response.status}`);
+					const catalog = await readCatalog(provider.id, response);
+					if (isNewer(catalog.lastModified, localGeneratedAt)) remote = catalog.models;
+				}
 			}
 			const personalized = await personalize(mergeModels(builtinModels(), remote), context);
 			if (context.signal.aborted) return;

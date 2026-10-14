@@ -328,6 +328,20 @@ describe("personalized catalog provider", () => {
 		expect(await store.read(provider.id)).toEqual(saved);
 	});
 
+	it("skips the default pi.dev catalog and personalizes the built-in models (fork remoteCatalog: false)", async () => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("not found", { status: 404 }));
+		const seen: string[][] = [];
+		const personalize: PersonalizeCatalog = async (models) => {
+			seen.push(models.map((entry) => entry.id));
+			return models;
+		};
+		const provider = withPersonalizedCatalog(builtinProvider(), personalize);
+
+		await refreshProvider(provider, new InMemoryModelsStore());
+		expect(fetchSpy).not.toHaveBeenCalled();
+		expect(seen).toEqual([["static"]]);
+	});
+
 	it("restores a saved list as is, and falls back to the built-in models only when it is empty", async () => {
 		const personalize: PersonalizeCatalog = async () => {
 			throw new Error("not used offline");
