@@ -33,10 +33,10 @@ const stageDir = join(repoRoot, ".artifacts", "hummin-cli");
 
 // Fork-internal workspace versions are not published to npm; extension loading
 // and the bundle resolve the published upstream line instead. Kept in sync with
-// the upstream release the fork sources were merged from (1.0.2 as of 2026-10-04;
+// the upstream release the fork sources were merged from (1.2.0 as of 2026-10-14;
 // ^0.87.1 broke hummin-cli@1.3.0 because the new pi-codemode/pi-mcp/pi-durable
 // deps have no 0.87.x versions on npm).
-const UPSTREAM_RANGE = "^1.0.2";
+const UPSTREAM_RANGE = "^1.2.0";
 
 // Staged relative path -> source relative path inside packages/coding-agent (or repo root when absolute).
 const assetTrees = [

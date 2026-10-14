@@ -3,7 +3,8 @@ import { join } from "node:path";
 
 const dependencySections = ["dependencies", "devDependencies", "optionalDependencies"];
 const exactVersionPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
-const ignoredDirectories = new Set([".git", "dist", "node_modules"]);
+// .artifacts: gitignored release staging (hummin-cli intentionally ranges the published upstream line).
+const ignoredDirectories = new Set([".artifacts", ".git", "dist", "node_modules"]);
 const packageJsonFiles = [];
 
 function collectPackageJsonFiles(directory) {
