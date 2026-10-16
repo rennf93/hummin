@@ -4393,17 +4393,40 @@ describe("Editor input highlighting", () => {
 		assert.ok(stripVTControlCharacters(content).includes("run cmd now"));
 	});
 
-	it("wraps the cursor character with the highlighter around it", () => {
-		const editor = new Editor(createTestTUI(), defaultEditorTheme, {
-			highlighter: (text) => `<h>${text}</h>`,
-		});
-		editor.setText("abc");
-		// Move cursor to start
+	// Like the bash highlighter, only styles text it sees from the start of the line (it needs the leading "!")
+	const colorTokens = (text: string) =>
+		!text.startsWith("!") ? text : text.replace(/[a-z]+/g, (token) => `\x1b[32m${token}\x1b[39m`);
+
+	it("keeps highlighting after the cursor when the cursor is at the start", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, { highlighter: colorTokens });
+		editor.setText("!abc def");
 		editor.handleInput("\x1b[H"); // home
-		const lines = editor.render(40);
-		const stripped = stripVTControlCharacters(lines.join("\n"));
-		// before-part, cursor char, after-part are highlighted separately
-		assert.ok(stripped.includes("<h>bc</h>"), `expected highlighted after-part, got: ${stripped}`);
+		const content = editor.render(40).join("\n");
+		assert.ok(
+			content.includes("\x1b[32mdef\x1b[39m"),
+			`expected colored text after cursor, got: ${JSON.stringify(content)}`,
+		);
+	});
+
+	it("keeps the token color on both halves of a token split by the cursor", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, { highlighter: colorTokens });
+		editor.setText("!abcd");
+		editor.handleInput("\x1b[H");
+		editor.handleInput("\x1b[C");
+		editor.handleInput("\x1b[C"); // cursor on "b"
+		const content = editor.render(40).join("\n");
+		const colored = (text: string) => content.includes(`\x1b[32m${text}`);
+		assert.ok(colored("a"), `expected colored before-half, got: ${JSON.stringify(content)}`);
+		assert.ok(/\x1b\[32mcd\x1b\[39m/.test(content), `expected colored after-half, got: ${JSON.stringify(content)}`);
+	});
+
+	it("renders the cursor line without styling when no highlighter is set", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.setText("abc def");
+		editor.handleInput("\x1b[H");
+		const content = editor.render(40).join("\n");
+		assert.ok(content.includes("\x1b_pi:fc\x07a\x1b_pi:/fc\x07bc def"), `got: ${JSON.stringify(content)}`);
+		assert.ok(!content.includes("\x1b[32m"));
 	});
 });
 

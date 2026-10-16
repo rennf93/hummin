@@ -1,11 +1,11 @@
 import { highlightCode } from "./theme/theme.ts";
 
-/** Syntax-highlights bash-mode input lines; other input renders unstyled. */
+/** Syntax-highlights every line of a bash-mode input; other input renders unstyled. */
 export class BashEditorLineHighlighter {
 	private cache = new Map<string, string>();
 
 	highlight(text: string, isBashMode: boolean): string {
-		if (!isBashMode || !text.trimStart().startsWith("!")) {
+		if (!isBashMode) {
 			return text;
 		}
 		const cached = this.cache.get(text);

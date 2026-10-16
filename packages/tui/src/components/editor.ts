@@ -713,13 +713,20 @@ export class Editor implements Component, Focusable {
 					const firstGrapheme = afterGraphemes[0]?.segment || "";
 					const restAfter = after.slice(firstGrapheme.length);
 					const cursor = renderFakeCursor(firstGrapheme);
-					// Highlight the text around the cursor separately; state across the seam is
-					// best-effort (tokens spanning the caret may color differently on one line).
-					displayText =
-						(highlighter ? highlighter(before) : before) +
-						marker +
-						cursor +
-						(highlighter ? highlighter(restAfter) : restAfter);
+					if (highlighter) {
+						// Highlight the whole line once so tokens spanning the caret keep their style, then cut the styled string at the caret column.
+						const highlighted = highlighter(layoutLine.text);
+						const caretColumn = visibleWidth(before);
+						const caretWidth = visibleWidth(firstGrapheme);
+						displayText =
+							sliceByColumn(highlighted, 0, caretColumn) +
+							"\x1b[0m" +
+							marker +
+							cursor +
+							sliceByColumn(highlighted, caretColumn + caretWidth, Number.POSITIVE_INFINITY);
+					} else {
+						displayText = before + marker + cursor + restAfter;
+					}
 					// lineVisibleWidth stays the same - we're replacing, not adding
 				} else {
 					// Cursor is at the end - add highlighted space
