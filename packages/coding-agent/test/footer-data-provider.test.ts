@@ -1,4 +1,5 @@
 import { execFile, spawnSync } from "child_process";
+import { EventEmitter } from "events";
 import { existsSync, type FSWatcher, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -43,6 +44,25 @@ vi.mock("child_process", () => ({
 		}
 		return { status: 1, stdout: "", stderr: "" };
 	}),
+}));
+
+// Inert watchers: real fs.watch events (late FSEvents replays on macOS CI) would schedule extra refreshes on the fake clock, and tests drive changes through emit() instead.
+vi.mock("../src/utils/fs-watch.ts", async (importOriginal) => ({
+	...(await importOriginal<Record<string, unknown>>()),
+	watchWithErrorHandler: (_path: string, listener: () => void, onError: () => void) => {
+		const watcher = new EventEmitter() as FSWatcher;
+		watcher.close = () => {};
+		watcher.on("change", listener);
+		watcher.on("error", onError);
+		return watcher;
+	},
+}));
+
+// watchFile is a libuv stat poller that ignores fake timers, so make it inert too.
+vi.mock("fs", async (importOriginal) => ({
+	...(await importOriginal<Record<string, unknown>>()),
+	watchFile: vi.fn(),
+	unwatchFile: vi.fn(),
 }));
 
 import { FooterDataProvider, parseGitStatusPorcelain } from "../src/core/footer-data-provider.ts";
