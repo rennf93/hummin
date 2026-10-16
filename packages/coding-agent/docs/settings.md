@@ -125,7 +125,7 @@ See [Themes](themes.md) and [Terminal Setup](terminal-setup.md) for format and p
 |---|---|---|---|
 | `transport` | `"auto" \| "sse" \| "websocket" \| "websocket-cached"` | `"auto"` | Preferred transport for AI providers that support multiple transports. |
 | `httpProxy` | string | None | Proxy URL applied as `HTTP_PROXY` and `HTTPS_PROXY` for Pi-managed HTTP clients. **Can only be set in agent-directory settings.** |
-| `httpIdleTimeoutMs` | number | `300000` | HTTP header and body idle timeout in milliseconds. Set to `0` to disable. |
+| `httpIdleTimeoutMs` | number | `300000` | HTTP header and body idle timeout in milliseconds. Set to `0` to disable. Configured hummin fleet servers are always exempt. |
 | `websocketConnectTimeoutMs` | number | `15000` | WebSocket connection timeout in milliseconds. Set to `0` to disable. |
 | `retry.enabled` | boolean | `true` | Enable automatic agent-level retry for transient failures. |
 | `retry.maxRetries` | number | `3` | Maximum agent-level retry attempts. |

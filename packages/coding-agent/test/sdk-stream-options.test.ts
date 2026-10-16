@@ -12,6 +12,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import type { ExtensionFactory } from "../src/core/extensions/types.ts";
+import { exemptFromHttpIdleTimeout } from "../src/core/http-dispatcher.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -85,8 +86,9 @@ describe("createAgentSession stream options", () => {
 		requestOptions: SimpleStreamOptions = {},
 		extensionFactory?: ExtensionFactory,
 		providerEvent?: unknown,
+		baseUrl?: string,
 	): Promise<SimpleStreamOptions | undefined> {
-		const model = createModel(api);
+		const model = baseUrl === undefined ? createModel(api) : { ...createModel(api), baseUrl };
 		const settingsManager = SettingsManager.inMemory(settings);
 		const resourceLoader = new DefaultResourceLoader({
 			cwd,
@@ -229,6 +231,35 @@ describe("createAgentSession stream options", () => {
 
 	it("defaults timeoutMs from httpIdleTimeoutMs for all providers", async () => {
 		const options = await captureStreamOptions("openai-completions", { httpIdleTimeoutMs: 1234 });
+
+		expect(options?.timeoutMs).toBe(1234);
+	});
+
+	it("gives a fleet-exempt origin the max timeout and leaves other origins on httpIdleTimeoutMs", async () => {
+		exemptFromHttpIdleTimeout("http://fleet-exempt.invalid:8080");
+		const exempt = await captureStreamOptions(
+			"openai-completions",
+			{ httpIdleTimeoutMs: 1234 },
+			{},
+			undefined,
+			undefined,
+			"http://fleet-exempt.invalid:8080/v1",
+		);
+		const other = await captureStreamOptions("openai-completions", { httpIdleTimeoutMs: 1234 });
+
+		expect(exempt?.timeoutMs).toBe(2147483647);
+		expect(other?.timeoutMs).toBe(1234);
+	});
+
+	it("does not throw for a model with an empty baseUrl", async () => {
+		const options = await captureStreamOptions(
+			"openai-completions",
+			{ httpIdleTimeoutMs: 1234 },
+			{},
+			undefined,
+			undefined,
+			"",
+		);
 
 		expect(options?.timeoutMs).toBe(1234);
 	});

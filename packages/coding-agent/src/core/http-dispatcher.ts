@@ -5,6 +5,26 @@
 
 export const DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300_000;
 
+// Origins whose requests must never hit the idle timeout (local fleet servers
+// can prefill silently for minutes). Registered before first use of the origin.
+const idleTimeoutExemptOrigins = new Set<string>();
+
+// Models may carry an empty or relative baseUrl (Azure catalog, virtual models).
+function originOf(url: string | URL): string | undefined {
+	const text = String(url);
+	return URL.canParse(text) ? new URL(text).origin : undefined;
+}
+
+export function exemptFromHttpIdleTimeout(url: string | URL): void {
+	const origin = originOf(url);
+	if (origin) idleTimeoutExemptOrigins.add(origin);
+}
+
+export function isExemptFromHttpIdleTimeout(url: string | URL): boolean {
+	const origin = originOf(url);
+	return origin !== undefined && idleTimeoutExemptOrigins.has(origin);
+}
+
 export const HTTP_IDLE_TIMEOUT_CHOICES = [
 	{ label: "30 sec", timeoutMs: 30_000 },
 	{ label: "1 min", timeoutMs: 60_000 },

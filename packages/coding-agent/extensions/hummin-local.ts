@@ -16,6 +16,7 @@ import {
 } from "@earendil-works/pi-ai/compat";
 import {
 	type ExtensionAPI,
+	exemptFromHttpIdleTimeout,
 	getAgentDir,
 	SettingsManager,
 	withLocalInferenceLock,
@@ -589,6 +590,9 @@ export default async function humminLocalExtension(pi: ExtensionAPI): Promise<vo
 	const configs = instanceConfigs();
 	if (configs.length === 0) {
 		return;
+	}
+	for (const config of configs) {
+		exemptFromHttpIdleTimeout(config.baseUrl);
 	}
 	const serving = await cachedDiscovery(configs);
 	if (serving.length === 0) {

@@ -1,6 +1,10 @@
 import { EventEmitter } from "node:events";
 import * as undici from "undici";
-import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
+import {
+	DEFAULT_HTTP_IDLE_TIMEOUT_MS,
+	isExemptFromHttpIdleTimeout,
+	parseHttpIdleTimeoutMs,
+} from "./http-dispatcher.ts";
 
 // This module owns the only runtime `undici` import for the HTTP dispatcher.
 // Importing undici has a module-init side effect: undici's lib/global.js
@@ -33,7 +37,9 @@ function createUndiciClient(origin: string | URL, options: object): undici.Dispa
 }
 
 function createUndiciOriginDispatcher(origin: string | URL, options: object): undici.Dispatcher {
-	const dispatcherOptions = options as undici.Pool.Options;
+	const dispatcherOptions = (
+		isExemptFromHttpIdleTimeout(origin) ? { ...options, bodyTimeout: 0, headersTimeout: 0 } : options
+	) as undici.Pool.Options;
 	if (dispatcherOptions.connections === 1) {
 		return createUndiciClient(origin, dispatcherOptions);
 	}
