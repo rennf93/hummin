@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the editor dropping syntax highlighting after the cursor when the cursor is not at the end of the line: the whole line is now highlighted once and cut at the caret, so tokens spanning the caret keep their style
+
 ## [1.5.0] - 2026-10-14
 
 ### Breaking Changes

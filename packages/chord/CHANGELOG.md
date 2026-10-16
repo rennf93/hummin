@@ -22,8 +22,6 @@
 - `Shape.codeVersion` and the `shape` frame's `codeVersion` are gone
 - `PROTOCOL_VERSION` is 4: a `hold` implies the state of its variant (`state: false` opts out until `sub`; `unsub` stops it); the provider answers with units, a `shape` listing the members the consumer lacks (`state`) followed by their snapshots; `state` frames are addressed by hold and member (`hold`, `m`) with `as: "snap" | "reset" | "ops" | "error"` and `value` (absent: `undefined`); `sub`/`unsub` take a hold; `resync` asks for a member again; `again` marks a re-hold after a link loss; `origin` (replacing `client`) names the client connection a hold comes from
 
-## [1.5.0] - 2026-10-14
-
 ### Added
 
 - `@earendil-works/chord/output`: `OutputBuffer`, which keeps a head or tail window of a stream at a cost proportional to each chunk, `Progress`, which paces commits of a changing value by their size, plus `boundOutput`, `sanitizeOutput`, `characterEnd`, `utf8ByteLength`, and the `OutputLimits`, `BoundedOutput`, `OutputSlice`, and `OutputSkip` types. Moved from `@earendil-works/pi-durable`, which now uses them from here.
@@ -32,23 +30,17 @@
 - Flow control by units: the first unit of a new reference passes the window, so a `get` never waits behind other references' state; units for reloads and re-holds wait, built lazily from the current values; waiting ops are capped per link (`LinkOptions.pendingCap`, default four windows), beyond which the oldest streams become resets (a relay asks downstream with `resync`)
 - `StateOptions`, `EventOf`, `ValueOf` and `Lifetime` types
 - `self.state(name, schema, { init }, options?)`: a cell whose first value comes from its source. `init(ctx)` (may be async) runs once the object's resources are open and its references live, before the object goes live, so no method, listener, task or subscriber sees another value; a throw or an invalid value fails the activation. A reload keeps the cell without running `init`; a cell a reload adds runs it while the reload prepares (a failure refuses the reload). Until then the cell's `value` throws `not_ready`. `StateInit` type
-- Links are flow controlled end to end: peers acknowledge what they processed (`ack` frames, announced with `acks` in `hello`), and while a window of frames is unacknowledged (`window` in `LinkOptions`, default 256 KiB), state frames wait at the sender, coalesced per subscription, instead of queuing in front of call results. A stalled peer costs a bounded slot per subscription; a slot that outgrows it becomes a reset. Calls, results and control frames are never held back, so under load a result can arrive before state changes made before it
-- `maxCalls` in `AcceptOptions` limits the calls a peer may have in progress on a link; further ones are answered at once with `unavailable` (reason `too_many_calls`) and the link stays open
 - `FacetApi.signal` aborts once that run of the facet is no longer installed: a committed reload replaced or removed it, the reload that loaded it aborted, or the host closed. While a reload prepares, the installed and the candidate run are both live
 - `HostOptions.taskStopDeadline` (default 5000 ms) bounds how long a reload waits for aborted tasks before it starts their replacements
 - Links deflate call arguments, results and state snapshots whose JSON exceeds `PACK_THRESHOLD` (64K characters): over IPC as a base64 field, over WebSockets as a binary message. Relaying hosts forward the deflated bytes unread; the host that uses the payload inflates it. `webSocketLink(socket, { compress, acceptPacked })` (`WebSocketLinkOptions`) controls sending and accepting packed frames (servers should refuse them from untrusted clients), and `inflateMessage` turns a packed WebSocket message back into a text frame
 
 ### Changed
 
-- `Link.send` returns the encoded frame's size as sent (deflated payloads count as sent) when the transport knows it (memory and WebSocket links); flow control counts these sizes, so links that return nothing (IPC, custom links) are not windowed
 - A reload starts an object's new tasks only after its aborted ones finished (at most `taskStopDeadline`, then anyway, reported); before, the old and the new run of a task worked side by side
 - When a reload forces the retirement of the previous code version, it first aborts the roots still running on it (their `ctx.signal`, reason `superseded`) and gives them up to 1 s to stop before it closes what only that code used; a call with such a ctx is `superseded`. Before, resources were closed under running roots, which were never told
 
 ### Fixed
 
-- `nodeLoader` registers every facet's directory before importing any, so a facet that imports a file of a facet listed after it gets the same module copy as that facet; before, the load order could produce duplicates.
-- A link that is already closed when a host accepts or routes to it is no longer kept as a connection: before, a route that returned a dead link (a child process that exited before its link was wrapped) made every later call to that host name fail with `unavailable` until restart, and leaked the connection's ping timer.
-- Fixed `processLock()` failing with `listen EINVAL` on macOS and the BSDs when the temporary directory is too deep for a socket path (sun_path holds 104 bytes); the lock socket then lives in a private per-user directory, `/tmp/chord2-<uid>`
 - A child host whose hello arrived while a cluster reload ran was marked in step without taking part, so it stayed on the old code version and every call to it failed `superseded` until it reconnected. It is now synced or reconciled when the reload ends; a child already behind is fenced at once, so its roots' calls up are admitted meanwhile. A reconciliation that is running when a reload starts likewise syncs its child only after that reload, against the committed code version
 - A child host retired its previous code version as soon as a cluster reload's `prepare` arrived, before its parent did, so the parent's old roots got `superseded` on it. The coordinator now retires before it sends `prepare`, a child waits for its parent's `retire` (at most `retireDeadline`), and a child coming in step (or about to be reconciled) is told which code versions the parent retired before
 - Disposed objects stayed reachable from the host until an object with the same address was created again (every distinct guest, session or input leaked one object, its references and the code they bind)
@@ -59,6 +51,23 @@
 - A resource kept across a reload closed with the `close` of the factory run that first opened it, and kept that run's code reachable; it now adopts the newest declaration at commit
 - `forkDriver` passed its own `CHORD2_LOCK` to forked children, so a child host that forked its own children made those without a lock of their own fail with `locked`
 - A call through a remote reference accepted a ctx from another host, or an object not made by Chord, and carried its root over the link; it now rejects it with `invalid/foreign_ctx` like a local reference ([#10959](https://github.com/earendil-works/pi/issues/10959))
+
+## [1.5.0] - 2026-10-14
+
+### Added
+
+- Links are flow controlled end to end: peers acknowledge what they processed (`ack` frames, announced with `acks` in `hello`), and while a window of frames is unacknowledged (`window` in `LinkOptions`, default 256 KiB), state frames wait at the sender, coalesced per subscription, instead of queuing in front of call results. A stalled peer costs a bounded slot per subscription; a slot that outgrows it becomes a reset. Calls, results and control frames are never held back, so under load a result can arrive before state changes made before it
+- `maxCalls` in `AcceptOptions` limits the calls a peer may have in progress on a link; further ones are answered at once with `unavailable` (reason `too_many_calls`) and the link stays open
+
+### Changed
+
+- `Link.send` returns the encoded frame's size as sent (deflated payloads count as sent) when the transport knows it (memory and WebSocket links); flow control counts these sizes, so links that return nothing (IPC, custom links) are not windowed
+
+### Fixed
+
+- `nodeLoader` registers every facet's directory before importing any, so a facet that imports a file of a facet listed after it gets the same module copy as that facet; before, the load order could produce duplicates.
+- A link that is already closed when a host accepts or routes to it is no longer kept as a connection: before, a route that returned a dead link (a child process that exited before its link was wrapped) made every later call to that host name fail with `unavailable` until restart, and leaked the connection's ping timer.
+- Fixed `processLock()` failing with `listen EINVAL` on macOS and the BSDs when the temporary directory is too deep for a socket path (sun_path holds 104 bytes); the lock socket then lives in a private per-user directory, `/tmp/chord2-<uid>`
 
 ## [1.2.0] - 2026-10-12
 
