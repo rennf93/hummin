@@ -97,7 +97,11 @@ function renderWhatsNew(collapseChangelog: boolean, expand: boolean, width: numb
 }
 
 describe("hummin startup header and What's New", () => {
+	const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+
 	beforeAll(() => {
+		// Key hints render alt as option on darwin only, and the snapshots were recorded on darwin.
+		Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
 		// The snapshots hold truecolor escape codes: pin the color mode instead of inheriting it from COLORTERM/TERM.
 		setCapabilityOverrides({ trueColor: true });
 		initTheme("dark");
@@ -106,6 +110,7 @@ describe("hummin startup header and What's New", () => {
 	});
 
 	afterAll(() => {
+		if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
 		setCapabilityOverrides({});
 	});
 
