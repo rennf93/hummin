@@ -1,0 +1,5 @@
+{
+	"multi-file": { "before": [], "after": ["node verify.mjs"] },
+	"preserve-work": { "before": [], "after": ["node verify.mjs"] },
+	"command-recovery": { "before": ["node verify-old.mjs"], "after": ["node verify.mjs"] }
+}

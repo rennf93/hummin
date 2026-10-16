@@ -1,0 +1,23 @@
+{
+	"toolCallTolerance": 0,
+	"fixtures": {
+		"command-recovery": {
+			"pass": true,
+			"toolCalls": 3,
+			"toolErrors": 1,
+			"durationSec": 5.1
+		},
+		"multi-file": {
+			"pass": true,
+			"toolCalls": 3,
+			"toolErrors": 0,
+			"durationSec": 4.2
+		},
+		"preserve-work": {
+			"pass": true,
+			"toolCalls": 2,
+			"toolErrors": 0,
+			"durationSec": 4.2
+		}
+	}
+}

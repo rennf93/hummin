@@ -28,4 +28,36 @@ jobs:
       - name: Validate benchmark fixtures
         run: node bench/run.mjs --validate-fixtures
       - name: Test runner and metric accounting
-        run: node --test bench/metrics.test.mjs bench/run.test.mjs
+        run: node --test bench/metrics.test.mjs bench/run.test.mjs bench/compare.test.mjs
+  offline-bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+          sudo ln -s $(which fdfind) /usr/local/bin/fd
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Build
+        run: npm run build
+      - name: Run scripted offline bench
+        run: node bench/run.mjs --offline
+        env:
+          HUMMIN_BENCH_RESULTS_DIR: ${{ runner.temp }}/bench-results
+      - name: Compare with baseline
+        run: node bench/compare.mjs "$HUMMIN_BENCH_RESULTS_DIR"
+        env:
+          HUMMIN_BENCH_RESULTS_DIR: ${{ runner.temp }}/bench-results
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hummin-bench-results
+          path: ${{ runner.temp }}/bench-results

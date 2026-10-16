@@ -9,6 +9,7 @@
 //   node bench/run.mjs --provider colibri-1 --model glm-5.3-flash-colibri
 //   node bench/run.mjs --provider zai --model glm-5.3-flash [--fixture fix-bug]
 //        [--thinking off] [--timeout 900] [--model-id <id>] [--provider-label <label>]
+//   node bench/run.mjs --offline   (scripted model, no provider; see faux-provider.mjs)
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -27,8 +28,9 @@ function argValue(name, fallback) {
 	return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : fallback;
 }
 
-const provider = argValue("--provider");
-const model = argValue("--model");
+const offline = process.argv.includes("--offline");
+const provider = offline ? "bench-faux" : argValue("--provider");
+const model = offline ? "scripted" : argValue("--model");
 const modelId = argValue("--model-id", model);
 const providerLabel = argValue("--provider-label", provider);
 const thinking = argValue("--thinking", "off");
@@ -44,7 +46,12 @@ if (!validate && (!provider || !model)) {
 	process.exit(2);
 }
 
-const fixtureNames = listFixtures().filter((f) => !onlyFixture || f === onlyFixture);
+const offlineFixtures = offline
+	? Object.keys(JSON.parse(readFileSync(join(ROOT, "bench", "faux-scripts.json"), "utf8")))
+	: undefined;
+const fixtureNames = listFixtures().filter(
+	(f) => (!onlyFixture || f === onlyFixture) && (!offlineFixtures || offlineFixtures.includes(f)),
+);
 
 function prepareFixture(fixture, work) {
 	cpSync(join(fixture, "files"), work, { recursive: true });
@@ -117,6 +124,7 @@ const results = [];
 for (const name of fixtureNames) {
 	const fixtureDir = join(FIXTURES_DIR, name);
 	const workDir = mkdtempSync(`/tmp/hummin-bench-${name}-`);
+	const agentDir = mkdtempSync("/tmp/hummin-bench-agent-");
 	prepareFixture(fixtureDir, workDir);
 
 	const brief = readFileSync(join(fixtureDir, "task.md"), "utf8").trim();
@@ -128,12 +136,29 @@ for (const name of fixtureNames) {
 	try {
 		const res = spawnSync(
 			process.execPath,
-			[CLI, "--mode", "json", "-p", brief, "--provider", provider, "--model", model, "--thinking", thinking],
+			[
+				CLI,
+				"--mode",
+				"json",
+				"-p",
+				brief,
+				"--provider",
+				provider,
+				"--model",
+				model,
+				"--thinking",
+				thinking,
+				...(offline ? ["--no-session", "--offline", "-e", join(ROOT, "bench", "faux-provider.mjs")] : []),
+			],
 			{
 				cwd: workDir,
 				encoding: "utf8",
 				timeout: timeoutSec * 1000,
-				env: { ...process.env, HUMMIN_MEMORY: "0" },
+				env: {
+					...process.env,
+					HUMMIN_MEMORY: "0",
+					...(offline ? { HUMMIN_BENCH_FIXTURE: name, HUMMIN_CODING_AGENT_DIR: agentDir } : {}),
+				},
 				stdio: ["ignore", "pipe", "pipe"],
 				maxBuffer: 32 * 1024 * 1024,
 				killSignal: "SIGKILL",
@@ -147,6 +172,7 @@ for (const name of fixtureNames) {
 		agentError = String(e);
 	}
 	const durationMs = Date.now() - started;
+	rmSync(agentDir, { recursive: true, force: true });
 
 	// Persist the agent's visible output for the check script and the record.
 	const outFile = join(workDir, ".agent-output.txt");
