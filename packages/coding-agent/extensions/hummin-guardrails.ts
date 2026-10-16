@@ -43,9 +43,8 @@
 
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { type ExtensionAPI, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import {
 	appendFriction,
 	type FrictionKind,
@@ -371,7 +370,7 @@ export class GuardrailsState {
 
 function writePostMortem(state: GuardrailsState): void {
 	try {
-		const dir = join(homedir(), ".hummin", "agent", "post-mortems");
+		const dir = join(getAgentDir(), "post-mortems");
 		mkdirSync(dir, { recursive: true });
 		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 		const record = {

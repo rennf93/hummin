@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Fixed guardrail post-mortems being written to `~/.hummin/agent/post-mortems` even when `HUMMIN_CODING_AGENT_DIR` points elsewhere; they now go to the configured agent dir
 - Fixed `--model` choosing a provider by catalog order when several providers offer the match; Pi now prefers the provider with credentials and otherwise reports the ambiguity. `--models` and `enabledModels` add a model for each provider that offers it and warn about the ambiguity ([#10160](https://github.com/earendil-works/pi/issues/10160)). A model served by several hummin fleet servers resolves to the first server in fleet order instead, which also fixes `--model <exact id>` reporting such a model as ambiguous
 - Fixed `read` line-range labels for numeric-string or null arguments in the TUI, session tree, HTML exports, and examples ([#9887](https://github.com/earendil-works/pi/issues/9887))
 - Fixed the Nix flake build failing when a provider switched APIs: the model catalog pin is now refreshed from the newest published catalog when its model API groups differ. hummin releases skip upstream's pin-and-build step unless `HUMMIN_RELEASE_PIN_MODEL_CATALOG=1` ([#10985](https://github.com/earendil-works/pi/issues/10985))

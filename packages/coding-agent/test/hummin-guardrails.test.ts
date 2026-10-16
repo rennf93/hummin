@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -437,6 +437,25 @@ describe("humminGuardrails wiring", () => {
 		await emit("tool_call", { type: "tool_call", toolCallId: "1", toolName: "edit", input: { path: "src/a.ts" } });
 		await emit("agent_end");
 		expect(sent).toHaveLength(0);
+	});
+
+	it("writes the post-mortem under the configured agent dir", async () => {
+		const { api, emit } = fakeGuardrailsPi();
+		humminGuardrails(api);
+		for (let i = 0; i < SOFT_PING_AT; i++) {
+			await emit("tool_call", {
+				type: "tool_call",
+				toolCallId: `${i}`,
+				toolName: "bash",
+				input: { command: `ls ${i}` },
+			});
+		}
+		await emit("session_shutdown");
+		const files = readdirSync(join(agentDir, "post-mortems"));
+		expect(files).toHaveLength(1);
+		expect(JSON.parse(readFileSync(join(agentDir, "post-mortems", files[0] ?? ""), "utf8")).totalToolCalls).toBe(
+			SOFT_PING_AT,
+		);
 	});
 
 	it("steers once when one source crosses three session errors", async () => {
