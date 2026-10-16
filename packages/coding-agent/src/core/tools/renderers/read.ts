@@ -16,7 +16,14 @@ import { formatPathRelativeToCwdOrAbsolute } from "../../../utils/paths.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
 import { resolveToCwd } from "../path-utils.ts";
 import type { ReadToolDetails } from "../read.ts";
-import { formatToolLabel, getTextOutput, renderToolPath, replaceTabs, str } from "../render-utils.ts";
+import {
+	formatReadLineRange,
+	formatToolLabel,
+	getTextOutput,
+	renderToolPath,
+	replaceTabs,
+	str,
+} from "../render-utils.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "../truncate.ts";
 
 interface CompactReadClassification {
@@ -24,17 +31,14 @@ interface CompactReadClassification {
 	label: string;
 }
 const COMPACT_RESOURCE_FILE_NAMES = new Set(["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
-type ReadRenderArgs = { path?: string; file_path?: string; offset?: number; limit?: number };
-function formatReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): string {
-	// Strict tool schemas make models send null for omitted optional fields.
-	if (args?.offset == null && args?.limit == null) return "";
-	const startLine = args.offset ?? 1;
-	const endLine = args.limit != null ? startLine + args.limit - 1 : "";
-	return theme.fg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
+type ReadRenderArgs = { path?: string; file_path?: string; offset?: unknown; limit?: unknown };
+function styledReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): string {
+	const range = formatReadLineRange(args?.offset, args?.limit);
+	return range ? theme.fg("warning", range) : "";
 }
 function formatReadCall(args: ReadRenderArgs | undefined, theme: Theme, cwd: string): string {
 	const pathDisplay = renderToolPath(str(args?.file_path ?? args?.path), theme, cwd);
-	return `${theme.fg("toolTitle", theme.bold(formatToolLabel("read")))}  ${pathDisplay}${formatReadLineRange(args, theme)}`;
+	return `${theme.fg("toolTitle", theme.bold(formatToolLabel("read")))}  ${pathDisplay}${styledReadLineRange(args, theme)}`;
 }
 function trimTrailingEmptyLines(lines: string[]): string[] {
 	let end = lines.length;
@@ -97,7 +101,7 @@ function formatCompactReadCall(
 			theme.fg("toolTitle", theme.bold(formatToolLabel("skill"))) +
 			"  " +
 			theme.fg("accent", classification.label) +
-			formatReadLineRange(args, theme) +
+			styledReadLineRange(args, theme) +
 			expandHint
 		);
 	}
@@ -106,7 +110,7 @@ function formatCompactReadCall(
 		theme.fg("toolTitle", theme.bold(formatToolLabel("read"))) +
 		"  " +
 		theme.fg("accent", classification.label) +
-		formatReadLineRange(args, theme) +
+		styledReadLineRange(args, theme) +
 		expandHint
 	);
 }

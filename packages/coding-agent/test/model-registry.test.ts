@@ -305,14 +305,14 @@ describe("ModelRegistry", () => {
 			writeModelsJson({
 				openrouter: providerConfig(
 					"https://my-proxy.example.com/v1",
-					[{ id: "anthropic/claude-sonnet-4" }],
+					[{ id: "anthropic/claude-sonnet-4.5" }],
 					"openai-completions",
 				),
 			});
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
-			const sonnetModels = models.filter((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnetModels = models.filter((m) => m.id === "anthropic/claude-sonnet-4.5");
 
 			expect(sonnetModels).toHaveLength(1);
 			expect(sonnetModels[0].baseUrl).toBe("https://my-proxy.example.com/v1");
@@ -633,7 +633,7 @@ describe("ModelRegistry", () => {
 						},
 					],
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						"anthropic/claude-sonnet-4.5": {
 							name: "Overridden Built-in Sonnet",
 						},
 					},
@@ -645,7 +645,7 @@ describe("ModelRegistry", () => {
 
 			expect(models.some((m) => m.id === "custom/openrouter-model")).toBe(true);
 			expect(
-				models.some((m) => m.id === "anthropic/claude-sonnet-4" && m.name === "Overridden Built-in Sonnet"),
+				models.some((m) => m.id === "anthropic/claude-sonnet-4.5" && m.name === "Overridden Built-in Sonnet"),
 			).toBe(true);
 		});
 
@@ -690,7 +690,7 @@ describe("ModelRegistry", () => {
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						"anthropic/claude-sonnet-4.5": {
 							name: "Custom Sonnet Name",
 						},
 					},
@@ -700,7 +700,7 @@ describe("ModelRegistry", () => {
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
 
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4.5");
 			expect(sonnet?.name).toBe("Custom Sonnet Name");
 
 			// Other models should be unchanged
@@ -776,7 +776,7 @@ describe("ModelRegistry", () => {
 								max: { temperature: 1 },
 							},
 						},
-						"anthropic/claude-sonnet-4": {
+						"anthropic/claude-sonnet-4.5": {
 							samplingParams: { top_p: 0.9 },
 							samplingParamsByThinkingLevel: { high: { temperature: 0.8 } },
 						},
@@ -795,7 +795,7 @@ describe("ModelRegistry", () => {
 				max: { temperature: 1 },
 			});
 
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4.5");
 			expect(sonnet?.samplingParams).toEqual({ top_p: 0.9 });
 			expect(sonnet?.samplingParamsByThinkingLevel).toEqual({ high: { temperature: 0.8 } });
 
@@ -812,7 +812,7 @@ describe("ModelRegistry", () => {
 					api: "openai-completions",
 					models: [{ id: "custom/cached-model", promptCache: { short: 120 } }],
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": { promptCache: { short: 300 } },
+						"anthropic/claude-sonnet-4.5": { promptCache: { short: 300 } },
 					},
 				},
 				anthropic: {
@@ -827,7 +827,7 @@ describe("ModelRegistry", () => {
 
 			expect(registry.getError()).toBeUndefined();
 			expect(openrouter.find((m) => m.id === "custom/cached-model")?.promptCache).toEqual({ short: 120 });
-			expect(openrouter.find((m) => m.id === "anthropic/claude-sonnet-4")?.promptCache).toEqual({ short: 300 });
+			expect(openrouter.find((m) => m.id === "anthropic/claude-sonnet-4.5")?.promptCache).toEqual({ short: 300 });
 			expect(openrouter.find((m) => m.id === "anthropic/claude-opus-4.1")?.promptCache).toBeUndefined();
 			// Overrides merge per tier with the built-in catalog.
 			expect(registry.find("anthropic", "claude-sonnet-4-6")?.promptCache).toEqual({ short: 300, long: 1800 });
@@ -885,7 +885,7 @@ describe("ModelRegistry", () => {
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						"anthropic/claude-sonnet-4.5": {
 							compat: {
 								openRouterRouting: { only: ["amazon-bedrock"] },
 							},
@@ -897,7 +897,7 @@ describe("ModelRegistry", () => {
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
 
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4.5");
 			const compat = sonnet?.compat as OpenAICompletionsCompat | undefined;
 			expect(compat?.openRouterRouting).toEqual({ only: ["amazon-bedrock"] });
 		});
@@ -913,7 +913,7 @@ describe("ModelRegistry", () => {
 					{ id: "anthropic/claude-opus-4", name: "Opus" },
 				],
 				modelOverrides: {
-					"anthropic/claude-sonnet-4": {
+					"anthropic/claude-sonnet-4.5": {
 						compat: { supportsFinishReason: false },
 					},
 				},
@@ -922,7 +922,7 @@ describe("ModelRegistry", () => {
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
-			const sonnet = models.find((model) => model.id === "anthropic/claude-sonnet-4");
+			const sonnet = models.find((model) => model.id === "anthropic/claude-sonnet-4.5");
 			const opus = models.find((model) => model.id === "anthropic/claude-opus-4.1");
 
 			expect((sonnet?.compat as OpenAICompletionsCompat | undefined)?.supportsFinishReason).toBe(false);
@@ -933,7 +933,7 @@ describe("ModelRegistry", () => {
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						"anthropic/claude-sonnet-4.5": {
 							compat: {
 								openRouterRouting: { order: ["anthropic", "together"] },
 							},
@@ -944,7 +944,7 @@ describe("ModelRegistry", () => {
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4.5");
 
 			// Should have both the new routing AND preserve other compat settings
 			const compat = sonnet?.compat as OpenAICompletionsCompat | undefined;
@@ -962,7 +962,7 @@ describe("ModelRegistry", () => {
 						{ id: "anthropic/claude-opus-4", name: "Opus" },
 					],
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						"anthropic/claude-sonnet-4.5": {
 							compat: { openRouterRouting: { only: ["amazon-bedrock"] } },
 						},
 						"anthropic/claude-opus-4.1": {
@@ -975,7 +975,7 @@ describe("ModelRegistry", () => {
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
 
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4.5");
 			const opus = models.find((m) => m.id === "anthropic/claude-opus-4.1");
 
 			const sonnetCompat = sonnet?.compat as OpenAICompletionsCompat | undefined;
@@ -995,7 +995,7 @@ describe("ModelRegistry", () => {
 						{ id: "anthropic/claude-opus-4", name: "Opus" },
 					],
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						"anthropic/claude-sonnet-4.5": {
 							name: "Proxied Sonnet",
 						},
 					},
@@ -1004,7 +1004,7 @@ describe("ModelRegistry", () => {
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4.5");
 
 			// Both overrides should apply
 			expect(sonnet?.baseUrl).toBe("https://my-proxy.example.com/v1");
@@ -1040,7 +1040,7 @@ describe("ModelRegistry", () => {
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						"anthropic/claude-sonnet-4.5": {
 							cost: { input: 99 },
 						},
 					},
@@ -1049,7 +1049,7 @@ describe("ModelRegistry", () => {
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4.5");
 
 			// Input cost should be overridden
 			expect(sonnet?.cost.input).toBe(99);
@@ -1061,7 +1061,7 @@ describe("ModelRegistry", () => {
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						"anthropic/claude-sonnet-4.5": {
 							headers: { "X-Custom-Model-Header": "value" },
 						},
 					},
@@ -1070,7 +1070,7 @@ describe("ModelRegistry", () => {
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4.5");
 			expect(sonnet).toBeDefined();
 
 			const auth = await registry.getApiKeyAndHeaders(sonnet!);
@@ -1084,7 +1084,7 @@ describe("ModelRegistry", () => {
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						"anthropic/claude-sonnet-4.5": {
 							name: "First Name",
 						},
 					},
@@ -1093,14 +1093,14 @@ describe("ModelRegistry", () => {
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			expect(
-				getModelsForProvider(registry, "openrouter").find((m) => m.id === "anthropic/claude-sonnet-4")?.name,
+				getModelsForProvider(registry, "openrouter").find((m) => m.id === "anthropic/claude-sonnet-4.5")?.name,
 			).toBe("First Name");
 
 			// Update and refresh
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						"anthropic/claude-sonnet-4.5": {
 							name: "Second Name",
 						},
 					},
@@ -1109,7 +1109,7 @@ describe("ModelRegistry", () => {
 			await registry.refresh();
 
 			expect(
-				getModelsForProvider(registry, "openrouter").find((m) => m.id === "anthropic/claude-sonnet-4")?.name,
+				getModelsForProvider(registry, "openrouter").find((m) => m.id === "anthropic/claude-sonnet-4.5")?.name,
 			).toBe("Second Name");
 		});
 
@@ -1117,7 +1117,7 @@ describe("ModelRegistry", () => {
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						"anthropic/claude-sonnet-4.5": {
 							name: "Custom Name",
 						},
 					},
@@ -1126,7 +1126,7 @@ describe("ModelRegistry", () => {
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const customName = getModelsForProvider(registry, "openrouter").find(
-				(m) => m.id === "anthropic/claude-sonnet-4",
+				(m) => m.id === "anthropic/claude-sonnet-4.5",
 			)?.name;
 			expect(customName).toBe("Custom Name");
 
@@ -1135,7 +1135,7 @@ describe("ModelRegistry", () => {
 			await registry.refresh();
 
 			const restoredName = getModelsForProvider(registry, "openrouter").find(
-				(m) => m.id === "anthropic/claude-sonnet-4",
+				(m) => m.id === "anthropic/claude-sonnet-4.5",
 			)?.name;
 			expect(restoredName).not.toBe("Custom Name");
 		});

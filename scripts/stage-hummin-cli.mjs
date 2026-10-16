@@ -14,7 +14,7 @@
  *                                        an optional runtime import; the @earendil-works/*
  *                                        entries back jiti aliases for extension imports
  *
- * @earendil-works/* ranges are pinned to the upstream-published line because the
+ * @earendil-works/* versions are pinned to the upstream-published release because the
  * fork's internal workspace versions are never published to npm.
  *
  * Usage: node scripts/stage-hummin-cli.mjs [--pack]
@@ -32,11 +32,13 @@ const codingAgentDistDir = join(codingAgentDir, "dist");
 const stageDir = join(repoRoot, ".artifacts", "hummin-cli");
 
 // Fork-internal workspace versions are not published to npm; extension loading
-// and the bundle resolve the published upstream line instead. Kept in sync with
-// the upstream release the fork sources were merged from (1.2.0 as of 2026-10-14;
+// and the bundle resolve the published upstream release instead. Kept equal to
+// the upstream release the fork sources were merged from (1.3.0 as of 2026-10-16;
 // ^0.87.1 broke hummin-cli@1.3.0 because the new pi-codemode/pi-mcp/pi-durable
-// deps have no 0.87.x versions on npm).
-const UPSTREAM_RANGE = "^1.2.0";
+// deps have no 0.87.x versions on npm). Exact, not a range: a range lets fresh
+// installs pick up upstream releases the fork was never merged with or tested on.
+const UPSTREAM_VERSION = "1.3.0";
+if (!/^\d+\.\d+\.\d+$/.test(UPSTREAM_VERSION)) throw new Error(`UPSTREAM_VERSION must be exact: ${UPSTREAM_VERSION}`);
 
 // Staged relative path -> source relative path inside packages/coding-agent (or repo root when absolute).
 const assetTrees = [
@@ -86,11 +88,11 @@ for (const input of requiredInputs) {
 
 const dependencies = {};
 for (const [name, range] of Object.entries(pkg.dependencies ?? {})) {
-	dependencies[name] = name.startsWith("@earendil-works/") ? UPSTREAM_RANGE : range;
+	dependencies[name] = name.startsWith("@earendil-works/") ? UPSTREAM_VERSION : range;
 }
 // Extensions import the extension API by package name; upstream packages ship
 // it as the package itself, the slim package needs it as an explicit dep.
-dependencies["@earendil-works/pi-coding-agent"] ??= UPSTREAM_RANGE;
+dependencies["@earendil-works/pi-coding-agent"] ??= UPSTREAM_VERSION;
 
 const manifest = {
 	name: "hummin-cli",

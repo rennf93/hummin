@@ -427,6 +427,7 @@ export {
 	withFileMutationQueue,
 } from "./core/tools/index.ts";
 export { resolveToCwd } from "./core/tools/path-utils.ts";
+export { formatReadLineRange } from "./core/tools/render-utils.ts";
 export {
 	hasTrustRequiringProjectResources,
 	type ProjectTrustDecision,
