@@ -13,8 +13,7 @@ describe("findMarkerJumpTarget", () => {
 
 	it("jumps to largest contentRow strictly below scrollTop + 1 for previous", () => {
 		expect(findMarkerJumpTarget(markers(0, 10, 20, 30), 21, "previous")?.contentRow).toBe(20);
-		// scrollTop exactly on a marker row: per spec, previous is < scrollTop + 1,
-		// so the row at scrollTop itself is a valid target
+		// scrollTop exactly on a marker row: per spec, previous is < scrollTop + 1, so the row at scrollTop itself is a valid target
 		expect(findMarkerJumpTarget(markers(0, 10, 20, 30), 20, "previous")?.contentRow).toBe(20);
 	});
 

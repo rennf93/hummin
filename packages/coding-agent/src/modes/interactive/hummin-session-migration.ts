@@ -61,8 +61,7 @@ function describeRunningWork<T extends CompactionQueued>(deps: SessionClearDeps<
 export async function beginSessionClear<T extends CompactionQueued>(
 	deps: SessionClearDeps<T>,
 ): Promise<SessionClearMigration<T> | undefined> {
-	// Snapshot before the switch: queued messages live on the outgoing
-	// session and would otherwise be dropped with it.
+	// Snapshot before the switch: queued messages live on the outgoing session and would otherwise be dropped with it.
 	const queued = collectQueuedForMigration(deps);
 	const running = describeRunningWork(deps);
 	let migrate = false;
@@ -102,8 +101,7 @@ export async function restoreQueuedAfterMigration<T extends CompactionQueued>(
 		try {
 			await session.sendUserMessage(message.content, { deliverAs: message.deliverAs });
 		} catch {
-			// A message that cannot re-deliver (e.g. no model) must not abort the
-			// remaining migrations; the user sees the fresh session either way.
+			// A message that cannot re-deliver (e.g. no model) must not abort the remaining migrations; the user sees the fresh session either way.
 		}
 	}
 }
