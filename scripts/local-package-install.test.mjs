@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
@@ -206,5 +206,31 @@ test("wires and installs a pnpm consumer without registry fallbacks", (t) => {
 	assert.doesNotMatch(lockContents, /https?:\/\//);
 	for (const packageName of ["@pi-package-test/target", "@pi-package-test/shared"]) {
 		assert.ok(lockContents.includes(basename(artifactSet.getPackage(packageName).tarballPath)), `${packageName} lock entry must reference its artifact`);
+	}
+});
+
+test("wireConsumer file specifiers resolve when the consumer and tarball use symlinked and real path forms", (t) => {
+	const realRoot = realpathSync(mkdtempSync(join(tmpdir(), "pi-local-package-install-symlink-")));
+	const linkRoot = `${realRoot}-link`;
+	symlinkSync(realRoot, linkRoot);
+	t.after(() => {
+		rmSync(linkRoot, { force: true });
+		rmSync(realRoot, { recursive: true, force: true });
+	});
+	mkdirSync(join(realRoot, "consumer"));
+	mkdirSync(join(realRoot, "deep", "out", "tarballs"), { recursive: true });
+	writeFileSync(join(realRoot, "deep", "out", "tarballs", "pkg.tgz"), "x");
+	const forms = [
+		{ consumer: join(linkRoot, "consumer"), tarball: join(realRoot, "deep", "out", "tarballs", "pkg.tgz") },
+		{ consumer: join(realRoot, "consumer"), tarball: join(linkRoot, "deep", "out", "tarballs", "pkg.tgz") },
+	];
+	for (const { consumer, tarball } of forms) {
+		writeFileSync(join(consumer, "package.json"), '{"name":"consumer","private":true}\n');
+		const pkg = { name: "pkg", tarballPath: tarball };
+		const artifactSet = { packages: [pkg], getPackage: () => pkg };
+		const manifest = wireConsumer({ artifactSet, consumerDirectory: consumer, packageNames: ["pkg"] });
+		const specifier = manifest.dependencies.pkg;
+		assert.ok(specifier.startsWith("file:"), specifier);
+		assert.equal(resolve(realpathSync(consumer), specifier.slice("file:".length)), realpathSync(tarball));
 	}
 });

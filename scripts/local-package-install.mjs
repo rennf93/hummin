@@ -1,15 +1,17 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseDocument } from "yaml";
 import { execNpmSync } from "./npm-command.mjs";
 
 const dependencySections = ["dependencies", "devDependencies", "optionalDependencies"];
 
+// npm resolves file: specifiers against the realpath of its cwd, so a relative path computed from a symlinked form (macOS /tmp) climbs out of the wrong root.
 function createFileSpecifier(fromDirectory, path) {
-	const relativePath = relative(fromDirectory, path);
-	return isAbsolute(relativePath) ? pathToFileURL(path).href : `file:./${relativePath.replaceAll("\\", "/")}`;
+	const realPath = join(realpathSync(dirname(path)), basename(path));
+	const relativePath = relative(realpathSync(fromDirectory), realPath);
+	return isAbsolute(relativePath) ? pathToFileURL(realPath).href : `file:./${relativePath.replaceAll("\\", "/")}`;
 }
 
 function detectIndentation(contents) {
@@ -84,8 +86,8 @@ function verifyLocalResolutions(directory, artifactSet, directPackageName) {
 		if (typeof installed.resolved !== "string" || !installed.resolved.startsWith("file:")) {
 			throw new Error(`${name} did not resolve from a local artifact: ${String(installed.resolved)}`);
 		}
-		const resolvedPath = new URL(installed.resolved, pathToFileURL(`${directory}/`));
-		if (resolvedPath.protocol !== "file:" || resolvedPath.pathname !== pathToFileURL(artifact.tarballPath).pathname) {
+		const resolvedPath = new URL(installed.resolved, pathToFileURL(`${realpathSync(directory)}/`));
+		if (resolvedPath.protocol !== "file:" || resolvedPath.pathname !== pathToFileURL(realpathSync(artifact.tarballPath)).pathname) {
 			throw new Error(`${name} resolved from the wrong local artifact: ${installed.resolved}`);
 		}
 		resolvedNames.add(name);
