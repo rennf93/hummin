@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { AuthEvent, AuthPrompt, TextContent } from "@earendil-works/pi-ai";
+import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import {
 	type AssistantMessage,
 	type ImageContent,
@@ -34,16 +34,11 @@ import {
 	CombinedAutocompleteProvider,
 	type Component,
 	Container,
-	type Focusable,
 	fuzzyFilter,
 	getCapabilities,
-	getKeybindings,
 	hyperlink,
 	Markdown,
-	MouseRegion,
 	matchesKey,
-	type SelectItem,
-	SelectList,
 	Spacer,
 	setCapabilityOverrides,
 	setKeybindings,
@@ -53,7 +48,6 @@ import {
 	type TUI,
 	TuiAltScreen,
 	TuiMainScreen,
-	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import chalk from "chalk";
@@ -63,7 +57,6 @@ import {
 	APP_TITLE,
 	CHECK_NEW_VERSION,
 	CONFIG_DIR_NAME,
-	DISPLAY_NAME,
 	detectInstallChange,
 	getAgentDir,
 	getAuthPath,
@@ -84,7 +77,6 @@ import {
 import { formatCacheWarmingStatus, formatCacheWarmingUsage } from "../../core/cache-warmer.ts";
 import { findExtensionStackMatches, recordCrash, takeUnnotifiedCrash } from "../../core/crash-log.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "../../core/defaults.ts";
-import { exportSessionToMarkdown } from "../../core/export-markdown.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -99,14 +91,9 @@ import type {
 	UserBashEventResult,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
-import { isFleetModel, isFleetProviderId } from "../../core/fleet-provider-ids.ts";
-import {
-	buildFooterNavigatorRows,
-	FooterDataProvider,
-	type FooterNavItem,
-	type ReadonlyFooterDataProvider,
-} from "../../core/footer-data-provider.ts";
-import { applyHttpProxySettings, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
+import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
+import { formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
+import { curateProviderOptions, ensureCuratedModelScope } from "../../core/hummin-curation.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import type { McpHttpServerConfig } from "../../core/mcp-servers.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
@@ -126,17 +113,10 @@ import {
 	sessionEntryToContextMessages,
 	type UsageEntry,
 } from "../../core/session-manager.ts";
-import { consumeBackgroundMigrationChoice, setBackgroundMigrationChoice } from "../../core/session-migration.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
-import {
-	parseNotificationChannel,
-	parseNotificationWhen,
-	sendTerminalNotification,
-	setNotificationGate,
-} from "../../core/terminal-notifications.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
@@ -160,8 +140,6 @@ import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
-import { Centered } from "./components/centered.ts";
-import { CollapsibleSection } from "./components/collapsible-section.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
@@ -173,7 +151,7 @@ import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
 import { FooterComponent, formatTokens } from "./components/footer.ts";
-import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
+import { formatKeyText, keyDisplayText, keyText } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { createMermaidMarkdownTransformer } from "./components/mermaid.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
@@ -183,7 +161,6 @@ import {
 	formatAuthSelectorProviderType,
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
-import { type QueuedMessageEntry, QueueManagerComponent } from "./components/queue-manager.ts";
 import { createLoginMenuSelector } from "./components/radius-login-selector.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
@@ -205,19 +182,28 @@ import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { editInExternalEditor } from "./external-editor.ts";
+import { BashEditorLineHighlighter } from "./hummin-bash-editor-line-highlighter.ts";
+import { type FooterActionsDeps, showBackgroundPanel, showFooterNavigator } from "./hummin-footer-actions.ts";
+import { createHumminHeaderText, createWhatsNewSection } from "./hummin-header.ts";
+import { exportMarkdownConfirmingOverwrite } from "./hummin-markdown-export.ts";
+import { jumpToMarker, SCROLLBAR_MARKER_STYLES } from "./hummin-marker-jump.ts";
+import { PartialRenderCoalescer } from "./hummin-partial-render-coalescer.ts";
+import { getPromptHistoryFile, rememberPromptHistory, restorePromptHistory } from "./hummin-prompt-history.ts";
+import { createQueueHint, showQueueManager, takeSessionQueuedMessages } from "./hummin-queue.ts";
+import { centerSelector } from "./hummin-selector-layout.ts";
+import { beginSessionClear, restoreQueuedAfterMigration } from "./hummin-session-migration.ts";
+import { humminSettingsCallbacks, humminSettingsConfig } from "./hummin-settings-wiring.ts";
+import { installTerminalNotificationGate, notifyTurnComplete } from "./hummin-terminal-notifications.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
 import { getModelSearchText } from "./model-search.ts";
 import { type BlockedStatus, ProgramStatusReporter } from "./program-status-reporter.ts";
-import { queuedMessageToEditorText } from "./queue-attachments.ts";
 import { shareSession } from "./session-share.ts";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
 	getEditorTheme,
 	getMarkdownTheme,
-	getSelectListTheme,
 	getThemeByName,
-	highlightCode,
 	onThemeChange,
 	SYSTEM_THEME_NAME,
 	setRegisteredThemes,
@@ -230,39 +216,6 @@ import { InteractiveThemeController } from "./theme/theme-controller.ts";
 import { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
 
 export { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
-
-/** A scrollbar marker dot painted on the transcript viewport. */
-export interface TranscriptMarker {
-	trackRow: number;
-	contentRow: number;
-	kind: string;
-}
-
-export type MarkerJumpDirection = "previous" | "next";
-
-/**
- * Find the marker to scroll to when jumping to the previous/next marker.
- * "previous" = largest contentRow strictly below scrollTop + 1; "next" = smallest
- * contentRow strictly above scrollTop. Returns undefined when no target exists.
- */
-export function findMarkerJumpTarget(
-	markers: ReadonlyArray<TranscriptMarker>,
-	scrollTop: number,
-	direction: MarkerJumpDirection,
-): TranscriptMarker | undefined {
-	let best: TranscriptMarker | undefined;
-	for (const marker of markers) {
-		const candidate = direction === "previous" ? marker.contentRow < scrollTop + 1 : marker.contentRow > scrollTop;
-		if (!candidate) continue;
-		if (
-			best === undefined ||
-			(direction === "previous" ? marker.contentRow > best.contentRow : marker.contentRow < best.contentRow)
-		) {
-			best = marker;
-		}
-	}
-	return best;
-}
 
 /** Interface for components that can be expanded/collapsed */
 interface Expandable {
@@ -312,70 +265,6 @@ class ExpandableText extends ThemedText implements Expandable {
 	}
 }
 
-/**
- * Popup listing actionable footer elements (background tasks, TODOs, agents, fleet).
- * Enter routes to the panel's slash command; Escape cancels.
- */
-class FooterNavigatorComponent extends Container implements Focusable {
-	private selectList: SelectList;
-	private onSelect: (item: FooterNavItem) => void;
-	private onCancel: () => void;
-	private rows: Array<{ item: FooterNavItem; select: SelectItem }>;
-	private _focused = false;
-
-	constructor(items: FooterNavItem[], onSelect: (item: FooterNavItem) => void, onCancel: () => void) {
-		super();
-		this.onSelect = onSelect;
-		this.onCancel = onCancel;
-		this.rows = items.map((item) => ({ item, select: { value: item.id, label: item.label } }));
-
-		this.addChild(new Text(theme.fg("accent", "Footer"), 0, 0));
-		this.addChild(
-			new Text(
-				theme.fg(
-					"dim",
-					`${keyDisplayText("tui.select.confirm")} open · ${keyDisplayText("tui.select.cancel")} close`,
-				),
-				0,
-				0,
-			),
-		);
-		this.addChild(new Spacer(1));
-		this.selectList = new SelectList(
-			this.rows.map((row) => row.select),
-			Math.max(1, Math.min(this.rows.length, 10)),
-			getSelectListTheme(),
-		);
-		this.selectList.onSelect = (selected) => {
-			const row = this.rows.find((candidate) => candidate.select.value === selected.value);
-			if (row) this.onSelect(row.item);
-		};
-		this.selectList.onCancel = () => this.onCancel();
-		this.addChild(this.selectList);
-	}
-
-	get focused(): boolean {
-		return this._focused;
-	}
-
-	set focused(value: boolean) {
-		this._focused = value;
-	}
-
-	handleInput(data: string): void {
-		if (getKeybindings().matches(data, "tui.select.cancel")) {
-			this.onCancel();
-			return;
-		}
-		this.selectList.handleInput(data);
-	}
-
-	invalidate(): void {
-		super.invalidate();
-		this.selectList.invalidate?.();
-	}
-}
-
 type CompactionQueuedMessage = {
 	text: string;
 	mode: "steer" | "followUp";
@@ -404,10 +293,6 @@ function isUsageSessionEntry(item: RenderSessionItem): item is Extract<SessionEn
 // EIO: tty reads/ioctls from an orphaned background process group, or writes after hangup.
 // ENOTTY: the tty was revoked (macOS) and stdin is no longer a terminal.
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN", "ENOTTY"]);
-
-/** Width cap for selector content: long values truncate instead of stretching
- * the block to the terminal edge, and every selector shares the same cap. */
-const SELECTOR_MAX_WIDTH = 100;
 
 function isDeadTerminalError(error: unknown): boolean {
 	if (!error || typeof error !== "object" || !("code" in error)) {
@@ -573,7 +458,7 @@ export class InteractiveMode {
 	private chatContainer: Container;
 	private documentContainer: Container;
 	private transcriptScrollView: TuiLayouts.ScrollView | undefined;
-	private highlightCache = new Map<string, string>();
+	private editorLineHighlighter = new BashEditorLineHighlighter();
 	private fullscreenLayoutRoot: Component | undefined;
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
@@ -624,14 +509,7 @@ export class InteractiveMode {
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
-	/** Coalesced partial tool results waiting for their trailing render. */
-	private pendingPartialUpdates = new Map<
-		string,
-		{
-			result: { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>; details?: any };
-			timer: ReturnType<typeof setTimeout>;
-		}
-	>();
+	private partialRenders = new PartialRenderCoalescer();
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
@@ -653,9 +531,6 @@ export class InteractiveMode {
 
 	// Track if editor is in bash mode (text starts with !)
 	private isBashMode = false;
-	/** Coalescing window for streaming partial tool results. */
-	private static readonly PARTIAL_RENDER_INTERVAL_MS = 16;
-
 	// Track current bash execution component
 	private bashComponent: BashExecutionComponent | undefined = undefined;
 
@@ -757,12 +632,7 @@ export class InteractiveMode {
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
-		// One gate for every notification call site (core agent_end + hummin-ask):
-		// applies the notificationsWhen condition against the live terminal focus.
-		setNotificationGate(() => {
-			if (this.settingsManager.getTerminalNotificationsWhen() === "always") return true;
-			return this.ui.terminal.isFocused() !== true;
-		});
+		installTerminalNotificationGate(this.settingsManager, this.ui);
 		this.headerContainer = new Container();
 		this.loadedResourcesContainer = new Container();
 		this.chatContainer = new Container();
@@ -782,7 +652,7 @@ export class InteractiveMode {
 			paddingX: editorPaddingX,
 			autocompleteMaxVisible,
 			embedWorkingStatus: true,
-			highlighter: (text) => this.highlightEditorLine(text),
+			highlighter: (text) => this.editorLineHighlighter.highlight(text, this.isBashMode),
 			vimMode: this.settingsManager.getEditorMode() === "vim",
 		});
 		this.editor = this.defaultEditor;
@@ -999,20 +869,11 @@ export class InteractiveMode {
 			const condensedText = `Updated to v${latestVersion}. Use ${theme.bold("/changelog")} to view full changelog.`;
 			this.chatContainer.addChild(new Text(condensedText, 1, 0));
 		} else {
-			const versionMatch = this.changelogMarkdown.match(/##\s+\[?(\d+\.\d+\.\d+)\]?/);
-			const latestVersion = versionMatch ? versionMatch[1] : this.version;
-			const body = new Markdown(this.changelogMarkdown.trim(), 1, 0, this.getMarkdownThemeWithSettings());
-			const whatsNew = new CollapsibleSection(
-				(expanded, width) => {
-					const glyph = expanded ? "▾" : "▸";
-					const hint = expanded ? "click to collapse" : "click to expand";
-					const header = `${glyph} ${theme.bold(theme.fg("accent", "What's New"))} ${theme.fg("dim", `· v${latestVersion} · ${hint}`)}`;
-					return truncateToWidth(header, width);
-				},
-				body,
-				() => this.ui.requestRender(),
+			this.chatContainer.addChild(
+				createWhatsNewSection(this.changelogMarkdown, this.version, this.getMarkdownThemeWithSettings(), () =>
+					this.ui.requestRender(),
+				),
 			);
-			this.chatContainer.addChild(whatsNew);
 			this.chatContainer.addChild(new Spacer(1));
 		}
 		this.chatContainer.addChild(new DynamicBorder());
@@ -1124,11 +985,7 @@ export class InteractiveMode {
 			scrollbar: this.settingsManager.getFullscreenScrollbar(),
 			scrollbarTrackStyle: (text) => theme.fg("scrollbarTrack", text),
 			scrollbarThumbStyle: (text) => theme.fg("scrollbarThumb", text),
-			scrollbarMarkerStyles: {
-				user: (text) => theme.fg("accent", text),
-				system: (text) => theme.fg("muted", text),
-				turnEnd: (text) => theme.fg("dim", text),
-			},
+			scrollbarMarkerStyles: SCROLLBAR_MARKER_STYLES,
 		});
 		this.transcriptScrollView = viewport.transcript;
 		this.fullscreenLayoutRoot = viewport.root;
@@ -1158,92 +1015,25 @@ export class InteractiveMode {
 		// reported its colors. This ends at the terminal's DA1 reply, or after 100 ms if it answers nothing.
 		await this.themeController.waitForTerminalColors();
 
-		// Add header: logo + keybinding hints. quietStartup silences only the
-		// loaded-resources listing, never the header.
-		{
-			// Exact pixel transcription of the red-throated hummingbird reference
-			// (native 16x12 grid, sampled colors, rendered at 2x scale).
-			const BIRD_PALETTE: Record<string, string> = {
-				B: "#383838",
-				D: "#388155",
-				G: "#b3bab7",
-				E: "#e65364",
-				W: "#646367",
-			};
-			const BIRD: string[] = [
-				"...BBBBB........",
-				"...BDDWWB.......",
-				"WWWWWEEEB.......",
-				"...BEEEDBB......",
-				"...WEEBDDBB.....",
-				"...WGGDDDDBB....",
-				"....BGGBDDDBB...",
-				"....BBGBBBDDB...",
-				".....BBGGGBDDB..",
-				"......BBBGBBBDBB",
-				"......BWBB..BBDB",
-				".............BBB",
-			];
-			const rgb = (hex: string): string => {
-				const value = parseInt(hex.slice(1), 16);
-				return `${(value >> 16) & 255};${(value >> 8) & 255};${value & 255}`;
-			};
-			const birdLines = BIRD.map((row) => {
-				let line = "";
-				for (const char of row) {
-					const color = char === "." ? undefined : BIRD_PALETTE[char];
-					line += color ? `\x1b[38;2;${rgb(color)}m██` : "  ";
-				}
-				return `${line}\x1b[0m`;
-			});
-			const nameLine = theme.bold(theme.fg("accent", DISPLAY_NAME)) + theme.fg("dim", ` v${this.version}`);
-			const tagline = theme.fg("dim", "GLM-native coding agent");
-			const logo = [`${birdLines[0]}    ${nameLine}`, `${birdLines[1]}    ${tagline}`, ...birdLines.slice(2)].join(
-				"\n",
-			);
-			// Build startup instructions using keybinding hint helpers
-			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
-
-			const expandedInstructions = [
-				hint("app.interrupt", "to interrupt"),
-				hint("app.clear", "to clear"),
-				rawKeyHint(`${keyText("app.clear")} twice`, "to exit"),
-				hint("app.exit", "to exit (empty)"),
-				hint("app.suspend", "to suspend"),
-				keyHint("tui.editor.deleteToLineEnd", "to delete to end"),
-				hint("app.thinking.cycle", "to cycle thinking level"),
-				rawKeyHint(`${keyText("app.model.cycleForward")}/${keyText("app.model.cycleBackward")}`, "to cycle models"),
-				hint("app.model.select", "to select model"),
-				hint("app.tools.expand", "to expand tools"),
-				hint("app.thinking.toggle", "to expand thinking"),
-				hint("app.editor.external", "for external editor"),
-				rawKeyHint("/", "for commands"),
-				rawKeyHint("!", "to run bash"),
-				rawKeyHint("!!", "to run bash (no context)"),
-				hint("app.message.followUp", "to queue follow-up"),
-				hint("app.message.dequeue", "to edit all queued messages"),
-				hint("app.clipboard.pasteImage", "to paste files on macOS, images, or text"),
-				rawKeyHint("drop files", "to attach"),
-			].join("\n");
-			const compactInstructions = [
-				hint("app.interrupt", "interrupt"),
-				hint("app.clear", "clear"),
-				rawKeyHint("/", "commands"),
-				rawKeyHint("!", "bash"),
-				hint("app.tools.expand", "all"),
-			].join(theme.fg("muted", " · "));
-			const onboarding = theme.fg("dim", `hummin can explain its own features and look up its docs - just ask.`);
+		// Add header with keybindings from config (unless silenced)
+		if (this.shouldShowStartupHeader()) {
+			const headerText = createHumminHeaderText(this.version);
 			this.builtInHeader = new ExpandableText(
-				() => `${logo}\n${compactInstructions}\n\n${onboarding}`,
-				() => `${logo}\n${expandedInstructions}\n\n${onboarding}`,
+				headerText.collapsed,
+				headerText.expanded,
 				this.getStartupExpansionState(),
 				1,
 				0,
 			);
+
 			// Setup UI layout
 			this.headerContainer.addChild(new Spacer(1));
 			this.headerContainer.addChild(this.builtInHeader);
 			this.headerContainer.addChild(new Spacer(1));
+		} else {
+			// Minimal header when silenced
+			this.builtInHeader = new Text("", 0, 0);
+			this.headerContainer.addChild(this.builtInHeader);
 		}
 		this.ui.requestRender();
 
@@ -1269,7 +1059,7 @@ export class InteractiveMode {
 
 		// Set up theme file watcher
 		onThemeChange(() => {
-			this.highlightCache.clear();
+			this.editorLineHighlighter.clear();
 			this.ui.invalidate();
 			this.updateEditorBorderColor();
 			this.ui.requestRender();
@@ -1324,13 +1114,11 @@ export class InteractiveMode {
 		}
 
 		// Start version check asynchronously
-		if (CHECK_NEW_VERSION) {
-			checkForNewPiVersion(this.version).then((newRelease) => {
-				if (newRelease) {
-					this.showNewVersionNotification(newRelease);
-				}
-			});
-		}
+		(CHECK_NEW_VERSION ? checkForNewPiVersion(this.version) : Promise.resolve(undefined)).then((newRelease) => {
+			if (newRelease) {
+				this.showNewVersionNotification(newRelease);
+			}
+		});
 
 		// Start package update check asynchronously
 		this.checkForPackageUpdates()
@@ -1593,7 +1381,7 @@ export class InteractiveMode {
 	 * product's identity and is always shown; quietStartup only gates the loaded
 	 * resources listing (see shouldShowStartupDetails). Kept as an explicit
 	 * divergence point from upstream, which hides the header on quietStartup. */
-	shouldShowStartupHeader(): boolean {
+	private shouldShowStartupHeader(): boolean {
 		return true;
 	}
 
@@ -2906,12 +2694,7 @@ export class InteractiveMode {
 
 			this.disposeActiveSelector();
 			this.editorContainer.clear();
-			this.editorContainer.addChild(
-				new Centered(this.extensionSelector, {
-					minHeight: () => this.selectorMinHeight(),
-					maxWidth: () => this.selectorMaxWidth(),
-				}),
-			);
+			this.editorContainer.addChild(centerSelector(this.extensionSelector, this.ui.terminal));
 			this.ui.setFocus(this.extensionSelector);
 			// Extension dialogs share the editor slot: opening one replaces the status of a displaced one.
 			this.programStatus.setBlocked("extension-dialog", blocked);
@@ -3290,8 +3073,8 @@ export class InteractiveMode {
 		this.defaultEditor.onCtrlD = () => this.handleCtrlD();
 		this.defaultEditor.onAction("app.suspend", () => this.handleCtrlZ());
 		this.defaultEditor.onAction("app.thinking.cycle", () => this.cycleThinkingLevel());
-		this.defaultEditor.onAction("app.model.cycleForward", () => void this.cycleModelCurated("forward"));
-		this.defaultEditor.onAction("app.model.cycleBackward", () => void this.cycleModelCurated("backward"));
+		this.defaultEditor.onAction("app.model.cycleForward", () => void this.cycleModel("forward"));
+		this.defaultEditor.onAction("app.model.cycleBackward", () => void this.cycleModel("backward"));
 
 		// Global debug handler on TUI (works regardless of focus)
 		this.ui.onDebug = () => this.handleDebugCommand();
@@ -3303,16 +3086,20 @@ export class InteractiveMode {
 			"app.message.copy",
 			() => void this.handleCopyCommand({ flashConfirmation: true, preferSelection: true }),
 		);
-		this.defaultEditor.onAction("app.message.jumpToPreviousMarker", () => this.jumpToMarker("previous"));
-		this.defaultEditor.onAction("app.message.jumpToNextMarker", () => this.jumpToMarker("next"));
+		this.defaultEditor.onAction("app.message.jumpToPreviousMarker", () =>
+			jumpToMarker(this.transcriptScrollView, "previous"),
+		);
+		this.defaultEditor.onAction("app.message.jumpToNextMarker", () =>
+			jumpToMarker(this.transcriptScrollView, "next"),
+		);
 		this.defaultEditor.onAction("app.message.followUp", () => this.handleFollowUp());
 		this.defaultEditor.onAction("app.message.dequeue", () => this.handleDequeue());
 		this.defaultEditor.onAction("app.session.new", () => this.handleClearCommand());
 		this.defaultEditor.onAction("app.session.tree", () => this.showTreeSelector());
 		this.defaultEditor.onAction("app.session.fork", () => this.showUserMessageSelector());
 		this.defaultEditor.onAction("app.session.resume", () => this.showSessionSelector());
-		this.defaultEditor.onAction("app.background.show", () => void this.showBackgroundPanel());
-		this.defaultEditor.onAction("app.footer.navigate", () => this.showFooterNavigator());
+		this.defaultEditor.onAction("app.background.show", () => void showBackgroundPanel(this.footerActionsDeps()));
+		this.defaultEditor.onAction("app.footer.navigate", () => showFooterNavigator(this.footerActionsDeps()));
 
 		this.defaultEditor.onChange = (text: string) => {
 			const wasBashMode = this.isBashMode;
@@ -3837,31 +3624,12 @@ export class InteractiveMode {
 			}
 
 			case "tool_execution_update": {
-				const component = this.pendingTools.get(event.toolCallId);
-				if (!component) break;
-				// Leading-edge render immediately, then coalesce bursts into one trailing render.
-				// Partial streams can emit many chunks per second; each updateResult rebuilds the
-				// component tree, so per-chunk renders waste work.
-				const pending = this.pendingPartialUpdates.get(event.toolCallId);
-				if (pending) {
-					pending.result = event.partialResult;
-					break;
-				}
-				component.updateResult({ ...event.partialResult, isError: false }, true);
-				const toolCallId = event.toolCallId;
-				this.pendingPartialUpdates.set(toolCallId, {
-					result: event.partialResult,
-					timer: setTimeout(() => {
-						const queued = this.pendingPartialUpdates.get(toolCallId);
-						this.pendingPartialUpdates.delete(toolCallId);
-						if (!queued) return;
-						const target = this.pendingTools.get(toolCallId);
-						if (target) {
-							target.updateResult({ ...queued.result, isError: false }, true);
-							this.ui.requestRender();
-						}
-					}, InteractiveMode.PARTIAL_RENDER_INTERVAL_MS),
-				});
+				this.partialRenders.update(
+					event.toolCallId,
+					event.partialResult,
+					() => this.pendingTools.get(event.toolCallId),
+					() => this.ui.requestRender(),
+				);
 				break;
 			}
 
@@ -3873,25 +3641,17 @@ export class InteractiveMode {
 					this.pendingTools.delete(event.toolCallId);
 					this.ui.requestRender();
 				}
-				// Drop any queued partial render; the final result already rendered above.
-				const queued = this.pendingPartialUpdates.get(event.toolCallId);
-				if (queued) {
-					clearTimeout(queued.timer);
-					this.pendingPartialUpdates.delete(event.toolCallId);
-				}
+				this.partialRenders.cancel(event.toolCallId);
 				// File edits may have changed the working tree; refresh footer git state (debounced)
 				this.footerDataProvider.scheduleGitStatusRefresh();
 				break;
 			}
 
-			case "agent_end": {
+			case "agent_end":
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(false);
 				}
-				const notifyChannel = this.settingsManager.getTerminalNotifications();
-				if (notifyChannel !== "off") {
-					sendTerminalNotification(notifyChannel, `${APP_NAME}: turn complete`);
-				}
+				notifyTurnComplete(this.settingsManager);
 				this.clearStatusIndicator("working");
 				if (this.streamingComponent) {
 					this.chatContainer.removeChild(this.streamingComponent);
@@ -3902,7 +3662,6 @@ export class InteractiveMode {
 
 				this.ui.requestRender();
 				break;
-			}
 
 			case "agent_settled":
 				await this.checkShutdownRequested();
@@ -4728,42 +4487,15 @@ export class InteractiveMode {
 		}
 	}
 
-	/** Open the background panel by running the /background extension command. */
-	private async showBackgroundPanel(): Promise<void> {
-		if (!this.isExtensionCommand("/background")) {
-			this.showStatus("No background command registered (hummin-subagents extension missing)");
-			return;
-		}
-		await this.session.prompt("/background");
-	}
-
-	/** Open the footer navigator popup listing actionable footer segments. */
-	private showFooterNavigator(): void {
-		const items = buildFooterNavigatorRows({
-			backgroundStatus: this.footerDataProvider.getExtensionStatuses().get("bg"),
-			todoSummary: this.footerDataProvider.getTodoSummary(),
-			agentsAvailable: this.isExtensionCommand("/agents"),
-			fleetAvailable: this.isExtensionCommand("/fleet"),
-		});
-
-		this.showSelector((done) => {
-			const navigator = new FooterNavigatorComponent(
-				items,
-				(item) => {
-					done();
-					if (this.isExtensionCommand(item.command)) {
-						void this.session.prompt(item.command);
-					} else {
-						this.showStatus(`${item.command} is not available`);
-					}
-				},
-				() => {
-					done();
-					this.ui.requestRender();
-				},
-			);
-			return { component: navigator, focus: navigator };
-		});
+	private footerActionsDeps(): FooterActionsDeps {
+		return {
+			footerDataProvider: this.footerDataProvider,
+			isExtensionCommand: (text) => this.isExtensionCommand(text),
+			prompt: (text) => this.session.prompt(text),
+			showStatus: (message) => this.showStatus(message),
+			requestRender: () => this.ui.requestRender(),
+			showSelector: (create) => this.showSelector(create),
+		};
 	}
 
 	private async handleFollowUp(): Promise<void> {
@@ -4818,47 +4550,6 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	/** Syntax-highlight bash-mode input lines; other input renders unstyled. */
-	private highlightEditorLine(text: string): string {
-		if (!this.isBashMode || !text.trimStart().startsWith("!")) {
-			return text;
-		}
-		const cached = this.highlightCache.get(text);
-		if (cached !== undefined) {
-			return cached;
-		}
-		let highlighted: string;
-		try {
-			highlighted = highlightCode(text, "bash")[0] ?? text;
-		} catch {
-			highlighted = text;
-		}
-		if (this.highlightCache.size >= 256) {
-			const oldest = this.highlightCache.keys().next().value;
-			if (oldest !== undefined) {
-				this.highlightCache.delete(oldest);
-			}
-		}
-		this.highlightCache.set(text, highlighted);
-		return highlighted;
-	}
-
-	private jumpToMarker(direction: MarkerJumpDirection): void {
-		const transcript = this.transcriptScrollView;
-		if (!transcript) {
-			return;
-		}
-		const target = findMarkerJumpTarget(transcript.scrollbarPaintedMarkers, transcript.scrollTop, direction);
-		if (target === undefined) {
-			return;
-		}
-		// Turn-end markers align to the viewport bottom so the end of the turn is visible;
-		// user/system markers align their message to the top.
-		const top =
-			target.kind === "turnEnd" ? Math.max(0, target.contentRow - transcript.viewportHeight + 1) : target.contentRow;
-		transcript.scrollTo(top, { disableFollow: true });
-	}
-
 	private cycleThinkingLevel(): void {
 		const newLevel = this.session.cycleThinkingLevel();
 		if (newLevel === undefined) {
@@ -4870,29 +4561,8 @@ export class InteractiveMode {
 		}
 	}
 
-	private async curatedModelScope(): Promise<Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>> {
-		const models = this.session.modelRuntime.getAvailableSnapshot();
-		const credentials = await this.session.modelRuntime
-			.listCredentials({ signal: AbortSignal.timeout(5_000) })
-			.catch(() => []);
-		const credentialed = new Set(credentials.map((entry) => entry.providerId));
-		const curated = (id: string): boolean =>
-			id === "zai" || id === "zai-coding-cn" || id === "zai-api" || credentialed.has(id);
-		return models.filter((model) => isFleetModel(model) || curated(model.provider)).map((model) => ({ model }));
-	}
-
-	// hummin curation: ctrl+P/N walks only curated and credentialed models.
-	// Cycling the full 167-model catalog lands on unconfigured providers,
-	// which reads as the app being broken.
-	private async cycleModelCurated(direction: "forward" | "backward"): Promise<void> {
-		if (this.session.scopedModels.length === 0) {
-			const scope = await this.curatedModelScope();
-			if (scope.length > 0) this.session.setScopedModels(scope);
-		}
-		await this.cycleModel(direction);
-	}
-
 	private async cycleModel(direction: "forward" | "backward"): Promise<void> {
+		await ensureCuratedModelScope(this.session);
 		try {
 			const result = await this.session.cycleModel(direction);
 			if (result === undefined) {
@@ -5063,22 +4733,7 @@ export class InteractiveMode {
 	 * Clears both session queue and compaction queue.
 	 */
 	private clearAllQueues(): { steering: string[]; followUp: string[] } {
-		// Materialize every attachment before mutating either queue. A failed write leaves messages pending.
-		const snapshots = (["steering", "followUp"] as const).flatMap((kind) =>
-			this.session.getQueuedUserMessages(kind).map((message, index) => ({
-				kind,
-				message,
-				index,
-				text: queuedMessageToEditorText(message),
-			})),
-		);
-		const steering: string[] = [];
-		const followUp: string[] = [];
-		for (const entry of snapshots) {
-			if (this.session.removeQueuedMessage(entry.kind, entry.index, entry.message) !== undefined) {
-				(entry.kind === "steering" ? steering : followUp).push(entry.text);
-			}
-		}
+		const { steering, followUp } = takeSessionQueuedMessages(this.session);
 		const compactionSteering = this.compactionQueuedMessages
 			.filter((msg) => msg.mode === "steer")
 			.map((msg) => msg.text);
@@ -5107,14 +4762,7 @@ export class InteractiveMode {
 				this.pendingMessagesContainer.addChild(new TruncatedText(text, 1, 0));
 			}
 			const dequeueHint = this.getAppKeyDisplay("app.message.dequeue");
-			const hintText = theme.fg("dim", `↳ ${dequeueHint} edits all · click here or /queue to manage individually`);
-			this.pendingMessagesContainer.addChild(
-				new MouseRegion(new TruncatedText(hintText, 1, 0), (event) => {
-					if (event.button !== "left" || (event.type !== "press" && event.type !== "click")) return undefined;
-					if (event.type === "click") this.showQueueManager();
-					return { handled: true };
-				}),
-			);
+			this.pendingMessagesContainer.addChild(createQueueHint(dequeueHint, () => this.showQueueManager()));
 		}
 	}
 
@@ -5265,27 +4913,6 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Upper bound for reserved selector height, so small terminals keep most of
-	 * the transcript visible.
-	 */
-	private selectorHeightCap(): number {
-		return Math.max(0, Math.min(24, this.ui.terminal.rows - 8));
-	}
-
-	/** Shared width cap for selector content (see {@link SELECTOR_MAX_WIDTH}). */
-	private selectorMaxWidth(): number {
-		return SELECTOR_MAX_WIDTH;
-	}
-
-	/**
-	 * Reserved height floor for selectors without a known maximum: proportional
-	 * to the viewport, capped by {@link selectorHeightCap}.
-	 */
-	private selectorMinHeight(): number {
-		return Math.min(Math.round(this.ui.terminal.rows * 0.4), this.selectorHeightCap());
-	}
-
-	/**
 	 * Shows a selector component in place of the editor.
 	 * @param create Factory that receives a `done` callback and returns the component and focus target
 	 */
@@ -5306,22 +4933,11 @@ export class InteractiveMode {
 		};
 		const created = create(done);
 		dispose = created.dispose;
-		// Selectors that know their tallest state (tabbed views) reserve it upfront;
-		// the ratchet in Centered covers the rest (filtering, submenus).
-		const getMaxHeight = (created.component as { getMaxRenderHeight?: (width: number) => number }).getMaxRenderHeight;
-		const minHeight = getMaxHeight
-			? (width: number) => Math.min(getMaxHeight.call(created.component, width), this.selectorHeightCap())
-			: () => this.selectorMinHeight();
 		this.disposeActiveSelector();
 		this.activeSelectorToken = token;
 		this.activeSelectorDispose = dispose;
 		this.editorContainer.clear();
-		this.editorContainer.addChild(
-			new Centered(created.component, {
-				minHeight,
-				maxWidth: () => this.selectorMaxWidth(),
-			}),
-		);
+		this.editorContainer.addChild(centerSelector(created.component, this.ui.terminal));
 		this.ui.setFocus(created.focus);
 		this.ui.requestRender();
 	}
@@ -5345,9 +4961,6 @@ export class InteractiveMode {
 					enableSkillCommands: this.settingsManager.getEnableSkillCommands(),
 					steeringMode: this.session.steeringMode,
 					followUpMode: this.session.followUpMode,
-					streamingSubmitMode: this.settingsManager.getStreamingSubmitMode(),
-					messageTimestamps: this.settingsManager.getMessageTimestamps(),
-					compactPrompt: this.settingsManager.getCompactPrompt(),
 					transport: this.settingsManager.getTransport(),
 					sessionShareDestination: this.settingsManager.getSessionShareDestination(),
 					httpIdleTimeoutMs: this.settingsManager.getHttpIdleTimeoutMs(),
@@ -5373,35 +4986,13 @@ export class InteractiveMode {
 					quietStartup: this.settingsManager.getQuietStartup(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
 					showTerminalProgress: this.settingsManager.getShowTerminalProgress(),
-					terminalNotifications: this.settingsManager.getTerminalNotifications(),
-					terminalNotificationsWhen: this.settingsManager.getTerminalNotificationsWhen(),
 					tuiMode: this.ui.mode,
 					fullscreenExitOutput: this.settingsManager.getFullscreenExitOutput(),
 					fullscreenScrollbar: this.settingsManager.getFullscreenScrollbar(),
 					fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 					fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
 					warnings: this.settingsManager.getWarnings(),
-					providersShowAll: this.settingsManager.getProvidersShowAll(),
-					retryEnabled: this.settingsManager.getRetryEnabled(),
-					memoryEnabled: this.settingsManager.getMemoryEnabled(),
-					memoryMode: this.settingsManager.getMemoryMode(),
-					memoryVaultDir: this.settingsManager.getMemoryVaultDir(),
-					memoryProvider: this.settingsManager.getMemoryProvider(),
-					memoryModelId: this.settingsManager.getMemoryModelId(),
-					localInstances: this.settingsManager.getLocalInstances(),
-					fleetAutoStart: this.settingsManager.getFleetAutoStart(),
-					rightSizeEnabled: this.settingsManager.getRightSizeEnabled(),
-					rightSizeSwingThreshold: this.settingsManager.getRightSizeSwingThreshold(),
-					rightSizeProfileCount: this.settingsManager.getRightSizeProfiles().length,
-					rightSizeProfilesJson: JSON.stringify(this.settingsManager.getRightSizeProfiles()),
-					editorMode: this.settingsManager.getEditorMode(),
-					externalEditor: this.settingsManager.getExternalEditorCommand(),
-					websocketConnectTimeoutMs: this.settingsManager.getWebSocketConnectTimeoutMs(),
-					httpProxy: this.settingsManager.getHttpProxy() ?? "",
-					shellPath: this.settingsManager.getShellPath() ?? "",
-					shellCommandPrefix: this.settingsManager.getShellCommandPrefix() ?? "",
-					npmCommand: this.settingsManager.getNpmCommand()?.join(" ") ?? "",
-					enableAnalytics: this.settingsManager.getEnableAnalytics(),
+					...humminSettingsConfig(this.settingsManager),
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -5439,24 +5030,6 @@ export class InteractiveMode {
 					},
 					onFollowUpModeChange: (mode) => {
 						this.session.setFollowUpMode(mode);
-					},
-					onStreamingSubmitModeChange: (mode) => {
-						this.settingsManager.setStreamingSubmitMode(mode);
-					},
-					onMessageTimestampsChange: (enabled) => {
-						this.settingsManager.setMessageTimestamps(enabled);
-						for (const child of this.chatContainer.children) {
-							if (child instanceof UserMessageComponent || child instanceof CustomMessageComponent) {
-								child.setShowTimestamp(enabled);
-							}
-						}
-						this.ui.requestRender();
-					},
-					onCompactPromptChange: (enabled) => {
-						this.settingsManager.setCompactPrompt(enabled);
-						// Reapply to the active tool set so the change takes effect next turn.
-						this.session.setActiveToolsByName(this.session.getActiveToolNames());
-						this.showStatus(enabled ? "Compact prompt: on (next turn)" : "Compact prompt: off (next turn)");
 					},
 					onTransportChange: (transport) => {
 						this.settingsManager.setTransport(transport);
@@ -5572,25 +5145,6 @@ export class InteractiveMode {
 					onShowTerminalProgressChange: (enabled) => {
 						this.settingsManager.setShowTerminalProgress(enabled);
 					},
-					onTerminalNotificationsChange: (channel) => {
-						const parsed = parseNotificationChannel(channel);
-						if (!parsed) {
-							selector?.updateValue("terminal-notifications", this.settingsManager.getTerminalNotifications());
-							return;
-						}
-						this.settingsManager.setTerminalNotifications(parsed);
-					},
-					onTerminalNotificationsWhenChange: (when) => {
-						const parsed = parseNotificationWhen(when);
-						if (!parsed) {
-							selector?.updateValue(
-								"terminal-notifications-when",
-								this.settingsManager.getTerminalNotificationsWhen(),
-							);
-							return;
-						}
-						this.settingsManager.setTerminalNotificationsWhen(parsed);
-					},
 					onTuiModeChange: (mode) => {
 						if (!this.switchTuiMode(mode)) {
 							selector?.updateValue("tui-mode", this.ui.mode);
@@ -5619,85 +5173,16 @@ export class InteractiveMode {
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
 					},
-					onDefaultThinkingLevelChange: (level) => {
-						this.session.setThinkingLevel(level, { persist: true });
-						this.footer.invalidate();
-						this.updateEditorBorderColor();
-						this.showStatus(`Default thinking level: ${level}`);
-					},
-					onProvidersShowAllChange: (enabled) => {
-						this.settingsManager.setProvidersShowAll(enabled);
-					},
-					onRetryEnabledChange: (enabled) => {
-						this.settingsManager.setRetryEnabled(enabled);
-					},
-					onMemoryEnabledChange: (enabled) => {
-						this.settingsManager.setMemoryEnabled(enabled);
-					},
-					onMemoryModeChange: (mode) => {
-						this.settingsManager.setMemoryMode(mode);
-					},
-					onMemoryVaultDirChange: (dir) => {
-						this.settingsManager.setMemoryVaultDir(dir);
-					},
-					onMemoryProviderChange: (provider) => {
-						this.settingsManager.setMemoryProvider(provider);
-					},
-					onMemoryModelIdChange: (modelId) => {
-						this.settingsManager.setMemoryModelId(modelId);
-					},
-					onLocalInstancesChange: (instances) => {
-						this.settingsManager.setLocalInstances(instances);
-					},
-					onFleetAutoStartChange: (enabled) => {
-						this.settingsManager.setFleetAutoStart(enabled);
-					},
-					onRightSizeEnabledChange: (enabled) => {
-						this.settingsManager.setRightSizeEnabled(enabled);
-					},
-					onRightSizeSwingThresholdChange: (threshold) => {
-						this.settingsManager.setRightSizeSwingThreshold(threshold);
-					},
-					onRightSizeProfilesChange: (profilesJson) => {
-						try {
-							this.settingsManager.setRightSizeProfiles(JSON.parse(profilesJson));
-							this.showStatus(
-								`Right-size profiles: ${this.settingsManager.getRightSizeProfiles().length} configured`,
-							);
-						} catch (error) {
-							this.showStatus(
-								`Invalid right-size profiles (not saved): ${error instanceof Error ? error.message : String(error)}`,
-							);
-						}
-					},
-					onEditorModeChange: (mode) => {
-						this.settingsManager.setEditorMode(mode);
-						this.showStatus(
-							mode === "vim" ? "Editor mode: vim (new sessions)" : "Editor mode: default (new sessions)",
-						);
-					},
-					onExternalEditorChange: (command) => {
-						this.settingsManager.setExternalEditor(command);
-					},
-					onWebSocketConnectTimeoutMsChange: (timeoutMs) => {
-						this.settingsManager.setWebSocketConnectTimeoutMs(timeoutMs);
-					},
-					onHttpProxyChange: (proxy) => {
-						this.settingsManager.setHttpProxy(proxy);
-						applyHttpProxySettings(proxy);
-					},
-					onShellPathChange: (path) => {
-						this.settingsManager.setShellPath(path);
-					},
-					onShellCommandPrefixChange: (prefix) => {
-						this.settingsManager.setShellCommandPrefix(prefix);
-					},
-					onNpmCommandChange: (command) => {
-						this.settingsManager.setNpmCommand(command.length > 0 ? command : undefined);
-					},
-					onEnableAnalyticsChange: (enabled) => {
-						this.settingsManager.setEnableAnalytics(enabled);
-					},
+					...humminSettingsCallbacks({
+						getSettingsManager: () => this.settingsManager,
+						getSession: () => this.session,
+						ui: this.ui,
+						footer: this.footer,
+						chatContainer: this.chatContainer,
+						showStatus: (message) => this.showStatus(message),
+						updateEditorBorderColor: () => this.updateEditorBorderColor(),
+						updateSelectorValue: (id, value) => selector?.updateValue(id, value),
+					}),
 					onCancel: () => {
 						done();
 						this.ui.requestRender();
@@ -6070,123 +5555,28 @@ export class InteractiveMode {
 	private get promptHistoryFile(): string {
 		// Lazy: class field initializers run before the constructor binds
 		// runtimeHost, so the session cwd is not available there.
-		return path.join(
-			getAgentDir(),
-			"history",
-			`${crypto.createHash("sha256").update(this.sessionManager.getCwd()).digest("hex").slice(0, 16)}.json`,
-		);
+		return getPromptHistoryFile(this.sessionManager.getCwd());
 	}
 
 	private loadPromptHistory(): void {
-		this.defaultEditor.setHistory([]);
-		try {
-			const file = this.promptHistoryFile;
-			if (!fs.existsSync(file)) return;
-			const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
-			if (!Array.isArray(parsed)) return;
-			const entries = parsed.filter((entry): entry is string => typeof entry === "string").slice(0, 500);
-			this.defaultEditor.setHistory(entries);
-		} catch {
-			// Corrupt or unreadable history is not worth reporting.
-		}
+		restorePromptHistory(this.defaultEditor, () => this.promptHistoryFile);
 	}
 
 	private rememberPromptHistory(text: string): void {
-		const trimmed = text.trim();
-		this.editor.addToHistory?.(text);
-		if (!trimmed) return;
-		try {
-			const file = this.promptHistoryFile;
-			fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-			let entries: string[] = [];
-			if (fs.existsSync(file)) {
-				try {
-					const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
-					if (Array.isArray(parsed))
-						entries = parsed.filter((entry): entry is string => typeof entry === "string");
-				} catch {
-					// A corrupt history must not prevent subsequent prompts from being saved.
-				}
-			}
-			if (entries[0] === trimmed) return;
-			entries = [trimmed, ...entries.filter((entry) => entry !== trimmed)].slice(0, 500);
-			fs.writeFileSync(file, JSON.stringify(entries), { mode: 0o600 });
-		} catch {
-			// Best effort persistence.
-		}
+		rememberPromptHistory(this.editor, () => this.promptHistoryFile, text);
 	}
 
 	private showQueueManager(): void {
-		const entries: Array<QueuedMessageEntry & { restoreText: () => string; remove: () => boolean }> = [];
-		for (const kind of ["steering", "followUp"] as const) {
-			for (const [index, message] of this.session.getQueuedUserMessages(kind).entries()) {
-				const content =
-					typeof message.content === "string"
-						? [{ type: "text" as const, text: message.content }]
-						: message.content;
-				entries.push({
-					kind,
-					index,
-					text: content
-						.filter((part) => part.type === "text")
-						.map((part) => part.text)
-						.join(""),
-					imageCount: content.filter((part) => part.type === "image").length,
-					restoreText: () => queuedMessageToEditorText(message),
-					remove: () => this.session.removeQueuedMessage(kind, index, message) !== undefined,
-				});
-			}
-			for (const message of this.compactionQueuedMessages.filter(
-				(item) => item.mode === (kind === "steering" ? "steer" : "followUp"),
-			)) {
-				entries.push({
-					kind,
-					index: entries.length,
-					text: message.text,
-					restoreText: () => message.text,
-					remove: () => {
-						const index = this.compactionQueuedMessages.indexOf(message);
-						if (index < 0) return false;
-						this.compactionQueuedMessages.splice(index, 1);
-						return true;
-					},
-				});
-			}
-		}
-		if (entries.length === 0) {
-			this.showStatus("No queued messages");
-			return;
-		}
-
-		this.showSelector((done) => {
-			const component = new QueueManagerComponent(
-				entries,
-				(action, entry) => {
-					const selected = entries.find((item) => item === entry);
-					if (!selected) return;
-					try {
-						const text = action === "restore" ? selected.restoreText() : undefined;
-						if (selected.remove()) {
-							if (text !== undefined)
-								this.editor.setText([text, this.editor.getText()].filter((part) => part.trim()).join("\n\n"));
-						} else {
-							this.showStatus("That message has already left the queue");
-						}
-					} catch (error) {
-						this.showError(error instanceof Error ? error.message : String(error));
-					}
-					done();
-					this.updatePendingMessagesDisplay();
-					this.ui.requestRender();
-					if (action === "delete" && this.session.pendingMessageCount + this.compactionQueuedMessages.length > 0)
-						this.showQueueManager();
-				},
-				() => {
-					done();
-					this.ui.requestRender();
-				},
-			);
-			return { component, focus: component };
+		showQueueManager({
+			getSession: () => this.session,
+			getCompactionQueuedMessages: () => this.compactionQueuedMessages,
+			getEditorText: () => this.editor.getText(),
+			setEditorText: (text) => this.editor.setText(text),
+			showSelector: (create) => this.showSelector(create),
+			showStatus: (message) => this.showStatus(message),
+			showError: (message) => this.showError(message),
+			updatePendingMessagesDisplay: () => this.updatePendingMessagesDisplay(),
+			requestRender: () => this.ui.requestRender(),
 		});
 	}
 
@@ -6510,17 +5900,7 @@ export class InteractiveMode {
 				});
 			}
 		}
-		const showAll = this.settingsManager.getProvidersShowAll();
-		const curated = (id: string): boolean =>
-			id === "zai" || id === "zai-coding-cn" || id === "zai-api" || isFleetProviderId(id);
-		const visible = options.filter((option) => showAll || curated(option.id) || option.status !== undefined);
-		return visible.sort((a, b) => {
-			const aCurated = curated(a.id);
-			const bCurated = curated(b.id);
-			if (aCurated && !bCurated) return -1;
-			if (!aCurated && bCurated) return 1;
-			return a.name.localeCompare(b.name);
-		});
+		return curateProviderOptions(options, this.settingsManager.getProvidersShowAll());
 	}
 
 	private async getLogoutProviderOptions(): Promise<AuthSelectorProvider[]> {
@@ -7227,21 +6607,9 @@ export class InteractiveMode {
 			if (outputPath?.endsWith(".jsonl")) {
 				const filePath = this.session.exportToJsonl(outputPath);
 				this.showStatus(`Session exported to: ${filePath}`);
-			} else if (outputPath?.endsWith(".md")) {
-				let filePath: string;
-				try {
-					filePath = exportSessionToMarkdown(this.sessionManager, outputPath);
-				} catch (error) {
-					if (!(error instanceof Error) || !error.message.startsWith("File already exists:")) throw error;
-					const confirmed = await this.session.extensionRunner
-						.getUIContext()
-						.confirm("Overwrite Markdown export?", error.message);
-					if (!confirmed) return;
-					filePath = exportSessionToMarkdown(this.sessionManager, outputPath, true);
-				}
-				this.showStatus(`Session exported to: ${filePath}`);
-			} else if (!outputPath) {
-				const filePath = exportSessionToMarkdown(this.sessionManager);
+			} else if (!outputPath || outputPath.endsWith(".md")) {
+				const filePath = await exportMarkdownConfirmingOverwrite(this.session, outputPath);
+				if (filePath === undefined) return;
 				this.showStatus(`Session exported to: ${filePath}`);
 			} else {
 				const filePath = await this.session.exportToHtml(outputPath, {
@@ -7645,99 +7013,26 @@ export class InteractiveMode {
 	private async handleClearCommand(): Promise<void> {
 		this.clearStatusIndicator();
 		try {
-			// Snapshot before the switch: queued messages live on the outgoing
-			// session and would otherwise be dropped with it.
-			const queued = this.collectQueuedForMigration();
-			const running = this.describeRunningWork();
-			let migrate = false;
-			if (running.length > 0) {
-				const choice = await this.showExtensionSelector(
-					`Running work: ${running.join(", ")}. Keep it running in the new session?`,
-					["Continue running (migrate to new session)", "Abort all"],
-				);
-				if (choice === undefined) return; // escape cancels the clear
-				migrate = choice.startsWith("Continue running");
-			}
-			setBackgroundMigrationChoice(migrate ? "migrate" : "abort");
+			const migration = await beginSessionClear({
+				session: this.session,
+				compactionQueuedMessages: this.compactionQueuedMessages,
+				footerDataProvider: this.footerDataProvider,
+				showExtensionSelector: (title, options) => this.showExtensionSelector(title, options),
+			});
+			if (!migration) return; // escape cancels the clear
 			const result = await this.runtimeHost.newSession();
-			consumeBackgroundMigrationChoice();
+			migration.releaseChoice();
 			if (result.cancelled) {
 				return;
 			}
 			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(
-				new ThemedText(
-					() =>
-						theme.fg(
-							"accent",
-							migrate ? "✓ New session started (running work migrated)" : "✓ New session started",
-						),
-					1,
-					1,
-				),
-			);
-			if (migrate) {
-				await this.session.restoreRememberedModel().catch(() => {});
-				await this.restoreQueuedAfterMigration(queued);
-			}
+			this.chatContainer.addChild(new ThemedText(() => theme.fg("accent", migration.successMessage), 1, 1));
+			if (migration.migrate) await this.session.restoreRememberedModel().catch(() => {});
+			await restoreQueuedAfterMigration(this.session, migration);
 			void this.session.restoreRememberedModel().catch(() => {});
 			this.ui.requestRender();
 		} catch (error: unknown) {
 			await this.handleFatalRuntimeError("Failed to create session", error);
-		}
-	}
-
-	/** Everything queued on the CURRENT session that a migrated clear should carry over. */
-	private collectQueuedForMigration(): {
-		queued: { content: string | (TextContent | ImageContent)[]; deliverAs: "steer" | "followUp" }[];
-		compaction: CompactionQueuedMessage[];
-	} {
-		return {
-			queued: [
-				...this.session.getQueuedUserMessages("steering").map((message) => ({
-					content: message.content as string | (TextContent | ImageContent)[],
-					deliverAs: "followUp" as const,
-				})),
-				...this.session.getQueuedUserMessages("followUp").map((message) => ({
-					content: message.content as string | (TextContent | ImageContent)[],
-					deliverAs: "followUp" as const,
-				})),
-			],
-			compaction: [...this.compactionQueuedMessages],
-		};
-	}
-
-	/** Human-readable list of work that a clear would interrupt; empty when idle. */
-	private describeRunningWork(): string[] {
-		const running: string[] = [];
-		if (this.session.isStreaming) running.push("active response");
-		if (this.session.isBashRunning) running.push("bash command");
-		const queuedCount = this.session.pendingMessageCount + this.compactionQueuedMessages.length;
-		if (queuedCount > 0) running.push(`${queuedCount} queued message${queuedCount === 1 ? "" : "s"}`);
-		const background = this.footerDataProvider.getExtensionStatuses().get("bg");
-		if (background) running.push(background);
-		return running;
-	}
-
-	/** Re-deliver queued messages into the fresh session after a migrated clear. */
-	private async restoreQueuedAfterMigration(queued: {
-		queued: { content: string | (TextContent | ImageContent)[]; deliverAs: "steer" | "followUp" }[];
-		compaction: CompactionQueuedMessage[];
-	}): Promise<void> {
-		const messages = [
-			...queued.compaction.map((entry) => ({
-				content: entry.text as string | (TextContent | ImageContent)[],
-				deliverAs: entry.mode,
-			})),
-			...queued.queued,
-		];
-		for (const message of messages) {
-			try {
-				await this.session.sendUserMessage(message.content, { deliverAs: message.deliverAs });
-			} catch {
-				// A message that cannot re-deliver (e.g. no model) must not abort the
-				// remaining migrations; the user sees the fresh session either way.
-			}
 		}
 	}
 

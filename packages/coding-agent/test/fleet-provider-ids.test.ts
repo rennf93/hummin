@@ -8,6 +8,7 @@ import humminLocalExtension from "../extensions/hummin-local.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import type { ExtensionAPI } from "../src/core/extensions/types.ts";
 import { FLEET_ENGINES, isFleetModel, isFleetProviderId } from "../src/core/fleet-provider-ids.ts";
+import { curatedModelScope } from "../src/core/hummin-curation.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { ModelSelectorComponent } from "../src/modes/interactive/components/model-selector.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
@@ -82,15 +83,10 @@ describe("interactive mode fleet curation", () => {
 			model("zai"),
 			model("openrouter"),
 		];
-		const fakeThis = {
-			session: { modelRuntime: { getAvailableSnapshot: () => models, listCredentials: async () => [] } },
-		};
-		const curatedModelScope = (
-			InteractiveMode as unknown as {
-				prototype: { curatedModelScope(this: typeof fakeThis): Promise<Array<{ model: Model<any> }>> };
-			}
-		).prototype.curatedModelScope;
-		const scope = await curatedModelScope.call(fakeThis);
+		const scope = await curatedModelScope({
+			getAvailableSnapshot: () => models,
+			listCredentials: async () => [],
+		} as never);
 		expect(scope.map((entry) => entry.model.provider)).toEqual(["colibri-mac-9997", "llamacpp-nas-9991", "zai"]);
 	});
 

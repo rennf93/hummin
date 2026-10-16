@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
 import type { ToolExecutionComponent } from "../../../src/modes/interactive/components/tool-execution.ts";
+import { PartialRenderCoalescer } from "../../../src/modes/interactive/hummin-partial-render-coalescer.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../../src/utils/ansi.ts";
@@ -35,7 +36,7 @@ type RenderSessionItems = (
 
 type RenderSessionContextThis = {
 	pendingTools: Map<string, ToolExecutionComponent>;
-	pendingPartialUpdates: Map<string, unknown>;
+	partialRenders: PartialRenderCoalescer;
 	footerDataProvider: { scheduleGitStatusRefresh(): void };
 	chatContainer: Container;
 	footer: { invalidate(): void };
@@ -69,7 +70,7 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 	const chatContainer = new Container();
 	return {
 		pendingTools: new Map<string, ToolExecutionComponent>(),
-		pendingPartialUpdates: new Map(),
+		partialRenders: new PartialRenderCoalescer(),
 		footerDataProvider: { scheduleGitStatusRefresh() {} },
 		chatContainer,
 		footer: { invalidate: vi.fn() },

@@ -171,8 +171,7 @@ it("records actual write-tool changes and rewinds files through the command hand
 			}) => Promise<void>;
 		}
 	).handleClearCommand;
-	// Prototype-backed this: handleClearCommand now delegates to sibling methods
-	// (collectQueuedForMigration, describeRunningWork) on the prototype chain.
+	// Prototype-backed this: handleClearCommand delegates to hummin-session-migration.
 	const fakeThis = Object.create(InteractiveMode.prototype) as Record<string, unknown>;
 	Object.defineProperties(fakeThis, {
 		clearStatusIndicator: { value: clearStatusIndicator, configurable: true },

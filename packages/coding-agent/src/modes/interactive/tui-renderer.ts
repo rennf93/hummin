@@ -3,6 +3,7 @@ import { ProcessTerminal, type TUI, TuiAltScreen, TuiMainScreen } from "@earendi
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
 import { keyDisplayText } from "./components/keybinding-hints.ts";
+import { SCROLLBAR_MARKER_STYLES } from "./hummin-marker-jump.ts";
 import { theme } from "./theme/theme.ts";
 
 export interface InteractiveTuiOptions {
@@ -48,11 +49,7 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 	}
 	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory, {
 		mouse: true,
-		scrollbarMarkerStyles: {
-			user: (text) => theme.fg("accent", text),
-			system: (text) => theme.fg("muted", text),
-			turnEnd: (text) => theme.fg("dim", text),
-		},
+		scrollbarMarkerStyles: SCROLLBAR_MARKER_STYLES,
 	});
 }
 

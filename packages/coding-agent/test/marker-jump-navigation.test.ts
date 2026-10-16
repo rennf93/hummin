@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findMarkerJumpTarget, type TranscriptMarker } from "../src/modes/interactive/interactive-mode.ts";
+import { findMarkerJumpTarget, type TranscriptMarker } from "../src/modes/interactive/hummin-marker-jump.ts";
 
 function markers(...contentRows: number[]): TranscriptMarker[] {
 	return contentRows.map((contentRow, i) => ({ trackRow: i, contentRow, kind: "user" }));
