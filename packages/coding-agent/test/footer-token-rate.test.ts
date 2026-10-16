@@ -1,7 +1,8 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
-import { FooterComponent, formatTokenRate } from "../src/modes/interactive/components/footer.ts";
+import { FooterComponent } from "../src/modes/interactive/components/footer.ts";
+import { formatTokenRate } from "../src/modes/interactive/components/hummin-footer.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 

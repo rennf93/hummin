@@ -1,0 +1,438 @@
+import type { Usage } from "@earendil-works/pi-ai/compat";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { VERSION } from "../../../config.ts";
+import type { AgentSession } from "../../../core/agent-session.ts";
+import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
+import type { StatuslineSettings } from "../../../core/settings-manager.ts";
+import { addUsageToTotals, createUsageTotals, type UsageTotals } from "../../../core/usage-totals.ts";
+import { theme } from "../theme/theme.ts";
+import { countDiffStat, type DiffStat } from "./diff.ts";
+import { formatCwdForFooter, formatTokens, sanitizeStatusText } from "./footer.ts";
+
+/** Format a live token-generation rate (tokens/second) for compact footer display. */
+export function formatTokenRate(rate: number): string {
+	if (!Number.isFinite(rate)) return "?";
+	// Keep one decimal below 100 tok/s (more readable for slower models); integer above.
+	return rate < 100 ? rate.toFixed(1) : Math.round(rate).toString();
+}
+
+/** hummin footer layout (identity row, stats row with ctx meter and tok/s, custom statusline, status row); FooterComponent delegates its rendering here. */
+export class HumminFooter {
+	private autoCompactEnabled = true;
+	private session: AgentSession;
+	private footerData: ReadonlyFooterDataProvider;
+	private compactionQueueCount = 0;
+	/** Cached per-toolCall diff stats so re-renders don't re-count patches. */
+	private diffStatCache = new Map<string, DiffStat>();
+	/**
+	 * Live token-generation rate for the current assistant response.
+	 * Anchored against the previous render's completion-token count; the rate is the
+	 * smoothed (EMA) delta of `usage.output` between consecutive renders. Cleared
+	 * automatically whenever generation stalls (e.g. during tool execution or while
+	 * idle), because completion tokens stop changing.
+	 */
+	private rateState = { prevOutput: 0, hasPrev: false, smoothed: undefined as number | undefined };
+	private rateStatePrevTime = 0;
+	/** EMA smoothing factor for the live tok/s rate (0..1). Lower = smoother. */
+	private static readonly RATE_SMOOTHING = 0.35;
+
+	/** Aggregated stats for all entries except the last; recomputed only when the entry set grows. */
+	private cachedPrefix:
+		| {
+				entryCount: number;
+				firstEntry: unknown;
+				usage: UsageTotals;
+				diff: DiffStat;
+				cacheHitRate: number | undefined;
+		  }
+		| undefined;
+
+	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
+		this.session = session;
+		this.footerData = footerData;
+	}
+
+	setSession(session: AgentSession): void {
+		this.session = session;
+	}
+
+	setAutoCompactEnabled(enabled: boolean): void {
+		this.autoCompactEnabled = enabled;
+	}
+
+	setCompactionQueueCount(count: number): void {
+		this.compactionQueueCount = count;
+	}
+
+	/** Cached per-toolCall diff stat, or undefined when the result carries no diff. */
+	private getToolDiffStat(message: { toolCallId: string; details?: unknown }): DiffStat | undefined {
+		const details = message.details as { diff?: unknown; added?: unknown; removed?: unknown } | undefined;
+		// edit stores a display diff; write stores precomputed counts
+		if (typeof details?.added === "number" && typeof details.removed === "number") {
+			return { added: details.added, removed: details.removed };
+		}
+		if (typeof details?.diff !== "string" || details.diff === "") return undefined;
+		const cached = this.diffStatCache.get(message.toolCallId);
+		if (cached) return cached;
+		const stat = countDiffStat(details.diff);
+		this.diffStatCache.set(message.toolCallId, stat);
+		return stat;
+	}
+
+	/** Aggregate usage/diff stats from a single session entry. */
+	private aggregateEntry(
+		entry: { type: string; message?: unknown; usage?: unknown },
+		usage: UsageTotals,
+		diff: DiffStat,
+	): number | undefined {
+		const message = entry.message as
+			| { role?: string; usage?: Usage; details?: unknown; toolCallId?: string }
+			| undefined;
+		if (entry.type === "usage") {
+			addUsageToTotals(usage, entry.usage as Usage);
+			return undefined;
+		}
+		if (entry.type === "message" && message?.role === "assistant") {
+			const msgUsage = message.usage as Usage;
+			addUsageToTotals(usage, msgUsage);
+			const latestPromptTokens = msgUsage.input + msgUsage.cacheRead + msgUsage.cacheWrite;
+			return latestPromptTokens > 0 ? (msgUsage.cacheRead / latestPromptTokens) * 100 : undefined;
+		}
+		if (entry.type === "message" && message?.role === "toolResult") {
+			if (message.usage) {
+				addUsageToTotals(usage, message.usage);
+			}
+			const stat = this.getToolDiffStat({ toolCallId: message.toolCallId ?? "", details: message.details });
+			if (stat) {
+				diff.added += stat.added;
+				diff.removed += stat.removed;
+			}
+		}
+		if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
+			addUsageToTotals(usage, entry.usage as Usage);
+		}
+		return undefined;
+	}
+
+	/**
+	 * Compute session-wide stats. All entries except the last are cached (entries only grow, and
+	 * older entries never change); the last entry is folded in fresh each render because its
+	 * usage mutates while an assistant message streams.
+	 */
+	private computeSessionStats() {
+		const entries = this.session.sessionManager.getEntries();
+		const prefixCount = Math.max(0, entries.length - 1);
+		if (
+			!this.cachedPrefix ||
+			this.cachedPrefix.entryCount !== prefixCount ||
+			entries[0] !== this.cachedPrefix.firstEntry
+		) {
+			const usage = createUsageTotals();
+			const diff: DiffStat = { added: 0, removed: 0 };
+			let cacheHitRate: number | undefined;
+			for (let i = 0; i < prefixCount; i++) {
+				const hitRate = this.aggregateEntry(
+					entries[i] as { type: string; message?: unknown; usage?: unknown },
+					usage,
+					diff,
+				);
+				if (hitRate !== undefined) cacheHitRate = hitRate;
+			}
+			this.cachedPrefix = { entryCount: prefixCount, firstEntry: entries[0], usage, diff, cacheHitRate };
+		}
+
+		const usageTotals = { ...this.cachedPrefix.usage };
+		const sessionDiff: DiffStat = { ...this.cachedPrefix.diff };
+		let latestCacheHitRate = this.cachedPrefix.cacheHitRate;
+		if (entries.length > 0) {
+			const hitRate = this.aggregateEntry(
+				entries[entries.length - 1] as { type: string; message?: unknown; usage?: unknown },
+				usageTotals,
+				sessionDiff,
+			);
+			if (hitRate !== undefined) latestCacheHitRate = hitRate;
+		}
+		return { usageTotals, sessionDiff, latestCacheHitRate };
+	}
+
+	/** One left-aligned footer row: groups joined by dim separators. */
+	/**
+	 * Compute the live token-generation rate (tokens/second) for the current in-flight
+	 * assistant response, or undefined when no response is actively generating. Uses the
+	 * delta of completion tokens between consecutive renders so it needs no reference
+	 * identity or timing assumptions and self-clears while generation stalls.
+	 */
+	private computeTokenRate(now = Date.now()): number | undefined {
+		// The in-flight partial assistant message lives in state.streamingMessage
+		// during streaming; state.messages only gains the final message at
+		// completion. No streaming message = nothing generating: reset and hide.
+		const streaming = this.session.state.streamingMessage as
+			| { role: string; usage?: { output?: number } }
+			| undefined;
+		const output =
+			streaming?.role === "assistant" && typeof streaming.usage?.output === "number" ? streaming.usage.output : -1;
+
+		if (output < 0) {
+			// Generation stalled (idle, tool execution, or a completed response): reset.
+			this.rateState = { prevOutput: 0, hasPrev: false, smoothed: undefined };
+			return undefined;
+		}
+
+		if (!this.rateState.hasPrev) {
+			this.rateState = { prevOutput: output, hasPrev: true, smoothed: undefined };
+			this.rateStatePrevTime = now;
+			return undefined;
+		}
+
+		const dtSeconds = (now - this.rateStatePrevTime) / 1000;
+		const delta = output - this.rateState.prevOutput;
+		this.rateState.prevOutput = output;
+		this.rateStatePrevTime = now;
+
+		if (dtSeconds <= 0 || delta <= 0) {
+			// Same-tick render or a stall tick: keep the smoothed value, don't update it.
+			return this.rateState.smoothed;
+		}
+
+		const rawRate = delta / dtSeconds;
+		this.rateState.smoothed =
+			this.rateState.smoothed === undefined
+				? rawRate
+				: HumminFooter.RATE_SMOOTHING * rawRate + (1 - HumminFooter.RATE_SMOOTHING) * this.rateState.smoothed;
+		return this.rateState.smoothed;
+	}
+
+	private joinGroups(groups: string[]): string {
+		return groups.filter((group) => group.length > 0).join(theme.fg("dim", " | "));
+	}
+
+	/** Build the dim-labeled live tok/s segment, e.g. `tok/s 45.2`. */
+	private formatTokenRateLabel(rate: number): string {
+		return `${theme.fg("dim", "tok/s")} ${theme.fg("accent", formatTokenRate(rate))}`;
+	}
+
+	/** Fit a left and right block on one width, right block pinned to the edge; left truncates first. */
+	private alignLeftRight(left: string, right: string, width: number): string {
+		const rightWidth = visibleWidth(right);
+		if (visibleWidth(left) + rightWidth <= width) {
+			return left + " ".repeat(width - visibleWidth(left) - rightWidth) + right;
+		}
+		if (rightWidth >= width) return truncateToWidth(right, width, "...");
+		const truncatedLeft = truncateToWidth(left, width - rightWidth, "...");
+		const padding = " ".repeat(Math.max(0, width - visibleWidth(truncatedLeft) - rightWidth));
+		return truncatedLeft + padding + right;
+	}
+
+	render(width: number): string[] {
+		const state = this.session.state;
+
+		// Calculate cumulative usage from ALL session entries (not just post-compaction messages)
+		const { usageTotals, sessionDiff, latestCacheHitRate } = this.computeSessionStats();
+
+		// Calculate context usage from session (handles compaction correctly).
+		// After compaction, tokens are unknown until the next LLM response.
+		const contextUsage = this.session.getContextUsage();
+		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
+		const contextPercentValue = contextUsage?.percent ?? 0;
+		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
+
+		const cwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
+		const gitStatus = this.footerData.getGitStatus();
+		const branch = this.footerData.getGitBranch();
+		const repoName = this.footerData.getGitRepoName();
+
+		const extensionStatuses = this.footerData.getExtensionStatuses();
+
+		// hummin: custom statusline layout. When `statusline` has at least one non-empty
+		// side, the fixed two-row content is replaced by the user-ordered segments.
+		const statusline: StatuslineSettings | undefined = this.session.settingsManager?.getStatusline?.();
+		const customStatusline =
+			statusline !== undefined && ((statusline.left?.length ?? 0) > 0 || (statusline.right?.length ?? 0) > 0);
+
+		// Row 1: dir | repo | branch   |   (provider) + model
+		const idParts: string[] = [theme.fg("dim", cwd)];
+		if (repoName) idParts.push(repoName);
+		if (branch) {
+			const dirty =
+				gitStatus && (gitStatus.staged > 0 || gitStatus.modified > 0 || gitStatus.untracked > 0) ? "*" : "";
+			idParts.push(theme.fg("accent", `${branch}${dirty}`));
+		}
+		const sessionName = this.session.sessionManager.getSessionName();
+		if (sessionName) idParts.push(sessionName);
+		const idLine = this.joinGroups(idParts);
+
+		const modelName = state.model?.id || "no-model";
+		const providerName = state.model
+			? (this.session.modelRuntime.getProvider(state.model.provider)?.name ?? state.model.provider)
+			: undefined;
+		const modelParts: string[] = [];
+		if (providerName) modelParts.push(theme.fg("dim", `(${providerName})`));
+		modelParts.push(theme.fg("accent", modelName));
+		if (state.model?.reasoning) {
+			const thinkingLevel = state.thinkingLevel || "off";
+			modelParts.push(theme.fg("dim", thinkingLevel === "off" ? "no thinking" : thinkingLevel));
+		}
+		// A virtual model routes each request; show where the latest response went.
+		// Appended to the last segment so the " + " joiner does not split the arrow.
+		const routed = this.session.routedModel;
+		if (routed) {
+			const routedLevel = routed.thinkingLevel ? ` \u2022 ${routed.thinkingLevel}` : "";
+			const routedText = theme.fg("dim", ` \u2192 ${routed.model.id}${routedLevel}`);
+			if (modelParts.length > 0) modelParts[modelParts.length - 1] += routedText;
+			else modelParts.push(theme.fg("dim", `\u2192 ${routed.model.id}${routedLevel}`));
+		}
+		const modelLine = modelParts.join(theme.fg("dim", " + "));
+
+		// Row 2: diff | git | tokens   |   ctx bar
+		const statGroups: string[] = [];
+		const queueCount = this.session.pendingMessageCount + this.compactionQueueCount;
+		if (queueCount > 0) statGroups.push(`${theme.fg("dim", "queue")} ${theme.fg("accent", String(queueCount))}`);
+
+		// Cumulative diff made by the agent this session (from edit/write tool patches)
+		let diffText = "";
+		if (sessionDiff.added > 0 || sessionDiff.removed > 0) {
+			const diffParts: string[] = [];
+			if (sessionDiff.added > 0) diffParts.push(theme.fg("toolDiffAdded", `+${formatTokens(sessionDiff.added)}`));
+			if (sessionDiff.removed > 0)
+				diffParts.push(theme.fg("toolDiffRemoved", `-${formatTokens(sessionDiff.removed)}`));
+			diffText = diffParts.join(" ");
+			statGroups.push(`${theme.fg("dim", "diff")} ${diffText}`);
+		}
+
+		// Git working-tree state (includes changes made outside the agent)
+		let gitText = "";
+		if (gitStatus) {
+			const gitParts: string[] = [];
+			if (gitStatus.staged > 0) gitParts.push(theme.fg("toolDiffAdded", `+${gitStatus.staged}`));
+			if (gitStatus.modified > 0) gitParts.push(theme.fg("warning", `~${gitStatus.modified}`));
+			if (gitStatus.untracked > 0) gitParts.push(theme.fg("dim", `?${gitStatus.untracked}`));
+			if (gitStatus.ahead) gitParts.push(theme.fg("accent", `↑${gitStatus.ahead}`));
+			if (gitStatus.behind) gitParts.push(theme.fg("accent", `↓${gitStatus.behind}`));
+			if (gitParts.length > 0) {
+				gitText = gitParts.join(" ");
+				statGroups.push(`${theme.fg("dim", "git")} ${gitText}`);
+			}
+		}
+
+		const tokenParts: string[] = [];
+		if (usageTotals.input) tokenParts.push(`${theme.fg("dim", "in")} ${formatTokens(usageTotals.input)}`);
+		if (usageTotals.output) tokenParts.push(`${theme.fg("dim", "out")} ${formatTokens(usageTotals.output)}`);
+		if (usageTotals.cacheRead) tokenParts.push(`${theme.fg("dim", "rd")} ${formatTokens(usageTotals.cacheRead)}`);
+		if (usageTotals.cacheWrite) tokenParts.push(`${theme.fg("dim", "wr")} ${formatTokens(usageTotals.cacheWrite)}`);
+		if ((usageTotals.cacheRead > 0 || usageTotals.cacheWrite > 0) && latestCacheHitRate !== undefined) {
+			tokenParts.push(`${theme.fg("dim", "hit")} ${latestCacheHitRate.toFixed(1)}%`);
+		}
+
+		// Kimi Coding is subscription-backed despite using API-key authentication.
+		const usingSubscription = state.model
+			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(state.model.provider)
+			: false;
+		const pricedModel =
+			state.model && Object.values(state.model.cost ?? {}).some((rate) => typeof rate === "number" && rate > 0);
+		let costText = "";
+		if (usageTotals.cost || usingSubscription || pricedModel) {
+			costText = `$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
+			tokenParts.push(costText);
+		}
+		if (tokenParts.length > 0) statGroups.push(tokenParts.join(theme.fg("dim", " · ")));
+		const statsLine = this.joinGroups(statGroups);
+
+		// Context meter: ctx [████░░░░░░] 3.2% — unchanged size, pinned to the right edge.
+		const autoTag = this.autoCompactEnabled ? " auto" : "";
+		const barCells = 10;
+		const filled = Math.max(0, Math.min(barCells, Math.round((contextPercentValue / 100) * barCells)));
+		const bar = "█".repeat(filled) + "░".repeat(barCells - filled);
+		const meterColor = contextPercentValue > 90 ? "error" : contextPercentValue > 70 ? "warning" : "accent";
+		const contextValue =
+			contextPercent === "?"
+				? `${theme.fg("dim", "?")}/${formatTokens(contextWindow)}`
+				: `${theme.fg(meterColor, bar)} ${theme.fg("dim", `${contextPercent}%${autoTag}`)}`;
+		const contextLine = `${theme.fg("dim", "ctx")} ${contextValue}`;
+
+		let lines: string[];
+		if (customStatusline && statusline) {
+			// Custom layout: one row of user-ordered segments. Known tokens resolve from
+			// the same data as the fixed rows; unknown tokens render dim as-is.
+			const segmentText = (token: string): string => {
+				switch (token) {
+					case "dir":
+						return theme.fg("dim", cwd);
+					case "repo":
+						return repoName ?? "";
+					case "branch": {
+						if (!branch) return "";
+						const dirty =
+							gitStatus && (gitStatus.staged > 0 || gitStatus.modified > 0 || gitStatus.untracked > 0)
+								? "*"
+								: "";
+						return theme.fg("accent", `${branch}${dirty}`);
+					}
+					case "model":
+						return theme.fg("accent", modelName);
+					case "provider":
+						return providerName ? theme.fg("dim", `(${providerName})`) : "";
+					case "ctx":
+						return `${theme.fg(meterColor, `${contextPercent}%`)}${
+							contextWindow ? theme.fg("dim", `/${formatTokens(contextWindow)}`) : ""
+						}`;
+					case "tokens":
+						return tokenParts.join(theme.fg("dim", " · "));
+					case "cost":
+						return costText;
+					case "queue":
+						return queueCount > 0 ? `${theme.fg("dim", "queue")} ${theme.fg("accent", String(queueCount))}` : "";
+					case "background":
+						return sanitizeStatusText(extensionStatuses.get("bg") ?? "");
+					case "sandbox":
+						return sanitizeStatusText(extensionStatuses.get("sandbox") ?? "");
+					case "mcp":
+						return sanitizeStatusText(extensionStatuses.get("mcp") ?? "");
+					case "git":
+						return gitText ? `${theme.fg("dim", "git")} ${gitText}` : "";
+					case "diff":
+						return diffText ? `${theme.fg("dim", "diff")} ${diffText}` : "";
+					default:
+						// Unknown token: render dim as-is (documented tolerant behavior)
+						return theme.fg("dim", token);
+				}
+			};
+			// Custom sides join with the subtle dim middot (like the stats row):
+			// with many segments on one line, " | " reads as pipe soup.
+			const resolveSide = (tokens: string[] | undefined): string =>
+				(tokens ?? [])
+					.map(segmentText)
+					.filter((part) => part.length > 0)
+					.join(theme.fg("dim", " · "));
+			lines = [this.alignLeftRight(resolveSide(statusline.left), resolveSide(statusline.right), width), ""];
+		} else {
+			// Right group: live tok/s (when generating) sits immediately left of the ctx meter.
+			const tokenRate = this.computeTokenRate();
+			const rightItems = [];
+			if (tokenRate !== undefined) rightItems.push(this.formatTokenRateLabel(tokenRate));
+			if (contextLine) rightItems.push(contextLine);
+			const rightGroup = rightItems.join(theme.fg("dim", " · "));
+			lines = [this.alignLeftRight(idLine, modelLine, width), "", this.alignLeftRight(statsLine, rightGroup, width)];
+		}
+
+		// Add extension statuses on a single line, sorted by key alphabetically.
+		// The "todo" key is excluded: it renders natively as a styled segment below.
+		const sortedStatuses = Array.from(extensionStatuses.entries())
+			.sort(([a], [b]) => a.localeCompare(b))
+			.filter(([key]) => key !== "todo")
+			.map(([, text]) => sanitizeStatusText(text));
+		const todoSummary = this.footerData.getTodoSummary();
+		if (todoSummary) {
+			const [counts, ...rest] = sanitizeStatusText(todoSummary).split(" · ");
+			const detail = rest.length > 0 ? ` ${theme.fg("dim", `· ${rest.join(" · ")}`)}` : "";
+			sortedStatuses.unshift(`${theme.fg("dim", "TODOs")} ${theme.fg("accent", counts)}${detail}`);
+		}
+		if (sortedStatuses.length > 0) {
+			const statusLine = sortedStatuses.join(" ");
+			// Running version pinned to the right edge of the status row (the
+			// TODOs row); the left side truncates first.
+			lines.push(this.alignLeftRight(statusLine, theme.fg("dim", `v${VERSION}`), width));
+		}
+
+		return lines;
+	}
+}

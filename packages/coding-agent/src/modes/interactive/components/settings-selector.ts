@@ -4,20 +4,14 @@ import {
 	type Component,
 	Container,
 	getCapabilities,
-	getKeybindings,
-	Input,
 	type ScrollViewScrollbar,
 	type SelectItem,
 	type SettingItem,
 	SettingsList,
 	Spacer,
 	Text,
-	type TuiMouseEvent,
-	type TuiMouseEventResult,
-	truncateToWidth,
-	visibleWidth,
+	type WheelScrollLines,
 } from "@earendil-works/pi-tui";
-import { THINKING_LEVEL_OPTIONS } from "../../../core/defaults.ts";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
 import { SETTINGS_DEFAULTS } from "../../../core/settings-defaults.ts";
 import {
@@ -39,7 +33,13 @@ import {
 	theme,
 } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
-import { keyDisplayText, keyText } from "./keybinding-hints.ts";
+import {
+	type HumminSettingsCallbacks,
+	type HumminSettingsConfig,
+	handleHumminSettingChange,
+	SettingsTabs,
+} from "./hummin-settings.ts";
+import { keyDisplayText } from "./keybinding-hints.ts";
 import { SelectSubmenu, SteppedSubmenu, type SteppedSubmenuStep } from "./settings-submenu.ts";
 
 const MODEL_PICKER_LAYOUT = { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 46 };
@@ -64,60 +64,9 @@ const DEFAULT_PROJECT_TRUST_BY_LABEL = new Map(
 	Object.entries(DEFAULT_PROJECT_TRUST_LABELS).map(([value, label]) => [label, value as DefaultProjectTrust]),
 );
 
-const WS_CONNECT_TIMEOUT_CHOICES = [
-	{ label: "5 sec", timeoutMs: 5_000 },
-	{ label: "10 sec", timeoutMs: 10_000 },
-	{ label: "30 sec", timeoutMs: 30_000 },
-	{ label: "disabled", timeoutMs: 0 },
-] as const;
+export { type SettingsCategory, SettingsTabBar } from "./hummin-settings.ts";
 
-const CLEAR_OVERRIDE_VALUE = "__clear__";
-
-function formatWsConnectTimeoutMs(timeoutMs: number | undefined): string {
-	if (timeoutMs === undefined) return "default";
-	const choice = WS_CONNECT_TIMEOUT_CHOICES.find((c) => c.timeoutMs === timeoutMs);
-	return choice ? choice.label : `${Math.round(timeoutMs / 1000)} sec`;
-}
-
-function parseWsConnectTimeoutChoice(value: string): number | undefined {
-	if (value === "default") return undefined;
-	const choice = WS_CONNECT_TIMEOUT_CHOICES.find((c) => c.label === value);
-	return choice ? choice.timeoutMs : undefined;
-}
-
-function splitInstances(value: string): string[] {
-	return value
-		.split(",")
-		.map((entry) => entry.trim())
-		.filter((entry) => entry.length > 0);
-}
-
-function splitArgv(value: string): string[] {
-	return value
-		.split(/\s+/)
-		.map((entry) => entry.trim())
-		.filter((entry) => entry.length > 0);
-}
-
-export interface SettingsCategory {
-	id: string;
-	label: string;
-}
-
-export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
-	{ id: "general", label: "General" },
-	{ id: "agent", label: "Agent" },
-	{ id: "models", label: "Models" },
-	{ id: "memory", label: "Memory" },
-	{ id: "fleet", label: "Fleet" },
-	{ id: "editor", label: "Editor" },
-	{ id: "terminal", label: "Terminal" },
-	{ id: "network", label: "Network" },
-	{ id: "shell", label: "Shell" },
-	{ id: "privacy", label: "Privacy" },
-];
-
-export interface SettingsConfig {
+export interface SettingsConfig extends HumminSettingsConfig {
 	autoCompact: boolean;
 	defaultModel: string;
 	currentModel?: Model<any>;
@@ -129,9 +78,6 @@ export interface SettingsConfig {
 	enableSkillCommands: boolean;
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";
-	streamingSubmitMode: "steer" | "followUp";
-	messageTimestamps: boolean;
-	compactPrompt: boolean;
 	transport: Transport;
 	sessionShareDestination: SessionShareDestination;
 	httpIdleTimeoutMs: number;
@@ -153,42 +99,19 @@ export interface SettingsConfig {
 	editorPaddingX: number;
 	outputPad: 0 | 1;
 	autocompleteMaxVisible: number;
-	quietStartup: boolean | "header";
+	quietStartup: QuietStartup;
 	defaultProjectTrust: DefaultProjectTrust;
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
-	terminalNotifications: string;
-	terminalNotificationsWhen: string;
 	tuiMode: TuiMode;
 	fullscreenExitOutput: FullscreenExitOutput;
 	fullscreenScrollbar: ScrollViewScrollbar;
 	fullscreenCopyOnSelect: boolean;
-	fullscreenWheelScrollLines: "auto" | number;
+	fullscreenWheelScrollLines: WheelScrollLines;
 	warnings: WarningSettings;
-	providersShowAll: boolean;
-	retryEnabled: boolean;
-	memoryEnabled: boolean;
-	memoryMode: "lesson" | "vault";
-	memoryVaultDir: string;
-	memoryProvider: string;
-	memoryModelId: string;
-	localInstances: string[];
-	fleetAutoStart: boolean;
-	rightSizeEnabled: boolean;
-	rightSizeSwingThreshold: number;
-	rightSizeProfileCount: number;
-	rightSizeProfilesJson: string;
-	editorMode: "default" | "vim";
-	externalEditor: string;
-	websocketConnectTimeoutMs: number | undefined;
-	httpProxy: string;
-	shellPath: string;
-	shellCommandPrefix: string;
-	npmCommand: string;
-	enableAnalytics: boolean;
 }
 
-export interface SettingsCallbacks {
+export interface SettingsCallbacks extends HumminSettingsCallbacks {
 	onAutoCompactChange: (enabled: boolean) => void;
 	onShowImagesChange: (enabled: boolean) => void;
 	onImageWidthCellsChange: (width: number) => void;
@@ -197,9 +120,6 @@ export interface SettingsCallbacks {
 	onEnableSkillCommandsChange: (enabled: boolean) => void;
 	onSteeringModeChange: (mode: "all" | "one-at-a-time") => void;
 	onFollowUpModeChange: (mode: "all" | "one-at-a-time") => void;
-	onStreamingSubmitModeChange: (mode: "steer" | "followUp") => void;
-	onMessageTimestampsChange: (enabled: boolean) => void;
-	onCompactPromptChange: (enabled: boolean) => void;
 	onTransportChange: (transport: Transport) => void;
 	onSessionShareDestinationChange: (destination: SessionShareDestination) => void;
 	onHttpIdleTimeoutMsChange: (timeoutMs: number) => void;
@@ -212,46 +132,23 @@ export interface SettingsCallbacks {
 	onMermaidRenderingModeChange: (mode: MermaidRenderingMode) => void;
 	onShowCacheMissNoticesChange: (shown: boolean) => void;
 	onCollapseChangelogChange: (collapsed: boolean) => void;
-	onFullscreenWheelScrollLinesChange: (lines: "auto" | number) => void;
 	onEnableInstallTelemetryChange: (enabled: boolean) => void;
-	onQuietStartupChange: (quiet: QuietStartup) => void;
-	onDefaultProjectTrustChange: (defaultProjectTrust: DefaultProjectTrust) => void;
 	onDoubleEscapeActionChange: (action: "fork" | "tree" | "none") => void;
 	onTreeFilterModeChange: (mode: "default" | "no-tools" | "user-only" | "labeled-only" | "all") => void;
 	onShowHardwareCursorChange: (enabled: boolean) => void;
 	onEditorPaddingXChange: (padding: number) => void;
 	onOutputPadChange: (padding: 0 | 1) => void;
 	onAutocompleteMaxVisibleChange: (maxVisible: number) => void;
+	onQuietStartupChange: (quiet: QuietStartup) => void;
+	onDefaultProjectTrustChange: (defaultProjectTrust: DefaultProjectTrust) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
-	onTerminalNotificationsChange: (channel: string) => void;
-	onTerminalNotificationsWhenChange: (when: string) => void;
 	onTuiModeChange: (mode: TuiMode) => void;
 	onFullscreenExitOutputChange: (output: FullscreenExitOutput) => void;
 	onFullscreenScrollbarChange: (mode: ScrollViewScrollbar) => void;
 	onFullscreenCopyOnSelectChange: (enabled: boolean) => void;
+	onFullscreenWheelScrollLinesChange: (lines: WheelScrollLines) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
-	onDefaultThinkingLevelChange: (level: ThinkingLevel) => void;
-	onProvidersShowAllChange: (enabled: boolean) => void;
-	onRetryEnabledChange: (enabled: boolean) => void;
-	onMemoryEnabledChange: (enabled: boolean) => void;
-	onMemoryModeChange: (mode: "lesson" | "vault") => void;
-	onMemoryVaultDirChange: (dir: string) => void;
-	onMemoryProviderChange: (provider: string) => void;
-	onMemoryModelIdChange: (modelId: string) => void;
-	onLocalInstancesChange: (instances: string[]) => void;
-	onFleetAutoStartChange: (enabled: boolean) => void;
-	onRightSizeEnabledChange: (enabled: boolean) => void;
-	onRightSizeSwingThresholdChange: (threshold: number) => void;
-	onRightSizeProfilesChange: (profilesJson: string) => void;
-	onEditorModeChange: (mode: "default" | "vim") => void;
-	onExternalEditorChange: (command: string) => void;
-	onWebSocketConnectTimeoutMsChange: (timeoutMs: number | undefined) => void;
-	onHttpProxyChange: (proxy: string) => void;
-	onShellPathChange: (path: string) => void;
-	onShellCommandPrefixChange: (prefix: string) => void;
-	onNpmCommandChange: (command: string[]) => void;
-	onEnableAnalyticsChange: (enabled: boolean) => void;
 	onCancel: () => void;
 }
 
@@ -300,6 +197,8 @@ class WarningSettingsSubmenu extends Container {
 		this.settingsList.handleInput(data);
 	}
 }
+
+const CLEAR_OVERRIDE_VALUE = "__clear__";
 
 function modelSettingKey(model: Model<any>): string {
 	return `${model.provider}/${model.id}`;
@@ -572,373 +471,10 @@ class ThemeSubmenu extends Container {
 }
 
 /**
- * Free-text submenu: input pre-filled with the current value.
- * Enter saves, Esc cancels. An optional validator keeps the submenu open with an
- * inline error when the value is not saveable.
- */
-class TextInputSubmenu extends Container {
-	private input: Input;
-	private error: string | undefined;
-
-	constructor(
-		title: string,
-		description: string,
-		initialValue: string,
-		placeholder: string,
-		onSave: (value: string) => void,
-		onCancel: () => void,
-		validate?: (value: string) => string | undefined,
-	) {
-		super();
-		this.addChild(new Text(theme.bold(theme.fg("accent", title)), 0, 0));
-		if (description) {
-			this.addChild(new Spacer(1));
-			this.addChild(new Text(theme.fg("muted", description), 0, 0));
-		}
-		this.addChild(new Spacer(1));
-		this.input = new Input({ prompt: "> ", placeholder });
-		this.input.setValue(initialValue);
-		this.input.onSubmit = (value) => {
-			const trimmed = value.trim();
-			const problem = validate?.(trimmed);
-			if (problem) {
-				this.error = problem;
-				return;
-			}
-			this.error = undefined;
-			onSave(trimmed);
-		};
-		this.input.onEscape = () => onCancel();
-		this.addChild(this.input);
-		this.addChild(new Spacer(1));
-		this.addChild(new Text(theme.fg("dim", "  Enter to save · Esc to cancel"), 0, 0));
-	}
-
-	handleInput(data: string): void {
-		this.input.handleInput(data);
-	}
-
-	render(width: number): string[] {
-		const lines = super.render(width);
-		if (this.error) lines.splice(lines.length - 1, 0, theme.fg("error", `  ${this.error}`));
-		return lines;
-	}
-}
-
-/** A right-size model profile: identity plus optional review metadata. */
-interface RightSizeProfile extends Record<string, unknown> {
-	provider: string;
-	modelId: string;
-	description?: string;
-	speed?: string;
-	thinkingLevels?: string[];
-	cost?: { input?: number; output?: number };
-}
-
-const RIGHT_SIZE_SPEED_VALUES = ["—", "fast", "normal", "slow"];
-const RIGHT_SIZE_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-
-/** Parse and shape-check the stored profiles JSON. Throws with a user-facing message. */
-function parseRightSizeProfiles(json: string): RightSizeProfile[] {
-	const parsed: unknown = JSON.parse(json);
-	if (!Array.isArray(parsed)) throw new Error("profiles must be a JSON array");
-	return parsed.map((entry) => {
-		const profile = entry as RightSizeProfile;
-		if (
-			typeof profile?.provider !== "string" ||
-			!profile.provider.trim() ||
-			typeof profile?.modelId !== "string" ||
-			!profile.modelId.trim()
-		) {
-			throw new Error("each profile needs non-empty provider and modelId strings");
-		}
-		return profile;
-	});
-}
-
-/** Field editor for one profile: named rows, text or toggle, delete action. */
-class ProfileFieldsSubmenu extends Container {
-	private settingsList!: SettingsList;
-	private readonly profile: RightSizeProfile;
-	private readonly onChanged: () => void;
-	private readonly onDelete: () => void;
-	private readonly onBack: () => void;
-
-	constructor(profile: RightSizeProfile, onChanged: () => void, onDelete: () => void, onBack: () => void) {
-		super();
-		this.profile = profile;
-		this.onChanged = onChanged;
-		this.onDelete = onDelete;
-		this.onBack = onBack;
-		this.rebuild();
-	}
-
-	private rebuild(): void {
-		this.clear();
-		this.addChild(new Text(theme.bold(theme.fg("accent", `${this.profile.provider}/${this.profile.modelId}`)), 0, 0));
-		this.addChild(new Spacer(1));
-		const profile = this.profile;
-		const required = (value: string) => (value.trim() ? undefined : "required");
-		const nonNegativeNumber = (value: string) =>
-			value === "" || (Number.isFinite(Number(value)) && Number(value) >= 0) ? undefined : "non-negative number";
-		const textField = (
-			id: string,
-			label: string,
-			current: string,
-			validate: ((value: string) => string | undefined) | undefined,
-			save: (value: string) => void,
-		): SettingItem => ({
-			id,
-			label,
-			currentValue: current,
-			submenu: (_current: string, done: (selectedValue?: string) => void) =>
-				new TextInputSubmenu(
-					label,
-					"",
-					current,
-					"",
-					(value) => {
-						save(value);
-						this.onChanged();
-						done(value);
-					},
-					() => done(),
-					validate,
-				),
-		});
-		const setCost = (key: "input" | "output", value: string): void => {
-			profile.cost ??= {};
-			if (value === "") delete profile.cost[key];
-			else profile.cost[key] = Number(value);
-			if (profile.cost.input === undefined && profile.cost.output === undefined) delete profile.cost;
-		};
-		const items: SettingItem[] = [
-			textField("provider", "Provider", profile.provider, required, (value) => {
-				profile.provider = value;
-			}),
-			textField("modelId", "Model id", profile.modelId, required, (value) => {
-				profile.modelId = value;
-			}),
-			textField("description", "Description", profile.description ?? "", undefined, (value) => {
-				if (value) profile.description = value;
-				else delete profile.description;
-			}),
-			{
-				id: "speed",
-				label: "Speed",
-				description: "Serving-latency hint for the review (how fast the model answers), not thinking depth",
-				currentValue: profile.speed ?? "—",
-				values: RIGHT_SIZE_SPEED_VALUES,
-			},
-		];
-		items.push({ id: "thinking-heading", label: "Thinking levels", heading: true, currentValue: "" });
-		for (const level of RIGHT_SIZE_THINKING_LEVELS) {
-			items.push({
-				id: `thinking-${level}`,
-				label: level,
-				description: "Whether the review may recommend this thinking depth for this model",
-				currentValue: Array.isArray(profile.thinkingLevels) && profile.thinkingLevels.includes(level) ? "on" : "—",
-				values: ["—", "on"],
-			});
-		}
-		items.push({ id: "cost-heading", label: "Cost ($/M)", heading: true, currentValue: "" });
-		items.push(
-			textField("cost-input", "Cost input", profile.cost?.input?.toString() ?? "", nonNegativeNumber, (value) => {
-				setCost("input", value);
-			}),
-			textField("cost-output", "Cost output", profile.cost?.output?.toString() ?? "", nonNegativeNumber, (value) => {
-				setCost("output", value);
-			}),
-			{
-				id: "delete",
-				label: "Delete this profile",
-				description: "Remove it immediately and return to the profile list",
-				currentValue: "",
-				activate: () => this.onDelete(),
-			},
-		);
-		this.settingsList = new SettingsList(
-			items,
-			Math.min(items.length, 10),
-			getSettingsListTheme(),
-			(id, newValue) => {
-				if (id === "speed") {
-					if (newValue === "—") delete profile.speed;
-					else profile.speed = newValue;
-					this.onChanged();
-					return;
-				}
-				if (id.startsWith("thinking-")) {
-					const level = id.slice("thinking-".length);
-					const levels = Array.isArray(profile.thinkingLevels)
-						? new Set(profile.thinkingLevels)
-						: new Set<string>();
-					if (newValue === "on") levels.add(level);
-					else levels.delete(level);
-					if (levels.size === 0) delete profile.thinkingLevels;
-					else profile.thinkingLevels = RIGHT_SIZE_THINKING_LEVELS.filter((entry) => levels.has(entry));
-					this.onChanged();
-				}
-			},
-			this.onBack,
-		);
-		this.addChild(this.settingsList);
-		this.addChild(new Spacer(1));
-		this.addChild(new Text(theme.fg("dim", "  Enter edit · Esc back"), 0, 0));
-	}
-
-	handleInput(data: string): void {
-		this.settingsList.handleInput(data);
-	}
-}
-
-/** Profiles screen: one row per profile plus an add action; Esc returns. */
-class RightSizeProfilesSubmenu extends Container {
-	private settingsList!: SettingsList;
-	private readonly profiles: RightSizeProfile[];
-	private readonly persist: (profiles: RightSizeProfile[]) => void;
-	private readonly onCancel: () => void;
-
-	constructor(profiles: RightSizeProfile[], persist: (profiles: RightSizeProfile[]) => void, onCancel: () => void) {
-		super();
-		this.profiles = profiles;
-		this.persist = persist;
-		this.onCancel = onCancel;
-		this.rebuild();
-	}
-
-	private rebuild(): void {
-		this.clear();
-		this.addChild(new Text(theme.bold(theme.fg("accent", "Right-size model profiles")), 0, 0));
-		this.addChild(new Text(theme.fg("muted", "What the right-size review knows about each model"), 0, 0));
-		this.addChild(new Spacer(1));
-		const items: SettingItem[] = this.profiles.map((profile) => ({
-			id: `profile-${profile.provider}/${profile.modelId}`,
-			label: `${profile.provider}/${profile.modelId}`,
-			description: typeof profile.description === "string" ? profile.description : undefined,
-			currentValue: typeof profile.speed === "string" ? profile.speed : "",
-			submenu: (_current: string, done: (selectedValue?: string) => void) =>
-				new ProfileFieldsSubmenu(
-					profile,
-					() => this.persist(this.profiles),
-					() => {
-						const index = this.profiles.indexOf(profile);
-						if (index !== -1) this.profiles.splice(index, 1);
-						this.persist(this.profiles);
-						done();
-						this.rebuild();
-					},
-					() => done(),
-				),
-		}));
-		items.push({
-			id: "add-profile",
-			label: "Add profile",
-			description: "Append a placeholder profile, then edit its fields",
-			currentValue: "",
-			activate: () => {
-				this.profiles.push({ provider: "provider", modelId: "model-id" });
-				this.persist(this.profiles);
-				this.rebuild();
-			},
-		});
-		this.settingsList = new SettingsList(
-			items,
-			Math.min(items.length, 10),
-			getSettingsListTheme(),
-			() => {},
-			this.onCancel,
-		);
-		this.addChild(this.settingsList);
-		this.addChild(new Spacer(1));
-		this.addChild(new Text(theme.fg("dim", "  Enter edit · Esc back"), 0, 0));
-	}
-
-	handleInput(data: string): void {
-		this.settingsList.handleInput(data);
-	}
-}
-
-interface TabRect {
-	id: string;
-	row: number;
-	start: number;
-	end: number;
-}
-
-/** Category tab bar row above the settings list. Click a tab to switch. */
-export class SettingsTabBar implements Component {
-	private readonly tabs: readonly SettingsCategory[];
-	private activeId: string;
-	private readonly onSelect: (id: string) => void;
-	private rects: TabRect[] = [];
-
-	invalidate(): void {
-		// No cached state to invalidate
-	}
-
-	constructor(tabs: readonly SettingsCategory[], activeId: string, onSelect: (id: string) => void) {
-		this.tabs = tabs;
-		this.activeId = activeId;
-		this.onSelect = onSelect;
-	}
-
-	setActiveId(id: string): void {
-		this.activeId = id;
-	}
-
-	render(width: number): string[] {
-		const lines: string[] = [];
-		const rects: TabRect[] = [];
-		const gap = 2;
-		let rowText = "  ";
-		let x = 2;
-		let row = 0;
-
-		for (const tab of this.tabs) {
-			const labelWidth = visibleWidth(tab.label);
-			if (x + labelWidth > width && x > 2) {
-				lines.push(truncateToWidth(rowText, width));
-				row += 1;
-				rowText = "  ";
-				x = 2;
-			}
-			rects.push({ id: tab.id, row, start: x, end: x + labelWidth });
-			rowText += this.activeId === tab.id ? theme.bold(theme.fg("accent", tab.label)) : theme.fg("muted", tab.label);
-			rowText += " ".repeat(gap);
-			x += labelWidth + gap;
-		}
-
-		if (rowText.length > 2) {
-			const hint = ` · ${keyText("tui.input.tab")} to switch`;
-			if (visibleWidth(rowText) + visibleWidth(hint) <= width) {
-				rowText += hint;
-			}
-		}
-
-		lines.push(truncateToWidth(rowText, width));
-		this.rects = rects;
-		return lines;
-	}
-
-	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-		if (event.button !== "left" || (event.type !== "press" && event.type !== "click")) return undefined;
-		const rect = this.rects.find((r) => r.row === event.y && event.x >= r.start && event.x < r.end);
-		if (!rect || rect.id === this.activeId) return undefined;
-		this.onSelect(rect.id);
-		return { handled: true };
-	}
-}
-
-/**
- * Main settings selector component: categorized tabs, one settings list per category.
- * Tab (or clicking a tab) switches the category; Esc cancels the whole selector.
+ * Main settings selector component.
  */
 export class SettingsSelectorComponent extends Container {
-	private lists = new Map<string, SettingsList>();
-	private activeCategoryId = SETTINGS_CATEGORIES[0].id;
-	private tabBar: SettingsTabBar;
-	private listChildIndex = 0;
+	private tabs: SettingsTabs;
 
 	constructor(config: SettingsConfig, callbacks: SettingsCallbacks) {
 		super();
@@ -954,74 +490,7 @@ export class SettingsSelectorComponent extends Container {
 		const currentDefaultModelKey = defaultModelByValue.has(config.defaultModel) ? config.defaultModel : undefined;
 		const currentModelKey = config.currentModel ? modelSettingKey(config.currentModel) : undefined;
 
-		// Free-text field: saving reports done(value), which flows through the shared
-		// onChange dispatcher to the matching callback.
-		const textSubmenu =
-			(label: string) =>
-			(currentValue: string, done: (selectedValue?: string) => void): Component =>
-				new TextInputSubmenu(
-					label,
-					"",
-					currentValue,
-					"",
-					(value) => done(value),
-					() => done(),
-				);
-
-		const general: SettingItem[] = [
-			{
-				id: "quiet-startup",
-				label: "Quiet startup",
-				description: "Disable verbose printing at startup (header: keep only the startup header)",
-				currentValue: String(config.quietStartup),
-				values: ["true", "header", "false"],
-			},
-			{
-				id: "collapse-changelog",
-				label: "Collapse changelog",
-				description: "Show condensed changelog after updates",
-				currentValue: config.collapseChangelog ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "message-timestamps",
-				label: "Message timestamps",
-				description: "Show local timestamps below user and extension messages.",
-				currentValue: config.messageTimestamps ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "skill-commands",
-				label: "Skill commands",
-				description: "Register skills as /skill:name commands",
-				currentValue: config.enableSkillCommands ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "default-project-trust",
-				label: "Default project trust",
-				description: "Fallback behavior when no extension or saved trust decision decides project trust",
-				currentValue: DEFAULT_PROJECT_TRUST_LABELS[config.defaultProjectTrust],
-				values: Object.values(DEFAULT_PROJECT_TRUST_LABELS),
-			},
-			{
-				id: "warnings",
-				label: "Warnings",
-				description: "Enable or disable individual warnings",
-				currentValue: "configure",
-				submenu: (_currentValue, done) =>
-					new WarningSettingsSubmenu(
-						currentWarnings,
-						(warnings) => {
-							currentWarnings = warnings;
-							callbacks.onWarningsChange(warnings);
-						},
-						() => done(),
-					),
-			},
-		];
-
-		const agent: SettingItem[] = [
+		const items: SettingItem[] = [
 			{
 				id: "autocompact",
 				label: "Auto-compact",
@@ -1030,25 +499,10 @@ export class SettingsSelectorComponent extends Container {
 				values: ["true", "false"],
 			},
 			{
-				id: "compact-prompt",
-				label: "Compact prompt",
-				description:
-					"Condense tool descriptions and guidance to cut fixed prompt overhead (best for slow local models). Takes effect next turn.",
-				currentValue: config.compactPrompt ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "streaming-submit-mode",
-				label: "Enter while streaming",
-				description: "Steer the current response, or queue a follow-up until the agent finishes.",
-				currentValue: config.streamingSubmitMode,
-				values: ["steer", "followUp"],
-			},
-			{
 				id: "steering-mode",
 				label: "Steering mode",
 				description:
-					"Steering delivery: 'one-at-a-time' delivers one and waits for a response; 'all' delivers all at once.",
+					"Enter while streaming queues steering messages. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.",
 				currentValue: config.steeringMode,
 				values: ["one-at-a-time", "all"],
 			},
@@ -1060,17 +514,33 @@ export class SettingsSelectorComponent extends Container {
 				values: ["one-at-a-time", "all"],
 			},
 			{
-				id: "retry-enabled",
-				label: "Retry on failure",
-				description: "Automatically retry failed agent turns with exponential backoff",
-				currentValue: config.retryEnabled ? "true" : "false",
-				values: ["true", "false"],
+				id: "transport",
+				label: "Transport",
+				description: "Preferred transport for providers that support multiple transports",
+				currentValue: config.transport,
+				values: ["sse", "websocket", "websocket-cached", "auto"],
+			},
+			{
+				id: "share-destination",
+				label: "Session share destination",
+				description:
+					"Where to upload sessions with /share (auto prefers Radius when authenticated, otherwise GitHub Gist)",
+				currentValue: config.sessionShareDestination,
+				values: ["auto", "gist", "radius"],
+			},
+			{
+				id: "http-idle-timeout",
+				label: "HTTP idle timeout",
+				description:
+					"Maximum idle gap while waiting for HTTP headers or body chunks. Disable for local models that pause longer than five minutes.",
+				currentValue: formatHttpIdleTimeoutMs(config.httpIdleTimeoutMs),
+				values: HTTP_IDLE_TIMEOUT_CHOICES.map((choice) => choice.label),
 			},
 			{
 				id: "cache-warming-mode",
 				label: "Cache warming",
 				description:
-					"off; streaming while the agent runs; idle also between runs while continuation stays profitable; always warms regardless of economics (local fleet slots)",
+					"off; streaming while the agent runs; idle also between runs while continuation stays profitable",
 				currentValue: config.cacheWarmingMode,
 				values: [...CACHE_WARMING_MODES],
 			},
@@ -1095,16 +565,62 @@ export class SettingsSelectorComponent extends Container {
 				currentValue: config.showCacheMissNotices ? "true" : "false",
 				values: ["true", "false"],
 			},
-		];
-
-		const models: SettingItem[] = [
 			{
-				id: "default-thinking-level",
-				label: "Default thinking level",
-				description:
-					"Global default reasoning effort for models that support thinking; also applies to the current session",
-				currentValue: config.thinkingLevel,
-				values: [...(config.availableThinkingLevels ?? THINKING_LEVEL_OPTIONS)],
+				id: "collapse-changelog",
+				label: "Collapse changelog",
+				description: "Show condensed changelog after updates",
+				currentValue: config.collapseChangelog ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "quiet-startup",
+				label: "Quiet startup",
+				description: "Disable verbose printing at startup (header: keep only the startup header)",
+				currentValue: String(config.quietStartup),
+				values: ["true", "header", "false"],
+			},
+			{
+				id: "install-telemetry",
+				label: "Install telemetry",
+				description: "Send an anonymous version/update ping after changelog-detected updates",
+				currentValue: config.enableInstallTelemetry ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "default-project-trust",
+				label: "Default project trust",
+				description: "Fallback behavior when no extension or saved trust decision decides project trust",
+				currentValue: DEFAULT_PROJECT_TRUST_LABELS[config.defaultProjectTrust],
+				values: Object.values(DEFAULT_PROJECT_TRUST_LABELS),
+			},
+			{
+				id: "double-escape-action",
+				label: "Double-escape action",
+				description: "Action when pressing Escape twice with empty editor",
+				currentValue: config.doubleEscapeAction,
+				values: ["tree", "fork", "none"],
+			},
+			{
+				id: "tree-filter-mode",
+				label: "Tree filter mode",
+				description: "Default filter when opening /tree",
+				currentValue: config.treeFilterMode,
+				values: ["default", "no-tools", "user-only", "labeled-only", "all"],
+			},
+			{
+				id: "warnings",
+				label: "Warnings",
+				description: "Enable or disable individual warnings",
+				currentValue: "configure",
+				submenu: (_currentValue, done) =>
+					new WarningSettingsSubmenu(
+						currentWarnings,
+						(warnings) => {
+							currentWarnings = warnings;
+							callbacks.onWarningsChange(warnings);
+						},
+						() => done(),
+					),
 			},
 			{
 				id: "model-thinking",
@@ -1208,173 +724,9 @@ export class SettingsSelectorComponent extends Container {
 				},
 			},
 			{
-				id: "providers-show-all",
-				label: "Show all providers",
-				description: "/login lists every known provider instead of the curated set plus already-configured ones",
-				currentValue: config.providersShowAll ? "true" : "false",
-				values: ["true", "false"],
-			},
-		];
-
-		const memory: SettingItem[] = [
-			{
-				id: "memory-enabled",
-				label: "Memory",
-				description: "Distill sessions into reusable lessons (and a knowledge vault in vault mode)",
-				currentValue: config.memoryEnabled ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "memory-mode",
-				label: "Memory mode",
-				description: "lesson: flat lesson notes · vault: linked entity graph with [[wikilinks]]",
-				currentValue: config.memoryMode,
-				values: ["lesson", "vault"],
-			},
-			{
-				id: "memory-vault-dir",
-				label: "Vault directory",
-				description: "Where the knowledge vault lives. HUMMIN_MEMORY_VAULT_DIR env var takes precedence.",
-				currentValue: config.memoryVaultDir,
-				submenu: textSubmenu("Memory vault directory"),
-			},
-			{
-				id: "memory-provider",
-				label: "Memory provider",
-				description: "Provider for distillation/fold calls. HUMMIN_MEMORY_PROVIDER env var takes precedence.",
-				currentValue: config.memoryProvider,
-				submenu: textSubmenu("Memory provider"),
-			},
-			{
-				id: "memory-model",
-				label: "Memory model",
-				description: "Model id for distillation/fold calls. HUMMIN_MEMORY_MODEL_ID env var takes precedence.",
-				currentValue: config.memoryModelId,
-				submenu: textSubmenu("Memory model"),
-			},
-		];
-
-		const fleet: SettingItem[] = [
-			{
-				id: "local-instances",
-				label: "Local instances",
-				description:
-					"Base URLs for the hummin provider, comma-separated. HUMMIN_INSTANCES env var takes precedence; applies after /reload. Fleet servers live in the settings.json fleet block (see /fleet).",
-				currentValue: config.localInstances.join(", "),
-				submenu: textSubmenu("Local instances"),
-			},
-			{
-				id: "fleet-auto-start",
-				label: "Fleet auto-start",
-				description:
-					"Start an offline fleet server automatically when its model is selected. HUMMIN_FLEET_AUTOSTART env var takes precedence.",
-				currentValue: config.fleetAutoStart ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "right-size-gate",
-				label: "Right-size gate",
-				description:
-					"The System-1 engine reviews child dispatches (task, cron) against the model catalog and holds confident mismatches for review. HUMMIN_SYS1_RIGHTSIZE=off takes precedence.",
-				currentValue: config.rightSizeEnabled ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "right-size-swing-threshold",
-				label: "Right-size swing threshold",
-				description:
-					"Confidence margin between the engine's pick and the requested model that turns a mismatch into a dispatch hold. HUMMIN_SYS1_RIGHTSIZE_SWING takes precedence.",
-				currentValue: String(config.rightSizeSwingThreshold),
-				values: ["0.25", "0.3", "0.35", "0.4", "0.45", "0.5", "0.6"],
-			},
-			{
-				id: "right-size-profiles",
-				label: "Right-size model profiles",
-				description:
-					"Per-model description/speed/cost metadata the right-size review sees. Enter to open the profile editor.",
-				currentValue: `${config.rightSizeProfileCount} configured`,
-				submenu: (_current: string, done: (selectedValue?: string) => void) => {
-					let profiles: RightSizeProfile[];
-					try {
-						profiles = parseRightSizeProfiles(config.rightSizeProfilesJson);
-					} catch {
-						profiles = [];
-					}
-					return new RightSizeProfilesSubmenu(
-						profiles,
-						(updated) => callbacks.onRightSizeProfilesChange(JSON.stringify(updated)),
-						() => done(),
-					);
-				},
-			},
-		];
-
-		const editor: SettingItem[] = [
-			{
-				id: "editor-mode",
-				label: "Editor mode",
-				description:
-					"default: standard keys · vim: modal editing (applies to new sessions; HUMMIN_VIM=1 takes precedence)",
-				currentValue: config.editorMode,
-				values: ["default", "vim"],
-			},
-			{
-				id: "double-escape-action",
-				label: "Double-escape action",
-				description: "Action when pressing Escape twice with empty editor",
-				currentValue: config.doubleEscapeAction,
-				values: ["tree", "fork", "none"],
-			},
-			{
-				id: "tree-filter-mode",
-				label: "Tree filter mode",
-				description: "Default filter when opening /tree",
-				currentValue: config.treeFilterMode,
-				values: ["default", "no-tools", "user-only", "labeled-only", "all"],
-			},
-			{
-				id: "editor-padding",
-				label: "Editor padding",
-				description: "Horizontal padding for input editor (0-3)",
-				currentValue: String(config.editorPaddingX),
-				values: ["0", "1", "2", "3"],
-			},
-			{
-				id: "autocomplete-max-visible",
-				label: "Autocomplete max items",
-				description: "Max visible items in autocomplete dropdown (3-20)",
-				currentValue: String(config.autocompleteMaxVisible),
-				values: ["3", "5", "7", "10", "15", "20"],
-			},
-			{
-				id: "show-hardware-cursor",
-				label: "Show hardware cursor",
-				description: "Use the terminal cursor instead of the drawn cursor",
-				currentValue: config.showHardwareCursor ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "external-editor",
-				label: "External editor",
-				description: "Command for the external editor keybinding. Empty falls back to VISUAL/EDITOR.",
-				currentValue: config.externalEditor,
-				submenu: textSubmenu("External editor command"),
-			},
-		];
-
-		const terminal: SettingItem[] = [
-			{
-				id: "theme",
-				label: "Theme",
-				description: "Color theme for the interface",
-				currentValue: config.currentTheme,
-				submenu: (currentValue, done) =>
-					new ThemeSubmenu(currentValue, config.terminalTheme, config.availableThemes, callbacks, done),
-			},
-			{
 				id: "tui-mode",
 				label: "TUI mode",
-				description: "Interface layout; fullscreen mode is experimental",
+				description: "Interface layout; regular mode uses the terminal's normal scrollback",
 				currentValue: config.tuiMode,
 				values: ["regular", "fullscreen"],
 			},
@@ -1414,423 +766,272 @@ export class SettingsSelectorComponent extends Container {
 				],
 			},
 			{
-				id: "clear-on-shrink",
-				label: "Clear on shrink",
-				description: "Clear empty rows when content shrinks (may cause flicker)",
-				currentValue: config.clearOnShrink ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "terminal-progress",
-				label: "Terminal progress",
-				description: "Show OSC 9;4 progress indicators in the terminal tab bar",
-				currentValue: config.showTerminalProgress ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "terminal-notifications",
-				label: "Notifications",
-				description: "BEL/OSC 9/desktop notification when a turn ends or the agent asks a question",
-				currentValue: config.terminalNotifications,
-				values: ["off", "bell", "osc9", "desktop", "all"],
-			},
-			{
-				id: "terminal-notifications-when",
-				label: "Notify when",
-				description: "Notify always, or only when the terminal is not focused (focus reporting)",
-				currentValue: config.terminalNotificationsWhen,
-				values: ["unfocused", "always"],
-			},
-			{
-				id: "output-padding",
-				label: "Output padding",
-				description: "Horizontal padding for messages, tool output, and command output",
-				currentValue: String(config.outputPad),
-				values: ["0", "1"],
+				id: "theme",
+				label: "Theme",
+				description: "Color theme for the interface",
+				currentValue: config.currentTheme,
+				submenu: (currentValue, done) =>
+					new ThemeSubmenu(currentValue, config.terminalTheme, config.availableThemes, callbacks, done),
 			},
 		];
 
+		// Only show image toggle if terminal supports it
 		if (supportsImages) {
-			terminal.splice(
-				2,
-				0,
-				{
-					id: "show-images",
-					label: "Show images",
-					description: "Render images inline in terminal",
-					currentValue: config.showImages ? "true" : "false",
-					values: ["true", "false"],
-				},
-				{
-					id: "image-width-cells",
-					label: "Image width",
-					description: "Preferred inline image width in terminal cells",
-					currentValue: String(config.imageWidthCells),
-					values: ["60", "80", "120"],
-				},
-			);
+			// Insert after autocompact
+			items.splice(1, 0, {
+				id: "show-images",
+				label: "Show images",
+				description: "Render images inline in terminal",
+				currentValue: config.showImages ? "true" : "false",
+				values: ["true", "false"],
+			});
+			items.splice(2, 0, {
+				id: "image-width-cells",
+				label: "Image width",
+				description: "Preferred inline image width in terminal cells",
+				currentValue: String(config.imageWidthCells),
+				values: ["60", "80", "120"],
+			});
 		}
-		terminal.push(
-			{
-				id: "auto-resize-images",
-				label: "Auto-resize images",
-				description: "Resize large images to 2000x2000 max for better model compatibility",
-				currentValue: config.autoResizeImages ? "true" : "false",
-				values: ["true", "false"],
+
+		// Image auto-resize toggle (always available, affects both attached and read images)
+		items.splice(supportsImages ? 3 : 1, 0, {
+			id: "auto-resize-images",
+			label: "Auto-resize images",
+			description: "Resize large images to 2000x2000 max for better model compatibility",
+			currentValue: config.autoResizeImages ? "true" : "false",
+			values: ["true", "false"],
+		});
+
+		// Block images toggle (always available, insert after auto-resize-images)
+		const autoResizeIndex = items.findIndex((item) => item.id === "auto-resize-images");
+		items.splice(autoResizeIndex + 1, 0, {
+			id: "block-images",
+			label: "Block images",
+			description: "Prevent images from being sent to LLM providers",
+			currentValue: config.blockImages ? "true" : "false",
+			values: ["true", "false"],
+		});
+
+		// Skill commands toggle (insert after block-images)
+		const blockImagesIndex = items.findIndex((item) => item.id === "block-images");
+		items.splice(blockImagesIndex + 1, 0, {
+			id: "skill-commands",
+			label: "Skill commands",
+			description: "Register skills as /skill:name commands",
+			currentValue: config.enableSkillCommands ? "true" : "false",
+			values: ["true", "false"],
+		});
+
+		// Hardware cursor toggle (insert after skill-commands)
+		const skillCommandsIndex = items.findIndex((item) => item.id === "skill-commands");
+		items.splice(skillCommandsIndex + 1, 0, {
+			id: "show-hardware-cursor",
+			label: "Show hardware cursor",
+			description: "Use the terminal cursor instead of Pi's drawn cursor",
+			currentValue: config.showHardwareCursor ? "true" : "false",
+			values: ["true", "false"],
+		});
+
+		// Editor padding toggle (insert after show-hardware-cursor)
+		const hardwareCursorIndex = items.findIndex((item) => item.id === "show-hardware-cursor");
+		items.splice(hardwareCursorIndex + 1, 0, {
+			id: "editor-padding",
+			label: "Editor padding",
+			description: "Horizontal padding for input editor (0-3)",
+			currentValue: String(config.editorPaddingX),
+			values: ["0", "1", "2", "3"],
+		});
+
+		// Output padding toggle (insert after editor-padding)
+		const editorPaddingIndex = items.findIndex((item) => item.id === "editor-padding");
+		items.splice(editorPaddingIndex + 1, 0, {
+			id: "output-padding",
+			label: "Output padding",
+			description: "Horizontal padding for messages, tool output, and command output",
+			currentValue: String(config.outputPad),
+			values: ["0", "1"],
+		});
+
+		// Autocomplete max visible toggle (insert after output-padding)
+		const outputPaddingIndex = items.findIndex((item) => item.id === "output-padding");
+		items.splice(outputPaddingIndex + 1, 0, {
+			id: "autocomplete-max-visible",
+			label: "Autocomplete max items",
+			description: "Max visible items in autocomplete dropdown (3-20)",
+			currentValue: String(config.autocompleteMaxVisible),
+			values: ["3", "5", "7", "10", "15", "20"],
+		});
+
+		// Clear on shrink toggle (insert after autocomplete-max-visible)
+		const autocompleteIndex = items.findIndex((item) => item.id === "autocomplete-max-visible");
+		items.splice(autocompleteIndex + 1, 0, {
+			id: "clear-on-shrink",
+			label: "Clear on shrink",
+			description: "Clear empty rows when content shrinks (may cause flicker)",
+			currentValue: config.clearOnShrink ? "true" : "false",
+			values: ["true", "false"],
+		});
+
+		// Terminal progress toggle (insert after clear-on-shrink)
+		const clearOnShrinkIndex = items.findIndex((item) => item.id === "clear-on-shrink");
+		items.splice(clearOnShrinkIndex + 1, 0, {
+			id: "terminal-progress",
+			label: "Terminal progress",
+			description: "Show OSC 9;4 progress indicators in the terminal tab bar",
+			currentValue: config.showTerminalProgress ? "true" : "false",
+			values: ["true", "false"],
+		});
+
+		// Add borders
+		this.addChild(new DynamicBorder());
+
+		this.tabs = new SettingsTabs(
+			config,
+			callbacks,
+			items,
+			10,
+			getSettingsListTheme(),
+			(id, newValue) => {
+				switch (id) {
+					case "autocompact":
+						callbacks.onAutoCompactChange(newValue === "true");
+						break;
+					case "show-images":
+						callbacks.onShowImagesChange(newValue === "true");
+						break;
+					case "image-width-cells":
+						callbacks.onImageWidthCellsChange(parseInt(newValue, 10));
+						break;
+					case "auto-resize-images":
+						callbacks.onAutoResizeImagesChange(newValue === "true");
+						break;
+					case "block-images":
+						callbacks.onBlockImagesChange(newValue === "true");
+						break;
+					case "skill-commands":
+						callbacks.onEnableSkillCommandsChange(newValue === "true");
+						break;
+					case "steering-mode":
+						callbacks.onSteeringModeChange(newValue as "all" | "one-at-a-time");
+						break;
+					case "follow-up-mode":
+						callbacks.onFollowUpModeChange(newValue as "all" | "one-at-a-time");
+						break;
+					case "transport":
+						callbacks.onTransportChange(newValue as Transport);
+						break;
+					case "share-destination":
+						callbacks.onSessionShareDestinationChange(newValue as SessionShareDestination);
+						break;
+					case "http-idle-timeout": {
+						const choice = HTTP_IDLE_TIMEOUT_CHOICES.find((item) => item.label === newValue);
+						if (choice) {
+							callbacks.onHttpIdleTimeoutMsChange(choice.timeoutMs);
+						}
+						break;
+					}
+					case "cache-warming-mode":
+						callbacks.onCacheWarmingModeChange(newValue as CacheWarmingMode);
+						break;
+					case "hide-thinking":
+						callbacks.onHideThinkingBlockChange(newValue === "true");
+						break;
+					case "mermaid-rendering":
+						callbacks.onMermaidRenderingModeChange(newValue as MermaidRenderingMode);
+						break;
+					case "cache-miss-notices":
+						callbacks.onShowCacheMissNoticesChange(newValue === "true");
+						break;
+					case "collapse-changelog":
+						callbacks.onCollapseChangelogChange(newValue === "true");
+						break;
+					case "quiet-startup":
+						callbacks.onQuietStartupChange(newValue === "header" ? "header" : newValue === "true");
+						break;
+					case "install-telemetry":
+						callbacks.onEnableInstallTelemetryChange(newValue === "true");
+						break;
+					case "default-project-trust": {
+						const defaultProjectTrust = DEFAULT_PROJECT_TRUST_BY_LABEL.get(newValue);
+						if (defaultProjectTrust) {
+							callbacks.onDefaultProjectTrustChange(defaultProjectTrust);
+						}
+						break;
+					}
+					case "double-escape-action":
+						callbacks.onDoubleEscapeActionChange(newValue as "fork" | "tree");
+						break;
+					case "tree-filter-mode":
+						callbacks.onTreeFilterModeChange(
+							newValue as "default" | "no-tools" | "user-only" | "labeled-only" | "all",
+						);
+						break;
+					case "show-hardware-cursor":
+						callbacks.onShowHardwareCursorChange(newValue === "true");
+						break;
+					case "editor-padding":
+						callbacks.onEditorPaddingXChange(parseInt(newValue, 10));
+						break;
+					case "output-padding":
+						callbacks.onOutputPadChange(newValue === "0" ? 0 : 1);
+						break;
+					case "autocomplete-max-visible":
+						callbacks.onAutocompleteMaxVisibleChange(parseInt(newValue, 10));
+						break;
+					case "clear-on-shrink":
+						callbacks.onClearOnShrinkChange(newValue === "true");
+						break;
+					case "terminal-progress":
+						callbacks.onShowTerminalProgressChange(newValue === "true");
+						break;
+					case "tui-mode":
+						callbacks.onTuiModeChange(newValue as TuiMode);
+						break;
+					case "fullscreen-exit-output":
+						callbacks.onFullscreenExitOutputChange(newValue as FullscreenExitOutput);
+						break;
+					case "fullscreen-scrollbar":
+						callbacks.onFullscreenScrollbarChange(newValue as ScrollViewScrollbar);
+						break;
+					case "fullscreen-copy-on-select":
+						callbacks.onFullscreenCopyOnSelectChange(newValue === "true");
+						break;
+					case "fullscreen-wheel-scroll-lines":
+						callbacks.onFullscreenWheelScrollLinesChange(newValue === "auto" ? "auto" : parseInt(newValue, 10));
+						break;
+					case "theme":
+						callbacks.onThemeChange(newValue);
+						break;
+					default:
+						handleHumminSettingChange(callbacks, id, newValue);
+				}
 			},
-			{
-				id: "block-images",
-				label: "Block images",
-				description: "Prevent images from being sent to LLM providers",
-				currentValue: config.blockImages ? "true" : "false",
-				values: ["true", "false"],
-			},
+			callbacks.onCancel,
+			{ enableSearch: true },
 		);
 
-		const network: SettingItem[] = [
-			{
-				id: "transport",
-				label: "Transport",
-				description: "Preferred transport for providers that support multiple transports",
-				currentValue: config.transport,
-				values: ["sse", "websocket", "websocket-cached", "auto"],
-			},
-			{
-				id: "share-destination",
-				label: "Session share destination",
-				description:
-					"Where to upload sessions with /share (auto prefers Radius when authenticated, otherwise GitHub Gist)",
-				currentValue: config.sessionShareDestination,
-				values: ["auto", "gist", "radius"],
-			},
-			{
-				id: "http-idle-timeout",
-				label: "HTTP idle timeout",
-				description:
-					"Maximum idle gap while waiting for HTTP headers or body chunks. Disable for local models that pause longer than five minutes.",
-				currentValue: formatHttpIdleTimeoutMs(config.httpIdleTimeoutMs),
-				values: HTTP_IDLE_TIMEOUT_CHOICES.map((choice) => choice.label),
-			},
-			{
-				id: "websocket-connect-timeout",
-				label: "WebSocket connect timeout",
-				description:
-					"Timeout for the WebSocket connect/open handshake on websocket transports. Applies to new requests.",
-				currentValue: formatWsConnectTimeoutMs(config.websocketConnectTimeoutMs),
-				values: ["default", ...WS_CONNECT_TIMEOUT_CHOICES.map((choice) => choice.label)],
-			},
-			{
-				id: "http-proxy",
-				label: "HTTP proxy",
-				description:
-					"Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients. Applies to new requests.",
-				currentValue: config.httpProxy,
-				submenu: textSubmenu("HTTP proxy URL"),
-			},
-		];
-
-		const shell: SettingItem[] = [
-			{
-				id: "shell-path",
-				label: "Shell path",
-				description: "Custom shell path for bash commands (e.g. for Cygwin users). Empty uses the default shell.",
-				currentValue: config.shellPath,
-				submenu: textSubmenu("Shell path"),
-			},
-			{
-				id: "shell-command-prefix",
-				label: "Shell command prefix",
-				description: "Prefix prepended to every bash command (e.g. 'shopt -s expand_aliases').",
-				currentValue: config.shellCommandPrefix,
-				submenu: textSubmenu("Shell command prefix"),
-			},
-			{
-				id: "npm-command",
-				label: "npm command",
-				description:
-					"Command used for npm package operations, space-separated argv (e.g. 'mise exec node@20 -- npm').",
-				currentValue: config.npmCommand,
-				submenu: textSubmenu("npm command"),
-			},
-		];
-
-		const privacy: SettingItem[] = [
-			{
-				id: "install-telemetry",
-				label: "Install telemetry",
-				description: "Send an anonymous version/update ping after changelog-detected updates",
-				currentValue: config.enableInstallTelemetry ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "enable-analytics",
-				label: "Analytics",
-				description: "Share anonymous usage data (opt-in)",
-				currentValue: config.enableAnalytics ? "true" : "false",
-				values: ["true", "false"],
-			},
-		];
-
-		const itemsByCategory: Record<string, SettingItem[]> = {
-			general,
-			agent,
-			models,
-			memory,
-			fleet,
-			editor,
-			terminal,
-			network,
-			shell,
-			privacy,
-		};
-
-		const onChange = (id: string, newValue: string) => {
-			switch (id) {
-				case "quiet-startup":
-					callbacks.onQuietStartupChange(newValue === "header" ? "header" : newValue === "true");
-					break;
-				case "collapse-changelog":
-					callbacks.onCollapseChangelogChange(newValue === "true");
-					break;
-				case "message-timestamps":
-					callbacks.onMessageTimestampsChange(newValue === "true");
-					break;
-				case "skill-commands":
-					callbacks.onEnableSkillCommandsChange(newValue === "true");
-					break;
-				case "default-project-trust": {
-					const defaultProjectTrust = DEFAULT_PROJECT_TRUST_BY_LABEL.get(newValue);
-					if (defaultProjectTrust) {
-						callbacks.onDefaultProjectTrustChange(defaultProjectTrust);
-					}
-					break;
-				}
-				case "autocompact":
-					callbacks.onAutoCompactChange(newValue === "true");
-					break;
-				case "compact-prompt":
-					callbacks.onCompactPromptChange(newValue === "true");
-					break;
-				case "streaming-submit-mode":
-					callbacks.onStreamingSubmitModeChange(newValue as "steer" | "followUp");
-					break;
-				case "steering-mode":
-					callbacks.onSteeringModeChange(newValue as "all" | "one-at-a-time");
-					break;
-				case "follow-up-mode":
-					callbacks.onFollowUpModeChange(newValue as "all" | "one-at-a-time");
-					break;
-				case "retry-enabled":
-					callbacks.onRetryEnabledChange(newValue === "true");
-					break;
-				case "cache-warming-mode":
-					callbacks.onCacheWarmingModeChange(newValue as CacheWarmingMode);
-					break;
-				case "hide-thinking":
-					callbacks.onHideThinkingBlockChange(newValue === "true");
-					break;
-				case "mermaid-rendering":
-					callbacks.onMermaidRenderingModeChange(newValue as MermaidRenderingMode);
-					break;
-				case "cache-miss-notices":
-					callbacks.onShowCacheMissNoticesChange(newValue === "true");
-					break;
-				case "default-thinking-level":
-					callbacks.onDefaultThinkingLevelChange(newValue as ThinkingLevel);
-					break;
-				case "providers-show-all":
-					callbacks.onProvidersShowAllChange(newValue === "true");
-					break;
-				case "memory-enabled":
-					callbacks.onMemoryEnabledChange(newValue === "true");
-					break;
-				case "memory-mode":
-					callbacks.onMemoryModeChange(newValue as "lesson" | "vault");
-					break;
-				case "memory-vault-dir":
-					callbacks.onMemoryVaultDirChange(newValue);
-					break;
-				case "memory-provider":
-					callbacks.onMemoryProviderChange(newValue);
-					break;
-				case "memory-model":
-					callbacks.onMemoryModelIdChange(newValue);
-					break;
-				case "local-instances":
-					callbacks.onLocalInstancesChange(splitInstances(newValue));
-					break;
-				case "fleet-auto-start":
-					callbacks.onFleetAutoStartChange(newValue === "true");
-					break;
-				case "right-size-gate":
-					callbacks.onRightSizeEnabledChange(newValue === "true");
-					break;
-				case "right-size-swing-threshold":
-					callbacks.onRightSizeSwingThresholdChange(Number(newValue));
-					break;
-				case "editor-mode":
-					callbacks.onEditorModeChange(newValue as "default" | "vim");
-					break;
-				case "double-escape-action":
-					callbacks.onDoubleEscapeActionChange(newValue as "fork" | "tree");
-					break;
-				case "tree-filter-mode":
-					callbacks.onTreeFilterModeChange(
-						newValue as "default" | "no-tools" | "user-only" | "labeled-only" | "all",
-					);
-					break;
-				case "editor-padding":
-					callbacks.onEditorPaddingXChange(parseInt(newValue, 10));
-					break;
-				case "autocomplete-max-visible":
-					callbacks.onAutocompleteMaxVisibleChange(parseInt(newValue, 10));
-					break;
-				case "show-hardware-cursor":
-					callbacks.onShowHardwareCursorChange(newValue === "true");
-					break;
-				case "external-editor":
-					callbacks.onExternalEditorChange(newValue);
-					break;
-				case "theme":
-					callbacks.onThemeChange(newValue);
-					break;
-				case "tui-mode":
-					callbacks.onTuiModeChange(newValue as TuiMode);
-					break;
-				case "fullscreen-exit-output":
-					callbacks.onFullscreenExitOutputChange(newValue as FullscreenExitOutput);
-					break;
-				case "fullscreen-scrollbar":
-					callbacks.onFullscreenScrollbarChange(newValue as ScrollViewScrollbar);
-					break;
-				case "fullscreen-copy-on-select":
-					callbacks.onFullscreenCopyOnSelectChange(newValue === "true");
-					break;
-				case "fullscreen-wheel-scroll-lines":
-					callbacks.onFullscreenWheelScrollLinesChange(newValue === "auto" ? "auto" : parseInt(newValue, 10));
-					break;
-				case "clear-on-shrink":
-					callbacks.onClearOnShrinkChange(newValue === "true");
-					break;
-				case "terminal-progress":
-					callbacks.onShowTerminalProgressChange(newValue === "true");
-					break;
-				case "terminal-notifications":
-					callbacks.onTerminalNotificationsChange(newValue);
-					break;
-				case "terminal-notifications-when":
-					callbacks.onTerminalNotificationsWhenChange(newValue);
-					break;
-				case "output-padding":
-					callbacks.onOutputPadChange(newValue === "0" ? 0 : 1);
-					break;
-				case "show-images":
-					callbacks.onShowImagesChange(newValue === "true");
-					break;
-				case "image-width-cells":
-					callbacks.onImageWidthCellsChange(parseInt(newValue, 10));
-					break;
-				case "auto-resize-images":
-					callbacks.onAutoResizeImagesChange(newValue === "true");
-					break;
-				case "block-images":
-					callbacks.onBlockImagesChange(newValue === "true");
-					break;
-				case "transport":
-					callbacks.onTransportChange(newValue as Transport);
-					break;
-				case "share-destination":
-					callbacks.onSessionShareDestinationChange(newValue as SessionShareDestination);
-					break;
-				case "http-idle-timeout": {
-					const choice = HTTP_IDLE_TIMEOUT_CHOICES.find((item) => item.label === newValue);
-					if (choice) {
-						callbacks.onHttpIdleTimeoutMsChange(choice.timeoutMs);
-					}
-					break;
-				}
-				case "websocket-connect-timeout":
-					callbacks.onWebSocketConnectTimeoutMsChange(parseWsConnectTimeoutChoice(newValue));
-					break;
-				case "http-proxy":
-					callbacks.onHttpProxyChange(newValue);
-					break;
-				case "shell-path":
-					callbacks.onShellPathChange(newValue);
-					break;
-				case "shell-command-prefix":
-					callbacks.onShellCommandPrefixChange(newValue);
-					break;
-				case "npm-command":
-					callbacks.onNpmCommandChange(splitArgv(newValue));
-					break;
-				case "install-telemetry":
-					callbacks.onEnableInstallTelemetryChange(newValue === "true");
-					break;
-				case "enable-analytics":
-					callbacks.onEnableAnalyticsChange(newValue === "true");
-					break;
-			}
-		};
-
-		for (const category of SETTINGS_CATEGORIES) {
-			this.lists.set(
-				category.id,
-				new SettingsList(itemsByCategory[category.id], 10, getSettingsListTheme(), onChange, callbacks.onCancel, {
-					enableSearch: true,
-				}),
-			);
-		}
-
-		this.tabBar = new SettingsTabBar(SETTINGS_CATEGORIES, this.activeCategoryId, (id) => this.switchCategory(id));
-
-		this.addChild(new DynamicBorder());
-		this.addChild(this.tabBar);
-		this.addChild(new Spacer(1));
-		this.addChild(this.lists.get(this.activeCategoryId)!);
-		this.listChildIndex = this.children.length - 1;
+		this.addChild(this.tabs);
 		this.addChild(new DynamicBorder());
 	}
 
-	private switchCategory(id: string): void {
-		if (id === this.activeCategoryId || !this.lists.has(id)) return;
-		this.activeCategoryId = id;
-		this.tabBar.setActiveId(id);
-		this.children[this.listChildIndex] = this.lists.get(id)!;
-	}
-
-	/** Get the settings list of one category (mainly for tests). */
 	getList(categoryId: string): SettingsList {
-		return this.lists.get(categoryId)!;
+		return this.tabs.getList(categoryId);
 	}
 
-	/**
-	 * Height the selector reaches in its tallest category at the given width
-	 * (border + tab bar + list with its description and hints), so containers
-	 * can reserve one stable block across tab switches.
-	 */
+	getPlacementProblems(): { unplaced: string[]; missing: string[] } {
+		return this.tabs.getPlacementProblems();
+	}
+
 	getMaxRenderHeight(width: number): number {
-		let maxList = 0;
-		for (const list of this.lists.values()) {
-			maxList = Math.max(maxList, list.render(width).length);
-		}
-		return maxList + this.tabBar.render(width).length + 3;
+		return this.tabs.getMaxRenderHeight(width) + 2;
 	}
 
-	/** Update an item's displayed value across all category lists. */
 	updateValue(id: string, value: string): void {
-		for (const list of this.lists.values()) {
-			list.updateValue(id, value);
-		}
+		this.tabs.updateValue(id, value);
 	}
 
 	handleInput(data: string): void {
-		const kb = getKeybindings();
-		if (kb.matches(data, "tui.input.tab")) {
-			const index = SETTINGS_CATEGORIES.findIndex((category) => category.id === this.activeCategoryId);
-			this.switchCategory(SETTINGS_CATEGORIES[(index + 1) % SETTINGS_CATEGORIES.length].id);
-			return;
-		}
-		this.lists.get(this.activeCategoryId)?.handleInput(data);
+		this.tabs.handleInput(data);
 	}
 }
