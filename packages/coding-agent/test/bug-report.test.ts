@@ -1,3 +1,11 @@
+import type { StreamFn } from "@earendil-works/pi-agent-core";
+import {
+	type AssistantMessage,
+	createAssistantMessageEventStream,
+	fauxAssistantMessage,
+	type Model,
+	type SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
 import {
 	Container,
 	Editor,
@@ -9,7 +17,7 @@ import {
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AgentSession } from "../src/core/agent-session.ts";
-import { redactJsonValue, redactUrl } from "../src/core/bug-report.ts";
+import { generateBugReportSummary, redactJsonValue, redactUrl } from "../src/core/bug-report.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { reportBug } from "../src/modes/interactive/bug-report.ts";
 import { ExtensionEditorComponent } from "../src/modes/interactive/components/extension-editor.ts";
@@ -109,5 +117,45 @@ describe("bug report redaction", () => {
 			compaction: { reserveTokens: 16_384, keepRecentTokens: 20_000 },
 			baseUrl: "https://example.com/",
 		});
+	});
+});
+
+describe("bug report summary request", () => {
+	const model: Model<"anthropic-messages"> = {
+		id: "test-model",
+		name: "Test Model",
+		api: "anthropic-messages",
+		provider: "anthropic",
+		baseUrl: "https://api.anthropic.com",
+		reasoning: true,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 200000,
+		maxTokens: 32000,
+	};
+
+	it("does not send a fixed output cap", async () => {
+		let requestOptions: SimpleStreamOptions | undefined;
+		const streamFn: StreamFn = (_model, _context, options) => {
+			requestOptions = options;
+			const stream = createAssistantMessageEventStream();
+			const message: AssistantMessage = {
+				...fauxAssistantMessage("summary"),
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+			};
+			queueMicrotask(() => stream.push({ type: "done", reason: "stop", message }));
+			return stream;
+		};
+
+		await generateBugReportSummary({
+			messages: [{ role: "user", content: "it broke", timestamp: 1 }],
+			model,
+			signal: new AbortController().signal,
+			streamFn,
+		});
+
+		expect(requestOptions?.maxTokens).toBeUndefined();
 	});
 });

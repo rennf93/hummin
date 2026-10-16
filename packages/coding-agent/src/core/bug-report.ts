@@ -343,7 +343,6 @@ export async function generateBugReportSummary(options: GenerateBugReportSummary
 		.filter((part) => part !== undefined)
 		.join("\n\n");
 	const requestOptions: SimpleStreamOptions = {
-		maxTokens: Math.min(4096, model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY),
 		signal: options.signal,
 		apiKey: options.apiKey,
 		headers: options.headers,
