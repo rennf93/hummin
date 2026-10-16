@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- Fixed hummin fleet providers (`llamacpp-*`, `colibri-*`) never being treated as curated: they now sort first in the model picker, colibri models are included in ctrl+P/N cycling, and fleet providers show in the provider list
 - Fixed guardrail post-mortems being written to `~/.hummin/agent/post-mortems` even when `HUMMIN_CODING_AGENT_DIR` points elsewhere; they now go to the configured agent dir
 - Fixed `--model` choosing a provider by catalog order when several providers offer the match; Pi now prefers the provider with credentials and otherwise reports the ambiguity. `--models` and `enabledModels` add a model for each provider that offers it and warn about the ambiguity ([#10160](https://github.com/earendil-works/pi/issues/10160)). A model served by several hummin fleet servers resolves to the first server in fleet order instead, which also fixes `--model <exact id>` reporting such a model as ambiguous
 - Fixed `read` line-range labels for numeric-string or null arguments in the TUI, session tree, HTML exports, and examples ([#9887](https://github.com/earendil-works/pi/issues/9887))

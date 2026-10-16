@@ -11,6 +11,7 @@ import {
 	type TUI,
 	truncateToWidth,
 } from "@earendil-works/pi-tui";
+import { isFleetModel } from "../../../core/fleet-provider-ids.ts";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
 import { SettingsManager } from "../../../core/settings-manager.ts";
 import { refreshModelCatalogs } from "../model-catalog-refresh.ts";
@@ -352,8 +353,9 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	}
 
 	private sortModels(models: ModelItem[]): ModelItem[] {
+		const fleetProviders = new Set(models.filter((item) => isFleetModel(item.model)).map((item) => item.provider));
 		const curated = (provider: string): boolean =>
-			provider === "zai" || provider === "zai-coding-cn" || provider.startsWith("hummin");
+			provider === "zai" || provider === "zai-coding-cn" || fleetProviders.has(provider);
 		const providerRank = (provider: string): number => (curated(provider) ? 0 : 1);
 		// Group by provider (curated providers first, then alphabetical); within a
 		// group the current model comes first, then models by id.

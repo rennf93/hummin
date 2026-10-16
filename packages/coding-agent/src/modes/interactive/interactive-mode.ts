@@ -99,6 +99,7 @@ import type {
 	UserBashEventResult,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
+import { isFleetModel, isFleetProviderId } from "../../core/fleet-provider-ids.ts";
 import {
 	buildFooterNavigatorRows,
 	FooterDataProvider,
@@ -4876,13 +4877,8 @@ export class InteractiveMode {
 			.catch(() => []);
 		const credentialed = new Set(credentials.map((entry) => entry.providerId));
 		const curated = (id: string): boolean =>
-			id === "zai" ||
-			id === "zai-coding-cn" ||
-			id === "zai-api" ||
-			id.startsWith("hummin") ||
-			id.startsWith("llamacpp") ||
-			credentialed.has(id);
-		return models.filter((model) => curated(model.provider)).map((model) => ({ model }));
+			id === "zai" || id === "zai-coding-cn" || id === "zai-api" || credentialed.has(id);
+		return models.filter((model) => isFleetModel(model) || curated(model.provider)).map((model) => ({ model }));
 	}
 
 	// hummin curation: ctrl+P/N walks only curated and credentialed models.
@@ -6516,7 +6512,7 @@ export class InteractiveMode {
 		}
 		const showAll = this.settingsManager.getProvidersShowAll();
 		const curated = (id: string): boolean =>
-			id === "zai" || id === "zai-coding-cn" || id === "zai-api" || id.startsWith("hummin");
+			id === "zai" || id === "zai-coding-cn" || id === "zai-api" || isFleetProviderId(id);
 		const visible = options.filter((option) => showAll || curated(option.id) || option.status !== undefined);
 		return visible.sort((a, b) => {
 			const aCurated = curated(a.id);
