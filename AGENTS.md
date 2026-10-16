@@ -1,5 +1,21 @@
 # Development Rules
 
+**A GOOD FUNCTION NAME IS SELF-EXPLANATORY. IF THE FUNCTION ONLY TAKES CARE OF A SINGLE THINGS, THEN EVEN BETTER BECAUSE THE NAME IS GOING TO BE THE ONLY DOCUMENTATION YOU NEED.**
+**DOING THINGS WRONGLY COST TWICE. DO THINGS RIGHT AT FIRST, AND YOU DON'T PAY THE PRICE**
+**ASK QUESTIONS BEFORE YOU DO ANYTHING**
+**YOU ARE NOT ALLOWED TO MAKE ASSUMPTIONS**
+**IGNORING != FIXING**
+**PRE-EXISTING ERRORS ARE STILL EXISTING ERRORS. I DON'T CARE IF THEY ARE PRE-EXISTING, THEY SHOULDN'T EXIST**
+**HELPING MY PROMPTS**:
+```text
+I want the deepest version of the tasks, not bigger ones but rather:
+
+1. Say what a top professional in this field would do that I'm not asking for.
+2. Name the rawest material they would start from instead of what's being digested for me.
+3. Name the specific methods and tools they would use/implement.
+4. Sayt what, other than you or me, would show the result is right. Then rewrite my prompts to ask for exactly that.
+```
+
 ## Conversational Style
 
 - Keep answers short and concise
@@ -131,8 +147,7 @@ For release preparation, publishing, verification, or recovery, load and follow 
 ## hummin specifics (this fork)
 
 - Fork policy: thin overlay on upstream pi - zero deletions, and `@earendil-works/*` internal package names stay for cheap upstream merges. Do not sweep renames without the user's explicit go.
-- Private design docs live OUTSIDE the repo at `~/Documents/GitHub/ZZZ/hummin-docs/` (SPEC, DESIGN, HANDOFF progress doc). Do not move them into the repo.
-- `packages/coding-agent/extensions/hummin-local.ts` invariants: keep separate engine/host providers so servers remain independently selectable. The local provider id is `hummin` (renamed from `colibri`; the colibri *engine* name still refers to the external container runtime). `HUMMIN_INSTANCES` overrides the ordered `fleet.servers` settings (`HUMMIN_COLIBRI_INSTANCES` and settings key `colibriInstances` kept as pre-rename fallbacks). Fleet order defines preference; offline catalog entries come only from explicitly configured server `models`. Keep personal fleet addresses, service targets, and model catalogs in private settings. Per-model context windows come from server `/props` with `HUMMIN_CTX` as fallback; qwen-family models carry `thinkingFormat: "qwen-chat-template"`. Never introduce guessed placeholder model ids for unreachable servers.
+- `packages/coding-agent/extensions/hummin-local.ts` invariants: keep separate engine/host providers so servers remain independently selectable. Fleet providers are registered one per server with id `<engine>-<host>-<port>` (engines `llamacpp` and `colibri`; the colibri *engine* name still refers to the external container runtime), and UI checks recognize them through `src/core/fleet-provider-ids.ts`, never by an id prefix such as `hummin`. `HUMMIN_INSTANCES` overrides the ordered `fleet.servers` settings (`HUMMIN_COLIBRI_INSTANCES` and settings key `colibriInstances` kept as pre-rename fallbacks). Fleet order defines preference; offline catalog entries come only from explicitly configured server `models`. Keep personal fleet addresses, service targets, and model catalogs in private settings. Per-model context windows come from server `/props` with `HUMMIN_CTX` as fallback; qwen-family models carry `thinkingFormat: "qwen-chat-template"`. Never introduce guessed placeholder model ids for unreachable servers.
 - `packages/coding-agent/extensions/hummin-memory.ts`: any spawned child (distill, fold) MUST set `HUMMIN_MEMORY=0` in its child env - otherwise the shutdown handler recurses unboundedly (bug class, fixed once already).
 - `src/core/http-dispatcher.ts` replaces the global fetch with an undici `EnvHttpProxyAgent`. Local model servers need `httpIdleTimeoutMs: 0` in user settings (slow prefills otherwise look like dead connections); do not "fix" reported hangs by shortening default timeouts.
 - Runtime process title is `hummin`; a TUI session and spawned `-p` children look identical in `ps` - never kill by name pattern.
