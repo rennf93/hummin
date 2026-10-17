@@ -260,6 +260,11 @@ export interface DecisionSettings {
 	steerThreshold?: number;
 	triageThreshold?: number;
 	intakeThreshold?: number;
+	/** ask_user recommendation gate: hold threshold for a confident
+	 * disagreement with the model's recommendation. */
+	askThreshold?: number;
+	/** ask_user recommendation gate enabled (default true). */
+	askGate?: boolean;
 	gateTimeoutMs?: number;
 	dispatchTimeoutMs?: number;
 	decideTimeoutMs?: number;

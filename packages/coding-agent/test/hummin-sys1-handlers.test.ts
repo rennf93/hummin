@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { default as humminSys1, type Sys1GateDecision, sys1GateCheck } from "../extensions/hummin-sys1.ts";
+import { resetEngineUrlWarning, warnIfEngineUrlImplicit } from "../extensions/lib/decision-engine.ts";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 
 // Handler-level coverage for the hummin-sys1 extension: the sys1_decide tool
@@ -170,6 +171,55 @@ test("registration primes the active engine with a warmup read", async () => {
 	expect(body.state).toBe("warmup");
 	expect(body.questions.warmup?.type).toBe("noul");
 	expect(calls[0]?.url).toBe("http://127.0.0.1:9987/v1/systemone");
+});
+
+test("choice criteria arrays normalize to label -> label objects on the wire", async () => {
+	const calls = stubFetch(() =>
+		okResponse({ answers: { pick: { type: "choice", choice: "b", probabilities: { b: 0.9 }, confidence: 0.9 } } }),
+	);
+	const pi = register();
+	const result = await decideTool(pi).execute("t1", {
+		state: "s",
+		questions: [{ name: "pick", type: "choice", instructions: "pick one", criteria: ["a", "b"] }],
+	});
+	expect(result.isError).toBeUndefined();
+	const body = JSON.parse(calls[0]?.body ?? "{}") as {
+		questions: Record<string, { criteria: Record<string, string> }>;
+	};
+	expect(body.questions.pick?.criteria).toEqual({ a: "a", b: "b" });
+});
+
+test("a missing decision url warns once; explicit settings urls (including opt-out) never warn", () => {
+	stubFetch(() => okResponse(noulPayload("q", 0.5)));
+	const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+	try {
+		delete process.env.HUMMIN_DECISION_URL;
+		resetEngineUrlWarning();
+		warnIfEngineUrlImplicit(agentDir);
+		expect(err).toHaveBeenCalledTimes(1);
+		expect(err.mock.calls[0]?.[0]).toContain("decision.url is not configured");
+		expect(err.mock.calls[0]?.[0]).toContain("http://127.0.0.1:9987/v1/systemone");
+		warnIfEngineUrlImplicit(agentDir);
+		expect(err).toHaveBeenCalledTimes(1); // once per process
+		// An explicit settings url silences the implicit-url warning.
+		resetEngineUrlWarning();
+		err.mockClear();
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ decision: { url: "http://127.0.0.1:9999/v1/systemone" } }),
+		);
+		warnIfEngineUrlImplicit(agentDir);
+		expect(err.mock.calls.flat().some((m) => String(m).includes("decision.url is not configured"))).toBe(false);
+		// A deliberate empty opt-out stays silent too (it has its own, pre-existing warning).
+		resetEngineUrlWarning();
+		err.mockClear();
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ decision: { url: "" } }));
+		warnIfEngineUrlImplicit(agentDir);
+		expect(err.mock.calls.flat().some((m) => String(m).includes("decision.url is not configured"))).toBe(false);
+		resetEngineUrlWarning();
+	} finally {
+		err.mockRestore();
+	}
 });
 
 // --- sys1_decide input validation --------------------------------------------

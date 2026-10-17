@@ -26,10 +26,12 @@ import {
 import { Type } from "typebox";
 import {
 	type DecisionEngineConfig,
+	normalizeChoiceCriteria,
 	resolveDecisionEngine,
 	sys1Disabled,
 	sys1Fetch,
 	sys1Noul,
+	warnIfEngineUrlImplicit,
 } from "./lib/decision-engine.ts";
 import { readSys1GateLines } from "./lib/friction.ts";
 import { registerChildDispatchReviewTool } from "./lib/child-dispatch-review.ts";
@@ -68,8 +70,9 @@ const pct = (n: number | undefined): string =>
 // --- Automatic System-1 reads (no model opt-in required) ---
 // Kill switches: HUMMIN_SYS1_STEER=off disables the per-turn read,
 // HUMMIN_SYS1_GATE=off the bash tripwire, HUMMIN_SYS1_TRIAGE=off the
-// test-failure triage, and HUMMIN_SYS1_INTAKE=off the distill worker's intake
-// read. All fail open: if the engine is unreachable or slow, the turn, the
+// test-failure triage, HUMMIN_SYS1_INTAKE=off the distill worker's intake
+// read, and HUMMIN_SYS1_ASK=off the ask_user recommendation gate
+// (lib/ask-gate.ts, wired in hummin-ask.ts). All fail open: if the engine is unreachable or slow, the turn, the
 // command, the tool result, and the lesson proceed untouched. Every read is
 // appended to sys1-gate.log as {ts, type: "read", kind, p}.
 
@@ -693,6 +696,11 @@ export async function sys1GateCheck(
 }
 
 export default function humminSys1(pi: ExtensionAPI): void {
+	// Missing/unset decision.url silently runs every read against the built-in
+	// default; say so once instead of dying quietly (warnIfEngineUrlImplicit is
+	// also reached by lib callers, but the extension startup is the guaranteed
+	// one warning per session).
+	warnIfEngineUrlImplicit();
 	registerChildDispatchReviewTool(pi);
 	pi.registerTool({
 		name: "sys1_decide",
@@ -749,7 +757,13 @@ export default function humminSys1(pi: ExtensionAPI): void {
 					};
 				}
 				questions[q.name] = q.criteria !== undefined
-					? { type: q.type, instructions: q.instructions, criteria: q.criteria }
+					? {
+						type: q.type,
+						instructions: q.instructions,
+						// Choice criteria must reach the engine as label -> description
+						// objects; a label array is normalized (score levels stay arrays).
+						criteria: q.type === "choice" ? normalizeChoiceCriteria(q.criteria) : q.criteria,
+					}
 					: { type: q.type, instructions: q.instructions };
 			}
 

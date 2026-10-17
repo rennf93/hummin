@@ -15,6 +15,14 @@ import {
 	type TUI,
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import {
+	askGateHoldReason,
+	clearHeldDecision,
+	extractUserTexts,
+	heldDecisionFor,
+	rememberHeldDecision,
+	sys1AskGateCheck,
+} from "./lib/ask-gate.ts";
 
 export const QUESTION_MAX = 500;
 export const CHOICE_MAX = 80;
@@ -139,6 +147,9 @@ export class QuestionComponent implements Component {
 	private readonly question: string;
 	private readonly allowFreeText: boolean;
 	private readonly recommended: number | undefined;
+	/** Dim annotation shown under the options when the sys1 ask gate disagrees
+	 * with the agent's recommendation (re-ask after a hold). */
+	private readonly sys1Line: string | undefined;
 	private readonly done: (picked: string | undefined) => void;
 	private readonly tui: TUI;
 	private readonly theme: Theme;
@@ -155,6 +166,7 @@ export class QuestionComponent implements Component {
 		done: (picked: string | undefined) => void,
 		signal: AbortSignal | undefined,
 		recommended?: number,
+		sys1Line?: string,
 	) {
 		this.tui = tui;
 		this.theme = theme;
@@ -163,6 +175,7 @@ export class QuestionComponent implements Component {
 		this.options = options;
 		this.allowFreeText = allowFreeText;
 		this.recommended = recommended;
+		this.sys1Line = sys1Line;
 		this.done = done;
 		this.signal = signal;
 		this.onAbort = () => this.finish(undefined);
@@ -254,6 +267,7 @@ export class QuestionComponent implements Component {
 			const recommended = index === this.recommended ? ` ${this.theme.fg("dim", "(recommended)")}` : "";
 			lines.push(this.padLine(`${marker} ${number} ${option}${recommended}`, width));
 		}
+		if (this.sys1Line) lines.push(this.padLine("", width), this.padLine(this.theme.fg("dim", this.sys1Line), width));
 		lines.push(
 			this.padLine("", width),
 			this.padLine(this.theme.fg("dim", this.allowFreeText ? QUESTION_HINT : QUESTION_HINT_PLAIN), width),
@@ -291,13 +305,14 @@ export async function askInteractive(
 	ctx: ExtensionContext,
 	signal: AbortSignal | undefined,
 	recommended?: number,
+	sys1Line?: string,
 ): Promise<AskUserResult> {
 	notifyQuestionPending(ctx, question);
 	const options = buildOptions(choices, allowFreeText);
 	const picked = await withAbort(
 		ctx.ui.custom<string | undefined>(
 			(tui, theme, kb, done) =>
-				new QuestionComponent(tui, theme, kb, question, options, allowFreeText, done, signal, recommended),
+				new QuestionComponent(tui, theme, kb, question, options, allowFreeText, done, signal, recommended, sys1Line),
 		),
 		signal,
 	);
@@ -343,7 +358,42 @@ export default function humminAsk(pi: ExtensionAPI): void {
 				const fallback = choices[recommended ?? 0];
 				return toolResult(result(fallback, false, "non-interactive: defaulted to recommended choice"));
 			}
-			return toolResult(await askInteractive(question, choices, allowFreeText, ctx, signal, recommended));
+			// sys1 ask gate: when the model recommends an option, one System-1 read
+			// checks that pick against the session's stated intent. A confident
+			// disagreement holds the question once and steers the model; an unchanged
+			// re-ask is shown annotated with both opinions. Everything else fails
+			// open. No recommendation -> nothing to check.
+			let sys1Line: string | undefined;
+			if (recommended !== undefined) {
+				const recommendedLabel = choices[recommended];
+				const held = heldDecisionFor(question, Date.now());
+				if (held) {
+					clearHeldDecision(question);
+					sys1Line = `sys1: engine favors "${held.enginePick}" (P=${held.p.toFixed(2)}) over the agent's recommendation`;
+				} else {
+					const hold = await sys1AskGateCheck({
+						userTexts: extractUserTexts(ctx.sessionManager.getEntries()),
+						question,
+						choices,
+						recommendedLabel,
+						cwd: ctx.cwd,
+					});
+					signal?.throwIfAborted();
+					if (hold) {
+						rememberHeldDecision(question, hold.enginePick, hold.p, Date.now());
+						return {
+							content: [{ type: "text", text: askGateHoldReason(hold.enginePick, hold.p, recommendedLabel) }],
+							details: { choice: "", cancelled: true, notice: "sys1 ask gate held the question once" },
+						};
+					}
+				}
+			}
+			const out = await askInteractive(question, choices, allowFreeText, ctx, signal, recommended, sys1Line);
+			if (sys1Line && !out.cancelled) {
+				const annotation = sys1Line.replace("sys1: ", "sys1 ");
+				return toolResult(result(out.choice, out.cancelled, out.notice ? `${out.notice}; ${annotation}` : annotation));
+			}
+			return toolResult(out);
 		},
 
 		renderCall(args, theme, context) {
@@ -359,7 +409,12 @@ export default function humminAsk(pi: ExtensionAPI): void {
 				return new Text(theme.fg("error", text.trim()), 0, 0);
 			}
 			const details = result.details as AskUserResult | undefined;
-			if (!details || details.cancelled) return new Text(theme.fg("dim", "cancelled"), 0, 0);
+			if (!details || details.cancelled) {
+				if (details?.notice?.startsWith("sys1 ask gate")) {
+					return new Text(theme.fg("warning", "held by sys1 ask gate (steered back to the agent)"), 0, 0);
+				}
+				return new Text(theme.fg("dim", "cancelled"), 0, 0);
+			}
 			let line = `${theme.fg("success", "→")} ${theme.fg("accent", details.choice)}`;
 			if (details.notice) line += ` ${theme.fg("dim", `(${details.notice})`)}`;
 			return new Text(line, 0, 0);

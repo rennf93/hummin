@@ -158,9 +158,9 @@ These fork-specific variables are read by hummin and its bundled extensions. Whe
 
 ### System-1 decision layer
 
-One System-1 engine answers every System-1 read: the bash gate's gray-zone scoring, the per-turn destructive steer, test-failure triage, memory intake, child-dispatch review, and the `sys1_decide` tool. Every hook fails open: an unreachable or slow engine never blocks the turn, the command, or the lesson. Every read is audited to `<agentDir>/sys1-gate.log` and summarized by `/friction`.
+One System-1 engine answers every System-1 read: the bash gate's gray-zone scoring, the per-turn destructive steer, test-failure triage, memory intake, child-dispatch review, the ask_user recommendation gate, and the `sys1_decide` tool. Every hook fails open: an unreachable or slow engine never blocks the turn, the command, or the lesson. Every read is audited to `<agentDir>/sys1-gate.log` and summarized by `/friction`.
 
-Connection and calibration live in settings under `decision.url`, `.apiKey`, `.gateThreshold`, `.steerThreshold`, `.triageThreshold`, `.intakeThreshold`, `.gateTimeoutMs`, `.dispatchTimeoutMs`, `.decideTimeoutMs`, and `.warmTimeoutMs`.
+Connection and calibration live in settings under `decision.url`, `.apiKey`, `.gateThreshold`, `.steerThreshold`, `.triageThreshold`, `.intakeThreshold`, `.askThreshold`, `.askGate`, `.gateTimeoutMs`, `.dispatchTimeoutMs`, `.decideTimeoutMs`, and `.warmTimeoutMs`. A missing/unset `decision.url` runs every read against the built-in default endpoint and warns once at startup (stderr plus terminal notification); an explicit `decision.url: ""` opts out silently.
 
 | Variable | Description |
 |----------|-------------|
@@ -170,10 +170,12 @@ Connection and calibration live in settings under `decision.url`, `.apiKey`, `.g
 | `HUMMIN_DECISION_STEER_THRESHOLD` | Destructive-intent steer threshold, `0` to `1` (default `0.8`) |
 | `HUMMIN_DECISION_TRIAGE_THRESHOLD` | Triage advisory threshold, `0` to `1` (default `0.45`) |
 | `HUMMIN_DECISION_INTAKE_THRESHOLD` | Memory lesson intake threshold, `0` to `1` (default `0.5`) |
+| `HUMMIN_DECISION_ASK_THRESHOLD` | ask_user recommendation-gate threshold, `0` to `1` (default `0.7`) |
 | `HUMMIN_SYS1_GATE` | `off` disables the bash destructive-command gate everywhere (the bash tool hook and background exec/monitor shells) |
 | `HUMMIN_SYS1_STEER` | `off` disables the per-turn destructive-intent steer |
 | `HUMMIN_SYS1_TRIAGE` | `off` disables the test-failure triage advisory |
 | `HUMMIN_SYS1_INTAKE` | `off` skips the distill worker's per-lesson intake score (lessons are stored unconditionally) |
+| `HUMMIN_SYS1_ASK` | `off` disables the ask_user recommendation gate (also `decision.askGate: false`) |
 
 
 ### Guardrails tool-call budget

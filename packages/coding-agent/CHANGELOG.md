@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### New Features
+
+- **sys1 ask gate**: `ask_user` recommendations are now checked against the session's stated intent by a System-1 choice read (the engine picks the option that best matches the user's recent messages). A confident disagreement (threshold `decision.askThreshold`, default 0.7) holds the question once and steers the model back with the disagreement; an unchanged re-ask is shown to the user annotated with both opinions. Fails open everywhere; `HUMMIN_SYS1_ASK=off` or `decision.askGate: false` disables.
+- **Decision-engine config warnings and criteria normalization**: a missing/unset `decision.url` now warns once at startup (stderr + terminal notification) while reads fall back to the built-in default endpoint; an explicit empty url stays a silent opt-out. `choice` questions sent to the engine (sys1_decide tool and the ask gate) normalize label-array criteria to label -> label objects, which is the shape engine builds validate.
+
 ## [1.6.0] - 2026-10-16
 
 ### New Features
