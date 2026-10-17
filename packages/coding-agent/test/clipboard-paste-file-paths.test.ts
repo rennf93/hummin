@@ -31,6 +31,7 @@ test("Finder file paths take precedence over their icon image", async () => {
 	const insertTextAtCursor = vi.fn<(text: string) => void>();
 	const context = {
 		editor: { insertTextAtCursor },
+		pastedImagePaths: new Set<string>(),
 		showError: vi.fn(),
 		ui: { requestRender: vi.fn() },
 	};
@@ -98,6 +99,7 @@ test.each([
 			getText: () => editorText,
 			insertTextAtCursor,
 		},
+		pastedImagePaths: new Set<string>(),
 		showError: vi.fn(),
 		ui: { requestRender: vi.fn() },
 	};
