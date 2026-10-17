@@ -13,7 +13,7 @@ I want the deepest version of the tasks, not bigger ones but rather:
 1. Say what a top professional in this field would do that I'm not asking for.
 2. Name the rawest material they would start from instead of what's being digested for me.
 3. Name the specific methods and tools they would use/implement.
-4. Sayt what, other than you or me, would show the result is right. Then rewrite my prompts to ask for exactly that.
+4. Say what, other than you or me, would show the result is right. Then rewrite my prompts to ask for exactly that.
 ```
 
 ## Conversational Style
