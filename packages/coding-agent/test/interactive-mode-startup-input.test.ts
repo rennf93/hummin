@@ -17,7 +17,7 @@ type SubmitContext = {
 	convertPastedImages: (text: string) => Promise<{ text: string; images: never[] }>;
 	rememberPromptHistory: (text: string) => void;
 	isExtensionCommand: (text: string) => boolean;
-	pastedImagePaths: Set<string>;
+	pendingPastedImages: Map<number, string>;
 	showWarning: (message: string) => void;
 	onInputCallback?: (text: string, images?: unknown[]) => void;
 	pendingUserInputs: { text: string; images?: unknown[] }[];
@@ -29,7 +29,7 @@ type InputContext = {
 };
 
 type ConvertContext = {
-	pastedImagePaths: Set<string>;
+	pendingPastedImages: Map<number, string>;
 	isExtensionCommand: (text: string) => boolean;
 	showWarning: (message: string) => void;
 };
@@ -65,14 +65,14 @@ function createSubmitContext(): SubmitContext {
 		convertPastedImages: (text: string) =>
 			interactiveModePrototype.convertPastedImages.call(
 				context as unknown as {
-					pastedImagePaths: Set<string>;
+					pendingPastedImages: Map<number, string>;
 					isExtensionCommand: (text: string) => boolean;
 					showWarning: (message: string) => void;
 				},
 				text,
 			),
 		isExtensionCommand: () => false,
-		pastedImagePaths: new Set<string>(),
+		pendingPastedImages: new Map<number, string>(),
 		showWarning: vi.fn(),
 		pendingUserInputs: [],
 		rememberPromptHistory: (text: string) => context.editor.addToHistory?.(text),

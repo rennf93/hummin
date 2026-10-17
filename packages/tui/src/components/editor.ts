@@ -395,6 +395,8 @@ export class Editor implements Component, Focusable {
 
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
+	/** Called with bracketed-paste text before insertion. Return true when the paste was handled; the editor then does nothing. */
+	public onPasteText?: (text: string) => boolean;
 	public disableSubmit: boolean = false;
 
 	constructor(tui: TUI, theme: EditorTheme, options: EditorOptions = {}) {
@@ -1465,6 +1467,7 @@ export class Editor implements Component, Focusable {
 	}
 
 	private handlePaste(pastedText: string): void {
+		if (this.onPasteText?.(pastedText)) return;
 		this.cancelAutocomplete();
 		this.exitHistoryBrowsing();
 		this.lastAction = null;

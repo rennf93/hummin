@@ -4,8 +4,8 @@ import { join } from "node:path";
 import type { UserMessage } from "@earendil-works/pi-ai/compat";
 import { extensionForImageMimeType } from "../../utils/clipboard-image.ts";
 
-/** Restore images as private files, using the same editor representation as clipboard images. */
-export function queuedMessageToEditorText(message: UserMessage, onImageFile?: (path: string) => void): string {
+/** Restore images as private temp files, registering each for its `[Image N]` marker in the editor text. */
+export function queuedMessageToEditorText(message: UserMessage, registerImageFile: (path: string) => string): string {
 	if (typeof message.content === "string") return message.content;
 	const text = message.content
 		.filter((part) => part.type === "text")
@@ -19,11 +19,10 @@ export function queuedMessageToEditorText(message: UserMessage, onImageFile?: (p
 		return extension;
 	});
 	const directory = mkdtempSync(join(tmpdir(), "hummin-queue-"));
-	const paths = images.map((image, index) => {
+	const markers = images.map((image, index) => {
 		const file = join(directory, `${index + 1}.${extensions[index]}`);
 		writeFileSync(file, Buffer.from(image.data, "base64"), { mode: 0o600 });
-		onImageFile?.(file);
-		return file;
+		return registerImageFile(file);
 	});
-	return [text, ...paths].filter(Boolean).join("\n");
+	return [text, ...markers].filter(Boolean).join("\n");
 }

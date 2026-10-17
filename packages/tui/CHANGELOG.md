@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `Editor.onPasteText?: (text: string) => boolean`: called with bracketed-paste text before insertion; returning true skips the editor's built-in paste handling so the app can transform it (e.g. image paths into markers).
+
 ## [1.6.2] - 2026-10-17
 
 ## [1.6.1] - 2026-10-17

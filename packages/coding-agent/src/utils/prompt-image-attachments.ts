@@ -1,15 +1,12 @@
 /**
- * Convert pasted image file paths in prompt text into image attachments.
+ * Paste-time image markers.
  *
- * Clipboard paste inserts file paths as literal text (macOS screenshots land in
- * TemporaryItems with spaces in the name). At submit time those paths are
- * replaced with compact `[Image N]` markers and the image bytes are attached to
- * the message, so the model sees the image immediately instead of reading the
- * file itself - and the transcript stays legible.
- *
- * Only paths that were actually inserted by paste (tracked by the caller) are
- * converted. Hand-typed paths stay as text: rewriting a sentence that merely
- * mentions `src/logo.png` would silently change its meaning.
+ * Pasting an image (Finder copy, clipboard bitmap, or clipboard text that is
+ * nothing but image file paths) inserts a compact `[Image N]` marker into the
+ * editor right away, where N counts every image pasted in the session. On
+ * submit, each marker still present in the text attaches its image bytes, so
+ * the model sees the image immediately and the transcript stays legible.
+ * Deleting a marker drops the image; hand-typed paths stay plain text.
  */
 
 import { readFile, stat } from "node:fs/promises";
@@ -17,73 +14,68 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import { processImage } from "./image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "./mime.ts";
 
-export interface ExtractedImagePrompt {
-	/** Prompt text with converted paths replaced by `[Image N]` markers. */
-	text: string;
-	/** Attachments in marker order. */
-	images: ImageContent[];
-	/** Human-readable reasons why a tracked path was left as text. */
-	warnings: string[];
-}
-
-interface PathOccurrence {
+/** A clipboard line that is an image file path: the unescaped `path` plus the original `raw` line. */
+export interface PastedImagePath {
 	path: string;
-	start: number;
-	end: number;
+	raw: string;
 }
 
-/** Find every occurrence of the known pasted paths in the text, left to right. */
-export function findPastedPathOccurrences(text: string, knownPaths: Iterable<string>): PathOccurrence[] {
-	const occurrences: PathOccurrence[] = [];
-	for (const knownPath of knownPaths) {
-		if (!knownPath) continue;
-		let searchFrom = 0;
-		while (true) {
-			const start = text.indexOf(knownPath, searchFrom);
-			if (start === -1) break;
-			const end = start + knownPath.length;
-			occurrences.push({ path: knownPath, start, end });
-			searchFrom = end;
-		}
+/**
+ * Parse clipboard text that consists exclusively of image file paths (one per line).
+ * Absolute paths with an image extension only; `\ ` escape sequences from terminal-style
+ * path text are unescaped, bare spaces pass through. Returns the entries in order, or
+ * null when the text is anything else - prose with a path in it must stay plain text.
+ */
+export function parsePastedImagePathText(text: string): PastedImagePath[] | null {
+	const lines = text
+		.trim()
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0);
+	if (lines.length === 0) return null;
+	const entries: PastedImagePath[] = [];
+	for (const line of lines) {
+		if (!/^\/(?:[^\\]|\\.)+$/.test(line)) return null;
+		if (!/\.(png|jpe?g|webp|gif|bmp)$/i.test(line)) return null;
+		entries.push({ path: line.replace(/\\(.)/g, "$1"), raw: line });
 	}
-	// At equal start, the longer path wins (e.g. `a.png` vs `a.png.bak`).
-	return occurrences.sort((a, b) => a.start - b.start || b.end - a.end);
+	return entries;
 }
 
-/** Replace tracked pasted image paths with `[Image N]` markers and load the images. */
-export async function extractImageAttachments(
+/** Return why `filePath` cannot attach as a pasted image, or null when it can. */
+export async function imagePasteBlocker(filePath: string): Promise<string | null> {
+	try {
+		const stats = await stat(filePath);
+		if (!stats.isFile()) return "not a regular file";
+		const mimeType = await detectSupportedImageMimeTypeFromFile(filePath);
+		if (!mimeType) return "not a supported image";
+		return null;
+	} catch (error) {
+		return error instanceof Error ? error.message : String(error);
+	}
+}
+
+/**
+ * Load the pending images for the `[Image N]` markers still present in the prompt
+ * text, in marker order. Markers the user deleted - or numbers that were never
+ * pasted - attach nothing.
+ */
+export async function collectPastedMarkerImages(
 	text: string,
-	knownPaths: ReadonlySet<string>,
-): Promise<ExtractedImagePrompt> {
+	pending: ReadonlyMap<number, string>,
+): Promise<{ images: ImageContent[]; warnings: string[] }> {
 	const images: ImageContent[] = [];
 	const warnings: string[] = [];
-	const occurrences = findPastedPathOccurrences(text, knownPaths);
-	if (occurrences.length === 0) {
-		return { text, images, warnings };
+	const seen = new Set<number>();
+	for (const match of text.matchAll(/\[Image (\d+)\]/g)) {
+		const index = Number(match[1]);
+		const filePath = pending.get(index);
+		if (filePath === undefined || seen.has(index)) continue;
+		seen.add(index);
+		const attachment = await loadImageAttachment(filePath, warnings);
+		if (attachment) images.push(attachment);
 	}
-
-	// Load every distinct path once; per-occurrence reuse keeps repeated pastes cheap.
-	const loaded = new Map<string, ImageContent | null>();
-	for (const occurrence of occurrences) {
-		if (loaded.has(occurrence.path)) continue;
-		loaded.set(occurrence.path, await loadImageAttachment(occurrence.path, warnings));
-	}
-
-	let result = "";
-	let cursor = 0;
-	let markerIndex = 0;
-	for (const occurrence of occurrences) {
-		if (occurrence.start < cursor) continue; // already consumed by a longer match
-		const attachment = loaded.get(occurrence.path);
-		if (!attachment) continue;
-		markerIndex += 1;
-		result += text.slice(cursor, occurrence.start);
-		result += `[Image ${markerIndex}]`;
-		cursor = occurrence.end;
-		images.push(attachment);
-	}
-	result += text.slice(cursor);
-	return { text: result, images, warnings };
+	return { images, warnings };
 }
 
 async function loadImageAttachment(filePath: string, warnings: string[]): Promise<ImageContent | null> {

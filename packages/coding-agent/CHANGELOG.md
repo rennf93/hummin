@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Paste-time `[Image N]` markers**: pasting an image inserts `[Image N]` into the editor immediately, where N counts every image pasted in the session, instead of inserting the file path and rewriting it on submit. Submit attaches the image behind each marker still in the text; deleting a marker drops the image. Finder-copied files, clipboard bitmaps, and clipboard text that is nothing but image paths (shell-escaped or bare spaces) all become markers; files that cannot attach keep their path text with a warning. Queued-message round-trips restore markers instead of raw paths.
+
 ## [1.6.2] - 2026-10-17
 
 ### New Features

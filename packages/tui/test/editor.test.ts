@@ -4572,3 +4572,28 @@ describe("Editor auto-pairing", () => {
 		assert.strictEqual(editor.getText(), "(foo))");
 	});
 });
+
+describe("Editor onPasteText hook", () => {
+	it("lets the app handle a bracketed paste and skips insertion", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		const seen: string[] = [];
+		editor.onPasteText = (text) => {
+			seen.push(text);
+			return true;
+		};
+
+		editor.handleInput("\x1b[200~/tmp/shot.png\x1b[201~");
+
+		assert.deepStrictEqual(seen, ["/tmp/shot.png"]);
+		assert.strictEqual(editor.getText(), "");
+	});
+
+	it("falls back to normal insertion when the hook declines", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.onPasteText = () => false;
+
+		editor.handleInput("\x1b[200~/tmp/shot.png\x1b[201~");
+
+		assert.strictEqual(editor.getText(), "/tmp/shot.png");
+	});
+});

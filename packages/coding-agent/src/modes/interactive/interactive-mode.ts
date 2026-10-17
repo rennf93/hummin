@@ -131,7 +131,12 @@ import { parseGitUrl } from "../../utils/git.ts";
 import { ensurePngTranscoder } from "../../utils/image-convert.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
-import { extractImageAttachments } from "../../utils/prompt-image-attachments.ts";
+import {
+	collectPastedMarkerImages,
+	imagePasteBlocker,
+	type PastedImagePath,
+	parsePastedImagePathText,
+} from "../../utils/prompt-image-attachments.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
@@ -485,7 +490,9 @@ export class InteractiveMode {
 	private onInputCallback?: (text: string, images?: ImageContent[]) => void;
 	private pendingUserInputs: { text: string; images?: ImageContent[] }[] = [];
 	/** File paths inserted by clipboard paste; converted to image attachments at submit. */
-	private readonly pastedImagePaths = new Set<string>();
+	/** Marker index -> image file path for images pasted this session; `[Image N]` in the text attaches N on submit. */
+	private readonly pendingPastedImages = new Map<number, string>();
+	private nextPastedImageIndex = 1;
 	private activeStatusIndicator: StatusIndicator | undefined = undefined;
 	private activeWorkingIndicatorEmbedded = false;
 	private readonly idleStatus = new IdleStatus();
@@ -3120,6 +3127,16 @@ export class InteractiveMode {
 		this.defaultEditor.onPasteImage = () => {
 			void this.handleClipboardPaste();
 		};
+
+		// Terminal bracketed paste (Cmd+V): clipboard text that is nothing but image file
+		// paths becomes [Image N] markers instead of literal path text.
+		this.defaultEditor.onPasteText = (text: string) => {
+			if (this.isBashMode) return false;
+			const entries = parsePastedImagePathText(text);
+			if (!entries) return false;
+			void this.pasteImageFiles(entries);
+			return true;
+		};
 	}
 
 	private async handleRightClickPaste(): Promise<void> {
@@ -3129,6 +3146,7 @@ export class InteractiveMode {
 		try {
 			const text = await readClipboardText();
 			if (!text || this.renderer.getFocusedComponent() !== target) return;
+			// Image-path text is converted by the editor's onPasteText hook during the simulated paste.
 			handleInput.call(target, `\x1b[200~${text}\x1b[201~`);
 			this.ui.requestRender();
 		} catch {
@@ -3143,20 +3161,12 @@ export class InteractiveMode {
 				if (filePaths.some((filePath) => /\p{Cc}/u.test(filePath))) {
 					throw new Error("Clipboard file path contains control characters");
 				}
-				const paths = this.isBashMode ? filePaths.map(quoteIfNeeded).join(" ") : filePaths.join("\n");
-				if (!this.isBashMode) {
-					for (const filePath of filePaths) {
-						this.pastedImagePaths.add(filePath);
-					}
+				if (this.isBashMode) {
+					this.insertAtCursorWithSpacing(filePaths.map(quoteIfNeeded).join(" "));
+					this.ui.requestRender();
+				} else {
+					await this.pasteImageFiles(filePaths.map((filePath) => ({ path: filePath, raw: filePath })));
 				}
-				const cursor = this.editor.getCursor?.();
-				const currentLine = cursor ? (this.editor.getText().split("\n")[cursor.line] ?? "") : "";
-				const characterBeforeCursor = cursor && cursor.col > 0 ? currentLine[cursor.col - 1] : "";
-				const characterAfterCursor = cursor ? currentLine[cursor.col] : "";
-				const leadingSpace = characterBeforeCursor && !/\s/.test(characterBeforeCursor) ? " " : "";
-				const trailingSpace = characterAfterCursor && !/\s/.test(characterAfterCursor) ? " " : "";
-				this.editor.insertTextAtCursor?.(`${leadingSpace}${paths}${trailingSpace}`);
-				this.ui.requestRender();
 				return;
 			}
 
@@ -3168,16 +3178,20 @@ export class InteractiveMode {
 				const filePath = path.join(tmpDir, fileName);
 				fs.writeFileSync(filePath, Buffer.from(image.bytes));
 
-				this.pastedImagePaths.add(filePath);
-				this.editor.insertTextAtCursor?.(filePath);
+				this.insertAtCursorWithSpacing(this.registerPastedImage(filePath));
 				this.ui.requestRender();
 				return;
 			}
 
 			const text = await readClipboardText();
 			if (text) {
-				this.editor.insertTextAtCursor?.(text);
-				this.ui.requestRender();
+				const entries = this.isBashMode ? null : parsePastedImagePathText(text);
+				if (entries) {
+					await this.pasteImageFiles(entries);
+				} else {
+					this.insertAtCursorWithSpacing(text);
+					this.ui.requestRender();
+				}
 			}
 		} catch (error) {
 			this.showError(`Failed to paste from clipboard: ${error instanceof Error ? error.message : String(error)}`);
@@ -4521,18 +4535,60 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Replace clipboard-pasted image paths with `[Image N]` markers and load attachments.
-	 * Extension command arguments pass through untouched.
+	 * Attach the images for the `[Image N]` markers still present in the text. The text is
+	 * sent as-is; extension command arguments pass through untouched.
 	 */
 	private async convertPastedImages(text: string): Promise<{ text: string; images: ImageContent[] }> {
-		if (this.pastedImagePaths.size === 0 || this.isExtensionCommand(text)) {
+		if (this.pendingPastedImages.size === 0 || this.isExtensionCommand(text)) {
 			return { text, images: [] };
 		}
-		const extracted = await extractImageAttachments(text, this.pastedImagePaths);
-		for (const warning of extracted.warnings) {
+		const collected = await collectPastedMarkerImages(text, this.pendingPastedImages);
+		for (const warning of collected.warnings) {
 			this.showWarning(warning);
 		}
-		return { text: extracted.text, images: extracted.images };
+		return { text, images: collected.images };
+	}
+
+	/** Register a pasted image file and return its `[Image N]` marker text; N counts all images pasted this session. */
+	private registerPastedImage(filePath: string): string {
+		const index = this.nextPastedImageIndex;
+		this.nextPastedImageIndex += 1;
+		this.pendingPastedImages.set(index, filePath);
+		return `[Image ${index}]`;
+	}
+
+	/** Insert text at the cursor, padded with a space when it would touch a word. */
+	private insertAtCursorWithSpacing(text: string): void {
+		const cursor = this.editor.getCursor?.();
+		const currentLine = cursor ? (this.editor.getText().split("\n")[cursor.line] ?? "") : "";
+		const characterBeforeCursor = cursor && cursor.col > 0 ? currentLine[cursor.col - 1] : "";
+		const characterAfterCursor = cursor ? currentLine[cursor.col] : "";
+		const leadingSpace = characterBeforeCursor && !/\s/.test(characterBeforeCursor) ? " " : "";
+		const trailingSpace = characterAfterCursor && !/\s/.test(characterAfterCursor) ? " " : "";
+		this.editor.insertTextAtCursor?.(`${leadingSpace}${text}${trailingSpace}`);
+	}
+
+	/**
+	 * Turn pasted image files into `[Image N]` markers at the cursor. A file that cannot
+	 * attach stays as its original text with a warning, so a broken path remains fixable.
+	 */
+	private async pasteImageFiles(entries: PastedImagePath[]): Promise<void> {
+		try {
+			const parts: string[] = [];
+			for (const entry of entries) {
+				const blocker = await imagePasteBlocker(entry.path);
+				if (blocker) {
+					this.showWarning(`Skipped ${entry.path}: ${blocker}`);
+					parts.push(entry.raw);
+				} else {
+					parts.push(this.registerPastedImage(entry.path));
+				}
+			}
+			this.insertAtCursorWithSpacing(parts.join("\n"));
+			this.ui.requestRender();
+		} catch (error) {
+			this.showError(`Failed to paste from clipboard: ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 
 	private async handleFollowUp(): Promise<void> {
@@ -4774,8 +4830,8 @@ export class InteractiveMode {
 	 * Clears both session queue and compaction queue.
 	 */
 	private clearAllQueues(): { steering: string[]; followUp: string[] } {
-		const trackImageFile = (path: string) => this.pastedImagePaths.add(path);
-		const { steering, followUp } = takeSessionQueuedMessages(this.session, trackImageFile);
+		const registerImageFile = (path: string) => this.registerPastedImage(path);
+		const { steering, followUp } = takeSessionQueuedMessages(this.session, registerImageFile);
 		// Materialize compaction-queued images back to files so an edited resubmit re-attaches them.
 		const materialize = (message: CompactionQueuedMessage) => {
 			if (!message.images || message.images.length === 0) return message.text;
@@ -4783,7 +4839,7 @@ export class InteractiveMode {
 				? [{ type: "text" as const, text: message.text }, ...message.images]
 				: message.images;
 			const userMessage: UserMessage = { role: "user", content, timestamp: Date.now() };
-			return queuedMessageToEditorText(userMessage, trackImageFile);
+			return queuedMessageToEditorText(userMessage, registerImageFile);
 		};
 		const compactionSteering = this.compactionQueuedMessages.filter((msg) => msg.mode === "steer").map(materialize);
 		const compactionFollowUp = this.compactionQueuedMessages
@@ -5624,7 +5680,7 @@ export class InteractiveMode {
 			getCompactionQueuedMessages: () => this.compactionQueuedMessages,
 			getEditorText: () => this.editor.getText(),
 			setEditorText: (text) => this.editor.setText(text),
-			trackImageFile: (path) => this.pastedImagePaths.add(path),
+			registerImageFile: (path) => this.registerPastedImage(path),
 			showSelector: (create) => this.showSelector(create),
 			showStatus: (message) => this.showStatus(message),
 			showError: (message) => this.showError(message),
