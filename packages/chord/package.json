@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/chord",
-	"version": "1.6.2",
+	"version": "1.6.3",
 	"description": "Typed host runtime for plugins, contracts, replicated state, and RPC over JSON links",
 	"type": "module",
 	"main": "./dist/index.js",
