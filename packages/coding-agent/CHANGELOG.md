@@ -7,6 +7,14 @@
 - **sys1 ask gate**: `ask_user` recommendations are now checked against the session's stated intent by a System-1 choice read (the engine picks the option that best matches the user's recent messages). A confident disagreement (threshold `decision.askThreshold`, default 0.7) holds the question once and steers the model back with the disagreement; an unchanged re-ask is shown to the user annotated with both opinions. Fails open everywhere; `HUMMIN_SYS1_ASK=off` or `decision.askGate: false` disables.
 - **Decision-engine config warnings and criteria normalization**: a missing/unset `decision.url` now warns once at startup (stderr + terminal notification) while reads fall back to the built-in default endpoint; an explicit empty url stays a silent opt-out. `choice` questions sent to the engine (sys1_decide tool and the ask gate) normalize label-array criteria to label -> label objects, which is the shape engine builds validate.
 
+### Added
+
+- Added a Models Configuration reference generated from the `models.json` schema, listing all provider, model, model override, and compatibility fields ([#10790](https://github.com/earendil-works/pi/issues/10790))
+
+### Fixed
+
+- Fixed `models.schema.json` missing descriptions for provider and model fields, so editors showed no hints for them ([#10790](https://github.com/earendil-works/pi/issues/10790))
+
 ## [1.6.0] - 2026-10-16
 
 ### New Features
@@ -30,6 +38,10 @@
 - Changed the default Xiaomi MiMo model of the `xiaomi` and `xiaomi-token-plan-*` providers to `mimo-v2.6-pro`; models.dev now marks `mimo-v2.5` and `mimo-v2.5-pro` deprecated, so they leave the generated catalog
 - Changed model switching to drop thinking blocks from earlier assistant messages produced by a different model, instead of sending them as plain text. The new model previously saw the old model's reasoning as part of its replies and could start writing its own reasoning into the visible answer ([#10995](https://github.com/earendil-works/pi/issues/10995))
 - `generateSummary()` and `generateSummaryWithUsage()` now ignore their `reserveTokens` parameter. Summary requests use the model's output limit instead.
+
+### Changed
+
+- Changed the default NVIDIA model to `nvidia/nemotron-3.5-super-vl-120b-a12b` ([#10910](https://github.com/earendil-works/pi/pull/10910) by [@cv](https://github.com/cv))
 
 ### Fixed
 
