@@ -15,6 +15,8 @@ export interface QueueManagerContext {
 	getCompactionQueuedMessages: () => CompactionQueuedMessageRef[];
 	getEditorText: () => string;
 	setEditorText: (text: string) => void;
+	/** Register a materialized image file so submit re-attaches it instead of sending the path as text. */
+	trackImageFile: (path: string) => void;
 	showSelector: (create: (done: () => void) => { component: Component; focus: Component }) => void;
 	showStatus: (message: string) => void;
 	showError: (message: string) => void;
@@ -26,14 +28,17 @@ export interface QueueManagerContext {
  * Remove every session-queued message and return their editor text, steering and follow-up separately.
  * Throws when an attachment cannot be materialized; in that case no message has been removed.
  */
-export function takeSessionQueuedMessages(session: AgentSession): { steering: string[]; followUp: string[] } {
+export function takeSessionQueuedMessages(
+	session: AgentSession,
+	onImageFile?: (path: string) => void,
+): { steering: string[]; followUp: string[] } {
 	// Materialize every attachment before mutating either queue. A failed write leaves messages pending.
 	const snapshots = (["steering", "followUp"] as const).flatMap((kind) =>
 		session.getQueuedUserMessages(kind).map((message, index) => ({
 			kind,
 			message,
 			index,
-			text: queuedMessageToEditorText(message),
+			text: queuedMessageToEditorText(message, onImageFile),
 		})),
 	);
 	const steering: string[] = [];
@@ -70,7 +75,7 @@ export function showQueueManager(ctx: QueueManagerContext): void {
 					.map((part) => part.text)
 					.join(""),
 				imageCount: content.filter((part) => part.type === "image").length,
-				restoreText: () => queuedMessageToEditorText(message),
+				restoreText: () => queuedMessageToEditorText(message, ctx.trackImageFile),
 				remove: () => ctx.getSession().removeQueuedMessage(kind, index, message) !== undefined,
 			});
 		}

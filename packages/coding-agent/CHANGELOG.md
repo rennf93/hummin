@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### New Features
+
+- **Pasted images attach on submit**: clipboard-pasted image paths become `[Image N]` markers with real image attachments, so the model sees the image immediately instead of reading the temporary file itself, and the transcript stays legible. Queued-message round-trips preserve the attachments.
+
 ## [1.6.1] - 2026-10-17
 
 ### New Features

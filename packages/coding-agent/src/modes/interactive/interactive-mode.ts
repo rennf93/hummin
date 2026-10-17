@@ -16,6 +16,7 @@ import {
 	type Message,
 	type Model,
 	type Usage,
+	type UserMessage,
 } from "@earendil-works/pi-ai/compat";
 import type {
 	AutocompleteItem,
@@ -130,6 +131,7 @@ import { parseGitUrl } from "../../utils/git.ts";
 import { ensurePngTranscoder } from "../../utils/image-convert.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
+import { extractImageAttachments } from "../../utils/prompt-image-attachments.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
@@ -197,6 +199,7 @@ import { installTerminalNotificationGate, notifyTurnComplete } from "./hummin-te
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
 import { getModelSearchText } from "./model-search.ts";
 import { type BlockedStatus, ProgramStatusReporter } from "./program-status-reporter.ts";
+import { queuedMessageToEditorText } from "./queue-attachments.ts";
 import { shareSession } from "./session-share.ts";
 import {
 	getAvailableThemes,
@@ -267,6 +270,7 @@ class ExpandableText extends ThemedText implements Expandable {
 
 type CompactionQueuedMessage = {
 	text: string;
+	images?: ImageContent[];
 	mode: "steer" | "followUp";
 };
 
@@ -478,8 +482,10 @@ export class InteractiveMode {
 	private keybindings: KeybindingsManager;
 	private version: string;
 	private isInitialized = false;
-	private onInputCallback?: (text: string) => void;
-	private pendingUserInputs: string[] = [];
+	private onInputCallback?: (text: string, images?: ImageContent[]) => void;
+	private pendingUserInputs: { text: string; images?: ImageContent[] }[] = [];
+	/** File paths inserted by clipboard paste; converted to image attachments at submit. */
+	private readonly pastedImagePaths = new Set<string>();
 	private activeStatusIndicator: StatusIndicator | undefined = undefined;
 	private activeWorkingIndicatorEmbedded = false;
 	private readonly idleStatus = new IdleStatus();
@@ -1210,7 +1216,7 @@ export class InteractiveMode {
 		while (true) {
 			const userInput = await this.getUserInput();
 			try {
-				await this.session.prompt(userInput);
+				await this.session.prompt(userInput.text, { images: userInput.images });
 			} catch (error: unknown) {
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
@@ -3138,6 +3144,11 @@ export class InteractiveMode {
 					throw new Error("Clipboard file path contains control characters");
 				}
 				const paths = this.isBashMode ? filePaths.map(quoteIfNeeded).join(" ") : filePaths.join("\n");
+				if (!this.isBashMode) {
+					for (const filePath of filePaths) {
+						this.pastedImagePaths.add(filePath);
+					}
+				}
 				const cursor = this.editor.getCursor?.();
 				const currentLine = cursor ? (this.editor.getText().split("\n")[cursor.line] ?? "") : "";
 				const characterBeforeCursor = cursor && cursor.col > 0 ? currentLine[cursor.col - 1] : "";
@@ -3157,6 +3168,7 @@ export class InteractiveMode {
 				const filePath = path.join(tmpDir, fileName);
 				fs.writeFileSync(filePath, Buffer.from(image.bytes));
 
+				this.pastedImagePaths.add(filePath);
 				this.editor.insertTextAtCursor?.(filePath);
 				this.ui.requestRender();
 				return;
@@ -3349,6 +3361,10 @@ export class InteractiveMode {
 				}
 			}
 
+			// Convert pasted image paths into attachments so the model and the transcript
+			// see `[Image N]` markers instead of temporary file paths.
+			const { text: promptText, images: promptImages } = await this.convertPastedImages(text);
+
 			// Queue input during compaction (extension commands execute immediately)
 			if (this.session.isCompacting) {
 				if (this.isExtensionCommand(text)) {
@@ -3356,7 +3372,7 @@ export class InteractiveMode {
 					this.editor.setText("");
 					await this.session.prompt(text);
 				} else {
-					this.queueCompactionMessage(text, "steer");
+					this.queueCompactionMessage(promptText, "steer", promptImages);
 				}
 				return;
 			}
@@ -3367,7 +3383,10 @@ export class InteractiveMode {
 				this.rememberPromptHistory(text);
 				this.editor.setText("");
 				const streamingSubmitMode = this.settingsManager.getStreamingSubmitMode();
-				await this.session.prompt(text, { streamingBehavior: streamingSubmitMode });
+				await this.session.prompt(promptText, {
+					images: promptImages.length > 0 ? promptImages : undefined,
+					streamingBehavior: streamingSubmitMode,
+				});
 				if (streamingSubmitMode === "followUp") {
 					const dequeueHint = this.getAppKeyDisplay("app.message.dequeue");
 					this.showStatus(`Queued as follow-up; ${dequeueHint} restores queued messages`);
@@ -3382,9 +3401,12 @@ export class InteractiveMode {
 			this.flushPendingBashComponents();
 
 			if (this.onInputCallback) {
-				this.onInputCallback(text);
+				this.onInputCallback(promptText, promptImages.length > 0 ? promptImages : undefined);
 			} else {
-				this.pendingUserInputs.push(text);
+				this.pendingUserInputs.push({
+					text: promptText,
+					images: promptImages.length > 0 ? promptImages : undefined,
+				});
 			}
 			this.rememberPromptHistory(text);
 		};
@@ -4258,16 +4280,16 @@ export class InteractiveMode {
 		);
 	}
 
-	async getUserInput(): Promise<string> {
+	async getUserInput(): Promise<{ text: string; images?: ImageContent[] }> {
 		const queuedInput = this.pendingUserInputs.shift();
 		if (queuedInput !== undefined) {
 			return queuedInput;
 		}
 
 		return new Promise((resolve) => {
-			this.onInputCallback = (text: string) => {
+			this.onInputCallback = (text: string, images?: ImageContent[]) => {
 				this.onInputCallback = undefined;
-				resolve(text);
+				resolve({ text, images });
 			};
 		});
 	}
@@ -4498,9 +4520,25 @@ export class InteractiveMode {
 		};
 	}
 
+	/**
+	 * Replace clipboard-pasted image paths with `[Image N]` markers and load attachments.
+	 * Extension command arguments pass through untouched.
+	 */
+	private async convertPastedImages(text: string): Promise<{ text: string; images: ImageContent[] }> {
+		if (this.pastedImagePaths.size === 0 || this.isExtensionCommand(text)) {
+			return { text, images: [] };
+		}
+		const extracted = await extractImageAttachments(text, this.pastedImagePaths);
+		for (const warning of extracted.warnings) {
+			this.showWarning(warning);
+		}
+		return { text: extracted.text, images: extracted.images };
+	}
+
 	private async handleFollowUp(): Promise<void> {
 		const text = (this.editor.getExpandedText?.() ?? this.editor.getText()).trim();
 		if (!text) return;
+		const { text: promptText, images: promptImages } = await this.convertPastedImages(text);
 
 		// Queue input during compaction (extension commands execute immediately)
 		if (this.session.isCompacting) {
@@ -4509,7 +4547,7 @@ export class InteractiveMode {
 				this.editor.setText("");
 				await this.session.prompt(text);
 			} else {
-				this.queueCompactionMessage(text, "followUp");
+				this.queueCompactionMessage(promptText, "followUp", promptImages);
 			}
 			return;
 		}
@@ -4519,7 +4557,10 @@ export class InteractiveMode {
 		if (this.session.isStreaming) {
 			this.rememberPromptHistory(text);
 			this.editor.setText("");
-			await this.session.prompt(text, { streamingBehavior: "followUp" });
+			await this.session.prompt(promptText, {
+				images: promptImages.length > 0 ? promptImages : undefined,
+				streamingBehavior: "followUp",
+			});
 			this.updatePendingMessagesDisplay();
 			this.ui.requestRender();
 		}
@@ -4733,13 +4774,21 @@ export class InteractiveMode {
 	 * Clears both session queue and compaction queue.
 	 */
 	private clearAllQueues(): { steering: string[]; followUp: string[] } {
-		const { steering, followUp } = takeSessionQueuedMessages(this.session);
-		const compactionSteering = this.compactionQueuedMessages
-			.filter((msg) => msg.mode === "steer")
-			.map((msg) => msg.text);
+		const trackImageFile = (path: string) => this.pastedImagePaths.add(path);
+		const { steering, followUp } = takeSessionQueuedMessages(this.session, trackImageFile);
+		// Materialize compaction-queued images back to files so an edited resubmit re-attaches them.
+		const materialize = (message: CompactionQueuedMessage) => {
+			if (!message.images || message.images.length === 0) return message.text;
+			const content = message.text
+				? [{ type: "text" as const, text: message.text }, ...message.images]
+				: message.images;
+			const userMessage: UserMessage = { role: "user", content, timestamp: Date.now() };
+			return queuedMessageToEditorText(userMessage, trackImageFile);
+		};
+		const compactionSteering = this.compactionQueuedMessages.filter((msg) => msg.mode === "steer").map(materialize);
 		const compactionFollowUp = this.compactionQueuedMessages
 			.filter((msg) => msg.mode === "followUp")
-			.map((msg) => msg.text);
+			.map(materialize);
 		this.compactionQueuedMessages = [];
 		return {
 			steering: [...steering, ...compactionSteering],
@@ -4795,8 +4844,8 @@ export class InteractiveMode {
 		return allQueued.length;
 	}
 
-	private queueCompactionMessage(text: string, mode: "steer" | "followUp"): void {
-		this.compactionQueuedMessages.push({ text, mode });
+	private queueCompactionMessage(text: string, mode: "steer" | "followUp", images?: ImageContent[]): void {
+		this.compactionQueuedMessages.push({ text, images, mode });
 		this.rememberPromptHistory(text);
 		this.editor.setText("");
 		this.updatePendingMessagesDisplay();
@@ -4840,9 +4889,9 @@ export class InteractiveMode {
 					if (this.isExtensionCommand(message.text)) {
 						await this.session.prompt(message.text);
 					} else if (message.mode === "followUp") {
-						await this.session.followUp(message.text);
+						await this.session.followUp(message.text, message.images);
 					} else {
-						await this.session.steer(message.text);
+						await this.session.steer(message.text, message.images);
 					}
 				}
 				this.updatePendingMessagesDisplay();
@@ -4870,7 +4919,10 @@ export class InteractiveMode {
 
 			// Start a prompt when idle, or queue it into a run still finishing compaction.
 			const promptPromise = this.session
-				.prompt(firstPrompt.text, { streamingBehavior: firstPrompt.mode })
+				.prompt(firstPrompt.text, {
+					images: firstPrompt.images,
+					streamingBehavior: firstPrompt.mode,
+				})
 				.catch((error) => {
 					restoreQueue(error);
 				});
@@ -4880,9 +4932,9 @@ export class InteractiveMode {
 				if (this.isExtensionCommand(message.text)) {
 					await this.session.prompt(message.text);
 				} else if (message.mode === "followUp") {
-					await this.session.followUp(message.text);
+					await this.session.followUp(message.text, message.images);
 				} else {
-					await this.session.steer(message.text);
+					await this.session.steer(message.text, message.images);
 				}
 			}
 			this.updatePendingMessagesDisplay();
@@ -5572,6 +5624,7 @@ export class InteractiveMode {
 			getCompactionQueuedMessages: () => this.compactionQueuedMessages,
 			getEditorText: () => this.editor.getText(),
 			setEditorText: (text) => this.editor.setText(text),
+			trackImageFile: (path) => this.pastedImagePaths.add(path),
 			showSelector: (create) => this.showSelector(create),
 			showStatus: (message) => this.showStatus(message),
 			showError: (message) => this.showError(message),
