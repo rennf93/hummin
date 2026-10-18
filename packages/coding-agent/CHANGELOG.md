@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Drag-and-drop image conversion**: dropping an image file into the editor inserts its path as typed text (terminals have no drop event), so submit now converts any line that is exactly one absolute image path - bare, backslash-escaped (Warp), or quoted (Terminal.app) - into a session-continuing `[Image N]` marker and attaches the image. Prose lines, relative paths, and invalid files stay text; invalid image-shaped lines warn.
+
 ## [1.6.3] - 2026-10-17
 
 ### Changed

@@ -135,6 +135,7 @@ import {
 	collectPastedMarkerImages,
 	imagePasteBlocker,
 	type PastedImagePath,
+	parseImagePathLine,
 	parsePastedImagePathText,
 } from "../../utils/prompt-image-attachments.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
@@ -4535,18 +4536,37 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Attach the images for the `[Image N]` markers still present in the text. The text is
-	 * sent as-is; extension command arguments pass through untouched.
+	 * Attach images for `[Image N]` markers still present in the text, and convert lines that
+	 * are exactly one image file path (drag-and-drop inserts such lines as typed text, which
+	 * never reaches the paste hooks) into fresh markers. Everything else is sent as-is;
+	 * extension command arguments pass through untouched.
 	 */
 	private async convertPastedImages(text: string): Promise<{ text: string; images: ImageContent[] }> {
-		if (this.pendingPastedImages.size === 0 || this.isExtensionCommand(text)) {
+		if (this.isExtensionCommand(text)) {
 			return { text, images: [] };
 		}
-		const collected = await collectPastedMarkerImages(text, this.pendingPastedImages);
-		for (const warning of collected.warnings) {
+		const warnings: string[] = [];
+		let effectiveText = text;
+		const lines = text.split("\n");
+		let converted = false;
+		for (let index = 0; index < lines.length; index += 1) {
+			const path = parseImagePathLine(lines[index] ?? "");
+			if (!path) continue;
+			const blocker = await imagePasteBlocker(path);
+			if (blocker) {
+				warnings.push(`Skipped ${path}: ${blocker}`);
+				continue;
+			}
+			lines[index] = this.registerPastedImage(path);
+			converted = true;
+		}
+		if (converted) effectiveText = lines.join("\n");
+		const collected = await collectPastedMarkerImages(effectiveText, this.pendingPastedImages);
+		warnings.push(...collected.warnings);
+		for (const warning of warnings) {
 			this.showWarning(warning);
 		}
-		return { text, images: collected.images };
+		return { text: effectiveText, images: collected.images };
 	}
 
 	/** Register a pasted image file and return its `[Image N]` marker text; N counts all images pasted this session. */

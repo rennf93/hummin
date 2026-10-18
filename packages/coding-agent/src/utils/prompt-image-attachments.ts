@@ -35,11 +35,28 @@ export function parsePastedImagePathText(text: string): PastedImagePath[] | null
 	if (lines.length === 0) return null;
 	const entries: PastedImagePath[] = [];
 	for (const line of lines) {
-		if (!/^\/(?:[^\\]|\\.)+$/.test(line)) return null;
-		if (!/\.(png|jpe?g|webp|gif|bmp)$/i.test(line)) return null;
-		entries.push({ path: line.replace(/\\(.)/g, "$1"), raw: line });
+		const path = parseImagePathLine(line);
+		if (!path) return null;
+		entries.push({ path, raw: line });
 	}
 	return entries;
+}
+
+/**
+ * Parse a single editor line that is exactly one absolute image file path and return the
+ * unescaped path, or null. Accepts the shapes drag-and-drop inserts: bare paths, paths with
+ * bare spaces, backslash-escaped paths (Warp, shell transcripts), and quoted paths
+ * (Terminal.app). Prose, relative paths, and non-image extensions stay plain text.
+ */
+export function parseImagePathLine(line: string): string | null {
+	let candidate = line.trim();
+	const quote = candidate.at(0);
+	if ((quote === '"' || quote === "'") && candidate.length > 1 && candidate.at(-1) === quote) {
+		candidate = candidate.slice(1, -1);
+	}
+	if (!/^\/(?:[^\\]|\\.)+$/.test(candidate)) return null;
+	if (!/\.(png|jpe?g|webp|gif|bmp)$/i.test(candidate)) return null;
+	return candidate.replace(/\\(.)/g, "$1");
 }
 
 /** Return why `filePath` cannot attach as a pasted image, or null when it can. */

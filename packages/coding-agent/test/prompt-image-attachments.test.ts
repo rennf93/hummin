@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	collectPastedMarkerImages,
 	imagePasteBlocker,
+	parseImagePathLine,
 	parsePastedImagePathText,
 } from "../src/utils/prompt-image-attachments.ts";
 
@@ -66,6 +67,24 @@ describe("parsePastedImagePathText", () => {
 		expect(parsePastedImagePathText("src/logo.png")).toBeNull();
 		expect(parsePastedImagePathText("/tmp/notes.txt")).toBeNull();
 		expect(parsePastedImagePathText("   \n  ")).toBeNull();
+	});
+});
+
+describe("parseImagePathLine", () => {
+	it("accepts bare, spaced, escaped, and quoted drop-shaped paths", () => {
+		expect(parseImagePathLine("/tmp/shot.png")).toBe("/tmp/shot.png");
+		expect(parseImagePathLine("/tmp/My Shots/shot.png")).toBe("/tmp/My Shots/shot.png");
+		expect(parseImagePathLine("/tmp/My\\ Shots/shot.png")).toBe("/tmp/My Shots/shot.png");
+		expect(parseImagePathLine("'/tmp/My Shots/shot.png'")).toBe("/tmp/My Shots/shot.png");
+		expect(parseImagePathLine('"/tmp/My Shots/shot.png"')).toBe("/tmp/My Shots/shot.png");
+	});
+
+	it("rejects prose, relative paths, non-images, and unpaired quotes", () => {
+		expect(parseImagePathLine("see /tmp/shot.png now")).toBeNull();
+		expect(parseImagePathLine("src/shot.png")).toBeNull();
+		expect(parseImagePathLine("/tmp/notes.txt")).toBeNull();
+		expect(parseImagePathLine("'/tmp/shot.png")).toBeNull();
+		expect(parseImagePathLine("")).toBeNull();
 	});
 });
 
