@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed per-package builds resolving a stale `@earendil-works/pi-telemetry` from the npm registry by pinning the dependency to the workspace version.
+
 ### Breaking Changes
 
 - Custom `Context` implementations must provide `telemetry: TelemetrySpan`; use the no-op span `NOOP_TELEMETRY_CONTEXT` when disabled. `withTelemetry()` accepts spans, not adapters.
