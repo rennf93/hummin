@@ -25,17 +25,23 @@ function count(haystack: string, needle: string): number {
 describe("terminal restore on process exit", () => {
 	it("restores terminal modes when the process exits without stop()", () => {
 		const output = runFixture("exit");
-		for (const sequence of ["\x1b[?1006l", "\x1b[?1004l", "\x1b[?1003l", "\x1b[?1000l", "\x1b[<u", "\x1b[?2004l"]) {
+		// This fork enables focus reporting (DECSET 1004) on start(), so the focus
+		// disable appears both in the mouse-mode bundle and as its own restore;
+		// upstream emits it exactly once. The double-restore guard is the == 1
+		// assertions on the bracketed-paste and Kitty-pop sequences below.
+		for (const sequence of ["\x1b[?1006l", "\x1b[?1003l", "\x1b[?1000l", "\x1b[<u", "\x1b[?2004l"]) {
 			assert.equal(count(output, sequence), 1, JSON.stringify(sequence));
 		}
+		assert.ok(count(output, "\x1b[?1004l") >= 1, '"\\x1b[?1004l"');
 		assert.ok(output.indexOf("\x1b[<u") < output.indexOf("\x1b[?1049l"), "Kitty pop must precede leaving alt screen");
 		assert.ok(output.endsWith("\x1b[?1049l\x1b[?25h"));
 	});
 
 	it("does not restore twice after a normal stop()", () => {
 		const output = runFixture("stop");
-		for (const sequence of ["\x1b[?1006l", "\x1b[?1004l", "\x1b[<u", "\x1b[?2004l", "\x1b[?1049l"]) {
+		for (const sequence of ["\x1b[?1006l", "\x1b[<u", "\x1b[?2004l", "\x1b[?1049l"]) {
 			assert.equal(count(output, sequence), 1, JSON.stringify(sequence));
 		}
+		assert.ok(count(output, "\x1b[?1004l") >= 1, '"\\x1b[?1004l"');
 	});
 });
