@@ -34,7 +34,6 @@ const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
 	"fireworks/accounts/fireworks/routers/minimax-latest",
 	"github-copilot/claude-fable-5",
 	"github-copilot/claude-fable-5.1",
-	"github-copilot/claude-opus-4.7",
 	"github-copilot/claude-opus-4.8",
 	"github-copilot/claude-opus-5",
 	"github-copilot/claude-opus-5.5",
