@@ -31,6 +31,7 @@ I want the deepest version of the tasks, not bigger ones but rather:
 ## No Things Left Behind
 
 - Finish tail work without asking: temp-file cleanup, changelog and progress-doc entries, smoke re-verification, and CI failures from your own changes.
+- Do not defer known work by labeling it "optional", "cosmetic", or "nice-to-have". Either do it in the same turn, or state exactly what blocks it (for example user-held credentials) and ask up-front - never park it in a closing summary.
 - Only ask when an action is destructive, needs user-held credentials, changes direction, or removes intentional functionality. Anything unresolved at close is recorded in the progress docs.
 
 ## Code Quality
