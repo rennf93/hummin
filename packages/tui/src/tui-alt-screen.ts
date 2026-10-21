@@ -1781,22 +1781,22 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			redrawImages && this.imageProtocol === "kitty" && screen.some(isImageLine) && isWezTerm;
 		if (drawKittyImagesLast) {
 			for (let row = 0; row < height; row++) {
-				if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;
+				if (this.rowUnchangedAndVisible(screen, row, fullRedraw, imagesNeedRedraw)) continue;
 				buffer += `\x1b[${row + 1};1H\x1b[2K`;
 			}
 			for (let row = 0; row < height; row++) {
-				if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;
+				if (this.rowUnchangedAndVisible(screen, row, fullRedraw, imagesNeedRedraw)) continue;
 				if (isImageLine(preparedKittyScreen.lines[row] ?? "")) continue;
 				buffer += `\x1b[${row + 1};1H${preparedKittyScreen.lines[row] ?? ""}`;
 			}
 			for (let row = 0; row < height; row++) {
-				if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;
+				if (this.rowUnchangedAndVisible(screen, row, fullRedraw, imagesNeedRedraw)) continue;
 				if (!isImageLine(preparedKittyScreen.lines[row] ?? "")) continue;
 				buffer += `\x1b[${row + 1};1H${preparedKittyScreen.lines[row] ?? ""}`;
 			}
 		} else {
 			for (let row = 0; row < height; row++) {
-				if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;
+				if (this.rowUnchangedAndVisible(screen, row, fullRedraw, imagesNeedRedraw)) continue;
 				buffer += `\x1b[${row + 1};1H\x1b[2K${preparedKittyScreen.lines[row] ?? ""}`;
 			}
 		}
@@ -1814,5 +1814,22 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.previousScreenWidth = width;
 		this.previousScreenHeight = height;
 		this.currentLayout = nextLayout;
+	}
+
+	/**
+	 * A row can be skipped only when its content is unchanged AND visibly non-empty.
+	 * Blank rows (spacers, SEGMENT_RESET-only lines) are always rewritten so pixels
+	 * left behind by an earlier frame - for example a footer row that shrank away
+	 * during /reload - are scrubbed instead of surviving under an invisible line.
+	 */
+	private rowUnchangedAndVisible(
+		screen: string[],
+		row: number,
+		fullRedraw: boolean,
+		imagesNeedRedraw: boolean,
+	): boolean {
+		if (fullRedraw || imagesNeedRedraw) return false;
+		if (screen[row] !== this.previousScreen[row]) return false;
+		return visibleWidth(screen[row] ?? "") > 0;
 	}
 }
