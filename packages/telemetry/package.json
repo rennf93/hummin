@@ -14,6 +14,11 @@
 			"types": "./dist/node.d.ts",
 			"import": "./dist/node.js"
 		},
+		"./render": {
+			"source": "./src/render.ts",
+			"types": "./dist/render.d.ts",
+			"import": "./dist/render.js"
+		},
 		"./testing": {
 			"types": "./dist/testing/index.d.ts",
 			"import": "./dist/testing/index.js"

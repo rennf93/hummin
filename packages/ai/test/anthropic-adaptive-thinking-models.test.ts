@@ -40,6 +40,8 @@ const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
 	"github-copilot/claude-opus-5.5",
 	"github-copilot/claude-sonnet-4.6",
 	"github-copilot/claude-sonnet-5",
+	"minimax-cn/MiniMax-M3.1-Flash",
+	"minimax/MiniMax-M3.1-Flash",
 	"opencode/claude-fable-5",
 	"opencode/claude-fable-5-1",
 	"opencode/claude-opus-4-6",
@@ -91,6 +93,9 @@ describe("Anthropic adaptive thinking model metadata", () => {
 					// Regression for #9323: Fireworks uses catalog effort metadata and
 					// verified fallbacks, not a fixed set of adaptive model names.
 					modelId.startsWith("fireworks/") ||
+					// #11121: MiniMax models with catalog effort levels require adaptive thinking.
+					modelId.startsWith("minimax/") ||
+					modelId.startsWith("minimax-cn/") ||
 					/(opus[-.](4[-.][678]|5)|sonnet[-.]4[-.]6|sonnet[-.]5|haiku[-.]5[-.]5|fable[-.]5)/.test(modelId),
 			),
 		);
