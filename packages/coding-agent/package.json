@@ -1,12 +1,12 @@
 {
 	"name": "@earendil-works/pi-coding-agent",
-	"version": "1.7.0",
+	"version": "1.8.0",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
 		"name": "hummin",
 		"configDir": ".hummin",
-		"version": "1.7.0",
+		"version": "1.8.0",
 		"displayName": "hummin",
 		"checkNewVersion": false,
 		"remoteCatalog": false
@@ -52,12 +52,12 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-	"@earendil-works/pi-agent-core": "1.7.0",
-	"@earendil-works/pi-ai": "1.7.0",
-	"@earendil-works/pi-codemode": "1.7.0",
-	"@earendil-works/pi-mcp": "1.7.0",
-	"@earendil-works/pi-tui": "1.7.0",
-	"@earendil-works/pi-telemetry": "1.7.0",
+		"@earendil-works/pi-agent-core": "1.8.0",
+		"@earendil-works/pi-ai": "1.8.0",
+		"@earendil-works/pi-codemode": "1.8.0",
+		"@earendil-works/pi-mcp": "1.8.0",
+		"@earendil-works/pi-tui": "1.8.0",
+		"@earendil-works/pi-telemetry": "1.8.0",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"chalk": "6.0.0",
 		"cross-spawn": "7.0.6",
