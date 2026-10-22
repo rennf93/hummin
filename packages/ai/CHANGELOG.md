@@ -2,8 +2,11 @@
 
 ## [Unreleased]
 
-## [1.8.0] - 2026-10-22
+### Fixed
 
+- Fixed Claude models that accept mid-conversation system messages rejecting a session with a 400 (`role 'system' must precede an 'assistant' message`) when a system update was followed by an assistant reply with nothing to send to Anthropic, such as an empty reply or another model's reasoning-only reply ([#11091](https://github.com/earendil-works/pi/issues/11091))
+
+## [1.8.0] - 2026-10-22
 
 ### Breaking Changes
 

@@ -50,7 +50,6 @@
 	},
 	"devDependencies": {
 		"shx": "0.3.4",
-		"vitest": "4.1.11"
-	},
-	"private": true
+		"vitest": "4.1.12"
+	}
 }
