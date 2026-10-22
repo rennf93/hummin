@@ -2,8 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `Usage.cost.totalFromProvider`: true when `usage.cost.total` is the billed cost reported by the provider, false when it is estimated from the model's catalog rates; a missing value also means false ([#11178](https://github.com/earendil-works/pi/pull/11178))
+
 ### Fixed
 
+- Fixed OpenRouter usage totals ignoring the cost OpenRouter reports: `usage.cost.total` now uses the reported charge, including the upstream inference cost for BYOK requests, and falls back to catalog rates when provider accounting is unavailable or invalid; the `input`, `output`, `cacheRead`, and `cacheWrite` components remain catalog estimates and may not sum to a provider-reported total ([#9980](https://github.com/earendil-works/pi/issues/9980), [#10286](https://github.com/earendil-works/pi/pull/10286))
 - Fixed Claude models that accept mid-conversation system messages rejecting a session with a 400 (`role 'system' must precede an 'assistant' message`) when a system update was followed by an assistant reply with nothing to send to Anthropic, such as an empty reply or another model's reasoning-only reply ([#11091](https://github.com/earendil-works/pi/issues/11091))
 
 ## [1.8.0] - 2026-10-22
