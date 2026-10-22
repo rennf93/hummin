@@ -8,7 +8,6 @@ import {
 	getAttributionHeaders,
 	type Model,
 	normalizeContext,
-	PI_ATTRIBUTION,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -93,7 +92,11 @@ describe("createAgentSession client identity", () => {
 		} = {},
 	): Promise<SimpleStreamOptions | undefined> {
 		const settingsManager = SettingsManager.create(cwd, agentDir);
-		if (options.telemetryEnabled === false) {
+		// hummin: install telemetry is opt-in (default off), so tests must enable it
+		// explicitly to see attribution; pass telemetryEnabled: false to assert null.
+		if (options.telemetryEnabled !== false) {
+			settingsManager.setEnableInstallTelemetry(true);
+		} else {
 			settingsManager.setEnableInstallTelemetry(false);
 		}
 
@@ -139,18 +142,25 @@ describe("createAgentSession client identity", () => {
 		}
 	}
 
-	it("identifies pi with a detailed User-Agent and attribution as a CLI agent", async () => {
+	/** hummin's provider attribution, mirroring HUMMIN_ATTRIBUTION in client-identity.ts. */
+	const HUMMIN_ATTRIBUTION = {
+		name: "hummin",
+		url: "https://github.com/rennf93/hummin",
+		categories: ["cli-agent"],
+	} as const;
+
+	it("identifies hummin with a detailed User-Agent and attribution as a CLI agent", async () => {
 		const model = createModel("openrouter", "https://openrouter.ai/api/v1");
 		const options = await captureOptions(model);
 
 		expect(options?.identity).toEqual({
 			userAgent: "detailed",
 			version: VERSION,
-			attribution: PI_ATTRIBUTION,
+			attribution: HUMMIN_ATTRIBUTION,
 		});
 		expect(getAttributionHeaders(model, options?.identity)).toEqual({
-			"HTTP-Referer": "https://pi.dev",
-			"X-OpenRouter-Title": "pi",
+			"HTTP-Referer": "https://github.com/rennf93/hummin",
+			"X-OpenRouter-Title": "hummin",
 			"X-OpenRouter-Categories": "cli-agent",
 		});
 	});
