@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-const LAST_REVIEWED_UPSTREAM_SHA = "4954d7605";
-const PINNED_SHA256 = "33f09f1060b44bfb4cddb31e9fae84371079d15e731a6391c388da6ce2c6e4a4";
+const LAST_REVIEWED_UPSTREAM_SHA = "e7a0df27c";
+const PINNED_SHA256 = "5a06d8a689b32bb9779422c6b03351cf5878da5fbb4646fe6622e451ac81d41c";
 
 it("model-selector.ts still matches the reviewed upstream copy", () => {
 	const file = join(import.meta.dirname, "../src/modes/interactive/components/model-selector.ts");

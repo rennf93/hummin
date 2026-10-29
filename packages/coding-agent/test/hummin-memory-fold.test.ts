@@ -190,10 +190,12 @@ test("decayKeepIndices enforces the byte cap before the record cap", () => {
 
 test("prune mode keeps recently injected lessons over never-injected ones when over the record cap", () => {
 	const memory = process.env.HUMMIN_MEMORY_DIR!;
+	// The worker prunes against the real clock, so the pin window must be relative to now, not to the fixed NOW.
+	const recent = new Date(Date.now() - 86_400_000).toISOString();
 	const records: Array<Record<string, unknown>> = [];
 	for (let i = 0; i < 10; i++)
-		records.push({ timestamp: FRESH, cwd: "/p", lesson: `pinned lesson ${i}`, lastInjectedAt: FRESH });
-	for (let i = 0; i < 995; i++) records.push({ timestamp: FRESH, cwd: "/p", lesson: `plain lesson ${i}` });
+		records.push({ timestamp: recent, cwd: "/p", lesson: `pinned lesson ${i}`, lastInjectedAt: recent });
+	for (let i = 0; i < 995; i++) records.push({ timestamp: recent, cwd: "/p", lesson: `plain lesson ${i}` });
 	writeFileSync(join(memory, "lessons.jsonl"), `${records.map((r) => JSON.stringify(r)).join("\n")}\n`);
 	const jobPath = writeWorkerAndJob({ mode: "prune", memoryDir: memory });
 

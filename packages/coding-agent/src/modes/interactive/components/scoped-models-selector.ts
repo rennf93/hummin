@@ -11,7 +11,7 @@ import {
 	Spacer,
 	Text,
 } from "@earendil-works/pi-tui";
-import { getModelSearchText } from "../model-search.ts";
+import { getDistinctModelName, getModelSearchText } from "../model-search.ts";
 import { getSettingsListTheme, theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyDisplayText } from "./keybinding-hints.ts";
@@ -97,6 +97,7 @@ export interface ModelsCallbacks {
  * Changes are session-only until explicitly persisted with Ctrl+S.
  */
 export class ScopedModelsSelectorComponent extends Container implements Focusable {
+	readonly capturesViewportInput: boolean = true;
 	private modelsById: Map<string, Model<any>> = new Map();
 	private allIds: string[] = [];
 	private enabledIds: EnabledIds = null;
@@ -233,7 +234,9 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		this.searchTexts.clear();
 		const items: SettingItem[] = this.filteredItems.map((item) => {
 			const id = item.model?.id ?? item.fullId;
-			const label = item.model ? id : theme.strikethrough(id);
+			// Ported from upstream (#5916): show the model name next to the id when it adds information.
+			const name = item.model ? getDistinctModelName({ id, name: item.model.name }) : undefined;
+			const label = item.model ? `${id}${name ? theme.fg("muted", ` (${name})`) : ""}` : theme.strikethrough(id);
 			const provider = item.model ? item.model.provider : "unavailable";
 			if (item.model) {
 				this.searchTexts.set(

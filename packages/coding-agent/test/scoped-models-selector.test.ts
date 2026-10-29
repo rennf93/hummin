@@ -59,6 +59,22 @@ describe("scoped models selector", () => {
 		return selector;
 	}
 
+	// #5916
+	it("shows model names that differ from the ID", async () => {
+		const selector = await createSelector([
+			{ id: "model-a", name: "Model A", enabled: true },
+			{ id: "model-b", name: "Renamed B", enabled: true },
+		]);
+		const provider = harness!.models[0].provider;
+
+		// hummin renders SettingsList rows (label column, then "on/off · provider"), not upstream's "id [provider]" line.
+		const rows = stripAnsi(selector.render(120).join("\n")).split("\n");
+		expect(rows.some((row) => new RegExp(`model-a\\s+on · ${provider}$`).test(row.trimEnd()))).toBe(true);
+		expect(rows.some((row) => new RegExp(`model-b \\(Renamed B\\)\\s+on · ${provider}$`).test(row.trimEnd()))).toBe(
+			true,
+		);
+	});
+
 	it("marks every model after enabling all", async () => {
 		const models = [
 			{ id: "model-a", name: "Model A", enabled: true },

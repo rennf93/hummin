@@ -29,7 +29,10 @@ export class UserMessageComponent extends Container {
 	private markdownTheme: MarkdownTheme;
 	private outputPad: number;
 	private markdownTransformers: readonly MarkdownTransformer[];
-	private timestamp?: number;
+	private messageId?: string;
+	private timestamp?: string;
+	// hummin overlay: the visible time tag, taken from the message's own epoch timestamp.
+	private displayTimestamp?: number;
 	private showTimestamp = true;
 
 	constructor(
@@ -37,14 +40,18 @@ export class UserMessageComponent extends Container {
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
-		timestamp?: number,
+		messageId?: string,
+		timestamp?: string,
+		displayTimestamp?: number,
 	) {
 		super();
 		this.text = text;
 		this.markdownTheme = markdownTheme;
 		this.outputPad = outputPad;
 		this.markdownTransformers = markdownTransformers;
+		this.messageId = messageId;
 		this.timestamp = timestamp;
+		this.displayTimestamp = displayTimestamp;
 		this.rebuild();
 	}
 
@@ -74,7 +81,13 @@ export class UserMessageComponent extends Container {
 				{
 					preserveOrderedListMarkers: true,
 					preserveBackslashEscapes: true,
-					transform: createMarkdownTransform("user", false, this.markdownTransformers),
+					transform: createMarkdownTransform(
+						"user",
+						false,
+						this.markdownTransformers,
+						this.messageId,
+						this.timestamp,
+					),
 				},
 			),
 		);
@@ -86,8 +99,8 @@ export class UserMessageComponent extends Container {
 			return lines;
 		}
 
-		if (this.showTimestamp && this.timestamp !== undefined) {
-			const tag = theme.fg("dim", formatMessageTimestamp(this.timestamp));
+		if (this.showTimestamp && this.displayTimestamp !== undefined) {
+			const tag = theme.fg("dim", formatMessageTimestamp(this.displayTimestamp));
 			const padWidth = Math.max(0, width - 1 - visibleWidth(tag));
 			const tagLine = " ".repeat(padWidth) + tag;
 			lines.push(truncateToWidth(tagLine, width));
