@@ -37,7 +37,7 @@ const stageDir = join(repoRoot, ".artifacts", "hummin-cli");
 // ^0.87.1 broke hummin-cli@1.3.0 because the new pi-codemode/pi-mcp/pi-durable
 // deps have no 0.87.x versions on npm). Exact, not a range: a range lets fresh
 // installs pick up upstream releases the fork was never merged with or tested on.
-const UPSTREAM_VERSION = "1.3.0";
+const UPSTREAM_VERSION = "1.4.0";
 if (!/^\d+\.\d+\.\d+$/.test(UPSTREAM_VERSION)) throw new Error(`UPSTREAM_VERSION must be exact: ${UPSTREAM_VERSION}`);
 
 // Staged relative path -> source relative path inside packages/coding-agent (or repo root when absolute).

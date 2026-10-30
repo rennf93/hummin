@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CONFIG_DIR_NAME } from "../src/config.ts";
+import { APP_NAME, CONFIG_DIR_NAME } from "../src/config.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
 import { DefaultResourceLoader, loadProjectContextFiles } from "../src/core/resource-loader.ts";
@@ -83,6 +83,95 @@ describe("DefaultResourceLoader", () => {
 						'Host-provided extension packages must be declared in peerDependencies with a "*" range, not dependencies: @earendil-works/pi-coding-agent. Installed copies can bypass the extension loader and create duplicate runtime modules.',
 				},
 			]);
+		});
+
+		// #11088
+		it("should warn and keep loading when a configured package cannot be installed", async () => {
+			vi.stubEnv("PI_OFFLINE", "");
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.inMemory({
+					packages: ["npm:broken-package"],
+					// Any non-zero exit stands in for an npm install that cannot reach the registry.
+					npmCommand: [process.execPath, "-e", "process.exit(1)"],
+				}),
+			});
+
+			await loader.reload();
+
+			const warnings = loader.getExtensions().warnings ?? [];
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0].path).toBe("npm:broken-package");
+			expect(warnings[0].warning).toMatch(/^failed to install \(.*failed with code 1\)\./);
+			expect(warnings[0].warning).toContain(
+				`Run "${APP_NAME} remove npm:broken-package" to remove it from settings.json.`,
+			);
+		});
+
+		// #11088
+		it("should point temporary extension sources at the source instead of pi remove", async () => {
+			vi.stubEnv("PI_OFFLINE", "");
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				additionalExtensionPaths: ["npm:broken-package"],
+				settingsManager: SettingsManager.inMemory({
+					npmCommand: [process.execPath, "-e", "process.exit(1)"],
+				}),
+			});
+
+			await loader.reload();
+
+			const warnings = loader.getExtensions().warnings ?? [];
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0].path).toBe("npm:broken-package");
+			expect(warnings[0].warning).toContain("Check the source and try again.");
+			expect(warnings[0].warning).not.toContain(`${APP_NAME} remove`);
+		});
+
+		// #11088
+		it("should point project extension packages at pi remove --local", async () => {
+			vi.stubEnv("PI_OFFLINE", "");
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ npmCommand: [process.execPath, "-e", "process.exit(1)"] }),
+			);
+			mkdirSync(join(cwd, CONFIG_DIR_NAME), { recursive: true });
+			writeFileSync(
+				join(cwd, CONFIG_DIR_NAME, "settings.json"),
+				JSON.stringify({ packages: ["npm:broken-package"] }),
+			);
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.create(cwd, agentDir, { projectTrusted: true }),
+			});
+
+			await loader.reload();
+
+			const warnings = loader.getExtensions().warnings ?? [];
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0].warning).toContain(`Run "${APP_NAME} remove npm:broken-package --local"`);
+		});
+
+		// #11088
+		it("should warn once about a failing install when project trust is resolved", async () => {
+			vi.stubEnv("PI_OFFLINE", "");
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.inMemory({
+					packages: ["npm:broken-package"],
+					npmCommand: [process.execPath, "-e", "process.exit(1)"],
+				}),
+			});
+
+			await loader.reload({ resolveProjectTrust: async () => false });
+
+			const warnings = loader.getExtensions().warnings ?? [];
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0].path).toBe("npm:broken-package");
 		});
 
 		it("should fail when an extension package manifest cannot be parsed", async () => {
@@ -1112,8 +1201,8 @@ export default function(pi: ExtensionAPI) {
 		});
 
 		it("should skip disabledBuiltinExtensions even when settings or -e enable them", async () => {
-			mkdirSync(join(cwd, ".pi"), { recursive: true });
-			writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ extensions: ["+builtin:mcp"] }));
+			mkdirSync(join(cwd, CONFIG_DIR_NAME), { recursive: true });
+			writeFileSync(join(cwd, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ extensions: ["+builtin:mcp"] }));
 			const loaded: string[] = [];
 			const loader = new DefaultResourceLoader({
 				cwd,

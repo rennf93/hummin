@@ -2,10 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `streamProxy()` re-parsing the accumulated tool-call arguments on every delta and keeping their raw text on the partial content block ([#9265](https://github.com/earendil-works/pi/issues/9265))
+
 ## [1.9.0] - 2026-10-22
 
 ## [1.8.0] - 2026-10-22
-
 
 ### Added
 

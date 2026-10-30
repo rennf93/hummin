@@ -94,7 +94,7 @@ test("toggles timestamps on existing user and extension messages", () => {
 	const timestamp = new Date(2020, 0, 2, 14, 32).getTime();
 	const tag = formatMessageTimestamp(timestamp);
 	const components = [
-		new UserMessageComponent("user text", undefined, 1, [], timestamp),
+		new UserMessageComponent("user text", undefined, 1, [], undefined, undefined, timestamp),
 		new CustomMessageComponent({
 			role: "custom",
 			customType: "test",

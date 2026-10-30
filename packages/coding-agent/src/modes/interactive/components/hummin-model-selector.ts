@@ -100,6 +100,8 @@ function formatContextWindow(ctx: number | undefined): string {
  * pane for the selected model, and a hint line.
  */
 export class ModelSelectorComponent extends Container implements Focusable {
+	// Ported from upstream's model-selector.ts: the wrapped SettingsList handles PageUp/PageDown itself.
+	readonly capturesViewportInput: boolean = true;
 	// Focusable implementation - propagate to the search input for IME cursor positioning
 	private _focused = false;
 	get focused(): boolean {
