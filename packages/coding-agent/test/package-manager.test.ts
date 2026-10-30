@@ -2945,6 +2945,81 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			expect(result.extensions.some((r) => pathEndsWith(r.path, "extensions/old.ts"))).toBe(false);
 		});
 
+		// https://github.com/earendil-works/pi/issues/11375
+		it("should refresh temporary git sources with a branch ref", async () => {
+			const managerWithInternals = packageManager as unknown as PackageManagerInternals;
+			const source = "git:github.com/example/repo@main";
+			const parsed = managerWithInternals.parseSource(source);
+			if (parsed.type !== "git") throw new Error("Expected git source");
+			const installedPath = managerWithInternals.getGitInstallPath(parsed, "temporary");
+			mkdirSync(join(installedPath, "extensions"), { recursive: true });
+			writeFileSync(join(installedPath, "extensions", "index.ts"), "export default function() {};");
+
+			const updateGitSpy = vi.spyOn(packageManager as any, "updateGit").mockResolvedValue(undefined);
+
+			const result = await packageManager.resolveExtensionSources([source], { temporary: true });
+			expect(updateGitSpy).toHaveBeenCalledTimes(1);
+			expect(updateGitSpy.mock.calls[0][0]).toMatchObject({ ref: "main" });
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "extensions/index.ts") && r.enabled)).toBe(true);
+		});
+
+		it("should not refresh temporary git sources pinned to the checked-out commit", async () => {
+			const managerWithInternals = packageManager as unknown as PackageManagerInternals;
+			const source = "git:github.com/example/repo@abc1234";
+			const parsed = managerWithInternals.parseSource(source);
+			if (parsed.type !== "git") throw new Error("Expected git source");
+			mkdirSync(managerWithInternals.getGitInstallPath(parsed, "temporary"), { recursive: true });
+
+			vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue(
+				"ABC1234def5678901234567890123456789012345\n",
+			);
+			const updateGitSpy = vi.spyOn(packageManager as any, "updateGit").mockResolvedValue(undefined);
+
+			await packageManager.resolveExtensionSources([source], { temporary: true });
+			expect(updateGitSpy).not.toHaveBeenCalled();
+		});
+
+		it("should refresh unpinned temporary npm sources when a newer version exists", async () => {
+			const managerWithInternals = packageManager as unknown as PackageManagerInternals;
+			const source = "npm:example";
+			const parsed = managerWithInternals.parseSource(source);
+			if (parsed.type !== "npm") throw new Error("Expected npm source");
+			const installedPath = managerWithInternals.getNpmInstallPath(parsed, "temporary");
+			mkdirSync(join(installedPath, "extensions"), { recursive: true });
+			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
+			writeFileSync(join(installedPath, "extensions", "index.ts"), "export default function() {};");
+
+			vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('"1.1.0"');
+			const runNpmCommandSpy = vi
+				.spyOn(packageManager as any, "runNpmCommand")
+				.mockRejectedValue(new Error("network down"));
+
+			const result = await packageManager.resolveExtensionSources([source], { temporary: true });
+			expect(runNpmCommandSpy).toHaveBeenCalledTimes(1);
+			expect(runNpmCommandSpy.mock.calls[0][0]).toContain("example@latest");
+			// A failed refresh keeps loading the cached install.
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "extensions/index.ts") && r.enabled)).toBe(true);
+		});
+
+		it("should not refresh temporary npm sources when already up to date or pinned", async () => {
+			const managerWithInternals = packageManager as unknown as PackageManagerInternals;
+			for (const source of ["npm:example", "npm:example@1.0.0"]) {
+				const parsed = managerWithInternals.parseSource(source);
+				if (parsed.type !== "npm") throw new Error("Expected npm source");
+				const installedPath = managerWithInternals.getNpmInstallPath(parsed, "temporary");
+				mkdirSync(installedPath, { recursive: true });
+				writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
+			}
+
+			const runCommandCaptureSpy = vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('"1.0.0"');
+			const runNpmCommandSpy = vi.spyOn(packageManager as any, "runNpmCommand").mockResolvedValue(undefined);
+
+			await packageManager.resolveExtensionSources(["npm:example"], { temporary: true });
+			await packageManager.resolveExtensionSources(["npm:example@1.0.0"], { temporary: true });
+			expect(runCommandCaptureSpy).toHaveBeenCalledTimes(1);
+			expect(runNpmCommandSpy).not.toHaveBeenCalled();
+		});
+
 		it("should not run npm view during resolve for installed unpinned packages", async () => {
 			process.env.PI_OFFLINE = "1";
 			const installedPath = join(tempDir, CONFIG_DIR_NAME, "npm", "node_modules", "example");

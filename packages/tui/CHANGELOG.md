@@ -10,12 +10,14 @@
 
 ### Fixed
 
+- Fixed `Shift+Enter` queueing a follow-up in Apple Terminal setups that send `ESC` + Return. When local native Shift detection is available (Apple Terminal, native Windows), `ProcessTerminal` now treats `ESC` + Return with Shift held as `Shift+Enter`; without Shift it remains `Alt+Enter` ([#11559](https://github.com/earendil-works/pi/issues/11559))
 - Fixed regular-mode `TUI` writing OSC 133 prompt markers from rendered lines to the terminal. Terminals treat `133;A` as a new shell prompt and drop the OSC 7501 program status, so the working indicator disappeared during runs. Fullscreen still uses the markers for prompt navigation and already stripped them ([#11519](https://github.com/earendil-works/pi/issues/11519))
 - Fixed fullscreen double-click selection splitting paths and tokens at `~`, `.`, `\`, and `+`. Word characters now match iTerm2's defaults ([#10980](https://github.com/earendil-works/pi/issues/10980))
 - Fixed `fuzzyMatch()` ranking a query scattered over an earlier part of the text above a contiguous match later in it. It now also scores each contiguous occurrence of the query and keeps the best alignment ([#11220](https://github.com/earendil-works/pi/issues/11220), [#11296](https://github.com/earendil-works/pi/pull/11296))
 - Fixed `ProcessTerminal.setTitle()` writing control characters from the title, which could end the title sequence and send the rest to the terminal as escape sequences
 - Fixed display math wider than the content width being wrapped row by row, which split fractions and sums apart. It now falls back to the raw LaTeX source ([#11483](https://github.com/earendil-works/pi/issues/11483))
 - Fixed `tui.select.pageUp` and `tui.select.pageDown` being ignored by `SelectList`, `SettingsList`, and editor autocomplete ([#7629](https://github.com/earendil-works/pi/issues/7629), based on [#7680](https://github.com/earendil-works/pi/pull/7680) by [@muyiyr](https://github.com/muyiyr))
+- Fixed `wrapTextWithAnsi()` starting the next line with a space when a styled word ended exactly at the wrap width, and strikethrough continuing into the right padding of wrapped lines ([#10925](https://github.com/earendil-works/pi/issues/10925))
 
 ## [1.9.0] - 2026-10-22
 
