@@ -1,5 +1,5 @@
 import { fuzzyFilter } from "../fuzzy.ts";
-import { getKeybindings } from "../keybindings.ts";
+import { getKeybindings, getSelectPageIndex } from "../keybindings.ts";
 import type { Component, TuiMouseEvent, TuiMouseEventResult } from "../tui.ts";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 import { Input } from "./input.ts";
@@ -52,6 +52,7 @@ export interface SettingsListOptions {
 }
 
 export class SettingsList implements Component {
+	readonly capturesViewportInput: boolean = true;
 	private items: SettingItem[];
 	private filteredItems: SettingItem[];
 	private theme: SettingsListTheme;
@@ -286,12 +287,18 @@ export class SettingsList implements Component {
 		// Main list input handling
 		const kb = getKeybindings();
 		const displayItems = this.getDisplayItems();
+		const pageIndex = getSelectPageIndex(kb, data, this.selectedIndex, displayItems.length, this.maxVisible);
 		if (kb.matches(data, "tui.select.up")) {
 			if (displayItems.length === 0) return;
 			this.moveSelection(-1);
 		} else if (kb.matches(data, "tui.select.down")) {
 			if (displayItems.length === 0) return;
 			this.moveSelection(1);
+		} else if (pageIndex !== undefined) {
+			if (displayItems.length === 0) return;
+			this.selectedIndex = pageIndex;
+			// hummin overlay: headings are not selectable.
+			if (displayItems[this.selectedIndex]?.heading) this.moveSelection(1);
 		} else if (
 			kb.matches(data, "tui.select.confirm") ||
 			(data === " " && (!this.searchEnabled || this.searchInput?.getValue().length === 0))

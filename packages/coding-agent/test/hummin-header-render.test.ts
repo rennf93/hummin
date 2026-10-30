@@ -78,6 +78,7 @@ function renderWhatsNew(collapseChangelog: boolean, expand: boolean, width: numb
 	const chatContainer = new Container();
 	const self: Record<string, unknown> = {
 		startupNoticesShown: false,
+		extensionChangelogUpdates: [],
 		version: "1.2.3",
 		changelogMarkdown: "## [1.2.3]\n\n### Added\n\n- A thing that was added\n- Another thing",
 		chatContainer,
