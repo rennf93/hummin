@@ -34,7 +34,11 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		description: "Export session (Markdown default, or specify path: .md/.html/.jsonl)",
 		category: "Session",
 	},
-	{ name: "import", description: "Import and resume a session from a JSONL file", category: "Session" },
+	{
+		name: "import",
+		description: "Import a JSONL session, preserving its ID and working directory",
+		category: "Session",
+	},
 	{ name: "share", description: "Share session via a Radius artifact or a GitHub gist", category: "Tools" },
 	{ name: "bug", description: "Report a bug to the Pi developers", argumentHint: "<description>", category: "Tools" },
 	{ name: "copy", description: "Copy last agent message to clipboard", category: "Tools" },
@@ -51,7 +55,7 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "queue", description: "Inspect queued messages", category: "Session" },
 	{ name: "queue", description: "Inspect queued messages", category: "Session" },
 	{ name: "compact", description: "Manually compact the session context", category: "Session" },
-	{ name: "resume", description: "Resume a different session", category: "Session" },
+	{ name: "resume", description: "Resume another session", category: "Session" },
 	{
 		name: "reload",
 		description: "Reload keybindings, extensions, skills, prompts, themes, and context files",

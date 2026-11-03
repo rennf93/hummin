@@ -1,4 +1,3 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Api, ImageContent, Model, ModelImageResizeOptions, TextContent } from "@earendil-works/pi-ai";
 import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
@@ -8,7 +7,7 @@ import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { resolveReadPathAsync } from "./path-utils.ts";
 import { readRenderers } from "./renderers/read.ts";
-import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
+import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
 
 // An explicit tiny limit (e.g. limit:1) costs one LLM turn per line, and models
@@ -240,6 +239,6 @@ export function createReadTool(
 	cwd: string,
 	options?: ReadToolOptions,
 	customCwd = false,
-): AgentTool<typeof readSchema> {
+): TypeBoxAgentTool<typeof readSchema> {
 	return wrapToolDefinition(createReadToolDefinition(cwd, options, customCwd));
 }
