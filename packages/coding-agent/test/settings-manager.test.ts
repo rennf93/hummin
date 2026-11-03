@@ -132,6 +132,22 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("fleet servers", () => {
+		it("keeps a systemd entry and drops an unknown kind", () => {
+			const base = { hostIp: "127.0.0.1", port: 9999, target: "omen-ornith.service" };
+			const manager = SettingsManager.inMemory({
+				fleet: {
+					servers: [
+						{ id: "a", kind: "systemd", ...base },
+						{ id: "b", kind: "upstart", ...base },
+					],
+				},
+			} as Settings);
+
+			expect(manager.getFleetServers().map((server) => [server.id, server.kind])).toEqual([["a", "systemd"]]);
+		});
+	});
+
 	describe("packages migration", () => {
 		it("should keep local-only extensions in extensions array", () => {
 			const settingsPath = join(agentDir, "settings.json");
