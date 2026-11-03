@@ -6,7 +6,8 @@
  * A denied step is blocked with `Renzo denied: <reason>`.
  *
  * Limits: text-level classification via bashguard's tokenizer, like bashguard
- * itself. Command substitution, eval and aliases are not analyzed; this is a
+ * itself. Command substitution, eval, aliases, xargs, find -exec, bash -c
+ * strings and ( ) / { } grouping are not analyzed; this is a
  * prompt for the human, not a security boundary.
  */
 
@@ -66,11 +67,32 @@ function segments(raw: string): { text: string; piped: boolean }[] {
 	return out;
 }
 
-/** Drop leading `env` and VAR=x assignments (sudo stays: it is itself risky). */
+/** Skip wrappers (env/command/nice/time/nohup/exec) and VAR=x, basename the command word, drop git global options. */
 function commandWords(tokens: string[]): string[] {
 	let i = 0;
-	while (i < tokens.length && (/^[A-Za-z_]\w*=/.test(tokens[i]) || tokens[i] === "env")) i++;
-	return tokens.slice(i);
+	for (;;) {
+		const t = tokens[i];
+		if (t === undefined) break;
+		if (/^[A-Za-z_]\w*=/.test(t) || ["command", "time", "nohup", "exec"].includes(t)) i++;
+		else if (t === "env") {
+			i++;
+			while (tokens[i]?.startsWith("-")) i++;
+		} else if (t === "nice") {
+			i++;
+			if (tokens[i] === "-n") i += 2;
+			else if (/^-\d+$/.test(tokens[i] ?? "")) i++;
+		} else break;
+	}
+	const words = tokens.slice(i);
+	if (words[0]) words[0] = words[0].slice(words[0].lastIndexOf("/") + 1);
+	if (words[0] === "git") {
+		let j = 1;
+		while (j < words.length && words[j].startsWith("-")) {
+			j += ["-C", "-c", "--git-dir", "--work-tree", "--namespace"].includes(words[j]) ? 2 : 1;
+		}
+		return ["git", ...words.slice(j)];
+	}
+	return words;
 }
 
 function segmentReason(words: string[]): string | undefined {
