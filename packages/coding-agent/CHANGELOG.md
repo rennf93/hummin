@@ -11,6 +11,7 @@
 
 ### Changed
 
+- Updated dependencies flagged by `npm audit`: zod is pinned to 4.6.6 for every package (GHSA-mrhx-c7xc-m3w5), minimatch to 11.0.3 (GHSA-g3hv-75wg-m249), `@anthropic-ai/sandbox-runtime` to 0.0.81 (it reads zod through `zod/v3`), shx to 0.4.0 and `@cloudflare/vitest-plugin` to 1.4.11. The `minimatch` module bundled for extensions no longer exports `makeRe` or `AST`
 - `/model` and `/scoped-models` now show a model's name next to its ID when the name adds words the ID lacks, such as a renamed `models.json` override ([#5916](https://github.com/earendil-works/pi/issues/5916), [#11347](https://github.com/earendil-works/pi/pull/11347))
 
 ### Fixed
