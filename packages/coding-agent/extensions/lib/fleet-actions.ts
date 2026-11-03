@@ -75,14 +75,24 @@ export function buildActionCommand(
 		if (action === "stop") return `launchctl stop ${label}; launchctl unload ${plist}`;
 		return `launchctl stop ${label}; launchctl load ${plist} 2>/dev/null; launchctl start ${label}`;
 	}
-	if (server.kind === "systemd") return `sudo -n systemctl ${action} ${q(server.target)}`;
+	if (server.kind === "systemd") {
+		const unit = q(server.target);
+		// restart = stop then start: the NixOS sudoers rules grant only start and stop without a password
+		if (action === "restart") return `sudo -n systemctl stop ${unit}; sudo -n systemctl start ${unit}`;
+		return `sudo -n systemctl ${action} ${unit}`;
+	}
 	if (!controls.sshHost || !controls.composeDir) return undefined;
 	return `ssh -o ConnectTimeout=5 ${q(controls.sshHost)} ${q(`cd ${q(controls.composeDir)} && sudo docker compose ${action} ${q(server.target)}`)}`;
 }
 
-function runZsh(command: string, timeoutMs: number, signal?: AbortSignal): Promise<{ ok: boolean; output: string }> {
+/** zsh on macOS; /bin/sh elsewhere, since NixOS and many Linux hosts have no /bin/zsh. */
+export function fleetShellFor(platform: NodeJS.Platform): string {
+	return platform === "darwin" ? "/bin/zsh" : "/bin/sh";
+}
+
+function runLoginShell(command: string, timeoutMs: number, signal?: AbortSignal): Promise<{ ok: boolean; output: string }> {
 	return new Promise((resolve) => {
-		const child = spawn("/bin/zsh", ["-lc", command], { env: { ...process.env, HUMMIN_MEMORY: "0" } });
+		const child = spawn(fleetShellFor(process.platform), ["-lc", command], { env: { ...process.env, HUMMIN_MEMORY: "0" } });
 		let output = "";
 		let settled = false;
 		const finish = (ok: boolean, text: string): void => {
@@ -115,16 +125,16 @@ export async function probeServer(
 ): Promise<boolean> {
 	if (server.kind === "launchd")
 		return (
-			await runZsh(
+			await runLoginShell(
 				`launchctl print ${q(`${controls.domain}/${server.target}`)} 2>/dev/null | grep -q 'state = running'`,
 				PROBE_TIMEOUT_MS,
 				signal,
 			)
 		).ok;
-	if (server.kind === "systemd") return (await runZsh(`systemctl is-active --quiet ${q(server.target)}`, PROBE_TIMEOUT_MS, signal)).ok;
+	if (server.kind === "systemd") return (await runLoginShell(`systemctl is-active --quiet ${q(server.target)}`, PROBE_TIMEOUT_MS, signal)).ok;
 	if (!controls.sshHost || !controls.composeDir) return false;
 	const remote = `sudo -n docker ps --format '{{.Names}}' --filter status=running | grep -Fxq ${q(server.target)}`;
-	return (await runZsh(`ssh -o ConnectTimeout=5 ${q(controls.sshHost)} ${q(remote)}`, PROBE_TIMEOUT_MS, signal)).ok;
+	return (await runLoginShell(`ssh -o ConnectTimeout=5 ${q(controls.sshHost)} ${q(remote)}`, PROBE_TIMEOUT_MS, signal)).ok;
 }
 
 export async function probeFleet(
@@ -140,7 +150,7 @@ export async function probeFleet(
 export interface FleetActionOptions {
 	/** Aborting kills the running action command and stops readiness polling. */
 	signal?: AbortSignal;
-	/** Injectable command runner (defaults to /bin/zsh). */
+	/** Injectable command runner (defaults to the login shell from fleetShellFor). */
 	run?: (command: string, timeoutMs: number, signal?: AbortSignal) => Promise<{ ok: boolean; output: string }>;
 	/** Injectable readiness probe. */
 	probe?: (server: FleetServer) => Promise<boolean>;
@@ -156,7 +166,7 @@ export async function performFleetAction(
 	controls: { domain: string; plistDir: string; sshHost: string; composeDir: string },
 	options: FleetActionOptions = {},
 ): Promise<{ ok: boolean; up: boolean; detail: string }> {
-	const run = options.run ?? runZsh;
+	const run = options.run ?? runLoginShell;
 	const probe = options.probe ?? ((target: FleetServer) => probeServer(target, controls, options.signal));
 	const command = buildActionCommand(server, action, controls);
 	if (command === undefined) return { ok: false, up: false, detail: "docker endpoint is not configured" };

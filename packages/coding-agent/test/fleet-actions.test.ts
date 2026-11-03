@@ -4,6 +4,7 @@ import {
 	type FleetServer,
 	fleetControls,
 	fleetSettingsToServers,
+	fleetShellFor,
 	performFleetAction,
 	probeServer,
 } from "../extensions/lib/fleet-actions.ts";
@@ -74,11 +75,19 @@ describe("fleet action command building", () => {
 		);
 	});
 
-	it("builds sudo systemctl start, stop and restart for systemd", () => {
-		for (const action of ["start", "stop", "restart"] as const)
+	it("builds sudo systemctl start and stop for systemd, and restart as stop then start", () => {
+		for (const action of ["start", "stop"] as const)
 			expect(buildActionCommand(systemdServer, action, controls)).toBe(
 				`sudo -n systemctl ${action} 'omen-ornith.service'`,
 			);
+		expect(buildActionCommand(systemdServer, "restart", controls)).toBe(
+			"sudo -n systemctl stop 'omen-ornith.service'; sudo -n systemctl start 'omen-ornith.service'",
+		);
+	});
+
+	it("runs fleet commands through zsh on macOS and /bin/sh elsewhere", () => {
+		expect(fleetShellFor("darwin")).toBe("/bin/zsh");
+		expect(fleetShellFor("linux")).toBe("/bin/sh");
 	});
 
 	it("runs systemd actions without docker endpoints", () => {
