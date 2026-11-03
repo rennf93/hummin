@@ -1,4 +1,4 @@
-import { type Component, Markdown, type MarkdownTheme, truncateToWidth } from "@earendil-works/pi-tui";
+import { type Component, truncateToWidth } from "@earendil-works/pi-tui";
 import { DISPLAY_NAME } from "../../config.ts";
 import type { AppKeybinding } from "../../core/keybindings.ts";
 import { CollapsibleSection } from "./components/collapsible-section.ts";
@@ -98,12 +98,11 @@ export function createHumminHeaderText(version: string): HumminHeaderText {
 export function createWhatsNewSection(
 	changelogMarkdown: string,
 	fallbackVersion: string,
-	markdownTheme: MarkdownTheme,
+	body: Component,
 	requestRender: () => void,
 ): Component {
 	const versionMatch = changelogMarkdown.match(/##\s+\[?(\d+\.\d+\.\d+)\]?/);
 	const latestVersion = versionMatch ? versionMatch[1] : fallbackVersion;
-	const body = new Markdown(changelogMarkdown.trim(), 1, 0, markdownTheme);
 	return new CollapsibleSection(
 		(expanded, width) => {
 			const glyph = expanded ? "▾" : "▸";

@@ -10,10 +10,11 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import type { MessageRenderer } from "../../../core/extensions/types.ts";
+import type { MarkdownTransformer, MessageRenderer } from "../../../core/extensions/types.ts";
 import type { CustomMessage } from "../../../core/messages.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
+import { createMarkdownTransform } from "./markdown-transform.ts";
 import { formatMessageTimestamp } from "./user-message.ts";
 
 /**
@@ -30,12 +31,18 @@ export class CustomMessageComponent extends Container {
 	private outputPad: number;
 	private showTimestamp: boolean;
 	readonly scrollbarMarkerKind = "system";
+	private markdownTransformers: readonly MarkdownTransformer[];
+	private messageId?: string;
+	private timestamp?: string;
 
 	constructor(
 		message: CustomMessage<unknown>,
 		customRenderer?: MessageRenderer,
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
 		outputPad = 1,
+		markdownTransformers: readonly MarkdownTransformer[] = [],
+		messageId?: string,
+		timestamp?: string,
 		showTimestamp = false,
 	) {
 		super();
@@ -43,6 +50,9 @@ export class CustomMessageComponent extends Container {
 		this.customRenderer = customRenderer;
 		this.markdownTheme = markdownTheme;
 		this.outputPad = outputPad;
+		this.markdownTransformers = markdownTransformers;
+		this.messageId = messageId;
+		this.timestamp = timestamp;
 		this.showTimestamp = showTimestamp;
 
 		this.addChild(new Spacer(1));
@@ -125,9 +135,22 @@ export class CustomMessageComponent extends Container {
 		}
 
 		this.box.addChild(
-			new Markdown(text, 0, 0, this.markdownTheme, {
-				color: (text: string) => theme.fg("customMessageText", text),
-			}),
+			new Markdown(
+				text,
+				0,
+				0,
+				this.markdownTheme,
+				{ color: (text: string) => theme.fg("customMessageText", text) },
+				{
+					transform: createMarkdownTransform(
+						"custom",
+						() => false,
+						this.markdownTransformers,
+						this.messageId,
+						this.timestamp,
+					),
+				},
+			),
 		);
 	}
 
