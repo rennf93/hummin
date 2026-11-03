@@ -54,6 +54,17 @@ describe("riskReason", () => {
 			"git -C . push",
 			"git --no-pager push",
 			"git -c k=v push",
+			"/usr/bin/env rm x",
+			"/bin/nohup rm x",
+			"/usr/bin/command rm x",
+			"/run/current-system/sw/bin/nice -n 5 rm x",
+			"time -p rm x",
+			"command -p rm x",
+			"exec -a x rm y",
+			"env -u HOME rm x",
+			"env -C dir rm x",
+			"env -S 'rm x'",
+			"nice --adjustment=5 rm x",
 		])
 			expect(bash(c), c).toBeDefined();
 		expect(bash("git -C . status")).toBeUndefined();

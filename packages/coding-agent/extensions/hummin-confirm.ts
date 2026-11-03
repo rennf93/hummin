@@ -69,22 +69,36 @@ function segments(raw: string): { text: string; piped: boolean }[] {
 
 /** Skip wrappers (env/command/nice/time/nohup/exec) and VAR=x, basename the command word, drop git global options. */
 function commandWords(tokens: string[]): string[] {
+	const base = (t: string) => t.slice(t.lastIndexOf("/") + 1);
 	let i = 0;
 	for (;;) {
 		const t = tokens[i];
 		if (t === undefined) break;
-		if (/^[A-Za-z_]\w*=/.test(t) || ["command", "time", "nohup", "exec"].includes(t)) i++;
-		else if (t === "env") {
+		const w = base(t);
+		if (/^[A-Za-z_]\w*=/.test(t) || w === "nohup") i++;
+		else if (w === "command" || w === "time" || w === "exec") {
 			i++;
-			while (tokens[i]?.startsWith("-")) i++;
-		} else if (t === "nice") {
+			while (tokens[i]?.startsWith("-")) i += w === "exec" && tokens[i] === "-a" ? 2 : 1;
+		} else if (w === "env") {
+			i++;
+			while (tokens[i]?.startsWith("-")) {
+				const f = tokens[i];
+				if (f === "-S" || f === "--split-string") {
+					// Re-split the embedded command line and keep classifying it.
+					tokens = [...tokenize(tokens[i + 1] ?? "").tokens, ...tokens.slice(i + 2)];
+					i = 0;
+					break;
+				}
+				i += ["-u", "-C", "--unset", "--chdir"].includes(f) ? 2 : 1;
+			}
+		} else if (w === "nice") {
 			i++;
 			if (tokens[i] === "-n") i += 2;
-			else if (/^-\d+$/.test(tokens[i] ?? "")) i++;
+			else if (/^-\d+$|^--adjustment=/.test(tokens[i] ?? "")) i++;
 		} else break;
 	}
 	const words = tokens.slice(i);
-	if (words[0]) words[0] = words[0].slice(words[0].lastIndexOf("/") + 1);
+	if (words[0]) words[0] = base(words[0]);
 	if (words[0] === "git") {
 		let j = 1;
 		while (j < words.length && words[j].startsWith("-")) {
