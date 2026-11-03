@@ -14,7 +14,7 @@ export interface FleetServer {
 	hostLabel: string;
 	hostIp: string;
 	port: number;
-	kind: "launchd" | "docker";
+	kind: "launchd" | "docker" | "systemd";
 	target: string;
 }
 
@@ -25,7 +25,7 @@ export interface FleetServerSpec {
 	host?: string;
 	hostIp: string;
 	port: number;
-	kind: "launchd" | "docker";
+	kind: "launchd" | "docker" | "systemd";
 	target: string;
 }
 
@@ -75,6 +75,7 @@ export function buildActionCommand(
 		if (action === "stop") return `launchctl stop ${label}; launchctl unload ${plist}`;
 		return `launchctl stop ${label}; launchctl load ${plist} 2>/dev/null; launchctl start ${label}`;
 	}
+	if (server.kind === "systemd") return `sudo -n systemctl ${action} ${q(server.target)}`;
 	if (!controls.sshHost || !controls.composeDir) return undefined;
 	return `ssh -o ConnectTimeout=5 ${q(controls.sshHost)} ${q(`cd ${q(controls.composeDir)} && sudo docker compose ${action} ${q(server.target)}`)}`;
 }
@@ -120,6 +121,7 @@ export async function probeServer(
 				signal,
 			)
 		).ok;
+	if (server.kind === "systemd") return (await runZsh(`systemctl is-active --quiet ${q(server.target)}`, PROBE_TIMEOUT_MS, signal)).ok;
 	if (!controls.sshHost || !controls.composeDir) return false;
 	const remote = `sudo -n docker ps --format '{{.Names}}' --filter status=running | grep -Fxq ${q(server.target)}`;
 	return (await runZsh(`ssh -o ConnectTimeout=5 ${q(controls.sshHost)} ${q(remote)}`, PROBE_TIMEOUT_MS, signal)).ok;

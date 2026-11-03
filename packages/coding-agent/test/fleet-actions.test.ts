@@ -5,6 +5,7 @@ import {
 	fleetControls,
 	fleetSettingsToServers,
 	performFleetAction,
+	probeServer,
 } from "../extensions/lib/fleet-actions.ts";
 
 const q = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
@@ -27,6 +28,16 @@ const dockerServer: FleetServer = {
 	port: 9998,
 	kind: "docker",
 	target: "glm-server",
+};
+
+const systemdServer: FleetServer = {
+	id: "omen-ornith",
+	label: "Ornith",
+	hostLabel: "omen",
+	hostIp: "127.0.0.1",
+	port: 9999,
+	kind: "systemd",
+	target: "omen-ornith.service",
 };
 
 const controls = {
@@ -61,6 +72,23 @@ describe("fleet action command building", () => {
 		expect(buildActionCommand(dockerServer, "start", controls)).toBe(
 			`ssh -o ConnectTimeout=5 ${q("user@box")} ${q(`cd ${q("/opt/compose")} && sudo docker compose start ${q("glm-server")}`)}`,
 		);
+	});
+
+	it("builds sudo systemctl start, stop and restart for systemd", () => {
+		for (const action of ["start", "stop", "restart"] as const)
+			expect(buildActionCommand(systemdServer, action, controls)).toBe(
+				`sudo -n systemctl ${action} 'omen-ornith.service'`,
+			);
+	});
+
+	it("runs systemd actions without docker endpoints", () => {
+		expect(buildActionCommand(systemdServer, "start", { ...controls, sshHost: "", composeDir: "" })).toBe(
+			"sudo -n systemctl start 'omen-ornith.service'",
+		);
+	});
+
+	it("probes a systemd unit with systemctl is-active and reports an unknown unit as down", async () => {
+		expect(await probeServer({ ...systemdServer, target: "hummin-no-such-unit.service" }, controls)).toBe(false);
 	});
 
 	it("refuses docker actions without control endpoints", () => {

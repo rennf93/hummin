@@ -234,8 +234,8 @@ Server list order is priority: when several servers serve the same model, the fi
 | `servers[].host` | string | Display host name; defaults to `hostIp` |
 | `servers[].hostIp` | string | Routable IP/hostname used to build the OpenAI-compatible base URL |
 | `servers[].port` | number | Port of the OpenAI-compatible endpoint |
-| `servers[].kind` | string | `"launchd"` or `"docker"`; service manager used for probe/start/stop/restart |
-| `servers[].target` | string | launchd service label, or docker compose service/container name |
+| `servers[].kind` | string | `"launchd"`, `"docker"` or `"systemd"`; service manager used for probe/start/stop/restart |
+| `servers[].target` | string | launchd service label, docker compose service/container name, or systemd unit name (e.g. `omen-ornith.service`) |
 | `servers[].engine` | string | `"llamacpp"` (default) or `"colibri"` (the external container engine) |
 | `servers[].models` | array | Staged models this server serves (`{ id, contextWindow }`); fills the picker catalog while the server is off |
 | `launchd.domain` | string | launchd domain; defaults to the current user's GUI domain (`gui/<uid>`) |

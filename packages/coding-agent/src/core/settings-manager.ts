@@ -91,10 +91,10 @@ export interface FleetServerSettings {
 	/** port of the OpenAI-compatible endpoint */
 	port: number;
 	/** service manager used for probe/start/stop/restart */
-	kind: "launchd" | "docker";
+	kind: "launchd" | "docker" | "systemd";
 	/** inference engine used by this endpoint; defaults to llamacpp */
 	engine?: "colibri" | "llamacpp"; // colibri = the external container engine (github.com/JustVugg/colibri), like llamacpp
-	/** launchd service label, or docker compose service / container name */
+	/** launchd service label, docker compose service / container name, or systemd unit name */
 	target: string;
 	/** staged models this server serves (picker catalog fill-in while the server is off). `capability` tags the model on its provider's rung for the sys1 right-size gate (optional; untagged = the gate fails open) */
 	models?: Array<{
@@ -1539,7 +1539,7 @@ export class SettingsManager {
 				typeof s.hostIp === "string" &&
 				typeof s.port === "number" &&
 				typeof s.target === "string" &&
-				(s.kind === "launchd" || s.kind === "docker"),
+				(s.kind === "launchd" || s.kind === "docker" || s.kind === "systemd"),
 		);
 	}
 

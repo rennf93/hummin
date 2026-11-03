@@ -36,8 +36,9 @@ display and local model preference; each host remains separately selectable.
 }
 ```
 
-Supported service managers are `launchd` and Docker Compose over SSH. `target`
-is the launchd label or Docker Compose service/container name. SSH and sudo
+Supported service managers are `launchd`, Docker Compose over SSH and `systemd`
+(units on the same host as Hummin, driven with `sudo -n systemctl`). `target`
+is the launchd label, Docker Compose service/container name or systemd unit name. SSH and sudo
 must work without interactive prompts. For launchd, the domain defaults to
 the current user's GUI domain and plist paths to `~/Library/LaunchAgents`.
 Override these with `fleet.launchd.domain` and `fleet.launchd.plistDir`.

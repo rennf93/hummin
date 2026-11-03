@@ -76,7 +76,7 @@ If you register servers in settings under `fleet.servers[]`, hummin health-probe
 - `/status` - fleet health dashboard alongside model, memory and todos
 - Start-from-picker: selecting an offline fleet model offers to start its server (readiness-gated; `fleet.autoStart` skips the confirm)
 
-Supported control: launchd on the Mac, docker-over-SSH on Linux hosts. This is how the model picker and your actual services stay in sync.
+Supported control: launchd on the Mac, systemd on the local Linux host, docker-over-SSH on Linux hosts. This is how the model picker and your actual services stay in sync.
 
 ## 7. Client-side tuning for slow models
 
