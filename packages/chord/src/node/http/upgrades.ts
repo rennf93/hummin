@@ -152,7 +152,12 @@ export class Upgrades {
 	/** Keeps `upgraded` until its socket closes; an error (an oversized frame) terminates only that socket. */
 	#keep(upgraded: Upgraded): void {
 		const { socket } = upgraded;
-		socket.on("error", () => socket.terminate());
+		// `ws` answers a bad frame by itself: it sends the close frame (1009 for an oversized one), ends the socket once that
+		// is written and destroys it after its close timeout. Terminating here would drop the close frame still unsent or
+		// reset by the unread rest of the frame (macOS), the peer seeing 1006 instead of 1009.
+		socket.on("error", () => {
+			if (socket.readyState !== socket.CLOSING) socket.terminate();
+		});
 		this.#open.add(upgraded);
 		socket.once("close", () => this.#open.delete(upgraded));
 	}

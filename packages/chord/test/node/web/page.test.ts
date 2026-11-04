@@ -6,6 +6,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
+import { fileEventsDelivered } from "../../file-events.ts";
 import { Browser, CHROMIUM } from "./browser.ts";
 import { freePort, panelPlugin, signIn, versionedEntry, webApp } from "./support.ts";
 
@@ -38,6 +39,7 @@ describe.skipIf(CHROMIUM === undefined)("a page", () => {
 			await browser.evaluate('document.getElementById("draft").focus()');
 			await browser.type("half-typed");
 			await writeFile(join(root, "notes", "web.ts"), panelPlugin("Notes v2", "#654321")["web.ts"]!);
+			await fileEventsDelivered();
 			while (!app.plugins.state.value.dirty.includes("@test/notes"))
 				await new Promise((resolve) => setTimeout(resolve, 10));
 			const result = await app.applyChanges(context);

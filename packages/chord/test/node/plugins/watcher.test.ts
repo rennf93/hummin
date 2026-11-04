@@ -10,6 +10,7 @@ import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { type BuiltFacet, discoverPlugins } from "../../../src/node/plugins/index.ts";
 import { PluginWatcher } from "../../../src/node/plugins/watcher.ts";
 import { Batch } from "../../../src/state/internal.ts";
+import { fileEventsDelivered } from "../../file-events.ts";
 import { changesOf, delivered } from "../../support.ts";
 import { KINDS, tempRoot, writeFiles, writePlugin } from "./support.ts";
 
@@ -41,6 +42,12 @@ async function watched() {
 		used("@test/a", "worker", [join(root, "a", "worker.ts"), contract]),
 		used("@test/b", "server", [join(root, "b", "server.ts"), contract]),
 	]);
+	// The writes above, as macOS reports them after the watch started, must not count as changes: marks they made clear.
+	await fileEventsDelivered();
+	const names = ["@test/a", "@test/b", "@test/contracts"];
+	watcher.know(await discoverPlugins([root], { kinds: KINDS }, context), watcher.discoverySnapshot());
+	for (const name of names) watcher.installed(name);
+	watcher.applied(names, watcher.snapshot(names));
 	return { root, base, watcher, failures };
 }
 
@@ -124,6 +131,8 @@ describe("the watcher and single-file plugins (slice 12 §4)", () => {
 	it("dirties a single-file plugin for a change of its file; a file appearing or disappearing at a root's top sets set", async () => {
 		const { root, watcher } = await watched();
 		await writeFiles(root, { "hello.server.ts": "" });
+		// The real events of each change first (macOS delivers them late): the marks made by hand follow them.
+		await fileEventsDelivered();
 		watcher.mark(join(root, "hello.server.ts"));
 		expect(watcher.value).toMatchObject({ set: true, dirty: [] });
 		const seen = watcher.discoverySnapshot();
@@ -133,10 +142,12 @@ describe("the watcher and single-file plugins (slice 12 §4)", () => {
 		watcher.mark(join(root, "hello.server.ts"));
 		expect(watcher.value).toMatchObject({ set: false, dirty: ["hello"] });
 		await writeFiles(root, { "hello.web.tsx": "" });
+		await fileEventsDelivered();
 		watcher.mark(join(root, "hello.web.tsx"));
 		expect(watcher.value).toMatchObject({ set: true });
 		watcher.know(await discoverPlugins([root], { kinds: KINDS }, context), watcher.discoverySnapshot());
 		await rm(join(root, "hello.server.ts"));
+		await fileEventsDelivered();
 		watcher.mark(join(root, "hello.server.ts"));
 		expect(watcher.value).toMatchObject({ set: true, dirty: ["hello"] });
 		watcher.close();

@@ -13,6 +13,7 @@ import * as chord from "../../../src/index.ts";
 import type { JsonValue } from "../../../src/json.ts";
 import { createPlugins, type Plugins } from "../../../src/node/plugins/index.ts";
 import { createWorkers, type Workers, type WorkersError } from "../../../src/node/workers/index.ts";
+import { fileEventsDelivered } from "../../file-events.ts";
 import { Session, type WorkerBehaviour } from "../fixtures/workers/control.ts";
 
 /** The server's own kind. */
@@ -135,7 +136,11 @@ export async function fleet(
 		starts,
 		output,
 		behaviours,
-		label: (label) => writeFile(join(root, "notes", "label.ts"), `export const label = ${JSON.stringify(label)};\n`),
+		label: async (label) => {
+			await writeFile(join(root, "notes", "label.ts"), `export const label = ${JSON.stringify(label)};\n`);
+			// macOS delivers one write's events one by one: a mark after a rollout's snapshot would be a new change.
+			await fileEventsDelivered();
+		},
 	};
 }
 

@@ -10,6 +10,7 @@ import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { hostKind, local, remote, str, unknown } from "../../../src/contracts/index.ts";
 import { addressParam, HostData } from "../../../src/node/app/data.ts";
 import { AppInfo } from "../../../src/node/app/index.ts";
+import { fileEventsDelivered } from "../../file-events.ts";
 import { rejection } from "../../support.ts";
 import { send } from "../http/support.ts";
 import { gitRepository, writePlugin } from "../plugins/support.ts";
@@ -169,6 +170,7 @@ describe("workers", () => {
 		const { app, root } = await testApp({ plugins: { echo: { "server.ts": ECHO_SERVER } } });
 		const echo = await app.host.get(Echo, {}, context);
 		await writeFile(join(root, "echo", "server.ts"), ECHO_SERVER.replace('"echo"', '"changed"'));
+		await fileEventsDelivered();
 		while (!app.plugins.state.value.dirty.includes("@test/echo"))
 			await new Promise((resolve) => setTimeout(resolve, 10));
 		const result = await app.applyChanges(context);

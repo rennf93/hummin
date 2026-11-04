@@ -4,7 +4,6 @@
 
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context, withAbortSignal } from "../../../src/context/index.ts";
@@ -103,9 +102,12 @@ describe("clearStaleLockAt", () => {
 	});
 });
 
-/** Runs `fn` in a fresh temporary directory, removed afterwards whatever `fn` did. */
+/**
+ * Runs `fn` in a fresh temporary directory under /tmp, removed afterwards whatever `fn` did: a socket path must fit
+ * sun_path (104 bytes on macOS), which a runner's own temporary directory under /private/var/folders may not.
+ */
 async function inTemporaryDirectory(fn: (dir: string) => Promise<void>): Promise<void> {
-	const dir = await mkdtemp(join(tmpdir(), "chord-lock-file-"));
+	const dir = await mkdtemp("/tmp/chord-lock-file-");
 	try {
 		await fn(dir);
 	} finally {

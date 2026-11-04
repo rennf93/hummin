@@ -9,6 +9,7 @@ import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { WebScripts } from "../../../src/index.ts";
 import { Sessions } from "../../../src/node/app/index.ts";
 import { pageScripts } from "../../../src/node/surfaces/index.ts";
+import { fileEventsDelivered } from "../../file-events.ts";
 import { tempDir, testApp } from "../app/support.ts";
 import { send } from "../http/support.ts";
 
@@ -182,6 +183,7 @@ describe("plugin scripts", () => {
 		await writeFile(join(root, "pictured", "web.ts"), "export default {");
 		for (let round = 0; round < 6; round++) {
 			await writeFile(join(root, "notes", "notes.css"), `.notes { order: ${round}; }`);
+			await fileEventsDelivered();
 			while (!app.plugins.state.value.dirty.includes("@test/notes"))
 				await new Promise((resolve) => setTimeout(resolve, 10));
 			await app.applyChanges(context);
@@ -196,6 +198,7 @@ describe("plugin scripts", () => {
 		const scripts = await app.host.get(WebScripts, {}, context);
 		const before = scripts.set.value;
 		await writeFile(join(root, "notes", "notes.css"), ".notes { color: var(--fg); }");
+		await fileEventsDelivered();
 		while (!app.plugins.state.value.dirty.includes("@test/notes"))
 			await new Promise((resolve) => setTimeout(resolve, 10));
 		const result = await app.applyChanges(context);

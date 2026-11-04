@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { Sessions } from "../../../src/node/app/index.ts";
 import { requireSandboxNode, terminalFile } from "../../../src/node/tui/index.ts";
+import { fileEventsDelivered } from "../../file-events.ts";
 import { send } from "../http/support.ts";
 import { Launched, linesPlugin, TUI_NODE, tuiApp } from "./support.ts";
 
@@ -71,6 +72,7 @@ describe.skipIf(TUI_NODE === undefined)("a terminal client", () => {
 			expect(launched.output).not.toContain("(opener");
 			// An edit of the terminal plugin applies in place: the sandbox fetches the new script through the launcher.
 			await writeFile(join(root, "lines", "tui.ts"), linesPlugin("plugin v2")["tui.ts"]!);
+			await fileEventsDelivered();
 			while (!app.plugins.state.value.dirty.includes("@test/lines"))
 				await new Promise((resolve) => setTimeout(resolve, 10));
 			const result = await app.applyChanges(context);

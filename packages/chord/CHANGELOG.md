@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Chord v2's HTTP component: a frame above a socket's `maxPayload` now reaches its peer as the close frame (1009) on macOS too; the component terminated the socket as `ws` was sending that frame, and the unread rest of the frame reset the connection first (the peer saw 1006).
+
 ## [1.9.0] - 2026-10-22
 
 ### Breaking Changes

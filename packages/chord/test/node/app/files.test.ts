@@ -112,7 +112,8 @@ describe("writing, reading and removing", () => {
 	it("caps the uploads under way per object: past it begin is refused busy; an ending one frees its slot (recheck N1)", async () => {
 		const { app } = await testApp({ limits: { uploads: 3 } });
 		const files = await app.host.get(Files, {}, context);
-		const fds = async () => (await readdir("/proc/self/fd")).length;
+		// /dev/fd lists this process's descriptors on Linux (a link to /proc/self/fd) and on macOS (no /proc there).
+		const fds = async () => (await readdir("/dev/fd")).length;
 		const before = await fds();
 		const begun = [];
 		for (let index = 0; index < 3; index++) begun.push(await files.begin({ name: `u${index}`, mime: "x" }, context));
