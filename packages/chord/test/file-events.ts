@@ -45,6 +45,8 @@ function startSentinel(): { readonly dir: string; readonly watcher: FSWatcher } 
 	const watcher = watch(dir, (_event, name) => {
 		if (name !== null) waiting.get(name)?.();
 	});
+	// never keeps a process alive on its own: a pending wait holds the loop through its rewrite timer
+	watcher.unref();
 	process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
 	return { dir, watcher };
 }
