@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Removed `readFile` from `GrepOperations`. The grep tool now takes context lines from ripgrep and no longer reads matched files itself. To search a remote system, override grep's `execute()`; see [Remote Execution](docs/extensions.md#remote-execution) ([#9276](https://github.com/earendil-works/pi/issues/9276))
+
 ### Added
 
 - Fleet servers can use `"kind": "systemd"` for Linux hosts: Hummin probes the unit with `systemctl is-active` and starts or stops it with `sudo -n systemctl` (restart is stop then start). Fleet commands run through `/bin/sh` outside macOS, since NixOS has no `/bin/zsh`
@@ -19,6 +23,8 @@
 - Fixed RPC mode ignoring an extension's `ctx.shutdown()` while idle, for example from a timer: the process kept running until the client sent another command. pi now shuts down right away when idle, and a shutdown requested by an extension command waits until the command's `prompt` response is written ([#11599](https://github.com/earendil-works/pi/issues/11599))
 - Fixed changelog notes repeating on every fresh launch when the installed package version has a prerelease suffix, such as `0.1.5-20261020.7`: the saved version was read as `0.1.0`, so the `0.1.1` to `0.1.5` notes counted as new each time. A saved version without `major.minor.patch` now shows no notes and is replaced by the installed version, instead of showing the whole changelog ([#11703](https://github.com/earendil-works/pi/issues/11703))
 - Fixed RPC mode cutting off shutdown cleanup, such as a pending MCP token refresh, when stdin closed and SIGTERM arrived together, which process managers like Paseo and systemd do. Pi lost the refreshed token and the MCP server revoked the sign-in. Once a shutdown has started, a stdin EOF or a single signal no longer interrupts it; a second signal still exits at once. Print mode likewise no longer dies from a signal that arrives during its final cleanup ([#11599](https://github.com/earendil-works/pi/issues/11599))
+- Fixed the grep tool reading every matched file into memory when `context` was set, which ran out of memory on large files; context now comes from ripgrep, which also fixes UTF-16 files and lone CRs in matched lines, and the match limit notice no longer appears when exactly `limit` matches exist ([#9276](https://github.com/earendil-works/pi/issues/9276), [#11423](https://github.com/earendil-works/pi/issues/11423))
+- Fixed the find tool reporting the result limit when exactly `limit` files match, and `limit: 0` in find and ls returning every result or an empty listing; limits below 1 now mean 1 ([#7121](https://github.com/earendil-works/pi/issues/7121))
 
 
 ## [1.5.0] - 2026-11-02
