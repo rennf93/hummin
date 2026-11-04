@@ -4,7 +4,7 @@
 	"type": "module",
 	"workspaces": [
 		"packages/*",
-		"apps/*",
+		"packages/chord/test/examples/61-tutorial",
 		"packages/coding-agent/examples/extensions/with-deps",
 		"packages/coding-agent/examples/extensions/custom-provider-anthropic",
 		"packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
@@ -12,14 +12,14 @@
 		"packages/coding-agent/examples/extensions/gondolin"
 	],
 	"scripts": {
-		"clean": "npm run clean --workspaces",
-		"build": "cd packages/telemetry && npm run build && cd ../chord && npm run build && cd ../tui && npm run build && cd ../codemode && npm run build && cd ../mcp && npm run build && cd ../ai && npm run build && cd ../durable && npm run build && cd ../env && npm run build && cd ../agent && npm run build && cd ../coding-agent && npm run build",
-		"build:offline": "cd packages/telemetry && npm run build && cd ../chord && npm run build && cd ../tui && npm run build && cd ../codemode && npm run build && cd ../mcp && npm run build && cd ../ai && npm run build:offline && cd ../durable && npm run build && cd ../env && npm run build && cd ../agent && npm run build && cd ../coding-agent && npm run build",
+		"clean": "npm run clean --workspaces --if-present",
+		"build": "cd packages/telemetry && npm run build && cd ../schema && npm run build && cd ../chord && npm run build && cd ../tui && npm run build && cd ../codemode && npm run build && cd ../mcp && npm run build && cd ../ai && npm run build && cd ../durable && npm run build && cd ../env && npm run build && cd ../agent && npm run build && cd ../coding-agent && npm run build",
+		"build:offline": "cd packages/telemetry && npm run build && cd ../schema && npm run build && cd ../chord && npm run build && cd ../tui && npm run build && cd ../codemode && npm run build && cd ../mcp && npm run build && cd ../ai && npm run build:offline && cd ../durable && npm run build && cd ../env && npm run build && cd ../agent && npm run build && cd ../coding-agent && npm run build",
 		"build:native:darwin": "npm --prefix packages/tui run build:native:darwin",
 		"build:native:linux": "npm --prefix packages/tui run build:native:linux",
 		"build:native:win32": "npm --prefix packages/tui run build:native:win32",
 		"bench:offline": "node bench/run.mjs --offline && node bench/compare.mjs bench/results",
-		"check": "node scripts/biome-check.mjs --write && npm run check:pinned-deps && npm run check:runtime-deps && npm run check:ts-imports && npm run check:entry-graphs && npm run check:install-lock:coding-agent && tsc --noEmit && npm run check:browser-smoke",
+		"check": "node scripts/biome-check.mjs --write && npm run check:pinned-deps && npm run check:runtime-deps && npm run check:ts-imports && npm run check:entry-graphs && npm run check:install-lock:coding-agent && tsc --noEmit && tsc --noEmit -p packages/coding-agent/examples/tsconfig.json && npm run check:browser-smoke",
 		"check:browser-smoke": "node scripts/check-browser-smoke.mjs",
 		"check:pinned-deps": "node scripts/check-pinned-deps.mjs",
 		"check:runtime-deps": "node scripts/check-runtime-deps.mjs",
@@ -38,7 +38,7 @@
 		"check:model-catalog-compat": "node scripts/check-model-catalog-compat.mjs",
 		"profile:tui": "node scripts/profile-coding-agent-node.mjs --mode tui",
 		"profile:rpc": "node scripts/profile-coding-agent-node.mjs --mode rpc",
-		"test": "npm run test:scripts && npm run test --workspaces --if-present",
+		"test": "npm run test:scripts && npm run test --workspace packages --if-present",
 		"test:scripts": "node --test scripts/*.test.mjs scripts/*.test.ts",
 		"stage:hummin-cli": "node scripts/stage-hummin-cli.mjs",
 		"test:mcp-conformance": "node packages/coding-agent/test/mcp-conformance/run.ts",
@@ -66,7 +66,6 @@
 		"esbuild": "0.28.2",
 		"husky": "9.1.7",
 		"pnpm": "11.15.1",
-		"shx": "0.4.0",
 		"tsx": "4.22.1",
 		"typescript": "7.0.2",
 		"yaml": "2.9.0"
@@ -77,6 +76,6 @@
 	"version": "1.0.0",
 	"overrides": {
 		"protobufjs": "7.6.6",
-		"zod": "4.6.6"
+		"zod": "4.6.7"
 	}
 }

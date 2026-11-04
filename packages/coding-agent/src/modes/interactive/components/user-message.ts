@@ -83,7 +83,7 @@ export class UserMessageComponent extends Container {
 					preserveBackslashEscapes: true,
 					transform: createMarkdownTransform(
 						"user",
-						false,
+						() => false,
 						this.markdownTransformers,
 						this.messageId,
 						this.timestamp,

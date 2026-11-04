@@ -86,6 +86,17 @@ function renderWhatsNew(collapseChangelog: boolean, expand: boolean, width: numb
 		ui: { requestRender: () => {} },
 	};
 	self.getMarkdownThemeWithSettings = () => proto.getMarkdownThemeWithSettings.call(self);
+	self.mermaidMarkdownTransformer = (markdown: string) => markdown;
+	self.session = { extensionRunner: { getMarkdownTransformers: () => [] } };
+	self.getMarkdownTransformers = () => proto.getMarkdownTransformers.call(self);
+	const createChangelogMarkdown = proto.createChangelogMarkdown;
+	self.createChangelogMarkdown = (markdown: string, paddingX: number, paddingY: number) =>
+		(createChangelogMarkdown as (this: unknown, a: string, b: number, c: number) => unknown).call(
+			self,
+			markdown,
+			paddingX,
+			paddingY,
+		);
 	proto.showStartupNoticesIfNeeded.call(self);
 	if (expand) {
 		const section = chatContainer.children.find((child) => child.handleMouse);

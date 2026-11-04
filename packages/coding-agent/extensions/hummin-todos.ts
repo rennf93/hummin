@@ -11,7 +11,6 @@
  * extensions example).
  */
 
-import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -31,7 +30,8 @@ const TodoParams = Type.Object({
 	todos: Type.Array(
 		Type.Object({
 			text: Type.String({ description: "Short imperative description of the step" }),
-			status: StringEnum(["pending", "in_progress", "completed"] as const),
+			// pi-ai's StringEnum no longer types for TypeBox's Static; Unsafe keeps the same { type: "string", enum } JSON.
+			status: Type.Unsafe<TodoStatus>({ type: "string", enum: ["pending", "in_progress", "completed"] }),
 		}),
 		{ description: "The full list, in order. Exactly one item should be in_progress while working." },
 	),

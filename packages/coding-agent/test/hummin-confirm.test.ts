@@ -84,10 +84,25 @@ describe("default export", () => {
 	});
 	const setup = (answer: boolean) => {
 		let handler: ((e: unknown, c: unknown) => Promise<unknown>) | undefined;
-		humminConfirm({ on: (_n: string, h: typeof handler) => (handler = h) } as never);
+		humminConfirm({
+			on: (_n: string, h: typeof handler) => {
+				handler = h;
+			},
+		} as never);
 		const messages: string[] = [];
-		const ctx = { ui: { confirm: async (_t: string, m: string) => (messages.push(m), answer) } };
-		return { run: () => handler?.({ toolName: "bash", input: { command: "rm x" } }, ctx), messages, has: () => !!handler };
+		const ctx = {
+			ui: {
+				confirm: async (_t: string, m: string) => {
+					messages.push(m);
+					return answer;
+				},
+			},
+		};
+		return {
+			run: () => handler?.({ toolName: "bash", input: { command: "rm x" } }, ctx),
+			messages,
+			has: () => !!handler,
+		};
 	};
 
 	it("registers nothing without HUMMIN_CONFIRM=1", () => {

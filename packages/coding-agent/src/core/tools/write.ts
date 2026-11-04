@@ -1,4 +1,3 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { existsSync, readFileSync } from "fs";
 import { mkdir as fsMkdir, writeFile as fsWriteFile } from "fs/promises";
 import { dirname } from "path";
@@ -8,7 +7,7 @@ import { countLineChanges, generateUnifiedPatch } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { writeRenderers } from "./renderers/write.ts";
-import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
+import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { formatSize } from "./truncate.ts";
 
 const writeSchema = Type.Object({
@@ -145,6 +144,6 @@ export function createWriteTool(
 	cwd: string,
 	options?: WriteToolOptions,
 	customCwd = false,
-): AgentTool<typeof writeSchema> {
+): TypeBoxAgentTool<typeof writeSchema> {
 	return wrapToolDefinition(createWriteToolDefinition(cwd, options, customCwd));
 }
