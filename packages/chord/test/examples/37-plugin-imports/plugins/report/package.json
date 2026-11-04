@@ -3,10 +3,12 @@
 	"private": true,
 	"type": "module",
 	"dependencies": {
-		"example-greeting": "file:../../deps/example-greeting",
-		"example-native": "file:../../deps/example-native"
+		"example-greeting": "1.0.0",
+		"example-native": "1.0.0"
 	},
 	"chord": {
-		"external": ["example-native"]
+		"external": [
+			"example-native"
+		]
 	}
 }

@@ -3,6 +3,6 @@
 	"private": true,
 	"type": "module",
 	"dependencies": {
-		"@bob/words": "git+file:///path/to/words.git#<commit>"
+		"@bob/words": "1.0.0"
 	}
 }
