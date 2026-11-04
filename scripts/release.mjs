@@ -196,7 +196,8 @@ function bumpOrSetVersion(target) {
 		}
 
 		console.log(`Setting explicit version (${target})...`);
-		run(`npm version ${target} --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts`);
+		// The tutorial app keeps its own version: docs/tutorial/book.md quotes its package.json.
+		run(`npm version ${target} --workspaces --no-git-tag-version --no-workspaces-update && git checkout -- packages/chord/test/examples/61-tutorial/package.json && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts`);
 	}
 
 	// npm version can temporarily install the previous workspace versions before
