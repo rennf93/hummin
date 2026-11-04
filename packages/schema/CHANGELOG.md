@@ -2,12 +2,6 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- Fixed local `$ref`s in schemas whose root `$id` is a relative path with a directory, such as `schemas/tool.json`: the `$id` was applied twice, so `compile` threw and `unresolvedRefs: "reject"` rejected valid tool arguments. Relative `$id`s are now also applied once with `unevaluatedProperties`/`unevaluatedItems`, when explaining errors under nested resources, and on the first coercion of a schema with `$dynamicRef` ([#11697](https://github.com/earendil-works/pi/issues/11697))
-
-## [1.5.0] - 2026-11-02
-
 ### Added
 
 - Initial release: `compile(schema, options)` validates JSON Schema drafts 2020-12 and 7 without `eval` or `new Function`, compiling a schema once into plain closures. `Validator.check` is the boolean check (a type guard for schemas built with the builders), `Validator.errors` reports each failure with a JSON Pointer path. Format checks are in the optional `@earendil-works/pi-schema/formats` entry point.
@@ -17,3 +11,8 @@
 - `unresolvedRefs: "reject"` compiles a `$ref` that names nothing as `false` (the error is `unresolved reference <ref>`) instead of throwing, for schemas whose references may dangle.
 - `formats` also checks `url` and `json-pointer-uri-fragment`, as TypeBox and ajv-formats do.
 - `npm run bench` compares conformance, speed (with and without eval), setup cost, memory and bundle size with ata-validator (generated code and its interpreter), Ajv, Zod (native schemas, and `z.fromJSONSchema` for the test suite), TypeBox, @cfworker/json-schema and omptype.
+
+### Fixed
+
+- Fixed local `$ref`s in schemas whose root `$id` is a relative path with a directory, such as `schemas/tool.json`: the `$id` was applied twice, so `compile` threw and `unresolvedRefs: "reject"` rejected valid tool arguments. Relative `$id`s are now also applied once with `unevaluatedProperties`/`unevaluatedItems`, when explaining errors under nested resources, and on the first coercion of a schema with `$dynamicRef` ([#11697](https://github.com/earendil-works/pi/issues/11697))
+
