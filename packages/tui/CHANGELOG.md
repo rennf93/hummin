@@ -2,12 +2,6 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- Fixed Markdown rendering HTML comments (`<!-- ... -->`) as visible text ([#11710](https://github.com/earendil-works/pi/issues/11710))
-
-## [1.5.0] - 2026-11-02
-
 ### Added
 
 - Added `replaceControlCharacters()` to replace runs of C0 and C1 control characters with a space
@@ -16,6 +10,7 @@
 
 ### Fixed
 
+- Fixed Markdown rendering HTML comments (`<!-- ... -->`) as visible text ([#11710](https://github.com/earendil-works/pi/issues/11710))
 - Fixed `Shift+Enter` queueing a follow-up in Apple Terminal setups that send `ESC` + Return. When local native Shift detection is available (Apple Terminal, native Windows), `ProcessTerminal` now treats `ESC` + Return with Shift held as `Shift+Enter`; without Shift it remains `Alt+Enter` ([#11559](https://github.com/earendil-works/pi/issues/11559))
 - Fixed regular-mode `TUI` writing OSC 133 prompt markers from rendered lines to the terminal. Terminals treat `133;A` as a new shell prompt and drop the OSC 7501 program status, so the working indicator disappeared during runs. Fullscreen still uses the markers for prompt navigation and already stripped them ([#11519](https://github.com/earendil-works/pi/issues/11519))
 - Fixed fullscreen double-click selection splitting paths and tokens at `~`, `.`, `\`, and `+`. Word characters now match iTerm2's defaults ([#10980](https://github.com/earendil-works/pi/issues/10980))
@@ -35,6 +30,7 @@
 ## [1.9.0] - 2026-10-22
 
 ## [1.8.0] - 2026-10-22
+
 
 ### Added
 
@@ -740,6 +736,7 @@
 - Fixed slash-command Tab completion from immediately chaining into argument autocomplete after completing the command name, restoring flows like `/model` that submit into a selector dialog ([#2577](https://github.com/badlogic/pi-mono/issues/2577))
 - Fixed stale content and incorrect viewport tracking after TUI content shrinks or transient components inflate the working area ([#2126](https://github.com/badlogic/pi-mono/pull/2126) by [@Perlence](https://github.com/Perlence))
 - Fixed `@` autocomplete to debounce editor-triggered searches, cancel in-flight `fd` lookups cleanly, and keep suggestions visible while results refresh ([#1278](https://github.com/badlogic/pi-mono/issues/1278))
+
 
 ## [0.62.0] - 2026-03-23
 
