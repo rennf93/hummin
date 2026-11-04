@@ -20,6 +20,9 @@ async function watched() {
 	const base = await realpath(await tempRoot());
 	await writePlugin(root, "a", "@test/a", { "worker.ts": "", "own.ts": "" });
 	await writePlugin(root, "b", "@test/b", { "server.ts": "" });
+	// `base` is set by any event under a base directory and never cleared: let the events of the directories and files
+	// made above arrive before the watch starts, so macOS cannot report them to it late as a base change.
+	await fileEventsDelivered();
 	const failures: unknown[] = [];
 	const watcher = new PluginWatcher(
 		{ roots: [root], base: [base], kinds: KINDS, failed: (error) => failures.push(error) },
