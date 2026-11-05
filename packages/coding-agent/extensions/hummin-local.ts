@@ -535,6 +535,7 @@ async function discoverInstances(configs: InstanceConfig[]): Promise<DiscoveredI
 			serving.filter((entry) => entry.baseUrl === config.baseUrl).map((entry) => entry.modelId),
 		);
 		for (const entry of config.models ?? []) {
+			if (listed.has(entry.id)) continue;
 			listed.add(entry.id);
 			serving.push({
 				modelId: entry.id,
