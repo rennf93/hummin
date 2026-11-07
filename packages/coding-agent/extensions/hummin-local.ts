@@ -59,6 +59,8 @@ interface InstanceConfig {
 const DISPLAY_NAMES: Record<string, string> = {
 	"qwen3.8-27b": "Qwen 3.8 27B",
 	"glm-5.3-flash": "GLM 5.3 Flash",
+	"glm-5.3-flash-coder-rco": "GLM 5.3 Flash Coder RCO (Q2)",
+	"glm-5.3-flash-coder-rco-q3": "GLM 5.3 Flash Coder RCO (Q3)",
 	"glm-5.3": "GLM 5.3",
 	"kimi-k3": "Kimi K3",
 	"glm-5.3-flash-local": "GLM 5.3 Flash (int4)",
