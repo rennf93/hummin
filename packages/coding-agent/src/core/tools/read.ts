@@ -321,19 +321,9 @@ export function createReadToolDefinition(
 								if (startLine >= totalFileLines) {
 									throw new Error(`Offset ${offset} is beyond end of file (${totalFileLines} lines total)`);
 								}
-								let selectedContent: string;
-								let userLimitedLines: number | undefined;
-								// If limit is specified by the user, honor it first. Otherwise truncateHead decides.
-								if (limit !== undefined) {
-									const effectiveLimit = Math.max(limit, MIN_EXPLICIT_LIMIT_LINES);
-									const endLine = Math.min(startLine + effectiveLimit, allLines.length);
-									selectedContent = allLines.slice(startLine, endLine).join("\n");
-									userLimitedLines = endLine - startLine;
-								} else {
-									selectedContent = allLines.slice(startLine).join("\n");
-								}
-								// Apply truncation, respecting both line and byte limits.
-								const truncation = truncateHead(selectedContent);
+								// A user-specified limit is honored before truncation.
+								const userLimitedLines =
+										limit === undefined ? undefined : Math.min(startLine + limit, totalFileLines) - startLine;
 								let outputText: string;
 								if (truncation.firstLineExceedsLimit) {
 									// First line alone exceeds the byte limit. Point the model at a bash fallback.
