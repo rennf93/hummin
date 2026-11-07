@@ -58,7 +58,7 @@ describe("generateEditDiff", () => {
 			const { content, replacements, newContent } = randomCase(random, true);
 			if (content === newContent) continue;
 			const windowed = generateEditDiff("f.txt", content, newContent, replacements);
-			const whole = generateDiffString(content, newContent);
+			const whole = generateDiffString("f.txt", content, newContent);
 			expect(windowed, `run ${run}`).toEqual({
 				diff: whole.diff,
 				patch: generateUnifiedPatch("f.txt", content, newContent),

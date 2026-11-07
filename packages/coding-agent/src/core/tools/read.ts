@@ -307,15 +307,18 @@ export function createReadToolDefinition(
 								// Read text content. Convert offset from 1-indexed input to 0-indexed line access.
 								const startLine = offset ? Math.max(0, offset - 1) : 0;
 								const startLineDisplay = startLine + 1;
+								// An explicit limit below the floor costs one LLM turn per line; raise it to a page.
+								const effectiveLimit =
+									limit === undefined ? undefined : Math.max(limit, MIN_EXPLICIT_LIMIT_LINES);
 								const { totalFileLines, truncation, firstLineBytes } =
-									ops.createReadStream && isStreamableRange(offset, limit)
+									ops.createReadStream && isStreamableRange(offset, effectiveLimit)
 										? await selectLinesFromStream(
 												ops.createReadStream(absolutePath, { signal }),
 												startLine,
-												limit,
+												effectiveLimit,
 												signal,
 											)
-										: selectLinesFromBuffer(await ops.readFile(absolutePath), startLine, limit);
+										: selectLinesFromBuffer(await ops.readFile(absolutePath), startLine, effectiveLimit);
 								if (aborted) return;
 								// Check if offset is out of bounds.
 								if (startLine >= totalFileLines) {
@@ -323,7 +326,9 @@ export function createReadToolDefinition(
 								}
 								// A user-specified limit is honored before truncation.
 								const userLimitedLines =
-										limit === undefined ? undefined : Math.min(startLine + limit, totalFileLines) - startLine;
+									effectiveLimit === undefined
+										? undefined
+										: Math.min(startLine + effectiveLimit, totalFileLines) - startLine;
 								let outputText: string;
 								if (truncation.firstLineExceedsLimit) {
 									// First line alone exceeds the byte limit. Point the model at a bash fallback.

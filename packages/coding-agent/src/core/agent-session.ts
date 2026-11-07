@@ -2449,6 +2449,7 @@ export class AgentSession {
 		const message: UserMessage = { role: "user", content, timestamp: Date.now() };
 		this._steeringMessages.push(message);
 		this.agent.steer(message);
+		if (images?.length) this._queuedMessagesWithImages.add(message);
 		this._emitQueueUpdate();
 	}
 
@@ -2463,6 +2464,7 @@ export class AgentSession {
 		const message: UserMessage = { role: "user", content, timestamp: Date.now() };
 		this._followUpMessages.push(message);
 		this.agent.followUp(message);
+		if (images?.length) this._queuedMessagesWithImages.add(message);
 		this._emitQueueUpdate();
 	}
 
