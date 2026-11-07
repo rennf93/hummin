@@ -21,7 +21,16 @@ import {
 } from "../../../src/node/plugins/index.ts";
 import { constant } from "../../../src/state/index.ts";
 import { fileEventsDelivered } from "../../file-events.ts";
-import { changesOf, delivered, expectCollected, rejection, settledHeap, transported, valuesOf } from "../../support.ts";
+import {
+	changesOf,
+	delivered,
+	expectCollected,
+	flushed,
+	rejection,
+	settledHeap,
+	transported,
+	valuesOf,
+} from "../../support.ts";
 import { gitRepository, HOST_PACKAGES, kindsOf, tempRoot, writeFiles, writePackage, writePlugin } from "./support.ts";
 
 /** The fixtures' contracts, as the `contracts` fixture declares them. */
@@ -130,7 +139,7 @@ describe("per plugin at reload", () => {
 		expect(built.facets.map(({ plugin, facet }) => [plugin, facet])).toEqual([["@test/b", "worker"]]);
 		const report = await plugins.reload(host, built, context);
 		expect(report.plugins).toEqual({ added: [], changed: ["@test/b"], removed: [] });
-		expect(report.objects).toEqual([{ object: "test.b", kind: "swapped" }]);
+		expect(report.objects).toEqual([{ object: "test.b", kind: "restarted" }]);
 		expect([await label("a"), await label("b"), await label("c")]).toEqual(["a1", "b2", "c1"]);
 		// Built again unchanged: the same digest, nothing reloaded.
 		const again = await plugins.reload(host, await plugins.build(["@test/b"], context), context);
@@ -611,8 +620,8 @@ describe("end to end: a server and a worker", () => {
 		expect(
 			rolled.steps.map(({ name, hosts }) => [name, reportOf(hosts).plugins.changed, reportOf(hosts).objects]),
 		).toEqual([
-			["server", ["@test/notes"], [{ object: "test.index", kind: "swapped" }]],
-			["worker", ["@test/notes"], [{ object: "test.notes", kind: "swapped" }]],
+			["server", ["@test/notes"], [{ object: "test.index", kind: "restarted" }]],
+			["worker", ["@test/notes"], [{ object: "test.notes", kind: "restarted" }]],
 		]);
 		await transported();
 		await delivered();
@@ -705,9 +714,12 @@ describe("fix round 1", () => {
 			details: { committed: { added: [], changed: ["@test/a"], removed: [], failed: [] } },
 		});
 		hook.mockRestore();
+		// Restarted: the new attempt goes live once the old one ended.
+		await flushed();
 		expect(item.label.value).toBe("a2");
 		await itemPlugin(root, "b", "b2");
 		await plugins.reload(host, await plugins.build(["@test/b"], context), context);
+		await flushed();
 		expect(item.label.value).toBe("a2");
 		await host.close(context);
 		plugins.close();
@@ -747,6 +759,7 @@ describe("fix round 1", () => {
 		await vi.waitFor(() => expect(plugins.state.value).toMatchObject({ dirty: ["@test/a"] }), { timeout: 5_000 });
 		const built = await plugins.build(["@test/a"], context);
 		expect((await plugins.reload(host, structuredClone(built), context)).plugins.changed).toEqual(["@test/a"]);
+		await flushed();
 		expect(item.label.value).toBe("a2");
 		// The marks clear only through the build object itself (a copy carries no snapshot).
 		const result = await plugins.rollout([plugins.step("worker", host)], structuredClone(built), context);
