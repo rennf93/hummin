@@ -13,6 +13,7 @@ export interface ModelCandidate {
 export interface Catalog { models: readonly ModelCandidate[]; }
 export interface ModelLike {
  provider: string; id: string; reasoning?: boolean; cost?: { input?: number; output?: number };
+ local?: boolean;
  thinkingLevelMap?: Record<string, string | null>;
  thinkingLevels?: readonly ThinkingLevel[];
 }
@@ -34,7 +35,12 @@ export function buildCatalog(models: readonly ModelLike[], profiles: readonly Mo
   // profile, unprofiled models stay out of the catalog so the engine chooses
   // among the models the user actually endorses (keeps superseded models
   // from winning picks). Without profiles the full registry is offered.
-  if (profiles.length > 0 && !profile) continue;
+  // Local/fleet inference is free and not covered by paid profiles, but it is
+  // a real runtime model the user can dispatch to, so it is always included.
+  // Excluding it would make System-1 review a silent no-op for every local
+  // dispatch (the requested model never resolves against the catalog, so the
+  // review is skipped). Profiles are curation only for paid models.
+  if (profiles.length > 0 && !profile && !model.local) continue;
  const thinking = profile?.thinkingLevels ?? model.thinkingLevels ?? supportedThinking(model);
   for (const level of thinking) candidates.push({
    provider: model.provider, modelId: model.id, thinking: level, description: profile?.description,
