@@ -59,6 +59,8 @@ interface InstanceConfig {
 const DISPLAY_NAMES: Record<string, string> = {
 	"qwen3.8-27b": "Qwen 3.8 27B",
 	"glm-5.3-flash": "GLM 5.3 Flash",
+	"glm-5.3-flash-coder-rco": "GLM 5.3 Flash Coder RCO (Q2)",
+	"glm-5.3-flash-coder-rco-q3": "GLM 5.3 Flash Coder RCO (Q3)",
 	"glm-5.3": "GLM 5.3",
 	"kimi-k3": "Kimi K3",
 	"glm-5.3-flash-local": "GLM 5.3 Flash (int4)",
@@ -535,6 +537,7 @@ async function discoverInstances(configs: InstanceConfig[]): Promise<DiscoveredI
 			serving.filter((entry) => entry.baseUrl === config.baseUrl).map((entry) => entry.modelId),
 		);
 		for (const entry of config.models ?? []) {
+			if (listed.has(entry.id)) continue;
 			listed.add(entry.id);
 			serving.push({
 				modelId: entry.id,

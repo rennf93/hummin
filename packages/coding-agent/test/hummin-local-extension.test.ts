@@ -107,6 +107,75 @@ describe("hummin local provider fleet discovery", () => {
 		expect(model?.contextWindow).toBe(4096);
 	});
 
+	it("lists a running fleet model once, not again as an offline catalog entry", async () => {
+		vi.stubEnv("HUMMIN_INSTANCES", "");
+		vi.spyOn(SettingsManager, "create").mockReturnValue({
+			getFleetServers: () => [
+				{
+					id: "live",
+					label: "Live",
+					host: "Test",
+					hostIp: "127.0.0.1",
+					port: 19996,
+					kind: "docker",
+					target: "live",
+					models: [{ id: "live-model", contextWindow: 4096 }],
+				},
+			],
+			getColibriInstances: () => [],
+		} as unknown as SettingsManager);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn((input: string | URL): Promise<Response> => {
+				const url = String(input);
+				if (url.endsWith("/v1/models")) return Promise.resolve(response({ data: [{ id: "live-model" }] }));
+				return Promise.resolve(response({}, 404));
+			}),
+		);
+		const providers: RegisteredProvider[] = [];
+
+		await humminLocalExtension(fakeApi(providers));
+
+		const models = providers.flatMap((provider) => provider.getModels());
+		expect(models.map((model) => model.name)).toEqual(["live-model [Test]"]);
+	});
+
+	it("keeps a staged model the running server does not serve, without duplicating the served one", async () => {
+		vi.stubEnv("HUMMIN_INSTANCES", "");
+		vi.spyOn(SettingsManager, "create").mockReturnValue({
+			getFleetServers: () => [
+				{
+					id: "staged",
+					label: "Staged",
+					host: "Test",
+					hostIp: "127.0.0.1",
+					port: 19997,
+					kind: "docker",
+					target: "staged",
+					models: [
+						{ id: "live-model", contextWindow: 8192 },
+						{ id: "extra-staged", contextWindow: 4096 },
+					],
+				},
+			],
+			getColibriInstances: () => [],
+		} as unknown as SettingsManager);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn((input: string | URL): Promise<Response> => {
+				const url = String(input);
+				if (url.endsWith("/v1/models")) return Promise.resolve(response({ data: [{ id: "live-model" }] }));
+				return Promise.resolve(response({}, 404));
+			}),
+		);
+		const providers: RegisteredProvider[] = [];
+
+		await humminLocalExtension(fakeApi(providers));
+
+		expect(providers.map((provider) => provider.id)).toEqual(["llamacpp-test-19997"]);
+		expect(providers[0]?.getModels().map((model) => model.id)).toEqual(["live-model", "extra-staged"]);
+	});
+
 	it("caches fleet discovery within the TTL so repeated factory runs skip the network", async () => {
 		vi.stubEnv("HUMMIN_INSTANCES", "http://127.0.0.1:19994");
 		const fetchMock = vi.fn((input: string | URL): Promise<Response> => {
