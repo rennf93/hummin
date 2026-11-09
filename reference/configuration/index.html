@@ -1623,7 +1623,7 @@
 </table>
 <p>Applies to <code>anthropic-messages</code> and <code>openai-completions</code> models; other APIs are left untouched.</p>
 <h2 id="system-1-decision-layer">System-1 decision layer<a class="headerlink" href="#system-1-decision-layer" title="Permanent link">&para;</a></h2>
-<p>One decision engine backs four automatic hooks (bash gate, destructive-intent steer, test-failure triage, memory intake). A single engine, no failover; every read fails open, so an unreachable engine never blocks a session.</p>
+<p>One decision engine backs four automatic hooks (bash gate, destructive-intent steer, test-failure triage, memory intake). Optional ordered fallbacks (<code>decision.fallbackUrls</code>) are tried when the primary is unreachable or answers 5xx/401/403/408/429; every read fails open, so an unreachable engine never blocks a session.</p>
 <table>
 <thead>
 <tr>
@@ -1634,7 +1634,11 @@
 <tbody>
 <tr>
 <td><code>decision.url</code></td>
-<td>Engine endpoint (default <code>http://127.0.0.1:9987/v1/systemone</code>)</td>
+<td>Engine endpoint (default <code>http://127.0.0.1:9997/v1/systemone</code>)</td>
+</tr>
+<tr>
+<td><code>decision.fallbackUrls</code></td>
+<td>Ordered fallback engine endpoints, tried in order when <code>decision.url</code> is down (default none; never started or woken by hummin)</td>
 </tr>
 <tr>
 <td><code>decision.apiKey</code></td>
