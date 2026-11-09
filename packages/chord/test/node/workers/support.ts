@@ -95,7 +95,7 @@ export async function fleet(
 		onError: (error) => hostErrors.push(error),
 		...(options.heartbeat === undefined ? {} : { heartbeat: options.heartbeat }),
 	});
-	const workers = await createWorkers(
+	const workers = createWorkers(
 		server,
 		Session,
 		{

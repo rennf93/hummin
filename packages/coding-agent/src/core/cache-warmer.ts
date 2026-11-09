@@ -1,67 +1,31 @@
 import {
 	type Api,
+	CACHE_WARMING_MAX_AGE_MS,
+	CACHE_WARMING_MAX_IDLE_AGE_MS,
+	CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS,
+	type CacheWarmingAction,
+	type CacheWarmingDecision as PiCacheWarmingDecision,
 	type Context,
-	calculateCost,
+	evaluateCacheWarming,
+	getCacheWarmingDelayMs,
+	getCacheWarmingRequestOptions,
+	getPromptCacheTtlMs,
+	isCacheWarmingReplayable,
 	type Model,
 	type ModelsSimpleStreamOptions,
-	type SimpleStreamOptions,
-	type Usage,
 } from "@earendil-works/pi-ai";
-import { getProviderEnvValue } from "@earendil-works/pi-ai/utils/provider-env";
 import type { ModelRuntime } from "./model-runtime.ts";
 import type { SessionEntry, SessionManager, UsageEntry } from "./session-manager.ts";
 import type { CacheWarmingMode } from "./settings-manager.ts";
 
-/** Streaming warming never continues past this long after the real request that started it. */
-const MAX_WARMING_AGE_MS = 60 * 60_000;
-/** Idle warming uses a shorter horizon because continuation estimates become less reliable with age. */
-const MAX_IDLE_WARMING_AGE_MS = 30 * 60_000;
-/** A refresh is sent only when it is expected to save at least this many dollars. */
-const CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS = 0.05;
-/**
- * Lifetime assumed for the prompt cache entry in "always" mode when the model
- * has no promptCache metadata (local OpenAI-compatible servers, for example).
- * Only used when caching is on; a request with `cacheRetention: "none"` never
- * warms.
- */
-const ALWAYS_MODE_TTL_MS = 10 * 60_000;
-/**
- * Chance that a real request arrives before the cache entry expires while the
- * agent sits idle. Measured from our own usage; per-session estimates were not
- * better than this constant.
- */
-const IDLE_CONTINUATION_PROBABILITY = 0.15;
+export type { CacheWarmingAction };
 
-/** Refresh at 90% of the TTL while preserving at least ten seconds of margin. */
-export function getCacheWarmingDelayMs(ttlMs: number): number | undefined {
-	if (ttlMs <= 10_000) return undefined;
-	return Math.max(1, Math.floor(Math.min(ttlMs * 0.9, ttlMs - 10_000)));
-}
-
-/**
- * Lifetime of the prompt cache entry a request writes, from the model's
- * `promptCache` tier for the retention the request used. Undefined when the
- * model has no lifetime for that tier or caching is off.
- */
-export function getPromptCacheTtlMs(model: Model<Api>, options: SimpleStreamOptions | undefined): number | undefined {
-	const retention =
-		options?.cacheRetention ??
-		(getProviderEnvValue("PI_CACHE_RETENTION", options?.env) === "long" ? "long" : "short");
-	if (retention === "none") return undefined;
-	const seconds = model.promptCache?.[retention];
-	return seconds === undefined ? undefined : seconds * 1000;
-}
-
-/**
- * Whether replaying the request with a one-token output cap leaves its cache
- * entry untouched. Anthropic's budget-based thinking (Claude models without
- * adaptive thinking) derives `budget_tokens` from `max_tokens`; the replay
- * would get a different budget, which Anthropic keys the message cache on,
- * and the model could still think for thousands of tokens.
- */
-export function isReplayable(model: Model<Api>, options: SimpleStreamOptions | undefined): boolean {
-	if (!options?.reasoning || model.api !== "anthropic-messages") return true;
-	return (model as Model<"anthropic-messages">).compat?.forceAdaptiveThinking === true;
+/** pi's warm-or-stop decision plus hummin's "always" marker: "always" skips
+ * the savings floor and warms regardless of economics, so `always` tells
+ * /session to say so instead of quoting the $0.05 comparison. */
+export interface CacheWarmingDecision extends PiCacheWarmingDecision {
+	/** True when the warming mode is "always": the savings floor is skipped. */
+	always: boolean;
 }
 
 /** Prompt size of the most recent real request on the branch, as reported by the provider. */
@@ -74,44 +38,6 @@ function lastPromptTokens(entries: SessionEntry[]): number {
 		}
 	}
 	return 0;
-}
-
-function price(
-	model: Model<Api>,
-	tokens: Partial<Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite">>,
-): number {
-	const usage: Usage = {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		...tokens,
-	};
-	return calculateCost(model, usage).total;
-}
-
-export type CacheWarmingAction = "warm" | "stop";
-
-/** Inputs and outcome of one warm-or-stop decision, as shown by `/session`. */
-export interface CacheWarmingDecision {
-	/** "streaming" while the agent run that sent the request is still active. */
-	phase: "streaming" | "idle";
-	/** Price of this refresh: a cache read of the prompt plus one output token. */
-	warmCost: number;
-	/** Extra price of the next real request if the cache entry is lost. */
-	missCost: number;
-	/** Estimated chance that a real request arrives before the entry expires. */
-	continuationProbability: number;
-	/** `continuationProbability * missCost - warmCost`. */
-	expectedSavings: number;
-	/** False when the prompt size or the model's prices are unknown. In "always" mode `action` can be warm while this is false. */
-	economicsAvailable: boolean;
-	/** True when the warming mode is "always": the savings floor is skipped. */
-	always: boolean;
-	/** Pi's decision: "warm" when `expectedSavings` is at least $0.05, or unconditionally in "always" mode. */
-	action: CacheWarmingAction;
 }
 
 /**
@@ -139,6 +65,14 @@ export interface CacheWarmingStatus {
 	/** True when an extension changed `decision.action`. */
 	extensionOverride?: boolean;
 }
+
+/**
+ * Lifetime assumed for the prompt cache entry in "always" mode when the model
+ * has no promptCache metadata (local OpenAI-compatible servers, for example).
+ * Only used when caching is on; a request with `cacheRetention: "none"` never
+ * warms.
+ */
+const ALWAYS_MODE_TTL_MS = 10 * 60_000;
 
 /** The request whose prompt cache entry should be kept warm, exactly as it was sent. */
 export interface CacheWarmRequest {
@@ -220,7 +154,7 @@ export class CacheWarmer {
 			this.stop("cache warming disabled");
 			return;
 		}
-		if (!isReplayable(request.model, request.options)) {
+		if (!isCacheWarmingReplayable(request.model, request.options)) {
 			this.stop("request cannot be replayed safely");
 			return;
 		}
@@ -262,7 +196,7 @@ export class CacheWarmer {
 			return;
 		}
 		run.phase = "idle";
-		const deadline = run.startedAt + MAX_IDLE_WARMING_AGE_MS;
+		const deadline = run.startedAt + CACHE_WARMING_MAX_IDLE_AGE_MS;
 		if (run.nextWarmAt > deadline || Date.now() >= deadline) {
 			this.stop("30-minute idle safety limit reached");
 		}
@@ -300,7 +234,8 @@ export class CacheWarmer {
 		// the planned pre-expiry margin for that delay and request dispatch; a
 		// late refresh is likely a full-price cache write, not a cache warm.
 		run.refreshDeadlineAt = run.nextWarmAt + Math.floor((run.ttlMs - run.delayMs) / 2);
-		const deadline = run.startedAt + (run.phase === "idle" ? MAX_IDLE_WARMING_AGE_MS : MAX_WARMING_AGE_MS);
+		const deadline =
+			run.startedAt + (run.phase === "idle" ? CACHE_WARMING_MAX_IDLE_AGE_MS : CACHE_WARMING_MAX_AGE_MS);
 		if (run.nextWarmAt > deadline || Date.now() >= deadline) {
 			this.stop(run.phase === "idle" ? "30-minute idle safety limit reached" : "one-hour safety limit reached");
 			return;
@@ -342,14 +277,7 @@ export class CacheWarmer {
 		run.extensionOverride = extensionOverride;
 		try {
 			const message = await this.models
-				.streamSimple(run.model, run.context, {
-					...run.options,
-					maxTokens: 1,
-					// The warm request repeats the last request; it must not replace the conversation's thread state.
-					disableContinuation: true,
-					maxRetries: 0,
-					signal: run.controller.signal,
-				})
+				.streamSimple(run.model, run.context, getCacheWarmingRequestOptions(run.options, run.controller.signal))
 				.result();
 			if (!this.validateRun(run)) return;
 			if (message.stopReason !== "error" && message.stopReason !== "aborted") {
@@ -390,30 +318,14 @@ export class CacheWarmer {
 	}
 
 	private evaluate(run: ActiveRun): CacheWarmingDecision {
-		const model = run.model;
 		const always = this.getMode() === "always";
-		const promptTokens = lastPromptTokens(this.sessionManager.getBranch());
-		const cacheHitCost = price(model, { cacheRead: promptTokens });
-		const cacheMissCost = price(
-			model,
-			model.cost.cacheWrite > 0 ? { cacheWrite: promptTokens } : { input: promptTokens },
-		);
-		const warmCost = price(model, { cacheRead: promptTokens, output: 1 });
-		const missCost = Math.max(0, cacheMissCost - cacheHitCost);
-		const continuationProbability = run.phase === "idle" ? IDLE_CONTINUATION_PROBABILITY : 1;
-		const economicsAvailable = promptTokens > 0 && (cacheHitCost > 0 || cacheMissCost > 0);
-		const expectedSavings = continuationProbability * missCost - warmCost;
+		const decision = evaluateCacheWarming(run.model, lastPromptTokens(this.sessionManager.getBranch()), run.phase);
 		return {
-			phase: run.phase,
-			warmCost,
-			missCost,
-			continuationProbability,
-			expectedSavings,
-			economicsAvailable,
+			...decision,
 			always,
 			// "always" keeps warming within the safety windows regardless of the
 			// economics; other modes require the expected savings floor.
-			action: always || expectedSavings >= CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS ? "warm" : "stop",
+			action: always || decision.action === "warm" ? "warm" : "stop",
 		};
 	}
 }
