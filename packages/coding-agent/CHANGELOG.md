@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Ordered System-1 engine fallbacks: `decision.fallbackUrls` (or `HUMMIN_DECISION_FALLBACK_URLS`) lists endpoints tried in order when the primary engine is unreachable or answers 5xx/401/403/408/429. Fallbacks are never started or woken; reads still fail open when all are down. The built-in default endpoint moved from port 9987 to 9997.
+
 ## [1.10.0] - 2026-11-04
 
 ### New Features
