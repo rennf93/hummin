@@ -30,6 +30,7 @@
 - Added syntax highlighting for Dart, Nix, Groovy, and Gradle files in read and write views ([#11643](https://github.com/earendil-works/pi/issues/11643))
 - Added GLM 5.3 to the Qwen Token Plan Individual model allowlist ([#11658](https://github.com/earendil-works/pi/issues/11658))
 - Added Claude Fable 5.2 (`claude-fable-5-2`) to the `anthropic` provider ($8/$40 per million input/output tokens, 1M context, 128K output). Like Fable 5.1 it uses per-message effort and mid-conversation system messages; requests its safety classifiers refuse before any output are answered by Claude Opus 5 through server-side fallback and billed at Opus 5's price. Claude Fable 5.2 and Mythos 5.2 on other providers, such as OpenRouter's `anthropic/claude-fable-5.2`, get the same per-message effort support
+- Ordered System-1 engine fallbacks: `decision.fallbackUrls` (or `HUMMIN_DECISION_FALLBACK_URLS`) lists endpoints tried in order when the primary engine is unreachable or answers 5xx/401/403/408/429. Fallbacks are never started or woken; reads still fail open when all are down. The built-in default endpoint moved from port 9987 to 9997.
 
 ### Changed
 

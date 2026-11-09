@@ -14,6 +14,7 @@ import { CONFIG_DIR_NAME, ENV_AGENT_DIR } from "../src/config.ts";
 const savedEnv: Record<string, string | undefined> = {};
 const ENV_NAMES = [
 	"HUMMIN_DECISION_URL",
+	"HUMMIN_DECISION_FALLBACK_URLS",
 	"HUMMIN_DECISION_API_KEY",
 	"HUMMIN_DECISION_GATE_THRESHOLD",
 	"HUMMIN_DECISION_STEER_THRESHOLD",
@@ -64,7 +65,7 @@ function projectWithSettings(settings: Record<string, unknown>): string {
 
 test("defaults resolve to the calibrated sys1 engine profile", () => {
 	const engine = resolveDecisionEngine();
-	expect(engine.url).toBe("http://127.0.0.1:9987/v1/systemone");
+	expect(engine.url).toBe("http://127.0.0.1:9997/v1/systemone");
 	expect(engine.gateThreshold).toBe(0.75);
 	expect(engine.steerThreshold).toBe(0.8);
 	expect(engine.triageThreshold).toBe(0.45);
@@ -207,4 +208,32 @@ test("sys1Noul fails open for an unconfigured engine and parses a noul answer", 
 	);
 	const read = await sys1Noul(resolveDecisionEngine(cwd), "state", "q", "instructions");
 	expect(read).toEqual({ noul: 0.42 });
+});
+
+test("sys1Fetch falls through decision.fallbackUrls in order and keeps the first as primary", async () => {
+	const cwd = projectWithSettings({ decision: { url: "http://a/x", fallbackUrls: ["http://b/x", "http://c/x"] } });
+	const config = resolveDecisionEngine(cwd);
+	expect(config.fallbackUrls).toEqual(["http://b/x", "http://c/x"]);
+	const calls: string[] = [];
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (url: string) => {
+			calls.push(url);
+			if (url === "http://a/x") throw new Error("fetch failed: ECONNREFUSED");
+			if (url === "http://b/x") return { ok: false, status: 503, json: async () => ({}) };
+			return { ok: true, status: 200, json: async () => ({ answers: { q: { type: "noul", noul: 0.9 } } }) };
+		}),
+	);
+	expect(await sys1Noul(config, "s", "q", "i")).toEqual({ noul: 0.9 });
+	expect(calls).toEqual(["http://a/x", "http://b/x", "http://c/x"]);
+	calls.length = 0;
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (url: string) => {
+			calls.push(url);
+			return { ok: true, status: 200, json: async () => ({ answers: { q: { type: "noul", noul: 0.1 } } }) };
+		}),
+	);
+	expect(await sys1Noul(config, "s", "q", "i")).toEqual({ noul: 0.1 });
+	expect(calls).toEqual(["http://a/x"]);
 });
