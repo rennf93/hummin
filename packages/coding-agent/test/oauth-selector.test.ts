@@ -146,7 +146,7 @@ describe("OAuthSelectorComponent", () => {
 		expect(stripAnsi(selector.render(120).join("\n"))).toContain("✓ command in models.json");
 	});
 
-	it("lists preferred partners first, then the rest alphabetically", () => {
+	it("lists curated providers first, then the rest alphabetically (hummin curation)", () => {
 		const getLoginProviderOptions = (
 			InteractiveMode as unknown as {
 				prototype: {
@@ -174,15 +174,18 @@ describe("OAuthSelectorComponent", () => {
 					isUsingOAuth: () => false,
 				},
 			},
+			// hummin curation needs the live providersShowAll flag; show-all keeps
+			// every option visible so the curated-first ordering is observable.
+			settingsManager: { getProvidersShowAll: () => true },
 		};
 
 		expect(getLoginProviderOptions.call(fakeThis).map(({ id, authType }) => `${id}:${authType}`)).toEqual([
-			"radius:oauth",
-			"openrouter:oauth",
-			"openrouter:api_key",
+			"zai:api_key",
 			"anthropic:api_key",
 			"google:api_key",
-			"zai:api_key",
+			"openrouter:oauth",
+			"openrouter:api_key",
+			"radius:oauth",
 		]);
 	});
 

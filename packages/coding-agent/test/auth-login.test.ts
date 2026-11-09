@@ -190,7 +190,7 @@ describe(`${APP_NAME} auth login`, () => {
 		expect(terminal.lines).toContain("Finish in the browser");
 		expect(terminal.opened).toEqual(["https://example.test/authorize"]);
 		expect(terminal.lines).toContain(
-			`To use "Sign in with device code" instead, run "${APP_NAME} auth login login-test --no-browser`,
+			`To use "Sign in with device code" instead, run "${APP_NAME} auth login login-test --no-browser"`,
 		);
 		expect(await credentials.read(PROVIDER_ID)).toMatchObject({ type: "oauth", access: "access-the-code" });
 		expect(terminal.lines.some((line) => line.startsWith("Logged in to Login Test."))).toBe(true);
