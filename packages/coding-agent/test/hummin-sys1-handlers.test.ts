@@ -54,7 +54,7 @@ beforeEach(() => {
 	cleanups.push(agentDir);
 	vi.stubEnv(ENV_AGENT_DIR, agentDir);
 	vi.stubEnv("COLI_API_KEY", "test-key");
-	vi.stubEnv("HUMMIN_DECISION_URL", "http://127.0.0.1:9987/v1/systemone");
+	vi.stubEnv("HUMMIN_DECISION_URL", "http://127.0.0.1:9997/v1/systemone");
 	vi.stubEnv("HUMMIN_NOTIFY", "off");
 	for (const name of DECISION_ENV_NAMES) {
 		savedDecisionEnv[name] = process.env[name];
@@ -170,7 +170,7 @@ test("registration primes the active engine with a warmup read", async () => {
 	const body = JSON.parse(calls[0]?.body ?? "{}") as { state: string; questions: Record<string, { type: string }> };
 	expect(body.state).toBe("warmup");
 	expect(body.questions.warmup?.type).toBe("noul");
-	expect(calls[0]?.url).toBe("http://127.0.0.1:9987/v1/systemone");
+	expect(calls[0]?.url).toBe("http://127.0.0.1:9997/v1/systemone");
 });
 
 test("choice criteria arrays normalize to label -> label objects on the wire", async () => {
@@ -198,7 +198,7 @@ test("a missing decision url warns once; explicit settings urls (including opt-o
 		warnIfEngineUrlImplicit(agentDir);
 		expect(err).toHaveBeenCalledTimes(1);
 		expect(err.mock.calls[0]?.[0]).toContain("decision.url is not configured");
-		expect(err.mock.calls[0]?.[0]).toContain("http://127.0.0.1:9987/v1/systemone");
+		expect(err.mock.calls[0]?.[0]).toContain("http://127.0.0.1:9997/v1/systemone");
 		warnIfEngineUrlImplicit(agentDir);
 		expect(err).toHaveBeenCalledTimes(1); // once per process
 		// An explicit settings url silences the implicit-url warning.
@@ -319,7 +319,7 @@ test("transport errors name the configured engine URL", async () => {
 		questions: [{ name: "q", type: "noul", instructions: "i" }],
 	});
 	expect(result.isError).toBe(true);
-	expect(result.content[0]?.text).toContain("the sys1 engine is unreachable at http://127.0.0.1:9987/v1/systemone");
+	expect(result.content[0]?.text).toContain("the sys1 engine is unreachable at http://127.0.0.1:9997/v1/systemone");
 });
 
 test("HTTP error status is surfaced with its detail body", async () => {

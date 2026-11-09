@@ -17,6 +17,8 @@ import { SettingsManager, sendTerminalNotification } from "@earendil-works/pi-co
 
 export interface DecisionEngineConfig {
 	url: string;
+	/** Tried in order after `url` when it is unreachable or answers 5xx/401/403/408/429. Never started or woken. */
+	fallbackUrls: string[];
 	apiKey: string;
 	gateThreshold: number;
 	steerThreshold: number;
@@ -51,7 +53,7 @@ export interface DecisionEngineConfig {
  * the engine is consulted; the scored layer only ever judges the gray
  * zone. */
 export const ENGINE_DEFAULTS: DecisionEngineConfig = {
-	url: "http://127.0.0.1:9987/v1/systemone",
+	url: "http://127.0.0.1:9997/v1/systemone",
 	apiKey: "",
 	gateThreshold: 0.75,
 	steerThreshold: 0.8,
@@ -64,6 +66,7 @@ export const ENGINE_DEFAULTS: DecisionEngineConfig = {
 	askThreshold: 0.7,
 	askGate: true,
 	urlSource: "default",
+	fallbackUrls: [],
 	gateTimeoutMs: 8000,
 	dispatchTimeoutMs: 6000,
 	decideTimeoutMs: 120000,
@@ -76,6 +79,7 @@ export const ENGINE_DEFAULTS: DecisionEngineConfig = {
  * works against runtime binaries whose SettingsManager predates it). */
 interface DecisionSettingsShape {
 	url?: unknown;
+	fallbackUrls?: unknown;
 	apiKey?: unknown;
 	gateThreshold?: unknown;
 	steerThreshold?: unknown;
@@ -94,6 +98,7 @@ function overrideFor(settings: DecisionSettingsShape | undefined): DecisionSetti
 	const out: DecisionSettingsShape = {};
 	for (const key of [
 		"url",
+		"fallbackUrls",
 		"apiKey",
 		"gateThreshold",
 		"steerThreshold",
@@ -180,6 +185,10 @@ export function resolveDecisionEngine(cwd: string = process.cwd()): DecisionEngi
 				? "settings"
 				: "optedOut"
 			: "default";
+	const envFallbacks = envStr("HUMMIN_DECISION_FALLBACK_URLS")?.split(",");
+	const fallbackUrls = [...(envFallbacks ?? (Array.isArray(override.fallbackUrls) ? override.fallbackUrls : []))]
+		.filter((u): u is string => typeof u === "string" && u.trim() !== "")
+		.map((u) => u.trim());
 	const legacyFleetKey = envStr("COLI_API_KEY");
 	const apiKey = envStr("HUMMIN_DECISION_API_KEY") ?? str(override.apiKey) ?? legacyFleetKey ?? ENGINE_DEFAULTS.apiKey;
 	const gateThreshold =
@@ -205,6 +214,7 @@ export function resolveDecisionEngine(cwd: string = process.cwd()): DecisionEngi
 	}
 	return {
 		url,
+		fallbackUrls,
 		apiKey,
 		gateThreshold,
 		steerThreshold,
@@ -278,14 +288,20 @@ export async function sys1Fetch(config: DecisionEngineConfig, body: string, time
 		},
 		body,
 	};
-	try {
-		return await fetch(config.url, { ...common, signal: AbortSignal.timeout(timeoutMs) });
-	} catch (err) {
-		if (err instanceof Error && /abort|timeout|econnreset|eclosed|eai_again|enotfound|econnrefused/i.test(err.message)) {
-			return await fetch(config.url, { ...common, signal: AbortSignal.timeout(timeoutMs) });
+	// Local first; a dead or unhealthy instance falls to the next one. Same retry-once as before on the last.
+	const urls = [config.url, ...config.fallbackUrls];
+	for (let i = 0; i < urls.length; i++) {
+		const last = i === urls.length - 1;
+		try {
+			const response = await fetch(urls[i], { ...common, signal: AbortSignal.timeout(timeoutMs) });
+			if (last || !(response.status >= 500 || [401, 403, 408, 429].includes(response.status))) return response;
+		} catch (err) {
+			const transient = err instanceof Error && /abort|timeout|econnreset|eclosed|eai_again|enotfound|econnrefused|fetch failed/i.test(err.message);
+			if (!transient) throw err;
+			if (last) return await fetch(urls[i], { ...common, signal: AbortSignal.timeout(timeoutMs) });
 		}
-		throw err;
 	}
+	throw new Error("unreachable");
 }
 
 /** One-question choice read from the engine; null on any failure, timeout,

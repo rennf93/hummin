@@ -46,11 +46,12 @@ Applies to `anthropic-messages` and `openai-completions` models; other APIs are 
 
 ## System-1 decision layer
 
-One decision engine backs four automatic hooks (bash gate, destructive-intent steer, test-failure triage, memory intake). A single engine, no failover; every read fails open, so an unreachable engine never blocks a session.
+One decision engine backs four automatic hooks (bash gate, destructive-intent steer, test-failure triage, memory intake). Optional ordered fallbacks (`decision.fallbackUrls`) are tried when the primary is unreachable or answers 5xx/401/403/408/429; every read fails open, so an unreachable engine never blocks a session.
 
 | Setting / env | Purpose |
 |---|---|
-| `decision.url` | Engine endpoint (default `http://127.0.0.1:9987/v1/systemone`) |
+| `decision.url` | Engine endpoint (default `http://127.0.0.1:9997/v1/systemone`) |
+| `decision.fallbackUrls` | Ordered fallback engine endpoints, tried in order when `decision.url` is down (default none; never started or woken by hummin) |
 | `decision.apiKey` | Engine auth (`COLI_API_KEY` works as fallback) |
 | `decision.gateThreshold` / `steerThreshold` / `triageThreshold` / `intakeThreshold` | Calibrate the four hooks |
 | `sys1Gate.extraSafe` / `extraDestructive` | Regex lists layered onto the bash gate |

@@ -590,7 +590,7 @@ async function sys1IntakeScore(lesson) {
 	const injectedUrl = process.env.HUMMIN_DECISION_URL;
 	if (typeof injectedUrl === "string" && injectedUrl.trim() === "") return null;
 	const apiKey = String(process.env.HUMMIN_DECISION_API_KEY || process.env.COLI_API_KEY || "").trim();
-	const url = injectedUrl !== undefined && injectedUrl.trim() !== "" ? injectedUrl.trim() : "http://127.0.0.1:9987/v1/systemone";
+	const url = injectedUrl !== undefined && injectedUrl.trim() !== "" ? injectedUrl.trim() : "http://127.0.0.1:9997/v1/systemone";
 	const state = "A coding agent distilled the following lesson from a finished session in " + job.cwd + ". Decide whether it is durable project knowledge.\n\n" + lesson.slice(0, 4000);
 	try {
 		const response = await fetch(url, {
