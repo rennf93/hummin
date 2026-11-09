@@ -188,7 +188,7 @@ describe("InteractiveMode pending user bash output", () => {
 			pendingBashComponents,
 			compactionQueuedMessages: [],
 			session: { getSteeringMessages: () => ["steer"], getFollowUpMessages: () => [] },
-			footer: { invalidate: vi.fn() },
+			footer: { invalidate: vi.fn(), setCompactionQueueCount: vi.fn() },
 			programStatus: { handleEvent: vi.fn() },
 			ui: { requestRender: vi.fn() },
 			showStatus: vi.fn(),
