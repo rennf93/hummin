@@ -5,9 +5,9 @@ import { InMemoryModelsStore, type Model, type Provider } from "@earendil-works/
 import { describe, expect, test, vi } from "vitest";
 import { runAuthLogin } from "../src/cli/auth-login.ts";
 import type { LoginTerminal } from "../src/cli/auth-terminal.ts";
+import { APP_NAME } from "../src/config.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { CredentialSynchronizationError, ModelRuntime } from "../src/core/model-runtime.ts";
-import { APP_NAME } from "../src/config.ts";
 
 const PROVIDER_ID = "login-test";
 
@@ -422,7 +422,9 @@ describe(`${APP_NAME} auth login`, () => {
 		);
 		const terminal = scriptedTerminal(["sk-test"]);
 		expect(await run([PROVIDER_ID], modelRuntime, terminal, controller.signal)).toBe(0);
-		expect(terminal.lines).toContain(`Skipped the Login Test model catalog refresh; ${APP_NAME} refreshes it on next start.`);
+		expect(terminal.lines).toContain(
+			`Skipped the Login Test model catalog refresh; ${APP_NAME} refreshes it on next start.`,
+		);
 		expect(await credentials.read(PROVIDER_ID)).toMatchObject({ type: "api_key", key: "sk-test" });
 	});
 

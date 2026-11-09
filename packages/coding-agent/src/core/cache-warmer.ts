@@ -4,7 +4,6 @@ import {
 	CACHE_WARMING_MAX_IDLE_AGE_MS,
 	CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS,
 	type CacheWarmingAction,
-	type CacheWarmingDecision as PiCacheWarmingDecision,
 	type Context,
 	evaluateCacheWarming,
 	getCacheWarmingDelayMs,
@@ -13,6 +12,7 @@ import {
 	isCacheWarmingReplayable,
 	type Model,
 	type ModelsSimpleStreamOptions,
+	type CacheWarmingDecision as PiCacheWarmingDecision,
 } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "./model-runtime.ts";
 import type { SessionEntry, SessionManager, UsageEntry } from "./session-manager.ts";

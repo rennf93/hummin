@@ -6,10 +6,10 @@ import { pathToFileURL } from "url";
 import type * as util from "util";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import {
-	MIN_EXPLICIT_LIMIT_LINES,
-	SUGGESTED_PAGE_LINES,
 	createReadToolDefinition,
+	MIN_EXPLICIT_LIMIT_LINES,
 	type ReadOperations,
+	SUGGESTED_PAGE_LINES,
 } from "../src/core/tools/read.ts";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "../src/core/tools/truncate.ts";
 

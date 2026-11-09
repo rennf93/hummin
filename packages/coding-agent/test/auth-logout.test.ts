@@ -1,7 +1,7 @@
 import { type Credential, InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { describe, expect, test, vi } from "vitest";
-import { APP_NAME } from "../src/config.ts";
 import { runAuthLogout } from "../src/cli/auth-logout.ts";
+import { APP_NAME } from "../src/config.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { CredentialSynchronizationError, ModelRuntime } from "../src/core/model-runtime.ts";
 
