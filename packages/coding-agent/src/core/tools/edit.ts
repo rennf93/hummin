@@ -197,10 +197,11 @@ export function createEditToolDefinition(
 				// the original is the normalized text, and the normalized result is already final.
 				const finalContent =
 					bom + (content === normalizedContent ? newContent : applyReplacementsToOriginal(content, replacements));
+				// Compute the diff before writing, so a diff failure leaves the file unchanged.
+				const diffResult = generateEditDiff(path, baseContent, newContent, replacements);
 				await ops.writeFile(absolutePath, finalContent);
 				throwIfAborted();
 
-				const diffResult = generateEditDiff(path, baseContent, newContent, replacements);
 				return {
 					content: [
 						{

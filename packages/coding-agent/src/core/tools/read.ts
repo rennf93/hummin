@@ -14,8 +14,8 @@ import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult
 // An explicit tiny limit (e.g. limit:1) costs one LLM turn per line, and models
 // imitate the continuation hint verbatim, so a file crawl at one line per turn
 // is otherwise unbounded. Floor tiny limits and suggest a page size in the hint.
-const MIN_EXPLICIT_LIMIT_LINES = 20;
-const SUGGESTED_PAGE_LINES = 200;
+export const MIN_EXPLICIT_LIMIT_LINES = 20;
+export const SUGGESTED_PAGE_LINES = 200;
 
 const readSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),

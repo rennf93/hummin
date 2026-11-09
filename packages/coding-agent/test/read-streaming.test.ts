@@ -5,7 +5,12 @@ import { join, resolve } from "path";
 import { pathToFileURL } from "url";
 import type * as util from "util";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { createReadToolDefinition, type ReadOperations } from "../src/core/tools/read.ts";
+import {
+	MIN_EXPLICIT_LIMIT_LINES,
+	SUGGESTED_PAGE_LINES,
+	createReadToolDefinition,
+	type ReadOperations,
+} from "../src/core/tools/read.ts";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "../src/core/tools/truncate.ts";
 
 // Runs when the read tool decodes a chunk: the file is open and partly read, so a test can change it mid-read.
@@ -38,7 +43,8 @@ function referenceRead(
 	let selectedContent: string;
 	let userLimitedLines: number | undefined;
 	if (limit !== undefined) {
-		const endLine = Math.min(startLine + limit, allLines.length);
+		// The read tool floors explicit limits below MIN_EXPLICIT_LIMIT_LINES, so the reference must too.
+		const endLine = Math.min(startLine + Math.max(limit, MIN_EXPLICIT_LIMIT_LINES), allLines.length);
 		selectedContent = allLines.slice(startLine, endLine).join("\n");
 		userLimitedLines = endLine - startLine;
 	} else {
@@ -64,7 +70,10 @@ function referenceRead(
 	} else if (userLimitedLines !== undefined && startLine + userLimitedLines < allLines.length) {
 		const remaining = allLines.length - (startLine + userLimitedLines);
 		const nextOffset = startLine + userLimitedLines + 1;
-		outputText = `${truncation.content}\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue.]`;
+		// The read tool suggests a page size when the model's tiny limit pages too thinly.
+		const pageSize = Math.min(SUGGESTED_PAGE_LINES, remaining);
+		const limitSuggestion = limit !== undefined && limit < SUGGESTED_PAGE_LINES ? ` (limit=${pageSize})` : "";
+		outputText = `${truncation.content}\n\n[${remaining} more lines in file. Use offset=${nextOffset}${limitSuggestion} to continue.]`;
 	} else {
 		outputText = truncation.content;
 	}
@@ -230,10 +239,12 @@ describe("read tool streaming", () => {
 			appendFileSync(path, "\nadded");
 		};
 		const tool = createReadToolDefinition(tempDir);
+		// limit:1 is floored to 20 lines, so the selection includes the oversized second line and
+		// truncateHead reports it as a byte truncation instead of a user-limited continuation.
 		const result = await tool.execute("call", { path, limit: 1 }, undefined, undefined, undefined as never);
 		expect(result.content[0]).toEqual({
 			type: "text",
-			text: "head\n\n[1 more lines in file. Use offset=2 to continue.]",
+			text: "head\n\n[Showing lines 1-1 of 2 (50.0KB limit). Use offset=2 to continue.]",
 		});
 	});
 
