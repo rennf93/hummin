@@ -1,11 +1,13 @@
 // The provider side of one origin on a link (§3, §22, W1; decision "Relay flow control per origin"): the holds the
 // peer sent for that origin, served here or relayed, by their ids; the calls on them, at most this side's N at once;
-// and the window: at most K unacknowledged `bound` and `state` messages of this host's own, with what waits meanwhile,
-// and the sender of every message in flight, so each `ack` reaches the host that sent its message.
+// and the window: at most K unacknowledged `bound` and `state` messages of this host's own, with what waits meanwhile
+// (a call's answer sends the waiting state first, past the window), and the sender of every message in flight, so each
+// `ack` reaches the host that sent its message. A served call's method runs under the call's carrier (slice 9).
 
+import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { type Context, withAbortSignal } from "../context/index.ts";
 import { ChordError, isChordError, type Principal } from "../data/index.ts";
-import type { Caller } from "../host/internal.ts";
+import { asRemoteOldWork, type Caller } from "../host/internal.ts";
 import {
 	type BoundEntry,
 	type ConsumerMessage,
@@ -19,9 +21,10 @@ import {
 	type StateEntry,
 	wireError,
 } from "../link/internal.ts";
+import { type OpenSpan, parentOf } from "../telemetry.ts";
 import { Hold } from "./hold.ts";
 import type { HostLink } from "./host-link.ts";
-import type { RelayedHold } from "./relay.ts";
+import { type RelayedHold, relayEnded } from "./relay.ts";
 
 /**
  * A call being handled: on a hold served here, with whether its result carries byte segments and the abort of its
@@ -29,7 +32,8 @@ import type { RelayedHold } from "./relay.ts";
  */
 type RunningCall =
 	| { readonly kind: "served"; readonly hold: Hold; readonly bytes: boolean; readonly abort: AbortController }
-	| { readonly kind: "relayed"; readonly hold: RelayedHold };
+	/** `span`: its `chord.relay` span while its reply is awaited, when this host records. */
+	| { readonly kind: "relayed"; readonly hold: RelayedHold; span?: OpenSpan<"chord.relay"> };
 
 /** Who sent a `bound` or `state` message in flight: this host, or the upstream link a relay forwarded it from. */
 type Sender = "local" | HostLink;
@@ -37,15 +41,19 @@ type Sender = "local" | HostLink;
 /** A relaying origin: its number on upstream links, and the open upstream links it relayed holds to. */
 type Relay = { readonly origin: number; readonly links: Set<HostLink> };
 
-/** At most this many of this host's own `bound` and `state` messages unacknowledged per origin. */
+/**
+ * At most this many of this host's own `bound` and `state` messages unacknowledged per origin; past it only the waiting
+ * state a call's answer sends first.
+ */
 const WINDOW = 2;
 
 /**
  * The provider side of one origin on a link. Ids are the origin's; a message naming an id this side does not know is
  * ignored (Q1), one reusing a live id is a protocol error, and so are more concurrent calls than this side announced.
  * This host's own `bound` and `state` messages go through the window: locally served holds wait while it is full
- * (their ops in their members' pending queues, their bindings for the next slot). A relay forwards upstream messages
- * at once (each upstream host keeps its own window for the origin it sees), so a slow consumer stalls only its origin.
+ * (their ops in their members' pending queues, their bindings for the next slot); a call's answer, its own or a
+ * relayed one, sends the waiting state first. A relay forwards upstream messages at once (each upstream host keeps its
+ * own window for the origin it sees), so a slow consumer stalls only its origin.
  */
 export class ProviderSide {
 	readonly link: HostLink;
@@ -58,6 +66,9 @@ export class ProviderSide {
 	readonly #sent: Sender[] = [];
 	/** This host's own messages in flight. */
 	#inFlight = 0;
+	/** How many of this host's own `bound` and `state` messages it sent, and how many its consumer acknowledged. */
+	#ownSent = 0;
+	#ownAcked = 0;
 	/** The holds the current batch touched, in order; its flush sends or queues them. */
 	#touched: Hold[] = [];
 	/** Holds whose ops wait in their pending queues for a slot. */
@@ -68,6 +79,8 @@ export class ProviderSide {
 	#bindingTurn = false;
 	/** Set once a hold of this origin is relayed. */
 	#relay: Relay | undefined;
+	/** When state began waiting for a slot (`performance.now()`), while some waits: `chord.backpressure.wait`. */
+	#waitingSince: number | undefined;
 
 	constructor(link: HostLink, origin: number, limit: number) {
 		this.link = link;
@@ -110,7 +123,10 @@ export class ProviderSide {
 		const entries = [...this.#entries.values()];
 		this.#entries.clear();
 		const closed = new ChordError({ code: "unavailable", message: "the link closed" });
-		for (const call of this.#calls.values()) if (call.kind === "served") call.abort.abort(closed);
+		for (const call of this.#calls.values()) {
+			if (call.kind === "served") call.abort.abort(closed);
+			else if (call.span !== undefined) relayEnded(call.span, undefined);
+		}
 		this.#calls.clear();
 		// While the host closes, it ends its objects itself.
 		for (const entry of entries) {
@@ -161,11 +177,11 @@ export class ProviderSide {
 
 	/**
 	 * A message from upstream link `from` for this origin's relayed holds, forwarded with this origin: `bound` and
-	 * `state` join the window's senders (their `ack` goes back to `from`), a reply ends its call, `gone` forgets its
-	 * hold. A link answers only for what was relayed over it: an entry, a notice or a reply naming a hold (or a call)
-	 * this origin did not relay over `from` is dropped (Q1); a `bound` or `state` left without entries is acknowledged
-	 * to `from` at once. Parts travel unchecked and unparsed: the end that parses a part checks it against its own
-	 * link's limits.
+	 * `state` join the window's senders (their `ack` goes back to `from`), a reply ends its call (after this host's own
+	 * waiting state: `reply`), `gone` forgets its hold. A link answers only for what was relayed over it: an entry, a
+	 * notice or a reply naming a hold (or a call) this origin did not relay over `from` is dropped (Q1); a `bound` or
+	 * `state` left without entries is acknowledged to `from` at once. Parts travel unchecked and unparsed: the end that
+	 * parses a part checks it against its own link's limits.
 	 */
 	forward(message: ConsumerMessage, from: HostLink): void {
 		const relay = this.#relay;
@@ -229,15 +245,27 @@ export class ProviderSide {
 			if (call.hold !== hold) continue;
 			this.#calls.delete(id);
 			if (call.kind === "served") call.abort.abort(reason);
+			else if (call.span !== undefined) relayEnded(call.span, undefined);
 		}
 		if (hold.kind === "served") this.unbind(hold);
 		this.#settle();
 	}
 
-	/** A call ended with `reply` (a result or an error): its slot is free; nothing is sent for one already gone. */
+	/**
+	 * A call ended with `reply` (a result or an error, its own or forwarded from upstream): its slot is free; nothing is
+	 * sent for one already gone. The state waiting for a slot goes first, past the window if it is full (decision "A
+	 * call's answer follows its state"): when the call settles at the consumer, every change this host committed before
+	 * answering is applied there.
+	 */
 	reply(id: number, reply: Extract<OriginMessage, { readonly kind: "result" | "error" }>): void {
-		if (!this.#calls.delete(id)) return;
+		const call = this.#calls.get(id);
+		if (call === undefined) return;
+		this.#calls.delete(id);
+		// At most one extra message per answer, acknowledged before the call its answer frees a slot for (one direction keeps
+		// its order): running calls and messages past the window stay within this side's N together.
+		if (this.#waiting.size > 0) this.#sendWaiting(this.link.context);
 		this.send(reply);
+		if (call.kind === "relayed" && call.span !== undefined) relayEnded(call.span, reply);
 		this.#settle();
 	}
 
@@ -262,12 +290,14 @@ export class ProviderSide {
 	unbind(hold: Hold): void {
 		this.#waiting.delete(hold);
 		this.#binding.delete(hold);
+		// Nothing waits any more: no wait to record.
+		if (this.#waiting.size === 0) this.#waitingSince = undefined;
 	}
 
 	/**
-	 * A served hold left its object's binding (slice 7b §6, model §5): its unsent pending ops and a queued `bound` are
-	 * dropped (the ack slots of messages already sent stay until their `ack`), its calls in flight rejected with `error`
-	 * (each slot freed once).
+	 * A served hold left its object's binding with `error` (a failure, a removal or a version no longer bound; slice 7b
+	 * §6, model §5): as `unbind`, and its calls in flight rejected with `error` (each slot freed once). A hold unbinding
+	 * with `loading` keeps them (`unbind` alone).
 	 */
 	unbound(hold: Hold, error: ChordError): void {
 		this.unbind(hold);
@@ -362,11 +392,12 @@ export class ProviderSide {
 	/**
 	 * A call: one on a hold this side does not know is ignored (Q1), more than this side's N at once and compressed
 	 * arguments from a child (clients never compress) are protocol errors. On a relayed hold it is forwarded, its
-	 * arguments checked against this link's part limit first (the bytes are here). On a served hold that is not bound
-	 * yet (nor binding afresh after a swap) it is refused `not_ready`; its method is an index into the bound variant (one
-	 * outside it is a protocol error) and its arguments are opened and parsed here within the hold's limits (past one
-	 * the call fails `too_large/part`; a malformed part is a protocol error), absent ones `null`. Arguments this host
-	 * must inflate asynchronously are inflated first, then the call is handled again.
+	 * arguments checked against this link's part limit first (the bytes are here). On a served hold that is not callable
+	 * (not bound yet, nor rebinding by the names its consumer still has after a `loading`) it is
+	 * refused `not_ready`; its method is an index into the bound variant (one outside it is a protocol error) and its
+	 * arguments are opened and parsed here within the hold's limits (past one the call fails `too_large/part`; a
+	 * malformed part is a protocol error), absent ones `null`. Arguments this host must inflate asynchronously are
+	 * inflated first, then the call is handled again.
 	 */
 	#call(message: Extract<Message, { readonly kind: "call" }>): void | Promise<void> {
 		if (this.#calls.has(message.call)) throw new Error(`call ${message.call}: the id is in use`);
@@ -383,12 +414,14 @@ export class ProviderSide {
 				this.#refuse(message.call, error);
 				return;
 			}
-			this.#calls.set(message.call, { kind: "relayed", hold });
-			hold.call(message);
+			const relayed: RunningCall = { kind: "relayed", hold };
+			this.#calls.set(message.call, relayed);
+			// Registered first: a hold without an upstream link answers at once.
+			relayed.span = hold.call(message);
 			return;
 		}
 		if (!hold.callable) {
-			this.#refuse(message.call, new ChordError({ code: "not_ready", message: `hold ${hold.id}: not bound yet` }));
+			this.#refuse(message.call, hold.refusal);
 			return;
 		}
 		const method = hold.method(message.method);
@@ -406,32 +439,59 @@ export class ProviderSide {
 		const args = json === undefined ? null : parsePayload(json, segments);
 		const call = { kind: "served", hold, bytes: method.resultBytes, abort: new AbortController() } as const;
 		this.#calls.set(message.call, call);
-		void this.#run(message.call, call, method.name, args);
+		// The caller's span over the link: its carrier with this host's adapter (absent or unknown: the adapter's root).
+		const parent = parentOf(message.trace, this.link.host.telemetry);
+		// Old work of another host's reload (`call.old`), honoured only from a trusted link (decision "Reload restarts
+		// every affected object"): it runs on open old attempts here, and counts as this host's old work while it runs.
+		if (message.old === true && this.link.trusted) {
+			const { oldWork } = this.link.host;
+			oldWork.open();
+			const close = (): void => oldWork.close();
+			this.#run(message.call, call, method.name, args, parent, asRemoteOldWork(this.link.context)).then(
+				close,
+				close,
+			);
+			return;
+		}
+		this.#run(message.call, call, method.name, args, parent, this.link.context);
 	}
 
 	/**
-	 * Runs a call and sends its result (absent when `null`) or error, unless it was aborted, released or gone
-	 * meanwhile. A result that cannot be encoded is sent as its error.
+	 * Runs a call under `scope` (the link's context, marked when it is another host's old work) and sends its result
+	 * (absent when `null`) or error, unless it was aborted, released or gone meanwhile. A result that cannot be encoded
+	 * is sent as its error. Returns the handler's settling.
 	 */
-	async #run(
+	#run(
 		id: number,
 		call: Extract<RunningCall, { readonly kind: "served" }>,
 		method: string,
 		args: unknown,
-	): Promise<void> {
-		let reply: Extract<OriginMessage, { readonly kind: "result" | "error" }>;
+		parent: TelemetryContext,
+		scope: Context,
+	): Promise<unknown> {
+		const context = withAbortSignal(call.abort.signal, scope);
+		let running: Promise<unknown>;
 		try {
-			// A link's context has no abort signal, so this is the call's own signal: no `AbortSignal.any` per call.
-			const result = await call.hold.call(method, args, withAbortSignal(call.abort.signal, this.link.context));
-			// Results are not validated: they are the provider's.
-			reply =
-				result === null || result === undefined
-					? { kind: "result", call: id }
-					: this.#result(id, result, call.bytes, this.link.context);
+			running = call.hold.call(method, args, parent, context);
 		} catch (error) {
-			reply = { kind: "error", call: id, error: wireError(error) };
+			running = Promise.reject(error);
 		}
-		this.reply(id, reply);
+		running.then(
+			(result) => {
+				let reply: Extract<OriginMessage, { readonly kind: "result" | "error" }>;
+				try {
+					reply =
+						result === null || result === undefined
+							? { kind: "result", call: id }
+							: this.#result(id, result, call.bytes, this.link.context);
+				} catch (error) {
+					reply = { kind: "error", call: id, error: wireError(error) };
+				}
+				this.reply(id, reply);
+			},
+			(error: unknown) => this.reply(id, { kind: "error", call: id, error: wireError(error) }),
+		);
+		return running;
 	}
 
 	/** Answers call `id` with `error` before it was admitted: it took no slot. */
@@ -443,8 +503,12 @@ export class ProviderSide {
 		const call = this.#calls.get(id);
 		if (call === undefined) return;
 		this.#calls.delete(id);
-		if (call.kind === "relayed") call.hold.abort(id);
-		else call.abort.abort(new ChordError({ code: "aborted", message: `call ${id}: aborted by its caller` }));
+		if (call.kind === "served") {
+			call.abort.abort(new ChordError({ code: "aborted", message: `call ${id}: aborted by its caller` }));
+			return;
+		}
+		call.hold.abort(id);
+		if (call.span !== undefined) relayEnded(call.span, undefined);
 	}
 
 	/**
@@ -460,7 +524,21 @@ export class ProviderSide {
 			return;
 		}
 		this.#inFlight--;
+		this.#ownAcked++;
 		this.#slotFreed();
+	}
+
+	/** The number the next of this host's own `bound` and `state` messages gets (counted from 1). */
+	get nextOwn(): number {
+		return this.#ownSent + 1;
+	}
+
+	/**
+	 * Whether its consumer acknowledged this host's own message number `own`, so applied it: a call it sent after that
+	 * arrives after the `ack` (one direction keeps its order).
+	 */
+	acknowledged(own: number): boolean {
+		return this.#ownAcked >= own;
 	}
 
 	/**
@@ -484,6 +562,7 @@ export class ProviderSide {
 			if (!hold.bound) continue;
 			hold.queue();
 			this.#waiting.add(hold);
+			this.#waitingSince ??= performance.now();
 		}
 	}
 
@@ -507,14 +586,23 @@ export class ProviderSide {
 				// Every snapshot in one synchronous step: the binding shows all of them at one moment.
 				this.#sendOwn({ kind: "bound", holds: holds.map((hold) => hold.boundEntry(context)) });
 			} else if (this.#waiting.size > 0) {
-				const holds = [...this.#waiting];
-				this.#waiting.clear();
-				this.#bindingTurn = this.#binding.size > 0;
-				this.#sendOwn({ kind: "state", holds: holds.map((hold) => hold.pendingEntry(context)) });
+				this.#sendWaiting(context);
 			} else {
 				return;
 			}
 		}
+	}
+
+	/**
+	 * The waiting state as one `state` message, taking a slot: a freed one, or one past the window before an answer.
+	 * Waiting bindings take the next slot.
+	 */
+	#sendWaiting(context: Context): void {
+		const holds = [...this.#waiting];
+		this.#waiting.clear();
+		this.#waited();
+		this.#bindingTurn = this.#binding.size > 0;
+		this.#sendOwn({ kind: "state", holds: holds.map((hold) => hold.pendingEntry(context)) });
 	}
 
 	/**
@@ -532,10 +620,19 @@ export class ProviderSide {
 		return { kind: "result", call: id, value, ...(segments === undefined ? {} : { segments }) };
 	}
 
+	/** The waiting state went out (or its holds left): how long it waited for its slot is recorded. */
+	#waited(): void {
+		if (this.#waitingSince === undefined) return;
+		this.link.host.metrics.histogram("chord.backpressure.wait").record(performance.now() - this.#waitingSince);
+		this.#waitingSince = undefined;
+	}
+
 	/** Sends one of this host's own `bound` or `state` messages, taking a slot. */
 	#sendOwn(message: Extract<OriginMessage, { readonly kind: "bound" | "state" }>): void {
 		this.#inFlight++;
+		this.#ownSent++;
 		this.#sent.push("local");
+		if (message.kind === "state") this.link.host.metrics.counter("chord.link.state_messages").add(1);
 		this.send(message);
 	}
 }

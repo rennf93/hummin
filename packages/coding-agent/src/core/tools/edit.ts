@@ -5,11 +5,10 @@ import { splitBom } from "../../utils/text.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import {
 	applyEditsToNormalizedContent,
-	detectLineEnding,
+	applyReplacementsToOriginal,
 	type Edit,
-	generateDiffString,
+	generateEditDiff,
 	normalizeToLF,
-	restoreLineEndings,
 } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
@@ -66,6 +65,8 @@ function isSingleEditInput(value: unknown): value is SingleEditInput {
 export interface EditToolDetails {
 	/** Display-oriented diff of the changes made */
 	diff: string;
+	/** Standard unified patch of the changes made */
+	patch: string;
 	/** Line number of the first change in the new file (for editor navigation) */
 	firstChangedLine?: number;
 }
@@ -184,16 +185,23 @@ export function createEditToolDefinition(
 
 				// Strip BOM before matching. The model will not include an invisible BOM in oldText.
 				const { bom, text: content } = splitBom(rawContent);
-				const originalEnding = detectLineEnding(content);
 				const normalizedContent = normalizeToLF(content);
-				const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
+				const { baseContent, newContent, replacements } = applyEditsToNormalizedContent(
+					normalizedContent,
+					edits,
+					path,
+				);
 				throwIfAborted();
 
-				const finalContent = bom + restoreLineEndings(newContent, originalEnding);
+				// Splice into the original text, so untouched lines keep their line endings. Without any CR
+				// the original is the normalized text, and the normalized result is already final.
+				const finalContent =
+					bom + (content === normalizedContent ? newContent : applyReplacementsToOriginal(content, replacements));
+				// Compute the diff before writing, so a diff failure leaves the file unchanged.
+				const diffResult = generateEditDiff(path, baseContent, newContent, replacements);
 				await ops.writeFile(absolutePath, finalContent);
 				throwIfAborted();
 
-				const diffResult = generateDiffString(baseContent, newContent);
 				return {
 					content: [
 						{
@@ -201,7 +209,11 @@ export function createEditToolDefinition(
 							text: `Successfully replaced ${edits.length} block(s) in ${path}.`,
 						},
 					],
-					details: { diff: diffResult.diff, firstChangedLine: diffResult.firstChangedLine },
+					details: {
+						diff: diffResult.diff,
+						patch: diffResult.patch,
+						firstChangedLine: diffResult.firstChangedLine,
+					},
 				};
 			});
 		},

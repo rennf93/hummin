@@ -279,9 +279,9 @@ the app exits with its own code for its supervisor or reopens.
 | `readyTimeout` | an activation attempt's own steps (its wait for the previous instance's teardown included; paused while the attempt is parked on its dependencies, slice 7a); a getter's whole wait; how long a call made while its reference is loading waits (the park deadline) | 60 s | per `get`/`hold`/`registry`: `{ readyTimeout }` |
 
 The park deadline's per-type override is not built (only if a real case needs it). Timeouts of later slices belong to
-their mechanisms: the routine handover uses `closeTimeout`, a job `finish` backs off 1 s to 60 s, provider-side
-`linger` is per type; a reload has no install timeout (it takes the app's context, slice 7b); a per-type drain
-override only if a case needs it (section 26). A route's `resolve` is bounded by the app.
+their mechanisms: a restart's old attempt is bounded by `reloadDrainTimeout` (default 5 s, at most `closeTimeout`;
+section 21), a job `finish` backs off 1 s to 60 s, provider-side `linger` is per type; a reload has no install timeout
+(it takes the app's context, slice 7b); a per-type drain override only if a case needs it (section 26). A route's `resolve` is bounded by the app.
 
 - **Incarnations** are minted by Chord (uuidv7, code copied from pi-ai, no dependency), never passed in, and carried
   in the link handshake (`hello`): the other side sees a restart as a new incarnation of the same identity;
@@ -382,7 +382,22 @@ host.route(Session, {
   - a hold that binds waits for a slot; its snapshot and subscription are taken in one synchronous step when its
     `bound` is sent; bindings and waiting state take turns when both wait, so neither starves;
   - a hold whose object leaves `live` while its `bound` waits goes back to pending (D1, owner, 2026-10-24; built in
-    slice 7b with the reload, which makes a live object leave `live`); so does a bound one, unbound (§7, §22).
+    slice 7b with the reload, which makes a live object leave `live`); so does a bound one, unbound (§7, §22);
+  - **a call's answer follows its state** (decision "A call's answer follows its state", owner, 2026-11-05): before
+    the provider sends a call's `result` or `error` (its own, or one it forwards as a relay), it sends the origin's
+    waiting state (every hold with pending ops, one `state` message), past the window if it is full. So when the call
+    settles at the consumer, every change the answering host committed before answering is applied there, and an
+    optimistic value (React's `useOptimistic`, `TuiScope.optimistic`) is replaced by the real one, never by the old.
+    Trace: window full (`bound`, `state` unacknowledged), a call commits (its ops wait), its `result`: the provider
+    sends `state` (the waiting ops), then `result`; without the rule the result overtook its own commit and the page
+    showed the old value until the next `ack`. A message past the window is counted and acknowledged like any other
+    (once, in order; the window opens only when fewer than K are in flight again); there is at most one per answer, and
+    its consumer acknowledges it before it sends the call that answer frees a slot for, so running calls and messages
+    past the window stay within N per origin together. Nothing extra is sent when nothing waits (the common path: a
+    free window sent the commit's `state` already). Bindings waiting for a slot are not sent past it: their `bound`
+    carries the latest state when it goes (a hold rebinding after a restart's old attempt ended shows its old values until then).
+    Not covered: changes committed after the answer (a method that returns before its effect lands) or on another host
+    that does not relay the answer.
   Not built, by decision: a byte window, credit messages, snapshot admission or debt, an adapter `backlog()` API,
   `reset` from anyone.
 - **Calls: a call window N** (default 256, the same on every host) announced in `hello`: how many concurrent calls a
@@ -391,7 +406,7 @@ host.route(Session, {
   nothing is refused for being "too many" (K16). A slot is freed once per call: by its `result` or `error`, its
   `abort` (when sent, at the caller; when received, at the provider), its hold's `release`, `gone`, its origin's
   `closed` or the link closing. A call still queued when its hold rebinds (`loading`) is rejected `unavailable` (it may
-  name a method of the old variant). A provider seeing more than N running calls of one origin closes the link
+  name a method of the old variant); one already sent is answered by the provider (a `loading` unbind keeps it, below). A provider seeing more than N running calls of one origin closes the link
   (protocol error); a call naming a hold it does not know is ignored before it is counted (Q1). **There is no limit on
   calls in progress per link** (owner, 2026-11-03; Chord v1's `maxCalls` had no counterpart): the call window N per origin
   and the part limits (section 22) are the bounds; 200 concurrent calls over one socket all run, N at a time in
@@ -433,7 +448,10 @@ drops, folds or resets.
   `result` and `error` by its call is checked against the relay's table; an answer for a hold or call not relayed over
   the link it came from is dropped (Q1: also one crossing a release). A `bound` or `state` left with some entries is
   forwarded with those; left with none, it is acknowledged to that link at once. A message for an origin from a link
-  the origin relayed nothing to is ignored whole.
+  the origin relayed nothing to is ignored whole. A `result` or `error` forwarded goes after the relay's own waiting
+  state for that origin (the rule above: a worker's answer whose effect the worker pushed to the server arrives after
+  that server state); the upstream host sent its own waiting state before its answer, and the relay forwarded that at
+  once.
 - **Acks:** the relay forwards each upstream `bound`/`state` at once and returns its `ack` to the upstream link that
   sent it when the downstream acknowledges it (the senders FIFO). A tab served by W workers may have 2W messages in
   flight (plus the relay's own 2), each worker's window bounding its own. A slow tab stalls only its origin at each
@@ -475,8 +493,9 @@ drops, folds or resets.
 - The app defines its principal type `P`: JSON, every variant with a `kind`, a type alias (not an interface),
   unversioned (owner, 2026-10-22): Chord never persists principals, base code changes every host at once, links stamp
   them. Objects persist a projection with its own schema, never the principal (p2: chat's `Author { kind, id, name }`).
-  p2/p3: `owner` (`access: "local" | "relay" | "device"`), `guest` (`session`, `mode`, grant revision), `server`,
-  `worker` (`session`).
+  p2: `owner` (`access: "local" | "relay" | "device"`), `guest` (`session`, `mode`, grant revision), `server`,
+  `worker` (`session`). p3: `user`, `guest`, `worker`, `server`, no `owner` kind: the kit's owner is one of its users
+  (§23, decision "The kit's owner is a principal the app chooses").
 - **Links stamp principals.** A caller's own data never sets its principal.
 - **The principal key** maps a principal to its object identity (`principalKey`, default canonical JSON; cached per
   principal object; the same function on every host). It should include connection provenance and grant revision, so
@@ -659,8 +678,7 @@ host.serve(Notes, ({ session }, principal, self) =>
   a job or routine start); commits are checked when they enter the store's commit step (sealed: rejected `released`,
   nothing written) and at adopt (sealed during the SQL: durable, adopted into the object's documents, its staged job
   changes adopted into the object too: decision "Second spec review: the majority" (3)); at the seal a transaction not yet in the step is aborted and the line released, a started step
-  finishes before teardown completes; cleanup (references, presence, activity counts) still runs. A pure swap is not a
-  replacement.
+  finishes before teardown completes; cleanup (references, presence, activity counts) still runs.
 - **Ending** (slice 1, 2): new calls are rejected; every caller of a running call gets `released` at once; the
   handler keeps running in the background under an aborted context and its `self.tx` throws `released` (a running
   method can change nothing after the end). Each call runs under a context aborted by its caller and by the object's
@@ -771,9 +789,9 @@ host.serve(NoteStore, ({ session }, self) => {
   routines and jobs.
 - Handles stay valid for their attempt's life (owner, 2026-10-26: documents and the line belong to the object; each
   attempt's handles carry its seal token and definition version); nothing is "read at use" or re-fetched.
-- On a reload the factory runs again: in staging against a recording `self` (declarations only), then for real; pure
-  objects swap in place (new methods and derives, same documents), native objects restart after their drain,
-  objects of a removed type end and their holders wait (section 21).
+- On a reload the factory runs again: in staging against a recording `self` (declarations only), then for real; every
+  live object restarts (same documents; its running calls and the calls they cause finish on the old attempt, the new
+  factory runs once that drained), objects of a removed type end and their holders wait (section 21).
 
 ### Pattern: shared store, per-principal views
 
@@ -830,8 +848,8 @@ location are dropped.
   reload, retry, restart; a new object after its type was removed and served again; another variant), the reference
   moves its subscriptions to the new one and sends one frame, a diff from the last value (consumers' derives recompute,
   a failed one heals; a member the new variant lacks fails `invalid/member`). While it points at nothing, its members
-  keep their last values (a pointer, no copy): while loading (a restart, a retry, a swap whose new instance is not live
-  yet) its watches get no call (`ref.state` says `loading`); while failed (a live failure, its version refused, its type
+  keep their last values (a pointer, no copy): while loading (a restart's successor not live yet, a retry) its watches
+  get no call (`ref.state` says `loading`); while failed (a live failure, its version refused, its type
   removed, a failed dependency) they get one `failed` call with the cause's error and stay open (decision "Failures are
   watch calls"); a reference that never had a value reads `not_ready` while loading and its failure's error while failed, and its
   watches wait for its first values. A member the new variant lacks is not a failed reference: it fails `invalid/member`
@@ -847,8 +865,8 @@ location are dropped.
   the re-exposing object's reference member, followed the same way. Over a link the same rule: the replica keeps its
   last values readable while its hold is failed. Nothing outlives its object instance and nothing is handed between
   objects.
-- **References across a reload** (slice 7b §6): a reference is never ended by a code change. Its object swapped in
-  place or restarted: it follows the new instance (above; a hold over a link gets a fresh `bound`, §22). Its version no longer accepted, or a member of it refused (`contract_mismatch`): it leaves the object and waits
+- **References across a reload** (slice 7b §6): a reference is never ended by a code change. Its object restarted: it
+  follows the old instance while that serves its version, then the new instance (above; a hold over a link gets a fresh `bound`, §22). Its version no longer accepted, or a member of it refused (`contract_mismatch`): it leaves the object and waits
   unbound (`failed { waiting }`) with its last values; the object and its other holders stay. Its type removed: it
   waits unbound `not_served` with its last values; a publication that serves the name again binds it to the next
   object (a new object: its in-memory documents start over from `initial()`, persisted ones load again). On a removal
@@ -912,10 +930,16 @@ Every handler gets a `ctx` (a `Context`): `telemetry` (the current span, section
 cancelled or the object ended; there is no per-call deadline), `principal` (the caller as its link stamped it; on a
 local object's handler the host's principal, none on a client), `incarnation` (the calling host's, section 4), and
 `get(Type, params, { readyTimeout? })` (references as the caller sees them, released when the handler settles; a
-`get` after that throws `released`). Later: `ctx.trace(name, attributes, fn)` gives `fn` a child `ctx` under a child
-span (slice 9, cut C11 to decide); in a job's `run` also `jobId` and `state` (slice 5). Pass `ctx` to everything you wait
+`get` after that throws `released`), and `trace(name, attributes, fn)`: `fn` in a child span of `ctx.telemetry` with a
+child `ctx` (the same principal, incarnation, signal and `get`, its references the handler's), so calls inside are
+parented under it; a throw marks the span failed (`trace_failed`) and is rethrown; without an adapter that records,
+`fn` gets `ctx` itself (slice 9; round-3 cut C11 kept, as this section already stated it); in a job's `run` also `jobId`
+and `state` (slice 5). Pass `ctx` to everything you wait
 on. Code outside objects gets a `ctx` from `host.root` (slice 8). Durable's `Context` is the same module
-(`../context`); bridging is explicit. No code versions, no request ids.
+(`../context`); bridging is explicit. No code versions, no request ids. A method's `ctx` is also a node of its **call
+chain** (the attempt the method runs on, then the chain of the call that made it): during a reload it tells old work
+from new (section 21), so a root opened inside a method takes the method's `ctx` (`withoutAbortSignal(ctx)`), never a
+fresh context.
 
 **Await what you start in a root or a handler** (decision "Mistakes that wait are reported at once" (e), owner,
 2026-11-03; footgun 10 of the p2 port). What is started with a context ends with it: a root's scope seals when `fn`
@@ -1275,7 +1299,7 @@ commits are the exact invalidation: a commit not writing the table runs nothing)
 (params decide it); **a limit is required** (`invalid/args` at declaration; the store's query language keeps the limit
 an argument of the runner, as `page` has it). A run that fails (a row the code cannot read) is a failed member, as a
 throwing derive (one failure call, `query_failed` once per episode, `[["r", rows]]` at the next good run); the object
-stays live. It is no native, so an object with live queries swaps on reload (section 21). Cost: one query per
+stays live. It is no native: a restart's successor runs its live queries again at its activation (section 21). Cost: one query per
 touching commit, bounded by the limit (100 rows: about 60 µs unwatched, 80 µs watched, `benchmarks.md`); **there may
 be dragons** for tables written hundreds of times a second. Incremental maintenance of the result (row-level changes
 kept in memory, a re-run only when a removal empties the window or a bulk write hides which rows changed) is left for
@@ -1436,7 +1460,7 @@ self.onLive(async (ctx) => { for await (const f of watcher.value.files(ctx.abort
     has finished or after `closeTimeout` (30 s at most, Q7: a longer script is aborted); Chord then opens the new one
     immediately. Code mode's sandbox does
     this; its tool entry looks up the current sandbox at `execute()`.
-  - **Swap through a registry:** the resource is a registry contribution; readers always find the current one, and a
+  - **Replace through a registry:** the resource is a registry contribution; readers always find the current one, and a
     reader that must wait for one uses a cancellable "wait until present" with the park deadline.
 
 ---
@@ -1466,12 +1490,11 @@ self.onLive(async (ctx) => {                                    // set up, wait 
   and stop when it ends (their `ctx` is aborted, then
   the drain waits for running calls, bounded by `closeTimeout`). Each call gets its own `ctx` (the object's principal
   for a remote type, the host's for a local one; the host's incarnation; `ctx.get` released when the call settles).
-- **On reload** the old routines' `ctx` is aborted; the new routines start once all old routine calls of the object
-  have finished (bounded; a stuck call is reported and the new routines start anyway): a handover per object, so
-  routines need no names. Example it prevents: an old handler midway through `restart(W1)` and a new one seeing W1
-  still pending and restarting it again. The bound is `closeTimeout` (owner, 2026-10-24); calls do not wait for the
-  handover, only the new routines do (slice 7b). A stuck old call past the handover is reported `drain_timeout` and
-  the whole old attempt is sealed then (audit A12: one seal token per attempt; its method calls had the same bound).
+- **On reload** the old routines' `ctx` is aborted at the restart; their calls drain with the old attempt, and the
+  new routines start when the successor goes live, after the old attempt's seal: routines need no names. Example it
+  prevents: an old handler midway through `restart(W1)` and a new one seeing W1 still pending and restarting it again.
+  The bound is the reload drain bound (`reloadDrainTimeout`); a call still running then is reported `drain_timeout`
+  and the whole old attempt is sealed (audit A12: one seal token per attempt).
 - **`on(source, fn)`:** any watchable (a document, a derive, a reference member, a registry value, `ref.state`). The
   first call gets the current value (`[["r", value]]`, W2b), then one call per change; calls never overlap (S8);
   changes made during a call arrive folded in the next (newest value, folded ops); a running call is not aborted by a
@@ -1486,8 +1509,8 @@ self.onLive(async (ctx) => {                                    // set up, wait 
   job for long work. Chord keeps no state for routines across reloads or restarts; what must survive is a document of
   the object (e.g. a `lastCleanup` time, which also survives a crash).
 - **Helpers:** `sleep(ms, ctx)` (rejects when `ctx` is aborted, leaves no timer or listener) and `untilAborted(ctx)`.
-  Routines and handlers wait only through calls that take `ctx`; otherwise Chord cannot stop them, and the handover
-  and the drain report them stuck.
+  Routines and handlers wait only through calls that take `ctx`; otherwise Chord cannot stop them, and the drain
+  reports them stuck.
 - **Errors:** `onError` gets `routine_failed { object, routine, error }`, `routine` a `Position` (`{ kind: "on" |
   "onLive", position }`; natives use the same type); never uncaught.
 - **Keep-alive:** routines do not count in `host.activity` (an `onLive` runs forever).
@@ -1612,12 +1635,10 @@ host.serve(ChatStore, ({ conversation }, self) => {          // local: no princi
   forwards and its result forwards (`{ 1: { args: (old) => current, result: (old) => current } }`; a producer's
   direction, unlike a contract's). Its records keep every run's version: a new attempt's `self.job(Def, impl)` at
   another version takes the records over (the same version with another fingerprint, over args, result and state, is
-  refused at declaration, as documents). A run started on an older version and still running finishes on its old
-  code across a pure swap (its invocation keeps the old implementation); `finish` runs on the new code with the
-  outcome's args and result mapped forwards (once per run, never per publication); `running` shows its args mapped; a
-  run not invoked yet runs on the new code with its args mapped. Its state document keeps its version while the old
-  code writes it and migrates through its own `migrate` once its run settled or moved to the new code (the outcome
-  `finish` gets). Without an adapter, for a run of a newer version than the code (a rollback), or for a job the new
+  refused at declaration, as documents). A reload restarts the job's object: a running in-memory run ends `aborted
+  { reload }` at the old attempt's seal (a persisted one is stopped and resumed per `resume`, R3); `finish` runs on the
+  new code with the outcome's args and result mapped forwards (once per run, never per publication); a run not invoked
+  yet runs on the new code with its args mapped, and its state document migrates through its own `migrate`. Without an adapter, for a run of a newer version than the code (a rollback), or for a job the new
   code no longer declares, the run is `blocked { version }` (kept, not invoked) until a reload brings matching code;
   blocked runs (`finish_failed` ones too) are retried on every reload of their object's plugin; a persisted run of
   another version or fingerprint stays blocked with its record as stored until the reload that brings its version
@@ -1878,9 +1899,9 @@ agent asks everyone present. Its store must live in an object (it predates "nati
 **complete new plugin set** after `load`: a plugin in it and not loaded is added; one loaded with another facet value is
 changed (Chord compares no code); one passed as the very same facet object is unchanged and untouched (owner,
 2026-10-29: base code passes its core facet value every time); one loaded and not in it is removed. It resolves with a
-report once the commit happened and every object took its fate (swaps and retries had their first dependency check;
-it does not wait for objects to go live); a plugin whose new code fails keeps its old code and is listed in the
-report's `failed` (per plugin, below).
+report once the commit happened and every object took its fate (a restart reports what its successor's recorded
+requests found at once, a retry its new attempt's first dependency check; it does not wait for objects to go live); a
+plugin whose new code fails keeps its old code and is listed in the report's `failed` (per plugin, below).
 Reloads run one after another per host; before `load` resolved it throws, and so does a plugin set with an invalid
 name (before anything changes); after `close` it rejects `released/closed`;
 `context` bounds it (decision 4: no install watchdog): its abort before the commit rejects `aborted` and changes
@@ -1893,8 +1914,8 @@ type ReloadReport = {
   readonly plugins: { readonly added: readonly string[]; readonly changed: readonly string[]; readonly removed: readonly string[] };
   readonly failed: readonly { readonly plugin: string; readonly error: unknown }[];   // new code failed: old code kept, an added one left out
   readonly objects: readonly ({ readonly object: string } & (
-    | { readonly kind: "swapped" } | { readonly kind: "restarted" } | { readonly kind: "ended" }
-    | { readonly kind: "parked"; readonly cause: FailureCause } | { readonly kind: "retried" }))[];
+    | { readonly kind: "restarted" } | { readonly kind: "ended" } | { readonly kind: "retried" }
+    | { readonly kind: "parked"; readonly cause: FailureCause }))[];
 };
 ```
 
@@ -1927,8 +1948,8 @@ type ReloadReport = {
   `linger` and provider, `bindProvider(contract, options.accepts)`; registry providers; facet contributions by
   plugin), then, for
   every live, activating, parked or failed object of a changed or removed plugin whose type is still served, its new
-  factory with the object's params (and principal) against a recording `self`: it records what the factory opens,
-  the documents, tables and jobs it declares with their versions, its contributions and requests, runs the checks an
+  factory with the object's params (and principal) against a recording `self`: it records the documents, tables
+  and jobs it declares with their versions, its contributions and requests, runs the checks an
   attempt makes without effects (declared twice; persisted data outside a stable identity; contributions outside a
   host-lifetime object; a document or job at an older version, or at its version with another schema), and hands out
   inert handles. Staging is synchronous, so no request or arriving hold meets it half done (audit A1: model §1's
@@ -1940,37 +1961,73 @@ type ReloadReport = {
   After the batch, each object takes its fate, host-lifetime objects of new types start (no barrier), and the
   publication wakes the requests indexed under the names the reload serves (`UnboundIndex.wake(names)`, per name),
   refused holds of those names re-run their start.
-- **Fates** (decided in staging; objects of plugins not in the reload are untouched):
+- **Fates** (decided in staging; objects of plugins not in the reload are untouched; decision "Reload restarts every
+  affected object; old work finishes on old code", which superseded the pure swap):
 
   | The object | Fate |
   | --- | --- |
   | its type is removed | **ended**: as an end (natives close `end`, callers of running calls rejected `released`, handlers drained, in-memory documents gone, persisted ones kept); its holders' requests are not ended: they wait unbound `not_served` (§7) |
   | failed, parked, activating or waiting for its backoff | **retried** on the new code (`ref.retry()`'s rule, whatever broke it); an activating attempt is sealed and its natives close `reload` |
-  | live, neither its live attempt nor the new factory opens natives, and no table of the new factory is newer than the store's | **swapped** in place (below); live queries are no natives (section 11): an object showing table rows through `self.query` swaps, one reading them in `self.open` restarts |
-  | live, otherwise | **restarted**: new calls park (it shows `loading`), its contributions leave, running calls drain (bounded by `closeTimeout`; a call outliving the drain is cut off by the seal fence), the attempt is sealed (in-memory job runs end `aborted { reload }`, persisted ones are stopped and resumed, R3), natives close `reload`, the new attempt activates after that teardown (documents stay; eager table migrations run as at activation) |
-  | any of the above whose new code waits for a dependency | **parked** (decision 4): no overlap of old and new code; reported with the cause |
+  | live (natives or not) | **restarted** (below): its old attempt serves old work until that drained and its successor's requests are ready, bounded by the reload drain bound; then it is sealed (in-memory job runs end `aborted { reload }`, persisted ones are stopped and resumed, R3), natives close `reload`, and the successor runs its factory and activates (documents stay; eager table migrations run as at activation) |
+  | a restart whose successor's recorded requests find a failure, or a retry whose new attempt waits for a dependency | **parked** (decision 4): reported with the cause; the successor activates once the dependency is there |
 
-  A restarted object gets a new instance id (an old activation chain never matches it); a swapped one keeps it; a
-  retried one keeps it as any retry does. Cycles are checked again for the new attempts; `parked_long` is unchanged.
-- **The pure swap** (decision "The seal fence": not a replacement while its calls run): a new attempt of the same
-  object (its documents, line and job records) activates at once; calls arriving meanwhile wait at
-  the gate (bounded by `readyTimeout`, `unavailable/park_timeout`). The new attempt's requests are made and bound
-  before the old attempt's are released (a request equal to an old one binds to the same target with no gap, M§3.9).
-  Running calls finish on the old attempt with its handles valid, except R15: an old call touching a document whose
-  version rose throws once (`released/version`), the document intact, the call not resent; the same for a table whose
-  version rose (old table handles' version fence: old code never issues SQL for a dropped column). Once the swap
-  ended (the new attempt live, parked or failed) and the old attempt's calls settled (bounded by `closeTimeout`,
-  `drain_timeout`), the old attempt is sealed and its references released; its job invocations finish on their old
-  code. Retiring attempts are bounded by `closeTimeout` each; a later swap never waits for them (several may retire
-  at once after quick reloads), while a restart, an end and the host's close do (an end rejects their callers at
-  once). The references move to the new instance's members by name (one frame from the last value; a member the new
-  variant lacks fails `invalid/member`; §7); exposed derives are matched by their member names, internal ones are
-  rebuilt; in-memory documents migrate through `migrate` when the new code declares a higher version; the
-  contributions are replaced in one batch; `self.writable` starts at its new initial value (decision 2); `retryOn`
-  sources are re-declared; the new attempt's live queries run at its activation (the old attempt's are re-run by the
-  commits of its remaining calls until it is sealed, then dropped). **Routines hand over per object:** the old attempt's routines are aborted; the new ones
-  start once the old routine calls finished, bounded by `closeTimeout` (a stuck one is reported `drain_timeout` and
-  the whole old attempt is sealed then, audit A12: one seal token per attempt); calls never wait.
+  A restarted object gets a new instance id (an old activation chain never matches it); a retried one keeps it as
+  any retry does. Cycles are checked again for the new attempts; `parked_long` is unchanged. Live queries are no
+  natives (section 11): the successor's run at its activation.
+- **Fates start in the plan's order**, removals first; the restarts' readiness and successors start once every fate
+  started, so the requests they bind meet the new served types only.
+- **Old work** (decision "Reload restarts every affected object; old work finishes on old code", rule 2): the calls
+  running on an object at the commit and every call they cause. On one host they are found through `ctx`: a method's
+  `ctx` is a node of its call chain (the attempt it runs on, then the chain of the call that made it), so a call,
+  `ctx.get` or root scope given the method's `ctx` (`withoutAbortSignal(ctx)` for a root) is old work while any
+  attempt in its chain drains for a restart. The host counts its draining attempts and the old calls it runs for
+  other hosts, so outside reloads no chain is walked. Across hosts a consumer marks such a call `old` (§22); a
+  provider honours the mark only from a trusted link and runs the call as old work, counted while it runs; a relay
+  drops it from a link that is not trusted (a page cannot claim old work).
+- **Old work runs on old attempts:** a call of old work on an object whose old attempt is open runs there, with its
+  handles valid; a getter of old work binds that attempt for any version it serves. A getter for a version the new
+  code dropped binds the open old attempt or fails at once (`contract_mismatch`, never a wait for a code update). An
+  object that did not exist starts on the new code; its requests bind open old attempts as any request does (rule 5
+  below). **New work** (anything else) waits at the gate and runs on the new code (bounded by `readyTimeout`,
+  `unavailable/park_timeout`); a parked successor showing `failed { waiting }` rejects it with that cause. A call
+  never gets `not_ready` there: a hold over a link stays bound while the old attempt is open, so its consumer sees
+  `live` and sends; when the hold then leaves the old instance, it tells the consumer `loading` and keeps the calls
+  still in flight: they go on waiting at the gate (§22, decision "Calls in flight survive a `loading` unbind").
+- **The seal** (rule 3): the old attempt is sealed once its own calls and the old work routed to it drained (a call
+  routed after the drain began joins it) and its **readiness** holds: the requests its successor's factory made in
+  staging, bound once every fate started, are each live, ended, or failed for a reason other than another host's
+  version skew (`contract_mismatch` or `unavailable/version` from a remote provider, kept on `waiting` causes along a
+  chain; it heals when that host's reload lands). Registry requests are not waited for (the old attempt's
+  contributions keep them). All of it is bounded by the **reload drain bound** `reloadDrainTimeout` (a host option,
+  default 5 s, at most `closeTimeout`; the app kit passes `timeouts.reloadDrainTimeout` to the server and every
+  worker): a method still running then is cut `released` and reported `drain_timeout`; long work belongs in jobs.
+  Only after the seal does the successor's factory run, so no new declaration meets old work: old work writes the
+  documents and tables at their old versions, and the successor migrates what it wrote. The readiness bindings and
+  the old attempt's references are released only once the successor's own requests bound (a dependency held only by
+  them never ends, M§3.9); presence lists (§19) never show readiness bindings (they are no consumers of their own).
+  A failed request is shown by the successor while it lasts (new calls get the cause, consumers of the old attempt
+  see the failure) and no longer once it recovered; from the old attempt's end on, the successor's own dependency
+  checks decide what it shows. The version fences stay for calls cut by the seal (R15: a document or table whose version
+  rose throws `released/version` there).
+- **Consumers meanwhile** (rule 5): a same-host consumer whose version the open old attempt binds sees the object
+  `live` and follows the old instance (its new code may read the provider's old state for up to the drain); a
+  reference or hold of a version only the new code serves shows `loading` until the successor is live. At the seal
+  the old attempt stops being the instance its holders bind (`loading`; a hold waiting for a window slot unbinds);
+  once its admitted commits published it stops changing and the references take their last values from it. When the
+  successor goes live they move to its members by name (one frame from the last value; a member the new variant
+  lacks fails `invalid/member`; §7); internal derives are rebuilt; in-memory documents migrate through `migrate` when
+  the new code declares a higher version; `self.writable` starts at its new initial value (decision 2); `retryOn`
+  sources are re-declared.
+- **Contributions:** an old attempt with natives withdraws its contributions at the seal (F-b); one without keeps
+  them until its successor is live, which replaces them in one batch, or drops them when the successor fails or parks
+  (F-c). **Routines** stop at the restart; their calls drain with the old attempt's; the successor's start when it
+  goes live.
+- **Reload cycles** (rule 6): a wait of old work on an object whose activation waits, through its parked
+  dependencies or the gates its opener waits at, on the old attempt that very work runs on fails at once with
+  `unavailable/reload_cycle`, naming the chain (`app.f(fresh) → app.p`: old work creating an object whose new code
+  needs the raised provider). Checked when the wait starts and whenever an attempt parks or an opener begins waiting
+  at a gate. What leaves Chord (roots opened without the method's `ctx`, Durable tasks, an app's locks) and cycles
+  across hosts end at the reload drain bound.
 - **Natives are not kept across reloads by name:** natives have no line, transactions or schema, so old and new code
   would interleave unchecked. In practice a restart costs little (the Durable harness is base code, terminal PTYs live
   in their own process, model runtimes, sandboxes and the search index rebuild in milliseconds); reloading the plugin
@@ -2016,9 +2073,34 @@ type ReloadReport = {
   another host sees follows §7: kept and freshly bound while its version is accepted; `failed
   { waiting }` (`version`, `not_served`) otherwise, bound again by the install that serves it; a consumer whose own
   code moves to a new version releases its old request and makes a new one.
+- **A contract change between hosts in one rollout leaves a gap** (decision "The rollout order stays; no `loading`
+  grace"): a consumer on an earlier step whose provider on a later step moves to a new version waits for the
+  provider's step (server first: server consumers of worker types). A restarting consumer's readiness waits out the
+  other host's version refusal, so its old attempt keeps serving meanwhile, up to the reload drain bound; past it, or
+  for a consumer created meanwhile, the reference waits `failed { waiting }` with its last values. `accepts` cannot
+  close the gap within one rollout (the old provider never serves the new version). The recipe: two applies, the
+  provider first (serving the new version and accepting the old one), then its consumers.
 - **The app's loader keeps its own duties:** the desired code set, a digest over the facet bundles' content hashes (an
   unchanged server restart reinstalls nothing), serialized installs, a host that starts or reconnects installing the
   current set before anything is routed to it, a rejected own install failing its own requests with the reason.
+
+### What a user sees during a reload (owner, 2026-11-04)
+
+The contract between reload and the people using an app: each row is checked end to end through a real page and a
+worker (the reload suite), not only by unit tests. "The page" is any client over a link (a browser page, a terminal);
+"a call" is a method call from it.
+
+| Change rolled out | What stays on screen | Calls | State |
+| --- | --- | --- | --- |
+| a plugin whose new build, evaluation or staging fails | everything; the plugin keeps its old code, the error is reported to the app (a page's own evaluation failure is reported in that page) | unaffected | unaffected |
+| pure code (no natives) on the server or a worker (a restart) | `live` with the last values (and what the old code still commits) while the old code drains, up to `reloadDrainTimeout`; then `loading` briefly; then a fresh snapshot from the new code | running calls, and the calls they cause on any host, finish on the old code (up to `reloadDrainTimeout`, then `released`); calls arriving meanwhile wait (the provider host's `readyTimeout`) and run on the new code; never `not_ready` | documents and tables unchanged; `self.writable` values start over; in-memory job runs end `aborted { reload }`, their `finish` on the new code |
+| code holding natives (a restart) | as pure code; the old code's natives close (`reload`) at the seal, the new code's open before the fresh snapshot | as pure code | as pure code; natives reopened |
+| a contract change the new code still `accepts` | the old page keeps working through the mapping | answered through the mapping | unchanged |
+| a contract change not accepted, or a type removed | the reference waits with its last values (`failed { waiting }`) until the page's code updates or the type returns | calls fail at once with the cause (`contract_mismatch`, `unavailable` not served; §7) | unchanged |
+| a web or terminal plugin | the other plugins untouched, scroll kept; the reloaded plugin's components remount; a page fetches the plugin's new stylesheet inactive before the reload (beside its old one, at most 10 s), applies it with the new code and retires the old one a frame after the reload (a plugin whose new script failed keeps its old stylesheet with its old code, the new one never applied); limitation: UI an object contributes stays until its successor is live and can show unstyled during that restart | the reloaded plugin's calls as above | component state starts over; `usePageState`/`scope.pageState` survive |
+| base code (the app's client and worker entries, Chord, React) | applied by restarting the server (the kit builds the base bundles and each worker kind's worker base right after the server listens; no reload applies them, and a worker forked meanwhile runs the server's boot code); the page reconnects to a new base and reloads (the terminal restarts its sandbox): the only case losing what is on screen | calls in flight end with the link | page state lost; in-memory server and worker state lost; stores unchanged |
+
+Order: the server, then every running worker by the same rules, then the clients' scripts.
 
 ### Loading plugins and the reload loop (slice 7c)
 
@@ -2041,10 +2123,17 @@ type ReloadReport = {
   calling facet's own plugin. A plugin's dependencies are installed into its directory (`installDependencies`, as
   coding-agent does: `--omit=dev --legacy-peer-deps --ignore-scripts`). esbuild is an optional peer dependency.
 - **The reload loop:** a watcher marks plugins dirty from the files each facet used (a copied contract dirties every
-  user) and flags changes of base code (the app restarts its hosts); a build is per plugin (a failed one keeps its old code); `rollout` runs the app's
-  steps in order (server, workers, clients; decision "Slice 7b's open points" (3)). A reload control (a button, a CLI,
-  an agent tool) is the app's. One base bundle per surface (host packages and the app runtime) is an app's startup
-  optimization, the web's in slice 11.
+  user) and flags changes of base code (the app restarts its hosts): `base` is content-compared (p3 step 0a), true
+  while a file differs from the bytes a running base artifact read (each base bundle hashes what its loader hands
+  esbuild; the server's own code is recorded after the start by bundling its entry, nothing written or run), is gone,
+  or is a source file new in a base directory; compared once when its watch starts and at each event (reads of one
+  path in order, the latest deciding), so a rewrite with the same bytes or a change and its revert leave no mark. One
+  exception, latched: a file of the server's own code whose timestamps show an edit after the process started is
+  recorded as differing whatever its bytes, since Node may have loaded other bytes than the scan read; it marks `base`
+  until the next restart, even when its bytes are restored (the exact rule: `src/node/app/README.md`, "Plugins"). A build is per plugin (a failed one keeps its old code);
+  `rollout` runs the app's steps in order (server, workers, clients; decision "Slice 7b's open points" (3)). A reload
+  control (a button, a CLI, an agent tool) is the app's. One base bundle per surface (host packages and the app runtime)
+  is an app's startup optimization, the web's in slice 11.
 - Project plugins, trust, snapshots, scopes and npm/git package installs: `apps/p2/docs/plugin-loading.md` (still the
   reference for those; not in 7c).
 
@@ -2114,7 +2203,7 @@ validation, no clone of snapshots or ops.
   | `revoke` | parent to child (route link) | the revocation value (4b) |
   | `release` | to provider | `origin?`, `hold` |
   | `retry` | to provider | `origin?`, `hold`, `hops` (the retry's hop budget, 1-16: 16 from the first host, one less for each host it passes on from, none sent at 0; audit A5); relays forward it unchanged |
-  | `call` | to provider | `origin?`, `call`, `hold`, `method` (index), `args?` (part; absent: no arguments), `segments?` |
+  | `call` | to provider | `origin?`, `call`, `hold`, `method` (index), `args?` (part; absent: no arguments), `segments?`, `old?` (`true`: old work of a reload, §21) |
   | `abort` | to provider | `origin?`, `call` (named `cancel` until 2026-10-27) |
   | `ack` | to provider | `origin?`; one per applied `bound`/`state` message |
   | `closed` | relay to provider | `origin`: the downstream origin ended |
@@ -2128,7 +2217,7 @@ validation, no clone of snapshots or ops.
   | `ping`, `pong` | both | the heartbeat |
 
   A `bound` on a hold that is bound already replaces its replicas in one batch, another variant allowed (re-holds,
-  slice 7b's restarted objects and its swaps to another variant).
+  slice 7b's restarted objects, another variant included).
 - **Codecs are pluggable per link** (both ends use the same): `binaryCodec` (default: a kind byte with a flag for a
   following origin varint, varints, raw incarnations and fingerprints, length-prefixed strings and parts; about 23 B
   for a streamed token) and `textCodec` (Delta-style JSON tuples without field names, a message with an origin wrapped
@@ -2157,7 +2246,9 @@ validation, no clone of snapshots or ops.
   provider and consumer), restarted with every snapshot. Two holds of the same principal (two tabs) encode the same
   ops separately (O(change) each). A part is encoded once at its origin; relays never re-encode it.
 - **Sending:** one `state` message per commit per link and origin while the window has a slot; otherwise the ops wait
-  in the members' pending queues and leave as one message when an `ack` frees a slot (section 3).
+  in the members' pending queues and leave as one message when an `ack` frees a slot, or before a call's `result` or
+  `error` of that origin, past the window (section 3, "a call's answer follows its state"; a relay sends its own before
+  each answer it forwards). No message kind or field changes.
 - **Relays** read and rewrite only envelopes (section 3, "Relays").
 - **Size limits per part (R2, Q2; slice 4b):** limits apply to each part (wire and decoded size), configurable per
   link, checked from the part's length before it is parsed or inflated; the decoded limit is enforced in the one
@@ -2189,8 +2280,23 @@ validation, no clone of snapshots or ops.
   The asynchronous inflate runs one part at a time; the queue behind it is bounded by the sending peer's window and N,
   so only a misbehaving parent or route peer could grow it (accepted: those are the app's own hosts). The adapter reports "too large"
   and "corrupt" as a tagged result. Limits and the threshold count bytes. No per-link compression.
-- **Trace carriers (R5; slice 9)** are an optional bounded field of `call` and `hold` (key count, string lengths);
-  relays read them from the envelope.
+- **Trace carriers (R5; slice 9)** are an optional field `trace` of `call` and `hold`: an adapter's string record of at
+  most 8 keys, keys and values of at most 256 characters of printable ASCII (keys without spaces; W3C's headers and
+  Chord's adapters fit); past the bounds, with a control character or not a string record, the message fails `MESSAGE`
+  as any malformed header and the link closes (a trusted link skips the check; the adapter's `extract` then checks it).
+  A carrier names stored trace and parent ids, so no control character reaches a renderer (and `renderTrace` escapes
+  them anyway). Names a relay records unparsed are bounded the same way: a hold's `type` and its address's `kind` have
+  at most 256 characters. The
+  binary codec flags it in the kind byte (`0x40`, beside the origin's `0x80`) and writes it as JSON after the origin;
+  the text codec writes it as the last element (a hold's after `limit`, absent ones before it `null`; a call's after its
+  payload, whose two fields are then positional, `null` when absent). Relays read it from the envelope and forward
+  their own span's carrier (a relay recording nothing forwards it as it came). `PROTOCOL_VERSION` stays 1.
+- **Old work across hosts** (decision "Reload restarts every affected object; old work finishes on old code"): a
+  consumer marks a `call` `old: true` when its caller is old work of a reload on its host (§21); the provider honours
+  the mark only from a trusted link (it runs the call on open old attempts, as old work of its own host while it
+  runs) and ignores it otherwise; a relay drops it from a downstream link that is not trusted. The binary codec flags
+  it in the call's kind byte (`0x20`; on any other kind that bit makes an unknown kind); the text codec writes it as a
+  call's seventh element, after the trace carrier (`null` when absent). `PROTOCOL_VERSION` stays 1.
 - **Adapted bindings get diffs** (slice 7b; decision "References are the only indirection" (5)): a consumer bound
   through `accepts` attaches to the object instance's shared mapping for its version: per member one derive of the
   instance's member through `(current) => old` (a changed member), of its whole state (a removed member), or the
@@ -2204,10 +2310,21 @@ validation, no clone of snapshots or ops.
   failure (its calls waiting for a slot reject with it; the provider rejects its calls in flight once); the provider
   detaches the hold's sources, drops its unsent pending ops and a queued `bound`, and keeps the ack slots of `bound`
   and `state` messages already sent until their `ack` or the link's loss. A reload sends it when the object's type is
-  removed (`not_served`), its version is no longer accepted (`version`), or a swap parks on a failed dependency; a
-  restart or a parked swap still loading sends `loading`; both are followed by a fresh `bound` when the object is live
-  again (applied as a re-binding). A swap in place keeps the hold bound and sends it a fresh `bound` once the new
-  instance is live (audit A9, 2026-10-30: one rebind path; a tab's watchers may get a frame for an unchanged member).
+  removed (`not_served`), its version is no longer accepted (`version`), or a restart's successor parks on a failed
+  dependency; a restart (once its old attempt no longer serves the hold's version) or a live failure already retrying
+  sends `loading`; both are followed by a fresh `bound` when the object is live again (applied as a re-binding; a
+  tab's watchers may get a frame for an unchanged member).
+- **A `loading` unbind keeps the calls in flight** (decision "Calls in flight survive a `loading` unbind"): the
+  provider unbinds the hold as above but rejects none of its calls, and the consumer keeps them (only its calls still
+  waiting for a slot reject `unavailable`). Each kept call gets exactly one answer from what it already waits on: the
+  instance it runs on (its result within the drain, else `released` at the seal) or the gate (the new instance's result, the parked
+  cause, `unavailable` after `readyTimeout`, the object's end); an `abort`, a `release`, `gone` or the link's close
+  ends it as any call. Until its fresh `bound` is sent the hold takes calls by the names it was bound with (sent before
+  its consumer learnt of the `loading`): they wait at the gate too, never `not_ready`; after a `failed` it takes none.
+  The kept call runs by name: a method the new variant lacks fails `invalid/member`; a version the new code no longer
+  binds unbinds the hold (`failed`, `contract_mismatch`), which rejects its calls before the gate lets them run. Kept
+  calls hold their call-window slots meanwhile. A relay forwards `loading` and keeps its forwarded calls (its own
+  `loading` after an upstream drop rejects them first).
 
 ---
 
@@ -2312,17 +2429,44 @@ route's checks, never instead of them.
 
 ### Workers (`@earendil-works/chord/workers`)
 
-`createWorkers(host, Kind, { kind, entry, execArgv?, env?, authorize, principal, start, lock, idleMs?, plugins,
-onOutput?, onError }, ctx)` routes `Kind` itself (`host.route`, keeping its `RouteHandle`): a forked worker per
-address over IPC, the link made at the fork, a start message `{ address, start, scripts, lock }` with the app's start
-data and the kind's complete current scripts (`plugins.scripts(kind)`); the 60 s start timer covers fork, lock and
-connect only (Q4). `workers.state` (a JSON watchable per address key), `stop`, `retry`, `step(name)`, `close`;
-`workerMain(fn, { hostPackages, redact, onError })` is the child's side (`fn({ address, start, parent, plugins,
-onClose }, ctx)`, `plugins` a `WorkerPlugins` evaluating the shipped scripts, closers in reverse order). One live
-worker per address (`processLock`: an abstract socket on Linux, a named pipe on Windows, a socket file elsewhere that
-fails closed when stale, the stale file cleared by the component before a start and after a child's exit by a signal,
-decision "Stale lock files are cleared by the starter"; a start waits for a draining old holder without polling).
+`await createWorkers(host, Kind, { kind, entry, execArgv?, env?, authorize, principal, start, lock, idleMs?, plugins,
+onOutput?, onError }, ctx)` bundles the kind's worker base, then routes `Kind` itself (`host.route`, keeping its
+`RouteHandle`): a forked worker per address over IPC, the link made at the fork, a start message `{ address, start,
+scripts, lock }` with the app's start data and the kind's complete current scripts (`plugins.scripts(kind)`); the 60 s
+start timer covers fork, lock and connect only (Q4). `workers.state` (a JSON watchable per address key), `inputs`,
+`stop`, `retry`, `step(name)`, `close`; `workerMain(fn, { hostPackages, redact, onError })` is the child's side
+(`fn({ address, start, parent, plugins, onClose }, ctx)`, `plugins` a `WorkerPlugins` evaluating the shipped scripts,
+closers in reverse order). One live worker per address (`processLock`: an abstract socket on Linux, a named pipe on
+Windows, a socket file elsewhere that fails closed when stale, the stale file cleared by the component before a start
+and after a child's exit by a signal, decision "Stale lock files are cleared by the starter"; a start waits for a
+draining old holder without polling).
 
+- **The worker base** (decision "Workers start from the base code the server booted with"): `entry` and the base code it
+  imports are bundled once by esbuild at `workers.build()` (the kit: right after the server listens, as it builds the
+  surfaces' base bundles; a start waits for it; `built.inputs`: the files read), and every worker of the kind is forked
+  from that snapshot: an edit of the app's source after the build (an agent half way through a change) reaches no
+  worker; a server restart applies it (the kit gives the inputs, each with its bytes' hash as the build read it, to the
+  watcher's `base` mark). A base that does not build fails every start of the kind (the kit reports it as `base_build`;
+  the server runs on). What it holds: the app's files and workspace
+  packages linked into `node_modules` (by their real paths); external, loaded by Node at each fork from where the build
+  resolved them: Node builtins and every package resolved under a `node_modules` directory (native addons and packages
+  reading their own files work as installed; they change only through an install, which needs a restart anyway).
+  Resolution as the child's Node does it (its `execArgv` `--conditions`, `main` only, `tsconfig.json` paths as esbuild
+  reads them); every imported module runs (`sideEffects: false` drops nothing); `import.meta.url`, `.dirname`,
+  `.filename`, `__dirname` and `__filename` name each module's source file. Split at each dynamic `import()` with a
+  literal specifier: the entry and the chunks it imports statically load at each fork, a lazily imported module and the
+  packages it imports only when the worker first imports it (an app's lazily loaded providers stay lazy; a module still
+  runs after its imports, but modules that do not import each other may run in another order than unbundled); a
+  variable-specifier import resolves at run time against its module's source file, outside the snapshot. ES modules with
+  inline source maps, forked with `--enable-source-maps` before the app's `execArgv` (stack traces name the source
+  files); `execArgv` and `env` apply to every fork as before (modules an `--import` names load from disk at each fork).
+  The files live in one private temporary directory (0700, written again into a new one when a cleaner removed one of
+  them), removed at `close`. The worker's side alone is `@earendil-works/chord/workers/child` (`workerMain`,
+  `processLock`): a worker entry importing it loads no esbuild. Plugins are unaffected: workers evaluate the server's
+  built scripts. Cost: a build at start (the kit's test worker 55-100 ms, p2's session worker 215-250 ms, 4.2 MB of
+  code); a fork then loads the entry and its static chunks (the kit's test worker 60 ms instead of 360 ms from source,
+  p2's 350 ms instead of 760 ms; on a phone, splitting and the child entry took p2's fork from 690 to 301 loaded
+  modules, no provider SDK or esbuild among them, about 300 ms less to `workerMain`).
 - **Keep-alive** (D9, R3, Q5): the child reports when `host.activity`'s references, jobs and lingering objects and the
   app's `busy` counts flip between all zero and not (local calls do not count; the first state with `ready`, which
   also carries the load report); the server stops a worker idle for `idleMs` (5 min).
@@ -2352,21 +2496,60 @@ entry. Opinionated and small: an app is its API, its built-in plugins and a star
   the app in the home directory. One server; worker kinds are a list the app defines, each a host kind with its own
   params (sharding is the app's) and how it starts (entry, start data, principal, idle time); zero kinds is a server
   with clients only.
-- **Principals and users:** the principal is tiny (a kind and an id) and the app's type; the kit needs only its server
-  and worker variants. User data lives in objects keyed by the user's id. Optional kit plugins: users (accounts with an
-  app-supplied profile schema), authenticators (device pairing, invite links, an ephemeral pick-a-name login).
+- **Principals and users:** the principal is tiny (a kind and an id) and the app's type; the kit needs only the server's
+  principal, each worker's (with worker kinds) and the owner's, values of that type the app chooses (decision "The kit's
+  owner is a principal the app chooses": the owner may be one of the app's users; the kit adds no variant). The owner is
+  strict JSON and never the server's principal (refused at start); the kit serves it as start data (`AppInfo.owner`).
+  User data lives in objects keyed by the user's id. Optional kit plugins: users (accounts with an app-supplied profile
+  schema), authenticators (device pairing, invite links, an ephemeral pick-a-name login).
 - **Authentication:** no owner by loopback alone: the start script prints a link with a one-time token that sets a
-  signed owner cookie; deny by default (the HTTP component refuses requests without a principal unless the route or
-  socket is public); a session helper issues and revokes sessions; command-line clients send a token in a header (an
+  signed cookie of the owner's session; the owner link, the owner token file and device pairing sign in as the app's
+  owner principal, and the owner-only routes (pairing's approval, invites) recognize it by canonical JSON, each
+  principal's key computed once per principal object; a change of the owner between starts replaces the owner token file
+  and revokes its old session; deny by default (the HTTP component refuses requests without a principal unless the route
+  or socket is public); a session helper issues and revokes sessions; command-line clients send a token in a header (an
   owner token file readable only by the app's OS user; a device pairing flow from other machines).
 - **Storage:** one store for the server, a directory per worker under its kind and address with its store; plugins
-  never use data-directory paths. A files plugin per address (`put`, chunked transfers, a watchable index, caps) is
-  the default file storage; raw directories only where a real path is needed, owned by one object, under the worker's
-  directory. Export and import the data a host created (`exportData`, `importData`): the store's archive plus its
+  never use data-directory paths. `Files`, one per host (decision "Files v2"), is the default file storage: its
+  bytes as immutable blobs in the host's `files/`, its index in tables of the host's store; every file in a space at
+  a path, folders as index entries and moves in the index only, a version per write and copies sharing blobs (a blob
+  goes once nothing references it), small writes and chunked transfers, idempotency keys, fixed indexed metadata
+  (`source`, `ref`, `key`, `mime`, …) plus free `meta`, queries by folder, path, `ref` and `key`, live folder
+  listings (`FilesFolder`), a summary per space a worker pushes to its server's index, caps per host, and
+  `copyFiles` for a new address made from an existing one. Raw directories only where a real path is needed, owned
+  by one object, under the worker's directory. Export and import the data a host created (`exportData`, `importData`): the store's archive plus its
   files; export stops nothing (a running worker packs its own store; without one the server reads it under the
   worker's lock), import refuses an address that has data (decision "App kit naming and export").
 - **Plugins:** the app's root (required) and the user's root in the data directory; installs from git or npm; one
   "apply changes" call builds and rolls out to the server, then every running worker, exposed by the app as it likes.
+- **Restart needed:** `plugins.state.base` compares base code with what runs by content (§21, the reload loop, with
+  its one latched exception): the app's `base` files and directories hashed at start, the server's own code (a
+  best-effort static scan of its entry, `process.argv[1]`, bundled by esbuild with the server's conditions only to
+  record what it reads: the literal imports of the start script's graph, lazy ones included, never a computed
+  `import(x)` or a loader's module; an unresolved import left out, a failed scan reported), and the bytes each base
+  read (the page's, the terminal's, each worker kind's), compared once when the kit watches them and at every change.
+  The bases' records and the scan are added after the start, off its path (`app.baseWatched`; until it settles `base`
+  is not known; the close does not wait for it): the server answers meanwhile. The latched exception covers the
+  window between Node loading the server's modules and the scan reading them; an edit whose timestamps do not show it
+  (a coarse or skewed file system clock) goes unseen there. The page's and the terminal's base resolve packages with
+  the server process's conditions (`--conditions`/`-C` of its flags and `NODE_OPTIONS`), or the app's
+  `web.conditions`/`tui.conditions`; a worker kind's with its own `execArgv`.
+- **Startup cost:** `startServer` resolves once the server listens; nothing it built is kept between starts (owner
+  decision "A"). The web and terminal base bundles and each worker kind's worker base are built right after the listen,
+  at once, from the files as they are then (`app.basesBuilt` settles once every build ended): a page request (the page,
+  the surface's files, its `base` hash, a launcher's start) waits for its surface's build, a worker start for its
+  kind's. A base that fails to build is reported (`AppError` `base_build`) and fails only what needs it: the page and
+  the surface's files answer 503, the kind's workers fail their start; the server runs on, and a restart builds again.
+  An Apply waiting at a surface's step for its initial build stops when its context is aborted (the build goes on: it
+  is shared). The scan of the server's own code runs after the builds. Workers are forked with
+  `NODE_COMPILE_CACHE=<dataDir>/cache/node`, and each kind's worker base is written to
+  `<dataDir>/cache/workers/<kind>/` at its first fork (emptied first, removed at close), only while the start holds the
+  data directory's lock: a build that ends after its start closed writes nothing. The path stays the same, so Node's compile
+  cache knows the files (about 18 ms of the first worker's start). The server's own process must get
+  `NODE_COMPILE_CACHE` from its supervisor or start command (its modules load before the kit runs). A minimal server's
+  `startServer` takes about 30 ms; example 53's about 40 ms, its first worker answering about 320 ms after the start
+  began (was about 560 ms with the builds on the start's path); Node's loading of Chord's source before the start script
+  (about 390 ms, about 110 ms with a warm compile cache) is the remaining cost.
 
 ### Web and TUI (slice 11)
 
@@ -2374,10 +2557,12 @@ Decision "Slice 11's points", "Slice 11, P3" to "P9", and "Tutorial gaps" (1) (p
 
 - `chord/surfaces` serves the client surfaces (web and terminal) from the server; `chord/web` is a page's client host
   with its connection loop (p2's `keepConnected`), loading and applying the plugins' web facets. A base bundle per
-  client kind built on the server from the app's entry (content-hashed); at page load the kind's current plugin set as
-  one combined file named by its hash, later changed plugins one script each, each a script that registers itself (no
-  eval); new scripts apply in place (`host.reload` in the page); pages learn of them through an object the web
-  component serves (the current set); a base code change reloads the page.
+  client kind built on the server from the app's entry (content-hashed; packages resolved with the server process's
+  conditions unless the app gives its own, so a page runs the Chord source the server runs); at page load the kind's
+  current plugin set as one combined file named by its hash, later changed plugins one script each, each a script that
+  registers itself (no eval); new scripts apply in place (`host.reload` in the page), their stylesheets (named by their
+  content) loaded before and each plugin left with the stylesheet of the code it runs; pages learn of them through an
+  object the web component serves (the current set); a base code change reloads the page.
 - `chord/react`: `HostProvider`, `useHold`, `useWatch`, `useRegistry`, `useRefState`, and `usePageState(key, initial)`:
   `useState`'s pair kept by the page's host under a key, so a component remounted by a plugin reload (a new function)
   keeps it (§21, "UI on client hosts").
@@ -2386,7 +2571,9 @@ Decision "Slice 11's points", "Slice 11, P3" to "P9", and "Tutorial gaps" (1) (p
   with an empty environment, `--permission` granting nothing and no SQLite; the builtin allowlist and a frozen
   substitute `process` inside; a bridge terminal; the trusted launcher outside, confirming copy, open and attach on its
   own prompt); a component scope (`hold`, `watch`, `registry`, released on dispose, one `changed` callback for the
-  app's redraw; `pageState(key, initial)`, the host's page state shared with `usePageState`), no pi-tui dependency.
+  app's redraw; `pageState(key, initial)`, the host's page state shared with `usePageState`; `optimistic(read, reduce?)`,
+  a reader showing optimistic actions while their calls are pending, with `add` and `pending`, React's `useOptimistic`,
+  §3), no pi-tui dependency.
 
 ### Messages and languages (built after slice 11)
 
@@ -2578,9 +2765,8 @@ this document):
 | 11 | where a flow lives | 20 | when login is ported |
 | 14 | project plugins | 21 | own pass over `plugin-loading.md` |
 | 16 | a Durable Object profile | 24 | when a DO target becomes concrete |
-| 24 | a per-type drain override: a host option or fixed (no install watchdog: `reload` takes the app's context, decision "Slice 7b's open points" (4); the routine handover uses `closeTimeout`; a failing job `finish` backs off 1-60 s and blocks after five failures, decided) | 3 | if a real case needs it |
+| 24 | a per-type drain override: a host option or fixed (no install watchdog: `reload` takes the app's context, decision "Slice 7b's open points" (4); a restart's old attempt is bounded by `reloadDrainTimeout`; a failing job `finish` backs off 1-60 s and blocks after five failures, decided) | 3 | if a real case needs it |
 | 28 | Astra's circuit breaker (a hard transport-buffer cap plus a stall deadline); the heartbeat is built, the cap was never decided | 3 | if a real case needs it |
-| 29 | round-3 cut C11 (`ctx.trace`); C3 and C4 are decided (§14, §15) | 8 | slice 9 |
 
 Apps (p3), from the functionality map, decided per domain when p3 is designed:
 
@@ -2718,7 +2904,113 @@ Chord reports traces, events and metrics through `@earendil-works/pi-telemetry`;
   (`pi-telemetry/render`) prints links and never follows them. A web trace viewer in the playground reads the store.
 - **Durable** (done): submit and phase spans, stored carriers on submissions and tasks (`TaskOptions.trace`, creation
   links), events after commit, report events; pi-ai emits `pi.ai.request`/`pi.ai.poll` from one observer in
-  `lazyStream`. Persisted Chord jobs store their start carrier.
+  `lazyStream`. Persisted Chord jobs store their start carrier. A worker's Harness gets its host's adapter
+  (`HarnessOptions.telemetry`) and a method that submits input passes its `ctx` (its `telemetry` the `chord.method`
+  span), so `pi.durable.submit` links to it and starts its own trace, as decided.
+
+**Built (slice 9, `slice-9.md`; `src/telemetry.ts`):**
+
+- **The schema:** `CHORD_TELEMETRY_SCHEMA` (root export, `defineTelemetrySchema`) declares every span, event and metric
+  Chord records with its attributes; the cost counters (`chord.data.*`, `chord.link.*`, `chord.store.*`,
+  `chord.query.runs`, `chord.cycle.visits`, `chord.derive.*`, `chord.registry.*`, `chord.contract.adapts`) are recorded
+  through it (`chordMetrics(metrics)`: typed instruments made once per adapter's metrics object and name, a `WeakMap`;
+  the NOOP metrics share one set). Ids (object labels, run ids, address keys) are span attributes only.
+- **Spans:** `chord.call` (a consumer's call of a remote member, until its reply), `chord.method` (a provider running a
+  method: under the call's carrier over a link, the caller's span on the same host; in `Attempt.call`, so local and
+  remote calls alike), `chord.relay` (a relayed hold until it is held upstream, a relayed call until its reply is
+  forwarded; the member is `hold` or `#<index>`: a relay never knows names), `chord.hold` (a remote reference's hold
+  until its first `bound` or failure; its carrier rides on the reference's first hold only: a re-hold after a reconnect
+  is a fresh `chord.hold` root of the host's adapter linked to the first, and a relay's re-hold upstream after a drop a
+  fresh `chord.relay` root linked to its first, so a page kept open for days never adds children under a span long
+  ended), `chord.activate`,
+  `chord.open` (under the activation), `chord.close` (a root), `chord.load`, `chord.reload` (a `chord.reload.fate`
+  event per object), `chord.resolve`, `chord.revoke` (recorded after the synchronous revocation, its `count`),
+  `chord.routine` (a root per call), `chord.job` (`intent` under the starter, `run` and `finish` under the start's
+  carrier), `chord.http`. Every span Chord starts, `ctx.trace`'s too, names the host that recorded it: `chord.host`, the
+  host's address key (`list|groceries`, `server`), `client` without an address, capped like the other attributes (a
+  viewer tells hosts apart by it, never by a store's span ids). Outcomes are attributes; a failure is `status: "error"` with a fixed category (`call_failed`,
+  `method_failed`, `relay_failed`, `hold_failed`, `activation_failed`, `open_failed`, `close_failed`, `load_failed`,
+  `reload_failed`, `resolve_failed`, `routine_failed`, `job_failed`, `http_failed` for a status of 500 or more,
+  `trace_failed`) and the message cut at 500 characters; a cancel (the caller's signal, `aborted`, an open its attempt
+  abandoned) sets status ok explicitly (an adapter marks a span failed when its callback throws). String attributes a
+  peer chose (an object's label with its params key, an address key, a principal's kind, names from the wire) are cut
+  at 256 characters: stores keep them for days.
+- **Activations:** one span per attempt on the host's adapter, linked to the object's first trigger (the span that
+  created it, or a hold's carrier), a retry's to the attempt before it; it ends `live`, `failed` (a transient failure's
+  backoff a `chord.retry` event) or `ended`, or `parked` with a `chord.park { cause }` event, and a parked attempt's own
+  steps resume in a new span linked to the parked one (spans stay short); one that fails or ends while still parked
+  records it in a short span linked to the parked one. A getter binding to an object while it
+  activates links its span to the activation (shared work); a route's first hold links to its resolve and back.
+- **Parents across processes are carriers, not spans:** a settled span starts no recorded children, so whatever runs
+  later under work that has ended (a job's run and finish, a re-hold) goes through a carrier extracted with the host's
+  adapter. Every job run keeps its start's carrier (a persisted one stores it): a run resumed in a new attempt or
+  process stays in its trace.
+- **`ctx.trace`** gives `fn` a child of the same kind (a job run's keeps `jobId` and `state`), and a synchronous throw of
+  `fn` rejects whether or not anything records: recording changes nothing `fn` sees but its span.
+- **Routines:** each call's span links to the span of the commit that changed its source when the watch frame's
+  context names one (the newest folded frame's; the first call, with the current value, has none), and a call that
+  threw carries its backoff as a `chord.retry` event.
+- **Cost (§30):** a span site checks `untraced(parent)` (the parent starts spans as the NOOP context does: no adapter can
+  record) and then
+  starts no span, builds no attribute object and injects no carrier; with the NOOP adapter a call over a link is within
+  noise of the code before slice 9 (`benchmarks.md`). A recording host's call costs its spans (`OpenSpan`, a span kept
+  open until its work's promise settles).
+- **Events and metrics:** `chord.commit { documents, ops, rows, duration }` on the span of the context a transaction
+  ran under (a method, a routine, a job phase, an HTTP request), only for a commit that changed something; `rows` is the
+  table rows its writes changed, as the commit step already counts them (a `put` one, an update or delete the rows its
+  statement changed; nothing is measured for it); the host-wide
+  metrics go to the host's adapter (`host.metrics`), not to a context: `chord.link.bytes { direction }` (every encoded
+  message of the host's links), `chord.link.state_messages`, `chord.commit.duration`, `chord.calls.in_flight`,
+  `chord.holds.active`, `chord.links.open`, `chord.park.duration`, `chord.backpressure.wait`. The cost counters still
+  count through the context of the work; a host with an adapter gives its links' and root scopes' work, when the app
+  passed a context without a span (`BACKGROUND_CONTEXT`, as the kit does), a span that records nothing but carries the
+  adapter's metrics (`countingOnly`), so they reach the adapter in an app too.
+- **Components:** `createHttp({ telemetry })` makes each routed request a `chord.http` root (method, route pattern,
+  status; never the path), its scope's `ctx` under it; a W3C `traceparent` (with its `tracestate`) is extracted (as the
+  carrier `{ traceparent, tracestate }`) only from a request a contributed relay verified, each header at most 256 and
+  512 characters of printable ASCII (else ignored). A verified relay vouches for the proxy, not the browser behind it:
+  an app's proxy must strip `traceparent` and `tracestate` from browsers' requests (or set its own), or a browser
+  chooses the trace its requests join. `startServer({ telemetry })` passes the store to its host and HTTP and serves
+  the ingest objects; workers and recording pages send it their spans (below). The SQLite store orders spans of one
+  microsecond as their recorder started them (by start time, then id length and id).
+- **Span times (after slice 9):** a span's start is `telemetryNow()` (pi-telemetry): wall-clock milliseconds at
+  microsecond resolution from `performance.now()` anchored to the wall clock, anchored anew when the two part by more
+  than 10 ms (a clock set, a sleep the monotonic clock did not count); its end and its events' times are the monotonic
+  clock's from there. The in-memory adapter and the SQLite store share it, and `renderTrace` prints lengths to the
+  microsecond. The SQLite store keeps span times in whole microseconds (`started_us`, `ended_us`): store version 2, to
+  which a recorder migrates a version 1 file in place (its rows' milliseconds multiplied), since several processes
+  share one file and a new store version would strand the rows already there.
+- **The server is the one place telemetry is stored** (decisions "Telemetry from browser pages", "The server is the
+  one place telemetry is stored", "Who a span was for"; `src/telemetry-ingest/`): the server's store is the only
+  writer of its file. Pages and workers record with Chord's in-memory `TelemetryRecorder` (the SQLite store records
+  with it too: one carrier format, one bounded queue of settled spans and metric aggregates per 10 s) and send finished
+  spans in batches over the link they already have to the server's `PageTelemetry` and `WorkerTelemetry`
+  (`ingest(batch)`), served by the kit when `startServer` has a telemetry store (`TelemetryContext` with the store's
+  `ingest`). A worker sends every second (and its last spans and partial metrics when it closes), written as they are,
+  stamped with its host (`chord.host`: its address key, known from the principal its link stamps). A page records
+  when `startPage({ telemetry: true })` and sends spans only, every 3 s and when hidden; the server treats it as
+  untrusted: the batch schema bounds everything (100 spans; names 128 characters; 32 attributes, keys 64, values 256
+  characters or numbers or booleans; 16 events; 8 links; error messages 500; ids printable ASCII; no control
+  characters anywhere), a span counts only when its id, trace and parent are under the page's own prefix
+  (`browser:<its host's incarnation>:`, so it neither writes into another sender's trace nor poses as a server span),
+  1,200 spans per page and minute (past it dropped, counted in the answer), each marked `chord.host: browser` and
+  stamped with the principal attributes of its link (the hook called per span), the page's own `chord.*` attributes
+  dropped, so a page never claims a host or a principal. The store writes ingested spans
+  with `INSERT OR IGNORE`: a stored span is never replaced. The ingest objects' calls start no `chord.method`
+  (`ServeOptions.untraced`): a span per batch would be telemetry about telemetry. A trace of a page's own starts with
+  `host.root(fn, ctx, { trace: { name, attributes } })`, a root span of the host's adapter (`trace_failed` on a throw).
+  A viewer clamps a page's spans against the server spans under them (the page's clock may be off).
+- **Who a span was for:** `chord.method` and `chord.call` record their principal's attributes: by default
+  `chord.principal`, its principal key (capped); a host's `principalAttributes(principal)` hook replaces them (none,
+  the key, more: a user's name the app resolves; `{}` records nothing). Chord calls it for every span it records with
+  a principal and never when nothing records (the NOOP adapter), so it is synchronous and cheap; Chord caches none of
+  its results, any caching is the hook's own; the kit passes `startServer`'s and `startWorker`'s to their hosts, and
+  the server stamps a page's spans with it for the link's principal. `Host` exposes `principalAttributes`,
+  `incarnation` and `address` for the kit and the page recorder.
+- **Reading a shared file:** `openTelemetryStore(path)` (`@earendil-works/chord/telemetry-sqlite/node`) implements
+  `TelemetryStore` only, on a read-only SQLite connection (`openNodeSqliteDatabase(path, { mode: "read-only" })`:
+  deferred transactions, nothing configured or checkpointed): it never writes, creates or migrates the file, and
+  refuses one without a store or with a store of another version.
 
 ## 30. Cost model
 
@@ -2769,4 +3061,5 @@ view algebra; keeping natives across reloads by name; Chord ending the process o
 flag on references; cross-relay reset coordination; count limits that refuse calls or holds; relays acking per hop, relay resets
 (`reset { hold }`, `reset { holds }`), relay recovery and id renumbering at relays (replaced by flow control per
 origin); a byte window, credit messages, snapshot admission and debt; `reset` from a consumer; a round-robin of
-relayed calls at the relay; `state: false` on references (C8); `inVariant`/`expectVariant` (C15); per-call deadlines.
+relayed calls at the relay; `state: false` on references (C8); `inVariant`/`expectVariant` (C15); per-call deadlines; references shared between UI
+components across a remount (decision "A reloaded UI part shows its loading state").

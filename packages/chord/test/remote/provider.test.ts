@@ -1,9 +1,10 @@
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { type Contract, int, local, map, method, obj, remote } from "../../src/contracts/index.ts";
 import { PendingOps } from "../../src/delta/index.ts";
 import { defineState } from "../../src/documents/index.ts";
-import { createHost, defineFacet, type FacetHost } from "../../src/host/index.ts";
+import { type Ctx, createHost, defineFacet, type FacetHost } from "../../src/host/index.ts";
 import { type Compression, memoryLinkPair, type PartLimits } from "../../src/link/index.ts";
 import { DeflatedPart, jsonPart, type Message } from "../../src/link/internal.ts";
 import { nodeCompression } from "../../src/node/compression.ts";
@@ -644,21 +645,15 @@ forEachCodec(() => {
 		});
 
 		it("overflows past 10,000 pending ops to a replacement with the current value (race 23)", async () => {
-			const { peer } = await slowConsumer();
+			const { server, peer } = await slowConsumer();
 			hold(peer, 0, Grid, {});
 			await peer.next("bound");
-			const fill = (id: number, value: number) =>
-				peer.send({
-					kind: "call",
-					call: id,
-					hold: 0,
-					method: GRID.methods.fill!,
-					args: jsonPart({ n: 6_000, value }),
-				});
-			fill(0, 1);
-			fill(1, 2);
-			fill(2, 3);
-			for (const _ of [0, 1, 2]) await peer.next("result");
+			// Calls on the owner's object from the server itself: an answer over the link would send the waiting state first.
+			const fills = async (ctx: Ctx<TestPrincipal>) => {
+				const grid = await ctx.get(Grid, {});
+				for (const value of [1, 2, 3]) await grid.fill({ n: 6_000, value }, ctx);
+			};
+			await server.root(fills, context, { principal: { kind: "owner" } });
 			// The first fill took the second slot; the next two overflowed the queue.
 			peer.ack();
 			await transported();
@@ -666,6 +661,79 @@ forEachCodec(() => {
 			const last = GRID.named(states.at(-1)!.holds[0]!.members).grid as [string, { cells: object }][];
 			expect(last[0]![0]).toBe("r");
 			expect(Object.keys(last[0]![1].cells)).toHaveLength(6_000);
+		});
+	});
+
+	describe('an answer after its state (decision "A call\'s answer follows its state")', () => {
+		it("sends the waiting state before a result when the window is full: one message, every hold, past the window", async () => {
+			const { server, peer } = await slowConsumer();
+			hold(peer, 0, Notes, { session: "S1" });
+			hold(peer, 1, Notes, { session: "S2" });
+			await peer.next("bound");
+			await peer.next("bound");
+			await addNote(server, "S2", "a");
+			await addNote(server, "S2", "b");
+			call(peer, 0, 0, add, { text: "c" });
+			await transported();
+			// The two bindings fill the window: both commits and the call's own wait, then go before its result.
+			expect(peer.kinds()).toEqual(["hello", "state", "result"]);
+			const { holds } = statesOf(peer)[0]!;
+			expect(holds.map(({ hold, members }) => [hold, EDITOR.named(members).count])).toEqual([
+				[1, [["r", 2]]],
+				[0, [["r", 1]]],
+			]);
+			expect(partValue((await peer.next("result")).value!)).toBe(1);
+		});
+
+		it("acknowledges every message once, in order, those past the window too: the window opens after their acks", async () => {
+			const { server, peer } = await slowConsumer();
+			hold(peer, 0, Notes, { session: "S1" });
+			await peer.next("bound");
+			await addNote(server, "S1", "a");
+			await addNote(server, "S1", "b");
+			call(peer, 0, 0, add, { text: "c" });
+			await peer.next("result");
+			await addNote(server, "S1", "d");
+			await transported();
+			// Three in flight (the bound, a state, the state past the window): the first ack leaves the window full.
+			expect(windowed(peer)).toEqual(["state", "state"]);
+			peer.ack();
+			await transported();
+			expect(windowed(peer)).toEqual(["state", "state"]);
+			peer.ack();
+			await transported();
+			expect(windowed(peer)).toEqual(["state", "state", "state"]);
+			for (const _ of [0, 1]) peer.ack();
+			// Acks crossing nothing are ignored: two slots, not more.
+			for (const _ of [0, 1]) peer.ack();
+			for (const text of ["e", "f", "g"]) await addNote(server, "S1", text);
+			await transported();
+			expect(windowed(peer)).toEqual(["state", "state", "state", "state", "state"]);
+		});
+
+		it("sends nothing more when nothing waits: a full window, an answer of a call that changed nothing", async () => {
+			const { server, peer } = await slowConsumer();
+			hold(peer, 0, Notes, { session: "S1" });
+			await peer.next("bound");
+			await addNote(server, "S1", "a");
+			call(peer, 0, 0, fail, { how: "chord" });
+			await transported();
+			expect(peer.kinds()).toEqual(["hello", "state", "error"]);
+		});
+
+		it("costs nothing on the common path: a call's commit goes out once, at its commit, never again with its answer", async () => {
+			const telemetry = new InMemoryTelemetryContext();
+			const { peer } = await rawLinked((h) => void serveNotes(h), { telemetry });
+			hold(peer, 0, Notes, { session: "S1" });
+			await peer.next("bound");
+			for (const [id, text] of ["a", "b", "c"].entries()) {
+				call(peer, id, 0, add, { text });
+				await peer.next("result");
+			}
+			await transported();
+			const states = telemetry.getMetrics().filter(({ name }) => name === "chord.link.state_messages");
+			expect(states.reduce((sum, { value }) => sum + value, 0)).toBe(3);
+			expect(peer.kinds()).toEqual(["hello", "state", "state", "state"]);
 		});
 	});
 
@@ -1021,3 +1089,145 @@ function notesHold(id: number): Extract<Message, { kind: "hold" }> {
 }
 
 const UTF8 = new TextEncoder();
+
+describe("telemetry at the provider (slice 9)", () => {
+	/** A server recording to `telemetry`, serving `Notes`, and a raw consumer holding S1 (bound). */
+	async function traced() {
+		const telemetry = new InMemoryTelemetryContext();
+		const { peer, server } = await rawLinked((h) => void serveNotes(h), { telemetry });
+		hold(peer, 0, Notes, { session: "S1" });
+		await peer.next("bound");
+		return { telemetry, peer, server };
+	}
+
+	it("runs a call's method under its carrier, extracted with the host's adapter; an absent or unknown one is a root", async () => {
+		const { telemetry, peer } = await traced();
+		const carrier = await telemetry.startSpan({ name: "caller" }, (span) => telemetry.inject(span));
+		const { add: addIndex } = EDITOR.methods as { add: number };
+		peer.send({ kind: "call", call: 0, hold: 0, method: addIndex, args: jsonPart({ text: "a" }), trace: carrier });
+		await peer.next("result");
+		call(peer, 1, 0, addIndex, { text: "b" });
+		await peer.next("result");
+		peer.send({ kind: "call", call: 2, hold: 0, method: addIndex, args: jsonPart({ text: "c" }), trace: { x: "y" } });
+		await peer.next("result");
+		const spans = telemetry.getSpans();
+		const caller = spans.find(({ name }) => name === "caller")!;
+		const methods = spans.filter(
+			({ name, attributes }) => name === "chord.method" && attributes.type === "app.notes",
+		);
+		expect(methods.map(({ parentId }) => parentId)).toEqual([caller.id, null, null]);
+		expect(methods[0]!.attributes).toEqual({
+			"chord.host": "server",
+			type: "app.notes",
+			member: "add",
+			object: "app.notes(S1)",
+			"principal.kind": "owner",
+			"chord.principal": '{"kind":"owner"}',
+			outcome: "ok",
+		});
+	});
+
+	it("counts holds placed here up and down, its own state messages, and the bytes of its link", async () => {
+		const { telemetry, peer, server } = await traced();
+		await addNote(server, "S1", "a");
+		await peer.next("state");
+		peer.send({ kind: "release", hold: 0 });
+		await transported();
+		const sums: Record<string, number> = {};
+		for (const { name, value } of telemetry.getMetrics()) sums[name] = (sums[name] ?? 0) + value;
+		expect(sums["chord.holds.active"]).toBe(0);
+		expect(
+			telemetry
+				.getMetrics()
+				.filter(({ name }) => name === "chord.holds.active")
+				.map(({ value }) => value),
+		).toEqual([1, -1]);
+		expect(sums["chord.link.state_messages"]).toBe(1);
+		expect(sums["chord.links.open"]).toBe(1);
+		const bytes = telemetry.getMetrics().filter(({ name }) => name === "chord.link.bytes");
+		expect(new Set(bytes.map(({ attributes }) => attributes.direction))).toEqual(new Set(["sent", "received"]));
+	});
+
+	it("records how long state waited for a slot of the window", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { server } = await rawLinked((h) => void serveNotes(h), { telemetry });
+		const [a, b] = memoryLinkPair();
+		server.accept(a, { principal: { kind: "owner" }, codec: testCodec() }, context);
+		const slow = new RawPeer(b, { ack: false });
+		hold(slow, 0, Notes, { session: "S1" });
+		await slow.next("bound");
+		await addNote(server, "S1", "a");
+		await slow.next("state");
+		// The window (two messages) is full: the next change waits for an ack.
+		await addNote(server, "S1", "b");
+		expect(telemetry.getMetrics().filter(({ name }) => name === "chord.backpressure.wait")).toHaveLength(0);
+		slow.ack();
+		await slow.next("state");
+		expect(telemetry.getMetrics().filter(({ name }) => name === "chord.backpressure.wait")).toHaveLength(1);
+	});
+});
+
+describe('old work from another host (decision "Reload restarts every affected object", `call.old`)', () => {
+	/** A remote type whose `slow` waits for `gate` (the call a restart drains) and whose `ping` answers its code. */
+	const Coded = remote("app.coded", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		variants: { v: { state: {}, methods: { slow: method(undefined, int()), ping: method(undefined, int()) } } },
+	});
+	const CODED = wireNames(Coded, "v");
+
+	/** Serves `Coded` as code `code`, `slow` first awaiting `gate`. */
+	const serveCoded = (h: FacetHost<TestPrincipal>, code: number, gate?: Promise<void>) =>
+		h.serve(Coded, () => ({
+			variant: "v",
+			members: {
+				slow: async () => {
+					await gate;
+					return code;
+				},
+				ping: async () => code,
+			},
+		}));
+
+	/**
+	 * Holds `Coded` on a server restarting it while its call `slow` drains, then sends `ping` (marked old when `old`) on
+	 * a link trusted when `trusted`: resolves with the code that answered it and whether that came before the drain.
+	 */
+	async function pingDuringDrain(old: boolean, trusted: boolean) {
+		const gate = Promise.withResolvers<void>();
+		const { server, peer } = await rawLinked((h) => serveCoded(h, 1, gate.promise), { trusted });
+		await peer.next("hello");
+		hold(peer, 0, Coded, {});
+		await peer.next("bound");
+		call(peer, 0, 0, CODED.methods.slow!);
+		await transported();
+		await server.reload([{ name: "@test/app", facet: defineFacet<TestPrincipal>((h) => serveCoded(h, 2)) }], context);
+		peer.send({
+			kind: "call",
+			call: 1,
+			hold: 0,
+			method: CODED.methods.ping!,
+			...(old ? { old: true as const } : {}),
+		});
+		await transported();
+		const early = peer.received.some((message) => message.kind === "result" && message.call === 1);
+		gate.resolve();
+		const first = await peer.next("result");
+		const result = first.call === 1 ? first : await peer.next("result");
+		await server.close(context);
+		return { code: partValue(result.value!), early };
+	}
+
+	it("runs a marked call from a trusted link on the open old attempt: answered by the old code, before the drain", async () => {
+		expect(await pingDuringDrain(true, true)).toEqual({ code: 1, early: true });
+	});
+
+	it("ignores the mark from a link that is not trusted: the call is new work and waits for the new code", async () => {
+		expect(await pingDuringDrain(true, false)).toEqual({ code: 2, early: false });
+	});
+
+	it("runs an unmarked call from a trusted link as new work", async () => {
+		expect(await pingDuringDrain(false, true)).toEqual({ code: 2, early: false });
+	});
+});
