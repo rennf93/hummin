@@ -44,7 +44,7 @@ beforeEach(() => {
 	cleanups.push(agentDir);
 	vi.stubEnv(ENV_AGENT_DIR, agentDir);
 	vi.stubEnv("COLI_API_KEY", "test-key");
-	vi.stubEnv("HUMMIN_DECISION_URL", "http://127.0.0.1:9987/v1/systemone");
+	vi.stubEnv("HUMMIN_DECISION_URL", "http://127.0.0.1:9997/v1/systemone");
 	vi.stubEnv("HUMMIN_NOTIFY", "off");
 	resetHeldDecisions();
 });

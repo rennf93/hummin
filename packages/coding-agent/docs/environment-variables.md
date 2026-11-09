@@ -167,7 +167,8 @@ Connection and calibration live in settings under `decision.url`, `.apiKey`, `.g
 
 | Variable | Description |
 |----------|-------------|
-| `HUMMIN_DECISION_URL` | Overrides the engine's SystemOne endpoint (default `http://127.0.0.1:9987/v1/systemone`) |
+| `HUMMIN_DECISION_URL` | Overrides the engine's SystemOne endpoint (default `http://127.0.0.1:9997/v1/systemone`) |
+| `HUMMIN_DECISION_FALLBACK_URLS` | Comma-separated fallback SystemOne endpoints, tried in order when the primary is unreachable or answers 5xx/401/403/408/429 (default none) |
 | `HUMMIN_DECISION_API_KEY` | Overrides the engine's bearer key (default `COLI_API_KEY`, the shared fleet key; no-auth engines work with it unset) |
 | `HUMMIN_DECISION_GATE_THRESHOLD` | Gray-zone block threshold on P(destructive), `0` to `1` (default `0.75`) |
 | `HUMMIN_DECISION_STEER_THRESHOLD` | Destructive-intent steer threshold, `0` to `1` (default `0.8`) |
