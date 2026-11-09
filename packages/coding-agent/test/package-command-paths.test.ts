@@ -587,7 +587,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 
 		const warnings = warnSpy.mock.calls.map(([message]) => String(message)).join("\n");
 		expect(warnings).toContain("skipped model catalog for radius: OAuth refresh failed for radius: invalid_grant");
-		expect(warnings).toContain("pi auth login radius");
+		expect(warnings).toContain(`${APP_NAME} auth login radius`);
 		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain("Model catalogs refreshed");
 		expect(errorSpy).not.toHaveBeenCalled();
 		expect(process.exitCode).toBeUndefined();
