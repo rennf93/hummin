@@ -1,4 +1,8 @@
+// Chord's Node tests use workspace sources and canonical temporary paths.
+
 import { availableParallelism } from "node:os";
+import { realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { defineConfig } from "vitest/config";
 
 // Workspace packages (pi-telemetry, pi-schema) resolve to their sources, so Chord's tests need no build.
@@ -9,7 +13,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
 	test: {
 		environment: "node",
-		setupFiles: ["./test/real-tmpdir.ts"],
+		// Fixtures and esbuild must name the same files when macOS's temporary directory is a symlink.
+		env: { TMPDIR: realpathSync(tmpdir()) },
 		maxWorkers: Math.min(4, Math.max(availableParallelism() - 1, 1)),
 	},
 	resolve: { conditions: ["source"] },
