@@ -13,9 +13,8 @@ import { contentHash } from "../../../src/node/plugins/base-inputs.ts";
 import { type BuiltFacet, discoverPlugins } from "../../../src/node/plugins/index.ts";
 import { PluginWatcher } from "../../../src/node/plugins/watcher.ts";
 import { Batch } from "../../../src/state/internal.ts";
-import { fileEventsDelivered } from "../../file-events.ts";
 import { changesOf, delivered } from "../../support.ts";
-import { KINDS, tempRoot, writeFiles, writePlugin } from "./support.ts";
+import { KINDS, settleFileEvents, tempRoot, writeFiles, writePlugin } from "./support.ts";
 
 /** A root with plugins `a` (worker), `b` (server) and the contracts fixture, a base directory, and a watcher of both. */
 async function watched() {
@@ -23,9 +22,7 @@ async function watched() {
 	const base = await realpath(await tempRoot());
 	await writePlugin(root, "a", "@test/a", { "worker.ts": "", "own.ts": "" });
 	await writePlugin(root, "b", "@test/b", { "server.ts": "" });
-	// `base` is set by any event under a base directory and never cleared: let the events of the directories and files
-	// made above arrive before the watch starts, so macOS cannot report them to it late as a base change.
-	await fileEventsDelivered();
+	await settleFileEvents();
 	const failures: unknown[] = [];
 	const watcher = new PluginWatcher(
 		{ roots: [root], base: [base], kinds: KINDS, failed: (error) => failures.push(error) },
@@ -48,12 +45,7 @@ async function watched() {
 		used("@test/a", "worker", [join(root, "a", "worker.ts"), contract]),
 		used("@test/b", "server", [join(root, "b", "server.ts"), contract]),
 	]);
-	// The writes above, as macOS reports them after the watch started, must not count as changes: marks they made clear.
-	await fileEventsDelivered();
-	const names = ["@test/a", "@test/b", "@test/contracts"];
-	watcher.know(await discoverPlugins([root], { kinds: KINDS }, context), watcher.discoverySnapshot());
-	for (const name of names) watcher.installed(name);
-	watcher.applied(names, watcher.snapshot(names));
+	await settleFileEvents();
 	return { root, base, watcher, failures };
 }
 
@@ -161,8 +153,6 @@ describe("the watcher and single-file plugins (slice 12 §4)", () => {
 	it("dirties a single-file plugin for a change of its file; a file appearing or disappearing at a root's top sets set", async () => {
 		const { root, watcher } = await watched();
 		await writeFiles(root, { "hello.server.ts": "" });
-		// The real events of each change first (macOS delivers them late): the marks made by hand follow them.
-		await fileEventsDelivered();
 		watcher.mark(join(root, "hello.server.ts"));
 		expect(watcher.value).toMatchObject({ set: true, dirty: [] });
 		const seen = watcher.discoverySnapshot();
@@ -172,12 +162,10 @@ describe("the watcher and single-file plugins (slice 12 §4)", () => {
 		watcher.mark(join(root, "hello.server.ts"));
 		expect(watcher.value).toMatchObject({ set: false, dirty: ["hello"] });
 		await writeFiles(root, { "hello.web.tsx": "" });
-		await fileEventsDelivered();
 		watcher.mark(join(root, "hello.web.tsx"));
 		expect(watcher.value).toMatchObject({ set: true });
 		watcher.know(await discoverPlugins([root], { kinds: KINDS }, context), watcher.discoverySnapshot());
 		await rm(join(root, "hello.server.ts"));
-		await fileEventsDelivered();
 		watcher.mark(join(root, "hello.server.ts"));
 		expect(watcher.value).toMatchObject({ set: true, dirty: ["hello"] });
 		watcher.close();
@@ -259,12 +247,14 @@ describe("base code compared with what the running bases read (p3 step 0a)", () 
 			{ roots: [], base: [base], kinds: KINDS, failed: () => {} },
 			new Batch(() => {}, undefined),
 		);
+		await settleFileEvents();
 		return { base, watcher };
 	}
 
 	/** Waits until the watcher's `base` mark is `value`. */
 	async function baseIs(watcher: PluginWatcher, value: boolean): Promise<void> {
 		await vi.waitFor(() => expect(watcher.value).toMatchObject({ base: value }), { timeout: 5_000 });
+		await settleFileEvents();
 	}
 
 	/** Lets the watch events and the comparisons of the last writes run. */
@@ -328,6 +318,7 @@ describe("base code compared with what the running bases read (p3 step 0a)", () 
 			{ roots: [], base: [base], kinds: KINDS, failed: () => {} },
 			new Batch(() => {}, undefined),
 		);
+		await settleFileEvents();
 		await rename(base, join(parent, "moved"));
 		await baseIs(watcher, true);
 		await rename(join(parent, "moved"), base);

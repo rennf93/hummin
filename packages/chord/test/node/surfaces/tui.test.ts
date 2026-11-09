@@ -44,10 +44,7 @@ describe("the terminal surface", () => {
 				"tui.ts": 'import icon from "./icon.svg?url";\nexport default { setup: () => icon };',
 				"icon.svg": "<svg/>",
 			});
-			// Named to the build, but found by discovery: the watch's event of the new directory asks for it.
-			await vi.waitFor(() => expect(app.plugins.component.state.value).toMatchObject({ set: true }), {
-				timeout: 5_000,
-			});
+			await vi.waitFor(() => expect(app.plugins.state.value.set).toBe(true));
 			const built = await app.plugins.component.build(["@test/pictured"], context);
 			expect(built.facets.find(({ plugin }) => plugin === "@test/pictured")).toMatchObject({
 				kind: "failed",

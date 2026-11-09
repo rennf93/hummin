@@ -149,7 +149,7 @@ export class Upgrades {
 		for (const upgraded of this.#open) end(upgraded);
 	}
 
-	/** Keeps `upgraded` until its socket closes; an error (an oversized frame) terminates only that socket. */
+	/** Keeps `upgraded` until its socket closes, letting a protocol error finish its close handshake. */
 	#keep(upgraded: Upgraded): void {
 		const { socket } = upgraded;
 		// `ws` answers a bad frame by itself: it sends the close frame (1009 for an oversized one), ends the socket once that

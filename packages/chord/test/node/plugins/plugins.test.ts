@@ -20,7 +20,6 @@ import {
 	type RolloutStep,
 } from "../../../src/node/plugins/index.ts";
 import { constant } from "../../../src/state/index.ts";
-import { fileEventsDelivered } from "../../file-events.ts";
 import {
 	changesOf,
 	delivered,
@@ -31,7 +30,16 @@ import {
 	transported,
 	valuesOf,
 } from "../../support.ts";
-import { gitRepository, HOST_PACKAGES, kindsOf, tempRoot, writeFiles, writePackage, writePlugin } from "./support.ts";
+import {
+	gitRepository,
+	HOST_PACKAGES,
+	kindsOf,
+	settleFileEvents,
+	tempRoot,
+	writeFiles,
+	writePackage,
+	writePlugin,
+} from "./support.ts";
 
 /** The fixtures' contracts, as the `contracts` fixture declares them. */
 const Worker = hostKind("test.worker");
@@ -62,8 +70,9 @@ function reportOf(hosts: readonly RolloutHost[]): ReloadReport {
 	return entry.report;
 }
 
-/** The component over `root`, its reports collected, its watch caught up with what was written to `root`. */
+/** The component over `root`, its reports collected. */
 async function component(root: string): Promise<{ plugins: Plugins; reported: unknown[] }> {
+	await settleFileEvents();
 	const reported: unknown[] = [];
 	const plugins = createPlugins(
 		{
@@ -73,8 +82,7 @@ async function component(root: string): Promise<{ plugins: Plugins; reported: un
 		},
 		context,
 	);
-	// macOS reports the writes that made `root` after the watch started: delivered before the test acts.
-	await fileEventsDelivered();
+	await settleFileEvents();
 	return { plugins, reported };
 }
 
@@ -250,7 +258,6 @@ describe("rollout", () => {
 		await plugins.build([], context);
 		await writeFile(join(root, "a", "worker.ts"), "// a\n");
 		await writeFile(join(root, "b", "worker.ts"), "// b\n");
-		await fileEventsDelivered();
 		await vi.waitFor(() => expect(plugins.state.value).toMatchObject({ dirty: ["@test/a", "@test/b"] }), {
 			timeout: 5_000,
 		});
@@ -277,7 +284,6 @@ describe("rollout", () => {
 		const { plugins } = await component(root);
 		await plugins.build([], context);
 		await writeFile(join(root, "a", "worker.ts"), "// a\n");
-		await fileEventsDelivered();
 		await vi.waitFor(() => expect(plugins.state.value).toMatchObject({ dirty: ["@test/a"] }), { timeout: 5_000 });
 		const stopped: RolloutHost[] = [{ host: "session|S1", stopped: true }];
 		await plugins.rollout(
@@ -287,7 +293,6 @@ describe("rollout", () => {
 		);
 		expect(plugins.state.value).toMatchObject({ dirty: [] });
 		await writeFile(join(root, "a", "worker.ts"), "// a again\n");
-		await fileEventsDelivered();
 		await vi.waitFor(() => expect(plugins.state.value).toMatchObject({ dirty: ["@test/a"] }), { timeout: 5_000 });
 		const crashed: RolloutHost[] = [
 			{ host: "session|S1", report: report([]) },
@@ -309,7 +314,6 @@ describe("rollout", () => {
 		const { plugins } = await component(root);
 		await plugins.build([], context);
 		await writeFile(join(root, "a", "worker.ts"), "export default { setup: () => {} }; // edited\n");
-		await fileEventsDelivered();
 		await vi.waitFor(() => expect(plugins.state.value).toMatchObject({ dirty: ["@test/a"] }), { timeout: 5_000 });
 		const built = await plugins.build(["@test/a"], context);
 		await plugins.rollout([step("worker", [], { report: report([]) })], built, context);
@@ -329,7 +333,6 @@ describe("rollout", () => {
 		const { plugins } = await component(root);
 		await plugins.build([], context);
 		await writeFile(join(root, "a", "worker.ts"), "// 1\n");
-		await fileEventsDelivered();
 		await vi.waitFor(() => expect(plugins.state.value).toMatchObject({ dirty: ["@test/a"] }), { timeout: 5_000 });
 		const built = await plugins.build(["@test/a"], context);
 		const order: string[] = [];
@@ -347,7 +350,6 @@ describe("rollout", () => {
 		// Saved again after the build: applied, the mark stays (the build did not include the new content).
 		const later = await plugins.build(["@test/a"], context);
 		await writeFile(join(root, "a", "worker.ts"), "// 2\n");
-		await fileEventsDelivered();
 		await vi.waitFor(async () => {
 			await plugins.rollout([step("server", [], { report: report([]) })], later, context);
 			expect(plugins.state.value).toMatchObject({ dirty: ["@test/a"] });
@@ -404,7 +406,6 @@ describe("installs through the component", () => {
 			},
 			context,
 		);
-		await fileEventsDelivered();
 		await plugins.build([], context);
 		await writeFile(
 			join(root, "a", "package.json"),
@@ -522,8 +523,7 @@ describe("plugins whose files move, and removed plugins (slice 12 fix round 2, S
 		const Hello = local("test.hello", { version: 1, params: {}, members: { label: str() } });
 		expect((await host.get(Hello, {}, context)).label.value).toBe("from a file");
 		await writePlugin(root, "hello", "hello", { "worker.ts": facet("from a directory") });
-		// Named by no one: the watch's event of the new directory makes the next build discover again.
-		await vi.waitFor(() => expect(plugins.state.value).toMatchObject({ set: true }), { timeout: 5_000 });
+		await vi.waitFor(() => expect(plugins.state.value.set).toBe(true));
 		const built = await plugins.build([], context);
 		expect(Object.keys(built.plugins)).toEqual(["hello"]);
 		await plugins.rollout([plugins.step("worker", host)], built, context);
@@ -613,8 +613,6 @@ describe("end to end: a server and a worker", () => {
 		const steps = [plugins.step("server", server as Host<P>), plugins.step("worker", worker as Host<P>)];
 
 		await writeFile(join(root, "notes", "label.ts"), 'export const label = "v2";\n');
-		// All events of the write, so none comes after the rollout and marks the plugin again.
-		await fileEventsDelivered();
 		await vi.waitFor(() => expect(plugins.state.value).toMatchObject({ dirty: ["@test/notes"] }), { timeout: 5_000 });
 		const rolled = await plugins.rollout(steps, await plugins.build(plugins.state.value.dirty, context), context);
 		expect(
@@ -630,8 +628,6 @@ describe("end to end: a server and a worker", () => {
 		expect(plugins.state.value).toMatchObject({ dirty: [] });
 
 		await writeFile(join(root, "notes", "label.ts"), "export const label = ;\n");
-		// All events of the write, so none comes after the rollout and marks the plugin again.
-		await fileEventsDelivered();
 		await vi.waitFor(() => expect(plugins.state.value).toMatchObject({ dirty: ["@test/notes"] }), { timeout: 5_000 });
 		const broken = await plugins.rollout(steps, await plugins.build(plugins.state.value.dirty, context), context);
 		expect(broken.steps.map(({ name, hosts }) => [name, failedNames(reportOf(hosts))])).toEqual([
@@ -777,6 +773,7 @@ describe("fix round 1", () => {
 			"worker.ts": 'import { label } from "./helper.ts";\nexport default { setup: () => {}, label };',
 			"helper.ts": 'export const label = "old";',
 		});
+		await settleFileEvents();
 		const plugins = createPlugins(
 			{
 				roots: [root],
@@ -786,7 +783,6 @@ describe("fix round 1", () => {
 			},
 			context,
 		);
-		await fileEventsDelivered();
 		expect((await plugins.build([], context)).facets.map(({ kind }) => kind)).toEqual(["script"]);
 		await writeFiles(dir, {
 			"package.json": JSON.stringify({ name: "@test/a", type: "module", dependencies: { "new-dep": "1.0.0" } }),

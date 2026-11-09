@@ -13,8 +13,8 @@ import * as chord from "../../../src/index.ts";
 import type { JsonValue } from "../../../src/json.ts";
 import { createPlugins, type Plugins } from "../../../src/node/plugins/index.ts";
 import { createWorkers, type Workers, type WorkersError } from "../../../src/node/workers/index.ts";
-import { fileEventsDelivered } from "../../file-events.ts";
 import { Session, type WorkerBehaviour } from "../fixtures/workers/control.ts";
+import { settleFileEvents } from "../plugins/support.ts";
 
 /** The server's own kind. */
 export const Server = hostKind("server");
@@ -79,6 +79,7 @@ export async function fleet(
 ): Promise<Fleet> {
 	const root = await mkdtemp(join(tmpdir(), "chord-workers-"));
 	await cp(PLUGINS, root, { recursive: true });
+	await settleFileEvents();
 	const errors: WorkersError[] = [];
 	const hostErrors: HostError[] = [];
 	const starts: string[] = [];
@@ -122,6 +123,7 @@ export async function fleet(
 	await server.load([], context);
 	// The worker kind's set made now (discovery, builds): the watcher marks edits from then on.
 	await plugins.scripts("worker", context);
+	await settleFileEvents();
 	const close = async () => {
 		await workers.close(context);
 		await server.close(context);
@@ -140,8 +142,7 @@ export async function fleet(
 		behaviours,
 		label: async (label) => {
 			await writeFile(join(root, "notes", "label.ts"), `export const label = ${JSON.stringify(label)};\n`);
-			// macOS delivers one write's events one by one: a mark after a rollout's snapshot would be a new change.
-			await fileEventsDelivered();
+			await settleFileEvents();
 		},
 	};
 }
