@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildCatalog, resolveRequestedModel, type ModelLike, type ModelProfile } from "../extensions/lib/model-rightsize.ts";
+import {
+	buildCatalog,
+	type ModelLike,
+	type ModelProfile,
+	resolveRequestedModel,
+} from "../extensions/lib/model-rightsize.ts";
 
 const profiles: ModelProfile[] = [
 	{ provider: "zai", modelId: "glm-5.3-flash", description: "cloud fast" },
@@ -13,7 +18,12 @@ const registry = (): ModelLike[] => [
 	{ provider: "zai", id: "glm-5.3-flash", thinkingLevels: ["off", "low"] },
 	{ provider: "anthropic", id: "claude-sonnet-5", thinkingLevels: ["off", "medium"] },
 	{ provider: "llamacpp-mac-9992", id: "lfm3-omni-2b", local: true, thinkingLevels: ["off"] },
-	{ provider: "llamacpp-nas-egpu-9994", id: "glm-5.3-flash-coder-rco", local: true, thinkingLevels: ["off", "medium"] },
+	{
+		provider: "llamacpp-nas-egpu-9994",
+		id: "glm-5.3-flash-coder-rco",
+		local: true,
+		thinkingLevels: ["off", "medium"],
+	},
 ];
 
 describe("buildCatalog with profiles", () => {
