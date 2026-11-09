@@ -255,6 +255,8 @@ export interface Settings extends Omit<SchemaSettings, "terminal" | "cacheWarmin
  * extensions/lib/decision-engine.ts). */
 export interface DecisionSettings {
 	url?: string;
+	/** Ordered fallback engine urls, used only when `url` is down. */
+	fallbackUrls?: string[];
 	apiKey?: string;
 	gateThreshold?: number;
 	steerThreshold?: number;
