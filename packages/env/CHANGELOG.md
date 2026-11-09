@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- An aborted or timed-out request no longer waits for a remote host that does not answer: aborting while the connection starts rejects at once with `aborted`, a sent request settles as `aborted` if the daemon does not answer its cancel within a second, `RemoteExecutionEnv.exec` enforces its timeout locally as well, and file operations stop waiting for the connection when aborted. `ssh` gets `ConnectTimeout=15`, so a host that is down fails a start within 15 s.
 - On Windows, an `exec` command's output readers stop once the command has settled, also while a descendant keeps a pipe open without writing; they stayed blocked until it exited, because cancelling a blocked read did not reach the standard library's overlapped pipe I/O.
 - `exec` and `pty` fail with `spawn_error` instead of hanging when the daemon cannot start a helper thread (for example at a cgroup task limit); the started command is killed and reaped ([#11433](https://github.com/earendil-works/pi/issues/11433)).
 - `Connection.close()` on Unix no longer leaves running commands behind: the daemon used to die from the client's `SIGTERM` before killing its process groups. It now kills them on `SIGTERM`, `SIGINT` or `SIGHUP` before exiting.

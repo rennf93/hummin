@@ -4,7 +4,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
+import { InMemoryTelemetryContext, type TelemetryContext } from "@earendil-works/pi-telemetry";
 import { afterEach, beforeAll, beforeEach, describe, expect, vi } from "vitest";
 import { BACKGROUND_CONTEXT, type Context, withTelemetry } from "../src/context/index.ts";
 import {
@@ -241,12 +241,14 @@ export async function loaded(
 		readonly context?: Context;
 		readonly closeTimeout?: number;
 		readonly readyTimeout?: number;
+		readonly reloadDrainTimeout?: number;
 		readonly store?: Store;
 	} = {},
 ): Promise<{ readonly host: Host; readonly errors: HostError[]; readonly failed: readonly PluginFailure[] }> {
 	const errors: HostError[] = [];
-	const { telemetry, closeTimeout, readyTimeout, store } = options;
-	const host = createHost({ telemetry, closeTimeout, readyTimeout, store, onError: (error) => errors.push(error) });
+	const { telemetry, closeTimeout, readyTimeout, reloadDrainTimeout, store } = options;
+	const onError = (error: HostError) => errors.push(error);
+	const host = createHost({ telemetry, closeTimeout, readyTimeout, reloadDrainTimeout, store, onError });
 	const facets = [{ name: "@test/app", facet: defineFacet(setup) }];
 	const { failed } = await host.load(facets, options.context ?? BACKGROUND_CONTEXT);
 	return { host, errors, failed };
@@ -544,7 +546,7 @@ export function wireNames(Type: Contract, variant: string) {
 	};
 }
 
-/** A server host as in `linked` and a raw peer on a link it accepted as `child`, with `limits`. */
+/** A server host as in `linked` and a raw peer on a link it accepted as `child` (trusted when `trusted`), with `limits`. */
 export async function rawLinked(
 	setup: (host: FacetHost<TestPrincipal>) => void,
 	options: {
@@ -555,6 +557,9 @@ export async function rawLinked(
 		readonly compression?: Compression;
 		/** What the raw peer is to the host: a child (`accept`, the default) or its parent (`connect`). */
 		readonly role?: "child" | "parent";
+		readonly telemetry?: TelemetryContext;
+		/** Whether the host trusts the raw peer's link (its messages are not checked; `call.old` is honoured). */
+		readonly trusted?: boolean;
 	} = {},
 ): Promise<{ readonly server: Host<TestPrincipal>; readonly peer: RawPeer; readonly errors: HostError[] }> {
 	const errors: HostError[] = [];
@@ -563,12 +568,13 @@ export async function rawLinked(
 		principal: { kind: "server" },
 		readyTimeout: options.readyTimeout,
 		compression: options.compression,
+		telemetry: options.telemetry,
 		onError: (error) => errors.push(error),
 	});
 	await server.load([{ name: "@test/app", facet: defineFacet<TestPrincipal>(setup) }], BACKGROUND_CONTEXT);
 	const [a, b] = memoryLinkPair();
 	const child = (options.child ?? { kind: "owner" }) as TestPrincipal;
-	const link = { principal: child, codec: testCodec(), limits: options.limits };
+	const link = { principal: child, codec: testCodec(), limits: options.limits, trusted: options.trusted };
 	if (options.role === "parent") server.connect(a, link, BACKGROUND_CONTEXT);
 	else server.accept(a, link, BACKGROUND_CONTEXT);
 	return { server, peer: new RawPeer(b, { hello: options.hello }), errors };
@@ -693,12 +699,18 @@ export async function addNote(server: Host<TestPrincipal>, session: string, text
 
 /** A client connected to a raw peer playing the provider (the link's limits `limits`), after the handshake. */
 export async function rawProvider(
-	options: { readonly readyTimeout?: number; readonly limits?: PartLimits; readonly compression?: Compression } = {},
+	options: {
+		readonly readyTimeout?: number;
+		readonly limits?: PartLimits;
+		readonly compression?: Compression;
+		readonly telemetry?: TelemetryContext;
+	} = {},
 ) {
 	const errors: HostError[] = [];
 	const client = createHost<TestPrincipal>({
 		readyTimeout: options.readyTimeout,
 		compression: options.compression,
+		telemetry: options.telemetry,
 		onError: (error) => errors.push(error),
 	});
 	await client.load([], BACKGROUND_CONTEXT);
@@ -824,6 +836,12 @@ export async function relayed(
 		};
 		/** The limits of the tab's link at the server. */
 		readonly limits?: PartLimits;
+		/** The telemetry adapter of each host: tab, server, workers. */
+		readonly telemetry?: {
+			readonly tab?: TelemetryContext;
+			readonly server?: TelemetryContext;
+			readonly worker?: TelemetryContext;
+		};
 	} = {},
 ): Promise<Relayed> {
 	const context = options.context ?? BACKGROUND_CONTEXT;
@@ -831,12 +849,13 @@ export async function relayed(
 	const workers = new Map<string, Host<TestPrincipal>>();
 	const routeLinks: Link[] = [];
 	const resolves: string[] = [];
-	const { revokedBy, compression = {} } = options;
+	const { revokedBy, compression = {}, telemetry = {} } = options;
 	const server = createHost<TestPrincipal>({
 		address: Server(),
 		principal: { kind: "server" },
 		revokedBy: options.serverRevokedBy ?? revokedBy,
 		compression: compression.server,
+		telemetry: telemetry.server,
 		onError: (error) => errors.server.push(error),
 	});
 	const codec = options.codecs?.route ?? testCodec();
@@ -849,6 +868,7 @@ export async function relayed(
 			principal,
 			revokedBy,
 			compression: compression.worker,
+			telemetry: telemetry.worker,
 			onError: (error) => errors.worker.push(error),
 		});
 		host.connect(b, { principal: { kind: "server" }, trusted: options.trusted, codec }, context);
@@ -874,7 +894,11 @@ export async function relayed(
 		[{ name: "@test/server", facet: defineFacet<TestPrincipal>((h) => options.server?.(h)) }],
 		context,
 	);
-	const tab = createHost<TestPrincipal>({ compression: compression.tab, onError: (error) => errors.tab.push(error) });
+	const tab = createHost<TestPrincipal>({
+		compression: compression.tab,
+		telemetry: telemetry.tab,
+		onError: (error) => errors.tab.push(error),
+	});
 	await tab.load([], context);
 	const [a, b] = memoryLinkPair();
 	const tabCodec = options.codecs?.tab ?? testCodec();

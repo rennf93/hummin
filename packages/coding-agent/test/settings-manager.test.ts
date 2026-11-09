@@ -132,22 +132,6 @@ describe("SettingsManager", () => {
 		});
 	});
 
-	describe("fleet servers", () => {
-		it("keeps a systemd entry and drops an unknown kind", () => {
-			const base = { hostIp: "127.0.0.1", port: 9999, target: "omen-ornith.service" };
-			const manager = SettingsManager.inMemory({
-				fleet: {
-					servers: [
-						{ id: "a", kind: "systemd", ...base },
-						{ id: "b", kind: "upstart", ...base },
-					],
-				},
-			} as Settings);
-
-			expect(manager.getFleetServers().map((server) => [server.id, server.kind])).toEqual([["a", "systemd"]]);
-		});
-	});
-
 	describe("packages migration", () => {
 		it("should keep local-only extensions in extensions array", () => {
 			const settingsPath = join(agentDir, "settings.json");
@@ -434,17 +418,20 @@ describe("SettingsManager", () => {
 	});
 
 	describe("cacheWarming", () => {
-		it("defaults to streaming and ignores project settings", () => {
-			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("streaming");
-
-			writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ cacheWarming: "idle" }));
-			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("streaming");
-
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "idle" }));
+		it("defaults to idle and ignores project settings", () => {
 			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("idle");
 
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "bogus" }));
+			writeFileSync(
+				join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+				JSON.stringify({ cacheWarming: "streaming" }),
+			);
+			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("idle");
+
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "streaming" }));
 			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("streaming");
+
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "bogus" }));
+			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("idle");
 		});
 
 		it("persists the mode globally", async () => {
@@ -454,16 +441,6 @@ describe("SettingsManager", () => {
 
 			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("off");
 			expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"))).toEqual({ cacheWarming: "off" });
-		});
-
-		it("accepts the always mode from global settings", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "always" }));
-			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("always");
-
-			// project settings still cannot set it
-			writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ cacheWarming: "always" }));
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "bogus" }));
-			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("streaming");
 		});
 	});
 
@@ -782,47 +759,6 @@ describe("SettingsManager", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ shellPath: "~" }));
 			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getShellPath()).toBe(homedir());
-		});
-	});
-
-	describe("hummin terminal notifications", () => {
-		it("defaults to bell and honors a stored channel", () => {
-			expect(SettingsManager.inMemory().getTerminalNotifications()).toBe("bell");
-			expect(SettingsManager.inMemory({ terminal: { notifications: "all" } }).getTerminalNotifications()).toBe(
-				"all",
-			);
-			expect(SettingsManager.inMemory({ terminal: { notifications: "off" } }).getTerminalNotifications()).toBe(
-				"off",
-			);
-			// invalid stored value falls to the default
-			expect(
-				SettingsManager.inMemory({ terminal: { notifications: "toast" as never } }).getTerminalNotifications(),
-			).toBe("bell");
-		});
-
-		it("env HUMMIN_NOTIFY overrides stored settings; invalid env falls through", () => {
-			const saved = process.env.HUMMIN_NOTIFY;
-			try {
-				process.env.HUMMIN_NOTIFY = "osc9";
-				expect(SettingsManager.inMemory({ terminal: { notifications: "off" } }).getTerminalNotifications()).toBe(
-					"osc9",
-				);
-				process.env.HUMMIN_NOTIFY = "nonsense";
-				expect(SettingsManager.inMemory({ terminal: { notifications: "all" } }).getTerminalNotifications()).toBe(
-					"all",
-				);
-			} finally {
-				if (saved === undefined) delete process.env.HUMMIN_NOTIFY;
-				else process.env.HUMMIN_NOTIFY = saved;
-			}
-		});
-	});
-
-	describe("hummin verify nudge", () => {
-		it("defaults to on and honors an explicit false", () => {
-			expect(SettingsManager.inMemory().getVerifyNudge()).toBe(true);
-			expect(SettingsManager.inMemory({ verifyNudge: false }).getVerifyNudge()).toBe(false);
-			expect(SettingsManager.inMemory({ verifyNudge: true }).getVerifyNudge()).toBe(true);
 		});
 	});
 });

@@ -1,16 +1,22 @@
 // Hosts (§3): `createHost`, loading facets and the start barrier, links to children, the parent (connected again after
 // a drop) and routes, the origins it relays holds for, getting and holding references as a principal, the heartbeat
 // of every link, revocation (§4), presence (§19) and keep-alive counts, registries and root scopes (slice 8), reloads
-// (slice 7b: staging, the commit, each object's fate, the report), closing; one batch per host, the backoff map and the
-// endings new instances wait for.
+// (staging, the commit, each object's fate, the report; old work and its reload cycles), closing; one batch per host,
+// the backoff map and the endings new instances wait for.
 
-import type { TelemetryContext } from "@earendil-works/pi-telemetry";
+import {
+	NOOP_TELEMETRY_CONTEXT,
+	type SpanAttributes,
+	type TelemetryContext,
+	type TelemetrySpan,
+} from "@earendil-works/pi-telemetry";
 import {
 	awaitWithContext,
 	BACKGROUND_CONTEXT,
 	type Context,
 	withAbortSignal,
 	withoutAbortSignal,
+	withTelemetry,
 } from "../context/index.ts";
 import type { Address, Contract, HostKind, ParamsOf } from "../contracts/index.ts";
 import { contractData, type Params } from "../contracts/internal.ts";
@@ -42,6 +48,17 @@ import {
 } from "../remote/internal.ts";
 import { Batch, type BatchError } from "../state/internal.ts";
 import type { ChordStore, Store } from "../store/store.ts";
+import {
+	type ChordMetrics,
+	capped,
+	chordMetrics,
+	chordSpans,
+	countingOnly,
+	ended,
+	hostAttribute,
+	parentOf,
+	untraced,
+} from "../telemetry.ts";
 import type { Watchable } from "../watch.ts";
 import { Activity, type ActivityCounts } from "./activity.ts";
 import { type Attempt, notLive } from "./attempt.ts";
@@ -52,8 +69,10 @@ import type { Facet } from "./facet.ts";
 import { contributionOf } from "./members.ts";
 import type { CloseFailed } from "./native.ts";
 import { ChordObject, type Holder, type ReloadFate, type Served } from "./object.ts";
+import { chainAttempts, OldWork } from "./old-work.ts";
 import { type Presence, References } from "./presence.ts";
 import { Binding, type CheckedParams, type Held, type Reference, type Target } from "./reference.ts";
+import { ReloadCycles } from "./reload-cycle.ts";
 import { RevocationKeys, type RevokedBy } from "./revocation.ts";
 import { type RootOptions, RootScopes } from "./root.ts";
 import { Route, type RouteHandle, type RouteOptions } from "./route.ts";
@@ -83,14 +102,31 @@ export type HostOptions<P extends Principal = Principal, R extends JsonValue = J
 	readonly principal?: P;
 	/** The key of a principal in identities; L1's canonical JSON by default. The same function on every host. */
 	readonly principalKey?: PrincipalKeyFunction<P>;
-	/** The telemetry adapter; NOOP by default. */
+	/**
+	 * The telemetry adapter (§29): this host's root spans (activations, closes, resolves, routines, methods called over
+	 * links) and metrics, and the carriers its links extract; NOOP by default, which records nothing and costs one call
+	 * per span site.
+	 */
 	readonly telemetry?: TelemetryContext;
+	/**
+	 * Who a span was for (decision "Who a span was for"): the attributes its method and call spans record for a
+	 * principal, in place of the default `chord.principal` (its principal key, capped at 256 characters). Called for
+	 * every span recorded with a principal: synchronous and cheap; caching, if any, is the hook's own. The same
+	 * function on every host.
+	 */
+	readonly principalAttributes?: PrincipalAttributes<P>;
 	/** Everything that fails in the background; every app handles it. */
 	readonly onError: (error: HostError) => void;
 	/** How long a native's close, and an ending object's running calls, are waited for; 30 s by default. */
 	readonly closeTimeout?: number;
 	/** How long an activation attempt, and a `get`, may take until the object is live; 60 s by default. */
 	readonly readyTimeout?: number;
+	/**
+	 * How long a reload's restart keeps its old attempt open for old work (its calls, routed calls, its successor's
+	 * readiness) before it is sealed and anything still running is cut off (`released`); 5 s by default, at most
+	 * `closeTimeout`. Ends in seconds the waits Chord cannot see (a root opened without the method's `ctx`).
+	 */
+	readonly reloadDrainTimeout?: number;
 	/**
 	 * The heartbeat of every link: a link silent for `ping` ms (15 s by default) sends a `ping`; one silent for `close`
 	 * ms (30 s by default), its handshake included, is closed.
@@ -113,6 +149,9 @@ export type HostOptions<P extends Principal = Principal, R extends JsonValue = J
 	 */
 	readonly store?: Store;
 };
+
+/** The span attributes recorded for a principal (`HostOptions.principalAttributes`): none, its key, or more. */
+export type PrincipalAttributes<P extends Principal = Principal> = (principal: P) => Readonly<SpanAttributes>;
 
 /** Where a reported part sits on its object: a routine (`on`, `onLive`) or a native, by kind, from 1 in declaration order. */
 export type Position = { readonly kind: "on" | "onLive" | "native"; readonly position: number };
@@ -218,6 +257,15 @@ export type AnyHost = Omit<ChordHost, "load" | "reload" | "accept" | "connect" |
 
 /** A host. `P` is the app's principal type, `R` its revocation type. */
 export interface Host<P extends Principal = Principal, R extends JsonValue = JsonValue> {
+	/** This host's address (`HostOptions.address`); `undefined` on a client. */
+	readonly address: Address | undefined;
+	/** This run of the host, sent in every handshake (R20): a link's peer sees it as its calls' `ctx.incarnation`. */
+	readonly incarnation: string;
+	/**
+	 * The attributes this host's spans record for `principal`: its `principalAttributes` hook's, else `chord.principal`,
+	 * its principal key; none without a principal.
+	 */
+	principalAttributes(principal: P | undefined, context: Context): Readonly<SpanAttributes>;
 	/**
 	 * Runs every facet's setup and publishes what they declared in one batch (the types and registries served, the
 	 * registries composed once, the contributions); holds that waited for the publication are placed after that batch,
@@ -237,14 +285,14 @@ export interface Host<P extends Principal = Principal, R extends JsonValue = Jso
 	 * and so does a changed plugin whose recorded requests would not bind because of it (the closure rule); both are
 	 * reported (`failed`); `options.failed` names plugins the caller passes as their loaded facet because their new
 	 * code failed before (a build, an evaluation): the same for the closure rule and the report. Then it commits in one
-	 * batch (types, registries,
-	 * contributions; a publication waking the requests for the names it serves) and every object of a changed or
-	 * removed plugin takes its fate: swapped in place, restarted after its drain, retried, or ended (its type
-	 * removed). Resolves with the report once every fate started (swaps and retries checked their dependencies; it
-	 * does not wait for objects to go live). Reloads run one after another. Throws before `load` resolved and for a
-	 * name that is no npm name (before anything changes); rejects `released/closed` after `close`; `context`'s abort
-	 * before the commit rejects `aborted` and changes nothing, after it only ends the wait (`aborted`, its
-	 * `details.committed` naming what the commit applied: `CommittedReload`).
+	 * batch (types, registries, contributions; a publication waking the requests for the names it serves) and every
+	 * object of a changed or removed plugin takes its fate: restarted (its old attempt finishing old work first),
+	 * retried, or ended (its type removed). Resolves with the report once every fate started (retries checked their
+	 * dependencies; a restart reports what its readiness found at once; it does not wait for objects to go live).
+	 * Reloads run one after another. Throws before `load` resolved and for a name that is no npm name (before anything
+	 * changes); rejects `released/closed` after `close`; `context`'s abort before the commit rejects `aborted` and
+	 * changes nothing, after it only ends the wait (`aborted`, its `details.committed` naming what the commit applied:
+	 * `CommittedReload`).
 	 */
 	reload(facets: readonly PluginFacet<P>[], context: Context, options?: ReloadOptions): Promise<ReloadReport>;
 	/**
@@ -362,12 +410,11 @@ export type ReloadReport = {
 };
 
 /**
- * One object's fate in a reload: `swapped` (pure, in place), `restarted` (natives: drained, closed with reason
- * `reload`, activated again), `ended` (its type is gone), `parked` (its new code waits for a dependency, `cause`), or
- * `retried` (it was failed, parked or activating: a new attempt runs on the new code).
+ * One object's fate in a reload: `restarted` (its old attempt drained, sealed and closed with reason `reload`, a new
+ * attempt on the new code), `ended` (its type is gone), `parked` (its new code waits for a failed dependency,
+ * `cause`), or `retried` (it was failed, parked or activating: a new attempt runs on the new code).
  */
 export type ReloadedObject = { readonly object: string } & (
-	| { readonly kind: "swapped" }
 	| { readonly kind: "restarted" }
 	| { readonly kind: "ended" }
 	| { readonly kind: "parked"; readonly cause: FailureCause }
@@ -414,15 +461,28 @@ type StagingPass<P extends Principal> =
 /** A recorded new factory of an object staging planned a fate for: whose new code it is, and what it declared. */
 type RecordedFactory = { readonly plugin: string; readonly recorded: Recorded };
 
-/** An affected object's fate, as staging decided it. */
+/** An affected object's fate, as staging decided it, with its new factory's requests as staging recorded them. */
 type PlannedFate =
 	| { readonly kind: "end"; readonly object: ChordObject }
-	| { readonly kind: ReloadFate; readonly object: ChordObject; readonly served: Served };
+	| {
+			readonly kind: ReloadFate;
+			readonly object: ChordObject;
+			readonly served: Served;
+			readonly requests: readonly Request[];
+	  };
 
-/** A fate started by a reload's commit, for its report: a swap's or retry's new attempt is checked first. */
+/**
+ * A fate started by a reload's commit, for its report: a retry's new attempt is checked first, a restart reports what
+ * its readiness found.
+ */
 type StartedFate =
 	| { readonly object: string; readonly kind: "ended" }
-	| { readonly object: string; readonly kind: "swapped" | "restarted" | "retried"; readonly attempt: Attempt };
+	| {
+			readonly object: string;
+			readonly kind: "restarted" | "retried";
+			readonly target: ChordObject;
+			readonly attempt: Attempt;
+	  };
 
 /** Creates a host. */
 export function createHost<P extends Principal = Principal, R extends JsonValue = JsonValue>(
@@ -437,10 +497,17 @@ const NO_CHAIN: readonly string[] = [];
 /** The params of a type with empty params, as checked: nothing, and the empty key. */
 const EMPTY_PARAMS: CheckedParams = { params: {}, key: "" };
 
+/** What a span records for no principal. */
+const NO_ATTRIBUTES: Readonly<SpanAttributes> = Object.freeze({});
+
 /** The host: its served types, its objects by identity, its batch, backoff and endings. */
 export class ChordHost<P extends Principal = Principal, R extends JsonValue = JsonValue> implements Host<P, R> {
 	readonly batch: Batch;
-	readonly timeouts: { readonly close: number; readonly ready: number };
+	readonly timeouts: { readonly close: number; readonly ready: number; readonly reload: number };
+	/** Its old work during reloads (whether a context runs under it): see `old-work.ts`. */
+	readonly oldWork = new OldWork();
+	/** The waits of old work on objects that are not live, cut at once when they cycle through their own drain. */
+	readonly reloadCycles = new ReloadCycles();
 	readonly backoff = new Backoff((identity) => this.#due(identity));
 	readonly address: Address | undefined;
 	readonly principal: P | undefined;
@@ -449,8 +516,17 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	readonly compression: Compression | undefined;
 	/** The host's store, if it has one. */
 	readonly store: ChordStore | undefined;
+	/** The telemetry adapter: root spans start on it, carriers from links are extracted with it. */
+	readonly telemetry: TelemetryContext;
+	/** The `chord.host` attribute of this host's spans: its address key, `client` without an address. */
+	readonly spanHost: string;
+	/** Chord's instruments on the adapter's metrics: the host's own counts (links, holds, calls, commits). */
+	readonly metrics: ChordMetrics;
+	/** The telemetry of this host's work under a context without a span (`#counted`); none without an adapter. */
+	readonly #counting: TelemetrySpan | undefined;
 	readonly #activity: Activity;
 	readonly #principalKey: PrincipalKeyFunction<P> | undefined;
+	readonly #principalAttributes: PrincipalAttributes<P> | undefined;
 	readonly #revocationKeys: RevocationKeys;
 	/** The presence list of each type someone asked about (`references`), by type name. */
 	readonly #references = new Map<string, References>();
@@ -502,13 +578,21 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		this.address = options.address;
 		this.principal = options.principal;
 		this.#principalKey = options.principalKey;
+		this.#principalAttributes = options.principalAttributes;
 		this.#onError = options.onError;
-		this.batch = new Batch((error) => this.report(error), options.telemetry?.metrics);
+		this.telemetry = options.telemetry ?? NOOP_TELEMETRY_CONTEXT;
+		this.spanHost = hostAttribute(this.address);
+		this.metrics = chordMetrics(this.telemetry.metrics);
+		const metrics = this.telemetry.metrics;
+		this.#counting = untraced(this.telemetry) || metrics === undefined ? undefined : countingOnly(metrics);
+		this.batch = new Batch((error) => this.report(error), this.telemetry.metrics);
 		this.compression = options.compression;
 		this.#activity = new Activity(this.batch);
 		// `revokedBy` is called with this host's principals only, the `P`s its links stamp.
 		this.#revocationKeys = new RevocationKeys(options.revokedBy as RevokedBy<Principal, JsonValue> | undefined);
-		this.timeouts = { close: options.closeTimeout ?? 30_000, ready: options.readyTimeout ?? 60_000 };
+		const close = options.closeTimeout ?? 30_000;
+		const reload = Math.min(close, options.reloadDrainTimeout ?? 5_000);
+		this.timeouts = { close, ready: options.readyTimeout ?? 60_000, reload };
 		this.#heartbeat = { ping: options.heartbeat?.ping ?? 15_000, close: options.heartbeat?.close ?? 30_000 };
 		this.#destination = new Destination(this.address, this.#routes, this.#parent);
 		// Chord's own: `openStore` made it.
@@ -522,6 +606,22 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		if (this.#state !== "new") throw new Error("load runs once per host");
 		checkPluginNames(facets);
 		this.#state = "loading";
+		const parent = context.telemetry;
+		if (untraced(parent)) return this.#load(facets, context);
+		return chordSpans(parent)("chord.load", { "chord.host": this.spanHost, plugins: facets.length }, async (span) => {
+			try {
+				const report = await this.#load(facets, withTelemetry(span, context));
+				span.setAttributes({ failed: report.failed.length });
+				return report;
+			} catch (error) {
+				ended(span, "load_failed", error, context.abortSignal);
+				throw error;
+			}
+		});
+	}
+
+	/** `load`'s steps under its span: the setups, the publication, then the start barrier. */
+	async #load(facets: readonly PluginFacet<P>[], context: Context): Promise<LoadReport> {
 		const staged = emptyStaged();
 		const loaded = new Map<string, Facet<P>>();
 		const failed: PluginFailure[] = [];
@@ -549,7 +649,7 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		this.#unbound.wakeAll();
 		const objects = [...this.#types.values()]
 			.filter((served) => served.kind === "local" && served.hostLifetime)
-			.map((served) => this.#object(served, EMPTY_PARAMS, undefined, context));
+			.map((served) => this.#object(served, EMPTY_PARAMS, undefined, context.telemetry, context));
 		await Promise.all(objects.map(({ firstOutcome }) => firstOutcome));
 		if (this.#state === "loading") this.#state = "loaded";
 		return { failed };
@@ -600,8 +700,36 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		return reload;
 	}
 
-	/** One reload, after the previous one: staging, the commit, the fates, the report. */
+	/** One reload, after the previous one, in its span: each object's fate an event of it. */
 	async #reload(
+		facets: readonly PluginFacet<P>[],
+		before: readonly PluginFailure[],
+		context: Context,
+	): Promise<ReloadReport> {
+		const parent = context.telemetry;
+		if (untraced(parent)) return this.#reloadSteps(facets, before, context);
+		return chordSpans(parent)(
+			"chord.reload",
+			{ "chord.host": this.spanHost, plugins: facets.length },
+			async (span) => {
+				try {
+					const report = await this.#reloadSteps(facets, before, withTelemetry(span, context));
+					for (const { object, kind } of report.objects)
+						span.addEvent("chord.reload.fate", { object: capped(object), fate: kind });
+					const { added, changed, removed } = report.plugins;
+					const counts = { added: added.length, changed: changed.length, removed: removed.length };
+					span.setAttributes({ ...counts, failed: report.failed.length, fates: report.objects.length });
+					return report;
+				} catch (error) {
+					ended(span, "reload_failed", error, context.abortSignal);
+					throw error;
+				}
+			},
+		);
+	}
+
+	/** One reload's steps: staging, the commit, the fates, the report. */
+	async #reloadSteps(
 		facets: readonly PluginFacet<P>[],
 		before: readonly PluginFailure[],
 		context: Context,
@@ -690,7 +818,7 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 			try {
 				const declared = recordFactory(object, served, context);
 				recorded.push({ plugin: served.plugin, recorded: declared });
-				fates.push({ kind: object.reloadFate(declared), object, served });
+				fates.push({ kind: object.reloadFate(), object, served, requests: declared.requests });
 			} catch (error) {
 				if (!failing.has(served.plugin)) failing.set(served.plugin, error);
 			}
@@ -757,8 +885,8 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	 * The commit (slice 7b §3), one batch: the served types become the staged ones (an unchanged plugin's stay as
 	 * they were), the removed plugins' registry providers go and the reloaded ones' are replaced, their facet
 	 * contributions replaced by plugin, every changed registry composed once; a removed type's presence list goes.
-	 * Then each object takes its fate, host-lifetime objects of new types start, and the publication wakes the
-	 * requests waiting for the names the reload serves.
+	 * Then each object takes its fate (`#startFates`), host-lifetime objects of new types start, and the publication
+	 * wakes the requests waiting for the names the reload serves.
 	 */
 	#commit(plan: ReloadPlan<P>, context: Context): readonly StartedFate[] {
 		const { staged, changed, removed } = plan;
@@ -787,17 +915,33 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		const names = new Set<string>();
 		for (const [name, served] of types) if (published.has(served.plugin)) names.add(name);
 		for (const [name, { plugin }] of staged.registries) if (published.has(plugin)) names.add(name);
-		const started = plan.fates.map((fate) => this.#startFate(fate));
+		const started = this.#startFates(plan.fates);
 		for (const type of types.values()) {
-			if (type.kind === "local" && type.hostLifetime) this.#object(type, EMPTY_PARAMS, undefined, context);
+			if (type.kind === "local" && type.hostLifetime) {
+				this.#object(type, EMPTY_PARAMS, undefined, context.telemetry, context);
+			}
 		}
 		this.#unbound.wake(names);
 		return started;
 	}
 
 	/**
-	 * Starts one object's fate after the commit (slice 7b §4): a removed type's object ends, its holders waiting
-	 * `not_served`; any other swaps, restarts or retries on its new served type.
+	 * Starts `fates` and returns them in their order, for the report: the removals first (a dependent whose new code
+	 * still needs a removed provider then parks, decision 4), then the restarts and retries; then the restarts'
+	 * readiness and successors, once every object has its new served type (their requests bind against the new code).
+	 */
+	#startFates(fates: readonly PlannedFate[]): StartedFate[] {
+		const started = new Map<PlannedFate, StartedFate>();
+		for (const fate of fates) if (fate.kind === "end") started.set(fate, this.#startFate(fate));
+		for (const fate of fates) if (fate.kind !== "end") started.set(fate, this.#startFate(fate));
+		for (const fate of fates) if (fate.kind === "restart") fate.object.startSuccessor();
+		// Every fate started above.
+		return fates.map((fate) => started.get(fate)!);
+	}
+
+	/**
+	 * Starts one object's fate after the commit: a removed type's object ends, its holders waiting `not_served`; any
+	 * other restarts or retries on its new served type.
 	 */
 	#startFate(fate: PlannedFate): StartedFate {
 		const { object } = fate;
@@ -809,14 +953,14 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 			object.remove({ kind: "waiting", error });
 			return { object: object.label, kind: "ended" };
 		}
-		const attempt = object.reload(fate.served, fate.kind);
-		return { object: object.label, kind: STARTED[fate.kind], attempt };
+		const attempt = object.reload(fate.served, fate.kind, fate.requests);
+		return { object: object.label, kind: fate.kind === "restart" ? "restarted" : "retried", target: object, attempt };
 	}
 
 	/**
-	 * The report, once every swap and retry had its first dependency check (a parked one reports why); restarts are
-	 * reported at once (their check follows the drain). `context`'s abort ends only this wait (`aborted`, its `details`
-	 * naming what the commit applied: `committed`).
+	 * The report, once every retry had its first dependency check (a parked one reports why); a restart reports at once
+	 * what its readiness found (its successor's own check follows the old attempt's end). `context`'s abort ends only
+	 * this wait (`aborted`, its `details` naming what the commit applied: `committed`).
 	 */
 	async #report(
 		started: readonly StartedFate[],
@@ -824,8 +968,8 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		context: Context,
 	): Promise<ReloadedObject[]> {
 		const checks = started.map(async (fate): Promise<ReloadedObject> => {
-			if (fate.kind === "ended" || fate.kind === "restarted") return { object: fate.object, kind: fate.kind };
-			const cause = await fate.attempt.checked;
+			if (fate.kind === "ended") return { object: fate.object, kind: fate.kind };
+			const cause = await this.#checked(fate);
 			return cause === undefined
 				? { object: fate.object, kind: fate.kind }
 				: { object: fate.object, kind: "parked", cause };
@@ -839,6 +983,18 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 			};
 			throw new ChordError({ code: "aborted", message: "reload: aborted after its commit", details });
 		}
+	}
+
+	/**
+	 * Why a restarted or retried object's new attempt waits, for the report: what a restart's readiness found, at once
+	 * (its new attempt's own check follows the old attempt's end), also for a retry of an attempt that still waits for
+	 * an open old attempt; otherwise its new attempt's first dependency check.
+	 */
+	#checked(fate: Extract<StartedFate, { readonly kind: "restarted" | "retried" }>): Promise<FailureCause | undefined> {
+		const { target, attempt } = fate;
+		if (fate.kind === "restarted" || target.openOldAttempt !== undefined)
+			return Promise.resolve(target.readinessCause);
+		return attempt.checked;
 	}
 
 	/** This host as staging sees it: whom it acts as, its address and its presence lists. */
@@ -902,13 +1058,27 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	}
 
 	revoke(revocation: R, context: Context): void {
+		const count = this.#revoke(revocation, context);
+		const parent = context.telemetry;
+		// Recorded after the work: a revocation is synchronous, its span only says what it ended.
+		if (!untraced(parent)) {
+			const attributes = { "chord.host": this.spanHost };
+			void chordSpans(parent)("chord.revoke", attributes, (span) => span.setAttributes({ count }));
+		}
+	}
+
+	/** `revoke`'s work; how many objects it ended and child links it closed. */
+	#revoke(revocation: R, context: Context): number {
+		let count = 0;
 		const key = canonicalJson(revocation, context);
 		const revoked = (principal: Principal): boolean =>
 			!this.#isOwn(principal, context) && this.#revocationKeys.revokes(principal, key, context);
 		const error = (label: string): ChordError =>
 			new ChordError({ code: "forbidden", reason: "revoked", message: `${label}: revoked` });
 		for (const object of [...this.#objects.values()]) {
-			if (object.principal !== undefined && revoked(object.principal)) object.end(error(object.label));
+			if (object.principal === undefined || !revoked(object.principal)) continue;
+			object.end(error(object.label));
+			count++;
 		}
 		// Requests not bound (waiting for the publication or a provider, refused, waiting for their link) end too: nothing
 		// revives them.
@@ -925,7 +1095,12 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		// Down the route links before the child links close: a worker ends the principal's objects with the revocation's
 		// error before the closed origins release their holds.
 		for (const link of this.#links) if (link.role === "route") link.send({ kind: "revoke", revocation });
-		for (const link of [...this.#links]) if (link.role === "child" && revoked(link.principal)) link.close();
+		for (const link of [...this.#links]) {
+			if (link.role !== "child" || !revoked(link.principal)) continue;
+			link.close();
+			count++;
+		}
+		return count;
 	}
 
 	get activity(): Watchable<ActivityCounts> {
@@ -939,7 +1114,7 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 			references = new References(this.batch);
 			for (const object of this.#objects.values()) {
 				if (object.served.contract.name !== Type.name) continue;
-				for (const holder of object.holders) references.record(object, holder);
+				for (const holder of object.holders) if (holder.listed) references.record(object, holder);
 			}
 			this.#references.set(Type.name, references);
 		}
@@ -985,7 +1160,25 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		// The scope's ctx acts as `principal`, a `P`: an explicit `undefined` runs anonymous (an HTTP request nobody
 		// authenticated), only an omitted one takes the host's.
 		const principal = "principal" in options ? options.principal : this.principal;
-		return this.#roots.run(fn as (ctx: Ctx) => Promise<T>, principal, context);
+		const run = fn as (ctx: Ctx) => Promise<T>;
+		const trace = options.trace;
+		if (trace === undefined || untraced(this.telemetry))
+			return this.#roots.run(run, principal, this.#counted(context));
+		const attributes = { "chord.host": this.spanHost, ...trace.attributes };
+		return this.telemetry.startSpan({ name: trace.name, attributes }, async (span) => {
+			try {
+				return await this.#roots.run(run, principal, withTelemetry(span, context));
+			} catch (error) {
+				ended(span, "trace_failed", error, context.abortSignal);
+				throw error;
+			}
+		});
+	}
+
+	principalAttributes(principal: P | undefined, context: Context): Readonly<SpanAttributes> {
+		if (principal === undefined) return NO_ATTRIBUTES;
+		if (this.#principalAttributes !== undefined) return this.#principalAttributes(principal);
+		return { "chord.principal": capped(principalKey(principal, context, this.#principalKey)) };
 	}
 
 	/**
@@ -1085,7 +1278,10 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		const waiting = withLinkedAbortSignal(expired.signal, context);
 		const deadline = setTimeout(() => expired.abort(binding.lastFailure ?? notLive(binding.label, timeout)), timeout);
 		try {
-			await binding.live(waiting.context);
+			// Old work's getter whose target's activation waits on that work's own drain fails at once (rule 6).
+			const target = binding.target;
+			const live = binding.live(waiting.context);
+			await (target instanceof ChordObject ? this.waitAsOldWork(live, target, Type, context) : live);
 			return binding;
 		} catch (error) {
 			binding.release();
@@ -1096,14 +1292,25 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		}
 	}
 
+	/**
+	 * `waiting` (a getter's or a gate's wait on `target`, for `contract`'s version) as `context` makes it: as old work it
+	 * is cut at once with `unavailable/reload_cycle` when it cycles through that work's own drain (`ReloadCycles`);
+	 * otherwise as it is.
+	 */
+	waitAsOldWork<T>(waiting: Promise<T>, target: ChordObject, contract: Contract, context: Context): Promise<T> {
+		if (!this.oldWork.of(context)) return waiting;
+		const chain = chainAttempts(context);
+		return chain.size === 0 ? waiting : this.reloadCycles.wait(waiting, target, contract, chain);
+	}
+
 	/** Adds `delta` to the keep-alive count of `kind` (`host.activity`), where the work happens. */
 	count(kind: keyof ActivityCounts, delta: number): void {
 		this.#activity.count(kind, delta);
 	}
 
-	/** `holder` references `object`: listed in its type's presence, if someone asked for it. */
+	/** `holder` references `object`: listed in its type's presence, if someone asked for it and it is listed. */
 	referenced(object: ChordObject, holder: Holder, context: Context): void {
-		this.#references.get(object.served.contract.name)?.add(object, holder, context);
+		if (holder.listed) this.#references.get(object.served.contract.name)?.add(object, holder, context);
 	}
 
 	/** `holders` of `object` ended: gone from its type's presence. */
@@ -1141,7 +1348,16 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		const placed = this.#destination.reference(Type, params.params, principal, context);
 		if (placed.kind === "path") {
 			const { caller, dependent } = binding;
-			const remote = new RemoteObject(this, Type, params, placed.address, caller, placed.path, dependent);
+			const remote = new RemoteObject(
+				this,
+				Type,
+				params,
+				placed.address,
+				caller,
+				placed.path,
+				dependent,
+				context.telemetry,
+			);
 			placed.path.attach(remote);
 			binding.bind(remote);
 			return remote;
@@ -1151,6 +1367,14 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 			unboundCause(served, Type.kind, Type.name, Type.version, Type.fingerprint) ??
 			this.#misplaced(Type, served!, params.params);
 		if (unbound !== undefined) {
+			// Old work never waits for a code update (rule 2): a version the new code dropped binds the object while its
+			// open old attempt still serves it, and fails at once otherwise.
+			if (unbound.error.code === "contract_mismatch" && this.oldWork.of(context)) {
+				const object = this.#objects.get(this.#identity(served!, params, principal, context));
+				if (object === undefined || !object.oldServes(Type.version, Type.fingerprint)) throw unbound.error;
+				binding.bind(object);
+				return object;
+			}
 			this.#wait(binding, Type.name, unbound, () => this.#place(binding, Type, params, context));
 			return undefined;
 		}
@@ -1163,8 +1387,11 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 			});
 		}
 		// Checked above: served here at the caller's version.
-		const object = this.#object(served!, params, principal, context, NO_CHAIN, binding.dependent);
+		const object = this.#object(served!, params, principal, context.telemetry, context, NO_CHAIN, binding.dependent);
 		binding.bind(object);
+		// A getter waiting for a shared activation links to it (decision "Shared work").
+		const activation = object.activationSpan;
+		if (activation !== undefined && !untraced(context.telemetry)) context.telemetry.addLink({ context: activation });
 		return object;
 	}
 
@@ -1190,7 +1417,9 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		const checked = checkParams(remote.contract, params, context);
 		const misplaced = this.#destination.misplaced(remote.contract, checked.params);
 		if (misplaced !== undefined) return { kind: "waiting", cause: { kind: "waiting", error: misplaced } };
-		const object = this.#object(remote, checked, principal, context, chain);
+		// The hold's carrier with this host's adapter: the first trigger of an object it creates.
+		const trigger = parentOf(request.trace, this.telemetry);
+		const object = this.#object(remote, checked, principal, trigger, context, chain);
 		const activation = object.activationId;
 		if (activation !== undefined && chain.includes(activation)) throw this.cycle(chain, activation, [object.label]);
 		return { kind: "object", object };
@@ -1354,11 +1583,26 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		);
 	}
 
+	/**
+	 * `context` for work this host does under it (a link's, a root scope's): one without a span carries this host's
+	 * adapter's metrics (`countingOnly`), so the cost counters of that work reach the adapter (review L6).
+	 */
+	#counted(context: Context): Context {
+		const counting = this.#counting;
+		if (counting === undefined || context.telemetry !== NOOP_TELEMETRY_CONTEXT) return context;
+		return withTelemetry(counting, context);
+	}
+
 	/** A new link of `role`, registered with the heartbeat while open. */
 	#link(link: Link, role: LinkRole, options: LinkOptions<Principal>, context: Context): HostLink {
 		const { principal, trusted = false, codec = binaryCodec } = options;
 		const limits = linkLimits(trusted, options.limits);
-		const made = new HostLink(this, link, { role, principal, trusted, codec, limits }, withoutAbortSignal(context));
+		const made = new HostLink(
+			this,
+			link,
+			{ role, principal, trusted, codec, limits },
+			this.#counted(withoutAbortSignal(context)),
+		);
 		if (!made.open) return made;
 		this.#links.add(made);
 		if (this.#ticking === undefined) {
@@ -1377,33 +1621,48 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		return made;
 	}
 
+	/** The identity of `served`'s object for `params` and `principal` (a remote type's includes its principal key). */
+	#identity(served: Served, params: CheckedParams, principal: Principal | undefined, context: Context): string {
+		if (served.kind === "local") return identityKey(served.contract, params.key);
+		// A host serving remote types has a principal, which its references act as unless a link stamped its own (only
+		// `P`s).
+		return identityKey(served.contract, params.key, principalKey(principal as P, context, this.#principalKey));
+	}
+
 	/**
 	 * The object for `params` (checked by L1) and, for a remote type, `principal` (its key is part of the identity),
 	 * created if there is none; its first attempt starts at once, or when its identity's backoff window ends. A new one
 	 * keeps the activation chain it is created for (Q5): `chain` (a hold's), or that of `dependent`'s activation when
-	 * an activation declared it, so its own holds over links carry that chain on.
+	 * an activation declared it, so its own holds over links carry that chain on. A new one's first activation span
+	 * links to `trigger` (decision "Shared work").
 	 */
 	#object(
 		served: Served,
 		params: CheckedParams,
 		principal: Principal | undefined,
+		trigger: TelemetryContext,
 		context: Context,
 		chain: readonly string[] = NO_CHAIN,
 		dependent?: ChordObject,
 	): ChordObject {
-		const { key, params: checked } = params;
-		const identity =
-			served.kind === "local"
-				? identityKey(served.contract, key)
-				: // A host serving remote types has a principal, which its references act as unless a
-					// link stamped its own (only `P`s).
-					identityKey(served.contract, key, principalKey(principal as P, context, this.#principalKey));
+		const { params: checked, key } = params;
+		const identity = this.#identity(served, params, principal, context);
 		let object = this.#objects.get(identity);
 		if (object === undefined) {
 			// Shared by every getter: one getter's cancellation does not cancel it.
 			const owner = served.kind === "local" ? undefined : principal;
 			const created = dependent?.activationChain() ?? chain;
-			object = new ChordObject(this, served, checked, owner, key, identity, withoutAbortSignal(context), created);
+			object = new ChordObject(
+				this,
+				served,
+				checked,
+				owner,
+				key,
+				identity,
+				trigger,
+				withoutAbortSignal(context),
+				created,
+			);
 			this.#objects.set(identity, object);
 			if (!this.backoff.waiting(identity)) object.attempt();
 		}
@@ -1566,9 +1825,6 @@ async function untilUsable(value: RegistryValueSource, usable: () => boolean, co
 		release();
 	}
 }
-
-/** What the report calls a fate. */
-const STARTED = { swap: "swapped", restart: "restarted", retry: "retried" } as const;
 
 /** The `aborted` error of a reload whose context aborted before its commit: nothing changed. */
 function reloadAborted(): ChordError {

@@ -245,7 +245,7 @@ export interface Settings extends Omit<SchemaSettings, "terminal" | "cacheWarmin
 	terminal?: TerminalSettings;
 	/** hummin: input editor key mode (env HUMMIN_VIM=1 overrides) */
 	editorMode?: "default" | "vim";
-	cacheWarming?: CacheWarmingMode; // default: "streaming"; global only because each refresh costs money
+	cacheWarming?: CacheWarmingMode; // default: "idle"; global only because each refresh costs money
 	/** hummin: custom statusline segment layout (see STATUSLINE_TOKENS); empty = default footer */
 	statusline?: StatuslineSettings;
 }

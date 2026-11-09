@@ -1,11 +1,12 @@
 // Attempts (§6, §13, §14, §15): one activation of an object, a fresh instance each time. It is the `self` its factory
 // declares with (handles to the object's documents and jobs, under its seal token); it runs the activation steps,
 // each failing with its own kind; it takes the live object's calls and starts its routines and jobs; and it ends with
-// its seal (slice 6a §1.3), the drain and the closes of its natives. A reload's swap hands it over (slice 7b §5): its
-// routines stop and hand over to the new attempt's, its jobs to the new attempt's, and it is sealed once its calls
-// settled.
+// its seal (slice 6a §1.3), the drain and the closes of its natives. A reload's restart drains it (decision "Reload
+// restarts every affected object; old work finishes on old code"): its routines stop, it serves old work under its
+// own contract, and it is sealed once that work settled.
 
-import { awaitWithContext, type Context, withAbortSignal } from "../context/index.ts";
+import type { TelemetryContext, TelemetrySpan } from "@earendil-works/pi-telemetry";
+import { awaitWithContext, type Context, withAbortSignal, withContextValue, withTelemetry } from "../context/index.ts";
 import type { Contract, Implementation, ParamsOf } from "../contracts/index.ts";
 import { contractData, type ShapeOf } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
@@ -33,6 +34,7 @@ import type { ChordStore } from "../store/store.ts";
 import type { TableDefinition } from "../store/table.ts";
 import { type Table, TableHandle } from "../store/table-handle.ts";
 import { prepareTables } from "../store/table-migration.ts";
+import { capped, MAX_MESSAGE, OpenSpan, spanFailed, untraced } from "../telemetry.ts";
 import type { NativeWatchable, Watchable, WatchEnd } from "../watch.ts";
 import { AdaptedMembers } from "./adapted.ts";
 import { CallContext, type Caller, type Ctx, withLinkedAbortSignal } from "./ctx.ts";
@@ -58,7 +60,8 @@ import {
 	type NativeSlot,
 } from "./native.ts";
 import type { ChordObject, Served } from "./object.ts";
-import type { Failed } from "./ref-state.ts";
+import { OPENING } from "./old-work.ts";
+import type { Failed, RefState } from "./ref-state.ts";
 import type { Binding, CheckedParams, Reference, RetryWalk } from "./reference.ts";
 import { type RetrySource, retrySource } from "./retry-on.ts";
 import {
@@ -189,11 +192,11 @@ type Work = Map<Promise<unknown>, (() => void) | undefined>;
 type RoutineRun = { readonly abort: AbortController; readonly calls: Work };
 
 /**
- * What a reload did to an attempt: `started` (a reload started it), `handedOver` (a swap: its jobs are the new
- * attempt's, its invocations finish on their own), `callsDrained` (a swap or restart waited for its calls: its end's
- * drain does not again), `routinesStopped` (its routines stopped, and do not start late after a handover).
+ * What a reload did to an attempt: `started` (a reload started it), `callsDrained` (a restart drains its calls: old
+ * work runs on it until its seal, and its end's drain does not wait for them again), `routinesStopped` (its routines
+ * stopped, and do not start late).
  */
-type Reloaded = { started: boolean; handedOver: boolean; callsDrained: boolean; routinesStopped: boolean };
+type Reloaded = { started: boolean; callsDrained: boolean; routinesStopped: boolean };
 
 /** A first dependency check that did not park: the shared answer. */
 const NOT_PARKED = { done: true, cause: undefined } as const;
@@ -232,6 +235,18 @@ type Activation =
 /** How an activation that did not go live ended. */
 type NotLive = Exclude<Activation, { readonly kind: "live" }>;
 
+/** What an attempt's activation span links to (its object's first trigger, or its last attempt's span) and its number. */
+export type AttemptTrace = { readonly trigger: TelemetryContext; readonly attempt: number };
+
+/**
+ * How an attempt's activation ended, for its span: live, failed (a transient failure's next attempt at `retryAt`), or
+ * ended (abandoned, its object gone).
+ */
+export type Activated =
+	| { readonly kind: "live" }
+	| { readonly kind: "failed"; readonly cause: FailureCause; readonly retryAt: number | undefined }
+	| { readonly kind: "ended" };
+
 /** The error of an object, or a getter, that waited `ms` without the object going live. */
 export function notLive(label: string, ms: number): ChordError {
 	return new ChordError({ code: "unavailable", message: `${label}: did not become live within ${ms} ms` });
@@ -255,8 +270,13 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	readonly #context: Context;
 	/** Aborted when the attempt is abandoned or ends: openers, activation's waits and calls run under its signal. */
 	readonly #abort = new AbortController();
-	/** The object's context under this attempt's signal. */
-	readonly #opening: Context;
+	/** The object's context under this attempt's signal, and its activation span while one is recorded. */
+	#opening: Context;
+	readonly #trace: AttemptTrace;
+	/** Its activation span while it runs (none when the host records nothing); a parked attempt resumes in a new one. */
+	#activation: OpenSpan<"chord.activate"> | undefined;
+	/** When it parked (`performance.now()`), while it is parked: `chord.park.duration` once it leaves. */
+	#parkedAt: number | undefined;
 	/** The seal token its handles and transactions carry (the seal fence). */
 	readonly #token = new SealToken();
 	/** Its routines once they started (most attempts have none). */
@@ -298,8 +318,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	 */
 	readonly #running: Work = new Map();
 	/**
-	 * Its running job invocations, as `#running`: the drain at its end waits for them; a swap does not (they finish on
-	 * their old code, slice 7b §8). Made by the first.
+	 * Its running job invocations, as `#running`: the drain at its end waits for them (a restart's drain does not: they
+	 * are cut at its seal). Made by the first.
 	 */
 	#runs: Work | undefined;
 	/** What activation returns once the attempt was abandoned: a timeout, a cycle through its object, or its end. */
@@ -315,8 +335,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	/** Its registry reads, contributions, wake signals and writables, made by the first: most attempts have none. */
 	#registryDeclarations: RegistryDeclarations | undefined;
 	/**
-	 * Its first dependency check, for a reload (its report, a swap's handover): waited for by someone, or done with why
-	 * it parked (`undefined`: it did not). Made by the first who asks or by the check.
+	 * Its first dependency check, for a reload (its report, its predecessor's references): waited for by someone, or
+	 * done with why it parked (`undefined`: it did not). Made by the first who asks or by the check.
 	 */
 	#check:
 		| { readonly done: false; readonly waiting: PromiseWithResolvers<FailureCause | undefined> }
@@ -325,11 +345,13 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	/** What a reload did to it, made by the first such step (most attempts never meet one). */
 	#reloaded: Reloaded | undefined;
 
-	constructor(object: ChordObject, context: Context) {
+	constructor(object: ChordObject, context: Context, trace: AttemptTrace) {
 		this.#object = object;
 		this.#served = object.served;
 		this.#context = context;
-		this.#opening = withAbortSignal(this.#abort.signal, context);
+		// Its opener's calls are known as its object's: their gate waits are the object's edges for reload cycles.
+		this.#opening = withContextValue(OPENING, object, withAbortSignal(this.#abort.signal, context));
+		this.#trace = trace;
 	}
 
 	state<D extends StateDefinition<JsonObject, boolean, boolean>>(definition: D): HandleOf<D> {
@@ -481,8 +503,11 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		const closeTimeout = options.closeTimeout ?? host.timeouts.close;
 		const owner = {
 			object: label,
+			type: this.#object.served.contract.name,
 			position: this.#natives.length + 1,
 			context: this.#context,
+			telemetry: host.telemetry,
+			host: host.spanHost,
 			report: (error: HostError) => host.report(error),
 		};
 		const native = new NativeHandle(open, close, closeTimeout, owner);
@@ -552,6 +577,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	 * while it waits has opened nothing).
 	 */
 	async activate(ending: Promise<void> | undefined): Promise<Activation> {
+		this.#startActivation(this.#trace.trigger);
 		const { ready } = this.#object.host.timeouts;
 		const deadline = new Deadline(ready, () => {
 			this.abandon({ kind: "failed", cause: { kind: "transient", error: notLive(this.#object.label, ready) } });
@@ -571,6 +597,71 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			// Ended before its first dependency check (its factory threw, it was abandoned): nothing parked.
 			this.#settleCheck(undefined);
 		}
+	}
+
+	/** Its current (or last) activation span; `undefined` when the host records nothing. */
+	get activationSpan(): TelemetrySpan | undefined {
+		return this.#activation?.span;
+	}
+
+	/**
+	 * Its activation's outcome, as its object took it: its span ends with it (a failure's error and a transient one's
+	 * backoff an event). An attempt still parked (its span ended `parked`) that fails or ends there records it in a short
+	 * span linked to the parked one, as its resumed steps would run in one (review L4).
+	 */
+	activated(outcome: Activated): void {
+		const current = this.#activation;
+		if (current === undefined) return;
+		if (current.ended) {
+			if (outcome.kind === "live") return;
+			this.#startActivation(current.span);
+		}
+		const activation = this.#activation!;
+		const { span } = activation;
+		if (outcome.kind === "failed") {
+			spanFailed(span, "activation_failed", outcome.cause.error);
+			if (outcome.retryAt !== undefined)
+				span.addEvent("chord.retry", { backoff: Math.max(0, outcome.retryAt - Date.now()) });
+		}
+		span.setAttributes({ outcome: outcome.kind });
+		activation.end();
+	}
+
+	/**
+	 * Starts an activation span on the host's adapter linked to `link` (none when it records nothing); the activation's
+	 * steps (its natives' opens, its references' holds) run under it.
+	 */
+	#startActivation(link: TelemetryContext): void {
+		const { host, served, label } = this.#object;
+		if (untraced(host.telemetry)) return;
+		const attributes = {
+			"chord.host": host.spanHost,
+			type: served.contract.name,
+			object: capped(label),
+			attempt: this.#trace.attempt,
+		};
+		const activation = new OpenSpan(host.telemetry, "chord.activate", attributes);
+		if (!untraced(link)) activation.span.addLink({ context: link });
+		this.#activation = activation;
+		this.#opening = withTelemetry(activation.span, this.#opening);
+	}
+
+	/** It parked showing `shown`: its activation span ends `parked` with the cause as an event. */
+	#parkedOn(shown: RefState): void {
+		this.#parkedAt ??= performance.now();
+		const activation = this.#activation;
+		if (activation === undefined || activation.ended) return;
+		const cause = shown.kind === "failed" ? shown.cause.error.message.slice(0, MAX_MESSAGE) : "loading";
+		activation.span.addEvent("chord.park", { cause });
+		activation.span.setAttributes({ outcome: "parked" });
+		activation.end();
+	}
+
+	/** It leaves its parking (its dependencies live, or abandoned): its park's duration is recorded. */
+	#parkEnded(): void {
+		if (this.#parkedAt === undefined) return;
+		this.#object.host.metrics.histogram("chord.park.duration").record(performance.now() - this.#parkedAt);
+		this.#parkedAt = undefined;
 	}
 
 	/** Abandons the activation with `outcome` (once): its waits stop and the openers' contexts are aborted. */
@@ -602,12 +693,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		this.abandon({ kind: "failed", cause: { kind: "transient", error } });
 	}
 
-	/**
-	 * The object went live: its jobs take starts and its routines start, in this turn; both stop when it is sealed.
-	 * After a swap (`previous`, the attempt it replaced) its routines start once the previous attempt's routine calls
-	 * finished (the handover per object, §14), calls never wait for it.
-	 */
-	live(previous?: Attempt): void {
+	/** The object went live: its jobs take starts and its routines start, in this turn; both stop when it is sealed. */
+	live(): void {
 		this.#isLive = true;
 		const early = this.#endedEarly;
 		if (early !== undefined) {
@@ -615,9 +702,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			return;
 		}
 		for (const job of this.#jobs.values()) job.live();
-		if (this.#routines.empty) return;
-		if (previous === undefined) this.#startRoutines();
-		else void previous.handOverRoutines().then(() => this.#startRoutines());
+		if (!this.#routines.empty) this.#startRoutines();
 	}
 
 	/** Starts its routines, unless it was sealed meanwhile. */
@@ -628,6 +713,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		this.#routineRun = run;
 		this.#routines.start({
 			label,
+			type: this.#object.served.contract.name,
 			host,
 			caller: this.#caller(),
 			context: withAbortSignal(run.abort.signal, this.#context),
@@ -640,17 +726,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		this.#routineRun?.abort.abort(reason);
 	}
 
-	/**
-	 * A reload swaps this live attempt out (slice 7b §5): its routines stop, its jobs are handed over (their running
-	 * invocations finish on this code), it takes no new starts; its calls run on until `drainCalls` settled.
-	 */
-	handOver(): void {
-		this.#reload().handedOver = true;
-		this.stopRoutines();
-		for (const job of this.#jobs.values()) job.handOver();
-	}
-
-	/** Its routines stop (their ctx aborted); their running calls are waited for by the drain or the handover. */
+	/** Its routines stop (their ctx aborted); their running calls are waited for by the drain. */
 	stopRoutines(): void {
 		this.#reload().routinesStopped = true;
 		this.#stopRoutines(
@@ -659,31 +735,39 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	}
 
 	/**
-	 * The new attempt's routines may start: once this attempt's routine calls finished, bounded by `closeTimeout` (a
-	 * stuck one is reported `drain_timeout`; the whole attempt is sealed by then: the swap's retirement drains its
-	 * calls and routine calls on the same bound from the swap's start, then seals it, so a stuck call's later commit
-	 * is refused `released`).
+	 * A restart drains it: from now on it serves old work (calls caused by calls on old attempts, routed by its object)
+	 * until its seal, counted as the host's old work.
 	 */
-	async handOverRoutines(): Promise<void> {
-		const { host, label } = this.#object;
-		const calls = this.#routineRun?.calls ?? NO_WORK;
-		if ((await drained(calls.keys(), calls.size, host.timeouts.close)) === "timeout") {
-			host.report({ kind: "drain_timeout", object: label });
-		}
+	beginDrain(): void {
+		this.#reload().callsDrained = true;
+		this.#object.host.oldWork.open();
+	}
+
+	/** Whether a restart drains it and it is not sealed yet: old work runs on it. */
+	get draining(): boolean {
+		return this.#reloaded?.callsDrained === true && this.#abandoned === undefined;
 	}
 
 	/**
-	 * Waits for its running calls and routine calls (not its job invocations), bounded by `closeTimeout`
-	 * (`drain_timeout` reported): a reload's swap or restart lets them finish before the seal. Its end's drain then
-	 * waits for them no more.
+	 * Waits until no call or routine call runs on it, routed old work included (it joins while the drain runs), or until
+	 * `due` (`Date.now()` time; `drain_timeout` reported). Its end's drain then waits for them no more.
 	 */
-	async drainCalls(): Promise<void> {
+	async drainCalls(due: number): Promise<void> {
 		const { host, label } = this.#object;
-		const calls = [...this.#running.keys(), ...(this.#routineRun?.calls ?? NO_WORK).keys()];
-		this.#reload().callsDrained = true;
-		if ((await drained(calls, calls.length, host.timeouts.close)) === "timeout") {
-			host.report({ kind: "drain_timeout", object: label });
+		for (;;) {
+			const calls = [...this.#running.keys(), ...(this.#routineRun?.calls ?? NO_WORK).keys()];
+			if (calls.length === 0) return;
+			const left = due - Date.now();
+			if (left <= 0 || (await drained(calls, calls.length, left)) === "timeout") {
+				host.report({ kind: "drain_timeout", object: label });
+				return;
+			}
 		}
+	}
+
+	/** The type it was made with: its contract and provider (old work and its consumers use it by that contract). */
+	get served(): Served {
+		return this.#served;
 	}
 
 	/** A reload started it: once live, its object retries its blocked job runs (slice 7b §8). */
@@ -698,7 +782,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 
 	/** What a reload did to it, made by the first such step. */
 	#reload(): Reloaded {
-		this.#reloaded ??= { started: false, handedOver: false, callsDrained: false, routinesStopped: false };
+		this.#reloaded ??= { started: false, callsDrained: false, routinesStopped: false };
 		return this.#reloaded;
 	}
 
@@ -707,14 +791,14 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		return this.#jobs.has(name);
 	}
 
-	/** Whether its factory opens natives (`self.open`): a reload restarts it instead of swapping it. */
+	/** Whether its factory opens natives (`self.open`): a restart's contributions then leave at its seal (F-b). */
 	get opensNatives(): boolean {
 		return this.#natives.length > 0;
 	}
 
 	/**
 	 * Its first dependency check: why it parked (`parkedCause`), `undefined` when it went on (its dependencies live) or
-	 * its activation ended before (a reload's report and a swap's handover wait for it).
+	 * its activation ended before (its predecessor's references are released once it is done).
 	 */
 	get checked(): Promise<FailureCause | undefined> {
 		const check = this.#check;
@@ -765,12 +849,20 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	 * call over a link was about 10% slower in the links benchmark), and no `async` (a check's throw is returned as a
 	 * rejection; as an async function a local call allocated about 250 B more).
 	 */
-	call(method: string, args: unknown, context: Context, caller: Caller, version: number): Promise<unknown> {
+	call(
+		method: string,
+		args: unknown,
+		context: Context,
+		caller: Caller,
+		version: number,
+		parent: TelemetryContext,
+	): Promise<unknown> {
 		let checked: ReturnType<typeof checkArgs>;
 		let handler: Method | undefined;
 		try {
 			context.abortSignal?.throwIfAborted();
-			const { served } = this.#object;
+			// Its own served type: an old attempt answers old work by the contract it was made with.
+			const served = this.#served;
 			const own = this.#members!.methods.get(method);
 			if (own === undefined && version === served.contract.version) throw this.#noMethod(method);
 			checked = checkArgs(served.provider, method, args, version, context);
@@ -786,15 +878,25 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		// A local object's handlers act as the host, its principal and its incarnation (§4); a remote one's as their
 		// caller. The caller stays the reference's (presence, §19).
 		const acting = served.kind === "remote" ? caller : { principal: host.principal, incarnation: host.incarnation };
-		const ctx = new CallContext(callContext, acting, host);
+		// Its span only when something records (§30: nothing else is made per call).
+		const span = !served.traced || untraced(parent) ? undefined : this.#methodSpan(parent, method, acting, context);
+		const ctx = new CallContext(
+			span === undefined ? callContext : withTelemetry(span.span, callContext),
+			acting,
+			host,
+			this,
+		);
 		// Admitted to the drain before the handler runs: the handler may end its own object before it returns.
 		const running = Promise.withResolvers<unknown>();
 		host.count("calls", 1);
+		host.metrics.upDownCounter("chord.calls.in_flight").add(1);
 		this.#admit(this.#running, running.promise, () => {
 			host.count("calls", -1);
+			host.metrics.upDownCounter("chord.calls.in_flight").add(-1);
 			linked.release();
 			ctx.settle();
 		});
+		span?.endWhen(running.promise, "method_failed", callContext.abortSignal);
 		// Plugin code, not type-checked: a synchronous throw or a plain value becomes the promise. Constants: the closure
 		// captures them, not the `let`s above.
 		const run = handler;
@@ -805,6 +907,19 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		// The handler's result is the current version's: its mapping back is the provider's (results are not validated).
 		const back = checked.result;
 		return settled.then((result) => back(result as Value));
+	}
+
+	/** The `chord.method` span of a call of `method` acting as `acting`, under `parent`. */
+	#methodSpan(parent: TelemetryContext, method: string, acting: Caller, context: Context): OpenSpan<"chord.method"> {
+		const { host, served, label } = this.#object;
+		return new OpenSpan(parent, "chord.method", {
+			"chord.host": host.spanHost,
+			type: served.contract.name,
+			member: method,
+			object: capped(label),
+			"principal.kind": capped(acting.principal?.kind ?? "none"),
+			...host.principalAttributes(acting.principal, context),
+		});
 	}
 
 	/** The `invalid/member` error of a method outside the variant. */
@@ -916,6 +1031,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	 * stay readable.
 	 */
 	seal(error: ChordError, runs: CutReason = "restart"): void {
+		// A drained old attempt stops counting as old work at its seal (once: an abandoned attempt is not draining).
+		if (this.draining) this.#object.host.oldWork.close();
 		this.abandon({ kind: "ended", error });
 		const { documents } = this.#object;
 		documents.fence(this.#token);
@@ -930,12 +1047,11 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		const { host, label } = this.#object;
 		if ((await this.#drained()) === "timeout") host.report({ kind: "drain_timeout", object: label });
 		// The close writer: the persisted runs the seal stopped, and the held state changes (slice 6b §4.2).
-		const handedOver = this.#reloaded?.handedOver === true;
-		if (!handedOver) for (const job of this.#jobs.values()) await job.writeAtClose(this.#context);
+		for (const job of this.#jobs.values()) await job.writeAtClose(this.#context);
 		// Work stuck past the drain keeps running, but no longer counts as a call or holds its `ctx.get` references.
 		cleanUp(this.#running);
 		cleanUp(this.#routineRun?.calls);
-		if (!handedOver) cleanUp(this.#runs);
+		cleanUp(this.#runs);
 		const failures: CloseFailed[] = [];
 		for (const native of [...this.#natives].reverse()) {
 			const failure = await native.close(reason);
@@ -945,14 +1061,13 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	}
 
 	/**
-	 * The drain at its end, bounded by `closeTimeout`: its running calls (unless a reload's `drainCalls` waited for them
-	 * already), routine calls and job invocations (unless a swap handed its jobs over: they finish on their own).
+	 * The drain at its end, bounded by `closeTimeout`: its running calls (unless a restart's `drainCalls` waited for them
+	 * already), routine calls and job invocations.
 	 */
 	#drained(): Promise<"settled" | "timeout"> {
 		const { close } = this.#object.host.timeouts;
-		const reloaded = this.#reloaded;
-		const running = reloaded?.callsDrained === true ? NO_WORK : this.#running;
-		const runs = reloaded?.handedOver === true ? undefined : this.#runs;
+		const running = this.#reloaded?.callsDrained === true ? NO_WORK : this.#running;
+		const runs = this.#runs;
 		const routineCalls = this.#routineRun?.calls;
 		// Most attempts have only calls: no list is made for them.
 		if (routineCalls === undefined && runs === undefined) return drained(running.keys(), running.size, close);
@@ -1061,23 +1176,36 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 					if (pinned === undefined && !this.#moved) {
 						// Its own steps follow: `loading` until its outcome (a failure shows as the failure, not this).
 						object.unparked(this);
+						this.#unparked();
 						return undefined;
 					}
-					if (pinned !== undefined) object.parked(this, pinned, true);
+					if (pinned !== undefined) {
+						object.parked(this, pinned, true);
+						this.#parkedOn(pinned);
+					}
 				} else {
 					object.parked(this, check.shown, check.firstPass);
 					this.#settleCheck(parkedCause(check));
 					long.blockedBy(check.blocker);
+					this.#parkedOn(check.shown);
 				}
 				if (!(await this.#nextChange())) return this.#abandoned!;
 			}
 		} finally {
+			this.#parkEnded();
 			long.stop();
 			for (const release of waits) release();
 			this.#parked = undefined;
 			object.waitsFor(NONE);
 			deadline.resume();
 		}
+	}
+
+	/** Its dependencies are live after it parked: its own steps run in a new activation span, linked to the parked one. */
+	#unparked(): void {
+		this.#parkEnded();
+		const parked = this.#activation;
+		if (parked?.ended) this.#startActivation(parked.span);
 	}
 
 	/**
