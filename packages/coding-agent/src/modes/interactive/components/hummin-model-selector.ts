@@ -214,7 +214,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		void this.refreshModels();
 	}
 
-	private loadModelsFromSnapshot(): void {
+	private loadModelsFromSnapshot(preferredKey?: string): void {
 		const models = this.modelRuntime.getAvailableSnapshot().map((model: Model<any>) => ({
 			provider: model.provider,
 			id: model.id,
@@ -231,12 +231,13 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			model: scoped.model as Model<any> & HumminModelMetadata,
 		}));
 		this.activeModels = this.scope === "scoped" ? this.scopedModelItems : this.allModels;
-		this.rebuildItems();
+		this.rebuildItems(preferredKey);
 	}
 
-	/** Rebuild the settings-list rows from the active model set, keeping the
-	 * current model selected when it is present. */
-	private rebuildItems(): void {
+	/** Rebuild the settings-list rows from the active model set. When the item
+	 * the user had selected is still listed (or the preferred key is missing),
+	 * keep it selected; otherwise fall back to the current model. */
+	private rebuildItems(preferredKey?: string): void {
 		this.searchTexts.clear();
 		const items: SettingItem[] = [];
 		let lastProvider: string | undefined;
@@ -275,9 +276,11 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			});
 		}
 		this.settingsList.setItems(items);
-		if (this.currentModel) {
-			this.settingsList.selectItem(`${this.currentModel.provider}/${this.currentModel.id}`);
-		}
+		// Keep the model the user had selected (it may have shifted position); when
+		// it is gone, fall back to the current model; selectItem is a no-op for a
+		// missing id, so the filter's clamped row (the current model first) stands.
+		const fallbackKey = this.currentModel ? `${this.currentModel.provider}/${this.currentModel.id}` : undefined;
+		this.settingsList.selectItem(preferredKey ?? fallbackKey ?? "");
 	}
 
 	private getModelDescription(item: ModelItem, providerName: string, isDefault: boolean): string {
@@ -330,7 +333,9 @@ export class ModelSelectorComponent extends Container implements Focusable {
 					this.refreshStatusSuccess = true;
 				}
 			}
-			this.loadModelsFromSnapshot();
+			// Capture what the user has selected before the snapshot reload shifts rows.
+			const selectedKey = this.settingsList.getSelectedItem()?.id;
+			this.loadModelsFromSnapshot(selectedKey);
 			this.updateStatus();
 			this.tui.requestRender();
 		} catch (error) {
