@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- Per-kind System-1 calibration: `/friction` now renders one section per logged read kind (steer, gate, decide, triage, intake, ask) with score distributions and near-miss bands against each kind's own threshold. The gate's threshold suggestion ships behind a band-separation check: it appears only when the confirmed-safe and blocked score bands do not overlap, and the report says "not enough separation to suggest" otherwise (the old rule suggested a threshold for the 2026-09 data shape, where confirmed-safe scores sit inside the blocked band; the separation check suppresses it)
+- Child result acceptance read: when a child task finishes, one System-1 read scores P(on-task, complete) from the child's final report and the result the parent sees gains a `sys1 acceptance` advisory line (asking to inspect below 0.5). Advisory only, fail-open, audited to sys1-gate.log as kind `accept`; `HUMMIN_SYS1_ACCEPT=off` skips it
+- Background shell job tools: `job_output` polls an exec or monitor job's state and output tail by job id, and `job_stop` stops a running one - exec jobs previously had no programmatic poll or stop (only the interactive /background panel). Subagent task jobs keep their dedicated `task_status` / `task_cancel` pair and are refused here with a pointer. No new spawn path: jobs start, gate, and deliver exactly as before
+
 ## [1.10.2] - 2026-11-10
 
 ## [1.10.1] - 2026-11-10
