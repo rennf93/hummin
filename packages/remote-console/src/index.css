@@ -42,7 +42,10 @@ body {
 	font-family: var(--rc-font-ui);
 }
 
-/* app shell: three regions, tokens only */
+/* app shell: three regions, tokens only. The header region is a transparent
+   stage: the island inside it (shell.css) carries the floating surface. The
+   composer is the pinned bottom surface; focusing any of its controls lights
+   its top hairline. */
 .rc-shell {
 	display: flex;
 	flex-direction: column;
@@ -50,9 +53,9 @@ body {
 }
 
 .rc-header {
-	background: var(--rc-surface);
-	border-bottom: 1px solid var(--rc-hairline);
-	padding: var(--rc-space-3) var(--rc-space-4);
+	background: transparent;
+	border: none;
+	padding: var(--rc-space-3) var(--rc-space-4) var(--rc-space-2);
 }
 
 .rc-transcript {
@@ -64,5 +67,11 @@ body {
 .rc-composer {
 	background: var(--rc-surface);
 	border-top: 1px solid var(--rc-hairline);
-	padding: var(--rc-space-3) var(--rc-space-4);
+	padding: var(--rc-space-3) var(--rc-space-4) var(--rc-space-4);
+	backdrop-filter: var(--rc-blur);
+	transition: border-color var(--rc-duration-fast) var(--rc-ease-out-expo);
+}
+
+.rc-composer:focus-within {
+	border-top-color: var(--rc-primary-muted);
 }

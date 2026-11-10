@@ -4,7 +4,8 @@
  * origin, and the bearer token. Tokens live only in this browser and are sent
  * only as the Authorization header to their own host. Appearance preferences
  * (localStorage key "rc.appearance") carry the Phase D panel shape now:
- * preset, accent hue, and density axes, applied to the document root by App.
+ * preset, accent hue, density, and motion axes, applied to the document root
+ * by App.
  */
 /// <reference lib="dom" />
 
@@ -20,13 +21,16 @@ export interface HostEntry {
 
 export type RemoteConsolePreset = "glass" | "paper" | "terminal";
 
+export type MotionPreference = "auto" | "off";
+
 export interface Appearance {
 	preset: RemoteConsolePreset;
 	accentHue: number;
 	density: number;
+	motion: MotionPreference;
 }
 
-export const DEFAULT_APPEARANCE: Appearance = { preset: "glass", accentHue: 190, density: 1 };
+export const DEFAULT_APPEARANCE: Appearance = { preset: "glass", accentHue: 190, density: 1, motion: "auto" };
 
 /** Last seen event older than this marks a connected stream stale. */
 export const STALE_AFTER_MS = 30_000;
@@ -125,7 +129,8 @@ export function removeHost(id: string): void {
 }
 
 /** Parses raw localStorage JSON into the appearance shape, with defaults for
- * missing or out-of-range fields (storage is a trust boundary). */
+ * missing or out-of-range fields (storage is a trust boundary). Records saved
+ * before the motion axis existed parse as "auto". */
 export function parseAppearance(raw: string | null): Appearance {
 	if (raw === null || raw.trim() === "") return DEFAULT_APPEARANCE;
 	let parsed: unknown;
@@ -139,12 +144,25 @@ export function parseAppearance(raw: string | null): Appearance {
 	const preset = record.preset === "paper" || record.preset === "terminal" ? record.preset : "glass";
 	const accentHue = numberInRange(record.accentHue, 0, 360, DEFAULT_APPEARANCE.accentHue);
 	const density = numberInRange(record.density, 0.5, 2, DEFAULT_APPEARANCE.density);
-	return { preset, accentHue, density };
+	const motion: MotionPreference = record.motion === "off" ? "off" : "auto";
+	return { preset, accentHue, density, motion };
 }
 
 function numberInRange(value: unknown, min: number, max: number, fallback: number): number {
 	if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) return fallback;
 	return value;
+}
+
+/** Live-edit clamp for the accent hue axis: integer hue in 0-360. */
+export function clampAccentHue(value: number): number {
+	if (!Number.isFinite(value)) return DEFAULT_APPEARANCE.accentHue;
+	return Math.min(360, Math.max(0, Math.round(value)));
+}
+
+/** Live-edit clamp for the density axis: the 0.05 grid between 0.5 and 2. */
+export function clampDensity(value: number): number {
+	if (!Number.isFinite(value)) return DEFAULT_APPEARANCE.density;
+	return Math.min(2, Math.max(0.5, Math.round(value * 20) / 20));
 }
 
 /** Reads the appearance prefs from localStorage. */
@@ -158,9 +176,11 @@ export function saveAppearance(appearance: Appearance): void {
 }
 
 /** Applies appearance prefs to the document root: the preset switches the
- * token sheet via data-rc-preset; the two axes are root custom properties. */
+ * token sheet via data-rc-preset; the two axes are root custom properties;
+ * motion="off" sets data-rc-motion so tokens.css zeroes the duration tokens. */
 export function applyAppearance(root: HTMLElement, appearance: Appearance): void {
 	root.dataset.rcPreset = appearance.preset;
+	root.dataset.rcMotion = appearance.motion;
 	root.style.setProperty("--rc-accent-hue", String(appearance.accentHue));
 	root.style.setProperty("--rc-density", String(appearance.density));
 }

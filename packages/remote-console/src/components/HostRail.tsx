@@ -2,8 +2,10 @@
  * components/HostRail: the fleet column. One row per registered host with its
  * live status glyph (connected, stale after 30 quiet seconds, reconnecting,
  * unreachable, unauthorized), label, session name, and model; clicking a row
- * selects the active host. The add-host form appends to the browser registry;
- * remove drops the entry (its token stays local to this browser either way).
+ * selects the active host. With no hosts the rail shows the onboarding card
+ * with the add form inline. The add-host form appends to the browser registry
+ * (expanded by the toggle on phones, always visible on desktop); remove drops
+ * the entry (its token stays local to this browser either way).
  */
 /// <reference lib="dom" />
 import { useEffect, useState } from "react";
@@ -75,14 +77,25 @@ export function HostRail({
 	onRemove(hostId: string): void;
 }) {
 	const now = useNowInterval(hosts.length > 0);
+	const empty = hosts.length === 0;
+	const [formOpen, setFormOpen] = useState(empty);
+	// Removing the last host returns to onboarding: the form leads again.
+	useEffect(() => {
+		if (empty) setFormOpen(true);
+	}, [empty]);
 	return (
 		<div className="rc-rail-inner" data-rc-rail="true">
 			<div className="rc-rail-title">hosts</div>
-			{hosts.length === 0 && <div className="rc-rail-empty">no hosts registered</div>}
+			{empty && (
+				<div className="rc-onboard" data-rc-empty="true">
+					<div className="rc-onboard-title">Add your first host</div>
+					<p className="rc-onboard-hint">Paste the console origin and bearer token of a running session to bring it into the rail.</p>
+				</div>
+			)}
 			{hosts.map((host) => (
 				<HostRow key={host.id} host={host} state={states[host.id]} active={host.id === activeId} now={now} onSelect={onSelect} onRemove={onRemove} />
 			))}
-			<AddHostForm onAdd={onAdd} />
+			<AddHostForm onAdd={onAdd} open={formOpen} onToggle={() => setFormOpen((current) => !current)} />
 		</div>
 	);
 }
@@ -113,7 +126,7 @@ function HostRow({
 				</span>
 				<span className="rc-host-text">
 					<span className="rc-host-label">{host.label}</span>
-					<span className="rc-host-sub">
+					<span className="rc-host-sub" data-rc-host-sub={status}>
 						{status}
 						{session !== null && ` \u00B7 ${session}`}
 					</span>
@@ -127,7 +140,15 @@ function HostRow({
 	);
 }
 
-function AddHostForm({ onAdd }: { onAdd(input: AddHostInput): void }) {
+function AddHostForm({
+	onAdd,
+	open,
+	onToggle,
+}: {
+	onAdd(input: AddHostInput): void;
+	open: boolean;
+	onToggle(): void;
+}) {
 	const [label, setLabel] = useState("");
 	const [origin, setOrigin] = useState("");
 	const [token, setToken] = useState("");
@@ -153,35 +174,49 @@ function AddHostForm({ onAdd }: { onAdd(input: AddHostInput): void }) {
 				if (ready) submit();
 			}}
 		>
-			<div className="rc-rail-title">add host</div>
-			<input
-				className="rc-add-input"
-				data-rc-add-label="true"
-				placeholder="label (optional)"
-				aria-label="host label"
-				value={label}
-				onChange={(event) => setLabel(event.target.value)}
-			/>
-			<input
-				className="rc-add-input"
-				data-rc-add-origin="true"
-				placeholder="origin (http://127.0.0.1:PORT)"
-				aria-label="host origin"
-				value={origin}
-				onChange={(event) => setOrigin(event.target.value)}
-			/>
-			<input
-				className="rc-add-input"
-				data-rc-add-token="true"
-				placeholder="token"
-				aria-label="host token"
-				value={token}
-				onChange={(event) => setToken(event.target.value)}
-			/>
-			{error !== null && <div className="rc-add-error">{error}</div>}
-			<button type="submit" className="rc-add-submit" data-rc-add-submit="true" disabled={!ready}>
-				add
-			</button>
+			<div className="rc-add-head">
+				<div className="rc-rail-title">add host</div>
+				<button
+					type="button"
+					className="rc-add-toggle"
+					data-rc-add-toggle="true"
+					aria-expanded={open}
+					aria-controls="rc-add-fields"
+					onClick={onToggle}
+				>
+					{open ? "close" : "add"}
+				</button>
+			</div>
+			<div className="rc-add-fields" id="rc-add-fields" data-rc-add-open={open ? "true" : "false"}>
+				<input
+					className="rc-add-input"
+					data-rc-add-label="true"
+					placeholder="label (optional)"
+					aria-label="host label"
+					value={label}
+					onChange={(event) => setLabel(event.target.value)}
+				/>
+				<input
+					className="rc-add-input"
+					data-rc-add-origin="true"
+					placeholder="origin (http://127.0.0.1:PORT)"
+					aria-label="host origin"
+					value={origin}
+					onChange={(event) => setOrigin(event.target.value)}
+				/>
+				<input
+					className="rc-add-input"
+					data-rc-add-token="true"
+					placeholder="token"
+					aria-label="host token"
+					value={token}
+					onChange={(event) => setToken(event.target.value)}
+				/>
+				{error !== null && <div className="rc-add-error">{error}</div>}
+				<button type="submit" className="rc-add-submit" data-rc-add-submit="true" disabled={!ready}>
+					add
+				</button>
+			</div>
 		</form>
 	);
 }

@@ -35,6 +35,7 @@ export function ApprovalCard({
 			</span>
 			<span className="rc-approval-body">
 				<span className="rc-approval-title">
+					<span className="rc-approval-label" data-rc-approval-label="true">approval</span>
 					approve <code className="rc-approval-tool">{approval.toolName}</code>
 				</span>
 				<span className="rc-approval-args">{approval.argsPreview}</span>

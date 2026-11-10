@@ -3,8 +3,10 @@
  * frames into the per-host store; the active host's slices drive the header,
  * transcript (renderer's TranscriptList, including the live slot and tool
  * cards), the approval card, and the composer. The host registry and
- * appearance prefs live browser-side (localStorage); connections rebuild only
- * when a host's identity (origin or token) changes, never on label edits.
+ * appearance prefs live browser-side (localStorage); the appearance panel
+ * edits the same prefs live (applied to the document root and persisted on
+ * every change). Connections rebuild only when a host's identity (origin or
+ * token) changes, never on label edits.
  */
 /// <reference lib="dom" />
 import { useCallback, useEffect, useReducer, useState } from "react";
@@ -16,6 +18,7 @@ import {
 	postPrompt,
 } from "./connection.ts";
 import { ApprovalCard } from "./components/ApprovalCard.tsx";
+import { AppearancePanel } from "./components/AppearancePanel.tsx";
 import { Composer } from "./components/Composer.tsx";
 import { Header } from "./components/Header.tsx";
 import { HostRail, type AddHostInput } from "./components/HostRail.tsx";
@@ -41,6 +44,7 @@ export function App() {
 	const [hosts, setHosts] = useState<readonly HostEntry[]>(() => listHosts());
 	const [activeId, setActiveId] = useState<string | null>(null);
 	const [appearance, setAppearance] = useState<Appearance>(loadAppearance);
+	const [panelOpen, setPanelOpen] = useState(false);
 	const [specs, setSpecs] = useState<readonly ConnectionSpec[]>([]);
 	const [store, dispatch] = useReducer(reduceHosts, {});
 
@@ -103,6 +107,14 @@ export function App() {
 		setAppearance((current) => ({ ...current, preset }));
 	}, [setAppearance]);
 
+	// Panel edits apply through the same appearance effect as the quick-switch.
+	const handleAppearance = useCallback((patch: Partial<Appearance>) => {
+		setAppearance((current) => ({ ...current, ...patch }));
+	}, [setAppearance]);
+
+	const openAppearance = useCallback(() => setPanelOpen(true), [setPanelOpen]);
+	const closeAppearance = useCallback(() => setPanelOpen(false), [setPanelOpen]);
+
 	const sendPrompt = useCallback(
 		(text: string, deliverAs: "steer" | "followUp") => {
 			if (activeHost === undefined) return;
@@ -126,22 +138,23 @@ export function App() {
 	);
 
 	return (
-		<div className="rc-shell" data-rc-shell="rail">
-			<nav className="rc-rail" aria-label="hosts">
-				<HostRail hosts={hosts} states={store} activeId={activeId} onSelect={selectHost} onAdd={handleAdd} onRemove={handleRemove} />
-			</nav>
-			<div className="rc-main">
-				<header className="rc-header" data-rc-region="header">
-					<Header state={activeState} preset={appearance.preset} onPreset={handlePreset} />
-				</header>
-				<main className="rc-transcript" data-rc-region="transcript">
-					<TranscriptList entries={activeState?.entries ?? []} slot={activeState?.slot ?? null} toolUpdates={activeState?.toolUpdates} />
-				</main>
-				<footer className="rc-composer" data-rc-region="composer">
-					<ApprovalCard approval={activeState?.approval ?? null} onResolve={resolveApproval} />
-					<Composer queue={activeState?.queue ?? null} disabled={activeHost === undefined} onSend={sendPrompt} onAbort={abort} />
-				</footer>
+			<div className="rc-shell" data-rc-shell="rail">
+				<nav className="rc-rail" aria-label="hosts">
+					<HostRail hosts={hosts} states={store} activeId={activeId} onSelect={selectHost} onAdd={handleAdd} onRemove={handleRemove} />
+				</nav>
+				<div className="rc-main">
+					<header className="rc-header" data-rc-region="header">
+						<Header state={activeState} preset={appearance.preset} onPreset={handlePreset} onOpenAppearance={openAppearance} />
+					</header>
+					<main className="rc-transcript" data-rc-region="transcript">
+						<TranscriptList entries={activeState?.entries ?? []} slot={activeState?.slot ?? null} toolUpdates={activeState?.toolUpdates} />
+					</main>
+					<footer className="rc-composer" data-rc-region="composer">
+						<ApprovalCard approval={activeState?.approval ?? null} onResolve={resolveApproval} />
+						<Composer queue={activeState?.queue ?? null} disabled={activeHost === undefined} onSend={sendPrompt} onAbort={abort} />
+					</footer>
+				</div>
+				{panelOpen && <AppearancePanel appearance={appearance} onChange={handleAppearance} onClose={closeAppearance} />}
 			</div>
-		</div>
 	);
 }

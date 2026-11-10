@@ -28,6 +28,10 @@ html {
 	--rc-accent-hue: 190;
 	--rc-density: 1;
 
+	/* the hue slider's live track: the full accent-hue range at the glass accent's
+	   saturation and lightness, so the swatch always previews the real accent. */
+	--rc-hue-spectrum: linear-gradient(to right, hsl(0 78% 60%), hsl(60 78% 60%), hsl(120 78% 60%), hsl(180 78% 60%), hsl(240 78% 60%), hsl(300 78% 60%), hsl(360 78% 60%));
+
 	/* surface ramp */
 	--rc-base: #060a0d;
 	--rc-surface: rgb(16 28 34 / 0.82);
@@ -74,6 +78,12 @@ html {
 	--rc-blur-overlay: blur(26px) saturate(170%);
 	--rc-glass-highlight: rgb(210 240 255 / 0.06);
 
+	/* depth: overlay scrim and the raised-surface shadow, tinted to the preset's
+	   base hue (never pure black). Floating chrome (header island, appearance
+	   panel) reads --rc-shadow-raise; the overlay scrim sits under the panel. */
+	--rc-scrim: rgb(2 8 12 / 0.62);
+	--rc-shadow-raise: 0 18px 40px -26px rgb(2 8 12 / 0.9), 0 2px 6px -2px rgb(2 8 12 / 0.5);
+
 	/* opaque equivalents, used by the reduced-transparency and no-backdrop-filter fallbacks below */
 	--rc-surface-solid: #0a1114;
 	--rc-raised-solid: #0d161a;
@@ -114,6 +124,8 @@ html {
 	--rc-blur: none;
 	--rc-blur-overlay: none;
 	--rc-glass-highlight: transparent;
+	--rc-scrim: rgb(43 36 26 / 0.38);
+	--rc-shadow-raise: 0 18px 40px -26px rgb(43 36 26 / 0.28), 0 2px 6px -2px rgb(43 36 26 / 0.16);
 	--rc-surface-solid: #fbf8f1;
 	--rc-raised-solid: #ffffff;
 }
@@ -143,9 +155,30 @@ html {
 	--rc-blur: none;
 	--rc-blur-overlay: none;
 	--rc-glass-highlight: transparent;
+	--rc-scrim: rgb(0 0 0 / 0.7);
+	--rc-shadow-raise: 0 14px 32px -24px rgb(0 0 0 / 0.95);
 	--rc-surface-solid: #0b0b0b;
 	--rc-raised-solid: #121212;
 	--rc-font-ui: var(--rc-font-mono);
+}
+
+/* motion off: the appearance panel's forced-reduced-motion switch. The root
+   attribute zeroes the duration tokens and applies the same blanket kill as
+   the prefers-reduced-motion twin below; "auto" leaves both to the OS. */
+[data-rc-motion="off"] {
+	--rc-duration-press: 0ms;
+	--rc-duration-fast: 0ms;
+	--rc-duration-base: 0ms;
+	--rc-duration-slow: 0ms;
+}
+
+[data-rc-motion="off"],
+[data-rc-motion="off"] *,
+[data-rc-motion="off"] *::before,
+[data-rc-motion="off"] *::after {
+	animation-duration: 0.01ms !important;
+	animation-iteration-count: 1 !important;
+	transition-duration: 0.01ms !important;
 }
 
 /* reduced motion: the token durations go to zero, plus a blanket kill for anything

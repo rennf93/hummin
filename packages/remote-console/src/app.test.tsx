@@ -38,6 +38,8 @@ import type {
 import {
 	addHost,
 	applyAppearance,
+	clampAccentHue,
+	clampDensity,
 	listHosts,
 	loadAppearance,
 	parseAppearance,
@@ -47,7 +49,7 @@ import {
 	updateHost,
 	type Appearance,
 } from "./hosts.ts";
-import { mount } from "./renderer/test/mount.tsx";
+import { mount, type Mounted } from "./renderer/test/mount.tsx";
 import { initialHostState, reduceHosts, type HostStore } from "./store.ts";
 
 const HARNESS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "harness");
@@ -521,16 +523,35 @@ describe("hosts: registry and appearance", () => {
 	});
 
 	it("appearance parses, persists, and applies to the document root", () => {
-		expect(parseAppearance(null)).toEqual({ preset: "glass", accentHue: 190, density: 1 });
-		expect(parseAppearance("garbage")).toEqual({ preset: "glass", accentHue: 190, density: 1 });
-		expect(parseAppearance(JSON.stringify({ preset: "terminal", accentHue: 400, density: 9 }))).toEqual({ preset: "terminal", accentHue: 190, density: 1 });
-		const appearance: Appearance = { preset: "paper", accentHue: 250, density: 0.85 };
+		expect(parseAppearance(null)).toEqual({ preset: "glass", accentHue: 190, density: 1, motion: "auto" });
+		expect(parseAppearance("garbage")).toEqual({ preset: "glass", accentHue: 190, density: 1, motion: "auto" });
+		expect(parseAppearance(JSON.stringify({ preset: "terminal", accentHue: 400, density: 9 }))).toEqual({ preset: "terminal", accentHue: 190, density: 1, motion: "auto" });
+		// Records saved before the motion axis existed parse as "auto"; an unknown
+		// motion value falls back the same way.
+		expect(parseAppearance(JSON.stringify({ preset: "paper", accentHue: 200, density: 1.5 }))).toEqual({ preset: "paper", accentHue: 200, density: 1.5, motion: "auto" });
+		expect(parseAppearance(JSON.stringify({ motion: "off" }))).toEqual({ preset: "glass", accentHue: 190, density: 1, motion: "off" });
+		expect(parseAppearance(JSON.stringify({ motion: "sometimes" }))).toMatchObject({ motion: "auto" });
+		const appearance: Appearance = { preset: "paper", accentHue: 250, density: 0.85, motion: "off" };
 		saveAppearance(appearance);
 		expect(loadAppearance()).toEqual(appearance);
 		applyAppearance(document.documentElement, appearance);
 		expect(document.documentElement.dataset.rcPreset).toBe("paper");
+		expect(document.documentElement.dataset.rcMotion).toBe("off");
 		expect(document.documentElement.style.getPropertyValue("--rc-accent-hue")).toBe("250");
 		expect(document.documentElement.style.getPropertyValue("--rc-density")).toBe("0.85");
+	});
+
+	it("clamps the live axes onto their ranges", () => {
+		expect(clampAccentHue(190)).toBe(190);
+		expect(clampAccentHue(-20)).toBe(0);
+		expect(clampAccentHue(400)).toBe(360);
+		expect(clampAccentHue(250.6)).toBe(251);
+		expect(clampAccentHue(Number.NaN)).toBe(190);
+		expect(clampDensity(1)).toBe(1);
+		expect(clampDensity(0.1)).toBe(0.5);
+		expect(clampDensity(9)).toBe(2);
+		expect(clampDensity(1.234)).toBe(1.25);
+		expect(clampDensity(Number.NaN)).toBe(1);
 	});
 });
 
@@ -555,6 +576,139 @@ describe("components: rail status and approval countdown", () => {
 		const approval: WireApproval = { id: "a1", toolName: "bash", argsPreview: "ls", deadlineMs: 100_000, createdAt: TS };
 		expect(countdownSeconds(approval, 90_000)).toBe(10);
 		expect(countdownSeconds(approval, 100_001)).toBe(0);
+	});
+});
+
+describe("app: appearance panel", () => {
+	beforeEach(() => {
+		localStorage.clear();
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	async function openPanel(): Promise<Mounted> {
+		seedRegistry();
+		const records: RecordedFetch[] = [];
+		vi.stubGlobal("fetch", hangingFetch(records));
+		const mounted = await mount(<App />);
+		await flush();
+		await click(document.querySelector("[data-rc-appearance-open]"));
+		await flush();
+		return mounted;
+	}
+
+	it("opens from the header as a labelled dialog with the live preview", async () => {
+		const mounted = await openPanel();
+		try {
+			const panel = document.querySelector("[data-rc-appear-panel]");
+			expect(panel).not.toBeNull();
+			expect(panel?.getAttribute("role")).toBe("dialog");
+			expect(panel?.getAttribute("aria-modal")).toBe("true");
+			expect(panel?.getAttribute("aria-label")).toBe("appearance");
+			expect(document.querySelector("[data-rc-appear-preview]")).not.toBeNull();
+			expect(document.querySelector('[data-rc-appear-swatch="glass"]')).not.toBeNull();
+			expect(document.querySelector("[data-rc-appear-hue]")).not.toBeNull();
+			expect(document.querySelector("[data-rc-appear-density]")).not.toBeNull();
+			expect(document.querySelector('[data-rc-appear-motion="auto"]')).not.toBeNull();
+			// Opening moves focus into the dialog.
+			expect(document.activeElement?.getAttribute("data-rc-appear-panel")).toBe("true");
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("closes on Escape and hands focus back to the opener", async () => {
+		seedRegistry();
+		const records: RecordedFetch[] = [];
+		vi.stubGlobal("fetch", hangingFetch(records));
+		const mounted = await mount(<App />);
+		try {
+			await flush();
+			// A real click focuses the button; model that so the opener is captured.
+			const opener = document.querySelector<HTMLButtonElement>("[data-rc-appearance-open]");
+			await act(async () => {
+				opener?.focus();
+			});
+			await click(opener);
+			await flush();
+			expect(document.querySelector("[data-rc-appear-panel]")).not.toBeNull();
+			await act(async () => {
+				document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+			});
+			await flush();
+			expect(document.querySelector("[data-rc-appear-panel]")).toBeNull();
+			expect(document.activeElement).toBe(opener);
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("closes on a scrim click", async () => {
+		const mounted = await openPanel();
+		try {
+			await click(document.querySelector("[data-rc-appear-scrim]"));
+			await flush();
+			expect(document.querySelector("[data-rc-appear-panel]")).toBeNull();
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("traps Tab inside the panel, skipping decorative stops", async () => {
+		const mounted = await openPanel();
+		try {
+			const stops = Array.from(document.querySelectorAll<HTMLElement>("[data-rc-appear-panel] button, [data-rc-appear-panel] input")).filter(
+				(node) => !node.hasAttribute("disabled") && node.getAttribute("tabindex") !== "-1",
+			);
+			expect(stops.length).toBeGreaterThan(1);
+			const last = stops[stops.length - 1];
+			await act(async () => {
+				last?.focus();
+			});
+			await act(async () => {
+				document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab" }));
+			});
+			expect(document.activeElement).toBe(stops[0]);
+			await act(async () => {
+				document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true }));
+			});
+			expect(document.activeElement).toBe(last);
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("applies preset, hue, density, and motion live and persists them", async () => {
+		const mounted = await openPanel();
+		try {
+			// Preset swatch switches the root preset and persists.
+			await click(document.querySelector('[data-rc-appear-swatch="paper"]'));
+			expect(document.documentElement.dataset.rcPreset).toBe("paper");
+			// Sliders apply their clamped axes to the root custom properties.
+			const hue = document.querySelector<HTMLInputElement>("[data-rc-appear-hue]");
+			await act(async () => {
+				setNativeValue(hue as HTMLInputElement, "250");
+			});
+			expect(document.documentElement.style.getPropertyValue("--rc-accent-hue")).toBe("250");
+			const density = document.querySelector<HTMLInputElement>("[data-rc-appear-density]");
+			await act(async () => {
+				setNativeValue(density as HTMLInputElement, "0.85");
+			});
+			expect(document.documentElement.style.getPropertyValue("--rc-density")).toBe("0.85");
+			// Motion off applies the root attribute.
+			await click(document.querySelector('[data-rc-appear-motion="off"]'));
+			expect(document.documentElement.dataset.rcMotion).toBe("off");
+			// Everything persisted in the same tick.
+			const saved = JSON.parse(localStorage.getItem("rc.appearance") ?? "{}") as { preset?: string; accentHue?: number; density?: number; motion?: string };
+			expect(saved).toEqual({ preset: "paper", accentHue: 250, density: 0.85, motion: "off" });
+			// The panel's readouts track the applied values.
+			expect(document.querySelector("[data-rc-appear-hue-value]")?.getAttribute("data-rc-appear-hue-value")).toBe("250");
+			expect(document.querySelector("[data-rc-appear-density-value]")?.getAttribute("data-rc-appear-density-value")).toBe("0.85");
+		} finally {
+			await mounted.unmount();
+		}
 	});
 });
 
@@ -625,6 +779,8 @@ describe("app: shell integration", () => {
 			// Approval flow: the card appears for the pending hold and posts on click.
 			const card = document.querySelector("[data-rc-approval]");
 			expect(card?.getAttribute("data-rc-approval-tool")).toBe("bash");
+			// The attention state is never color alone: the label chip names it.
+			expect(document.querySelector("[data-rc-approval-label]")?.textContent).toBe("approval");
 			await click(document.querySelector("[data-rc-approve]"));
 			const approvalPost = postBodies(posts).find((post) => post.url.endsWith("/approval"));
 			expect(approvalPost?.body).toEqual({ id: "a1", allow: true });
@@ -694,6 +850,45 @@ describe("app: shell integration", () => {
 		try {
 			await flush();
 			expect(document.querySelector("[data-rc-approval]")).toBeNull();
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("shows the no-hosts onboarding card and registers a host through its inline form", async () => {
+		localStorage.clear();
+		const records: RecordedFetch[] = [];
+		vi.stubGlobal("fetch", hangingFetch(records));
+		const mounted = await mount(<App />);
+		try {
+			await flush();
+			const onboarding = document.querySelector("[data-rc-empty]");
+			expect(onboarding).not.toBeNull();
+			expect(onboarding?.textContent).toContain("Add your first host");
+			// The form leads while empty: expanded, inline in the onboarding card.
+			const toggle = document.querySelector<HTMLButtonElement>("[data-rc-add-toggle]");
+			expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+			expect(document.querySelector(".rc-add-fields")?.getAttribute("data-rc-add-open")).toBe("true");
+
+			// Adding a host through the form lands the row and retires onboarding.
+			await act(async () => {
+				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-origin]") as HTMLInputElement, "http://127.0.0.1:7777");
+				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-token]") as HTMLInputElement, "tok");
+			});
+			await click(document.querySelector("[data-rc-add-submit]"));
+			await flush();
+			expect(document.querySelector("[data-rc-empty]")).toBeNull();
+			expect(localStorage.getItem("rc.hosts")).toContain("127.0.0.1:7777");
+			const row = document.querySelector("[data-rc-host-row]");
+			expect(row).not.toBeNull();
+
+			// With hosts present the form collapses behind the toggle.
+			const collapsed = document.querySelector<HTMLButtonElement>("[data-rc-add-toggle]");
+			expect(collapsed?.getAttribute("aria-expanded")).toBe("true");
+			await click(collapsed);
+			await flush();
+			expect(collapsed?.getAttribute("aria-expanded")).toBe("false");
+			expect(document.querySelector(".rc-add-fields")?.getAttribute("data-rc-add-open")).toBe("false");
 		} finally {
 			await mounted.unmount();
 		}

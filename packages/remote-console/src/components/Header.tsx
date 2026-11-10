@@ -1,8 +1,8 @@
 /**
  * components/Header: the active host's status island. Run status (idle,
  * working, waiting with its terminal detail), model and thinking level,
- * context usage percent, and the preset quick-switch that drives the
- * appearance store (the full panel is Phase D).
+ * context usage percent, the preset quick-switch that drives the appearance
+ * store, and the button that opens the full appearance panel.
  */
 /// <reference lib="dom" />
 import type { HostState } from "../store.ts";
@@ -24,10 +24,12 @@ export function Header({
 	state,
 	preset,
 	onPreset,
+	onOpenAppearance,
 }: {
 	state: HostState | undefined;
 	preset: RemoteConsolePreset;
 	onPreset(preset: RemoteConsolePreset): void;
+	onOpenAppearance(): void;
 }) {
 	const status = headerStatus(state);
 	const model = state?.status?.model ?? null;
@@ -73,6 +75,15 @@ export function Header({
 					</button>
 				))}
 			</span>
+			<button
+				type="button"
+				className="rc-appear-open"
+				data-rc-appearance-open="true"
+				aria-haspopup="dialog"
+				onClick={onOpenAppearance}
+			>
+				appearance
+			</button>
 		</div>
 	);
 }

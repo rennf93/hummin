@@ -1,7 +1,16 @@
-/* hummin remote console shell: layout and chrome for the host rail, header,
-   approval card, and composer. Every styled value reads an --rc-* token. The
+/* hummin remote console shell: layout and chrome for the host rail, header
+   island, approval card, composer, and the appearance overlay. Every styled
+   value reads an --rc-* token; layout dimensions are the only raw values. The
    bundle loads this sheet before index.css, so region rules qualify with their
-   data-rc attribute to win the tie against index.css's region classes. */
+   data-rc attribute to win the tie against index.css's region classes.
+
+   Shape lock: controls and chips use --rc-radius-sm, cards use
+   --rc-radius-md, floating islands (header island, appearance panel) use
+   --rc-radius-lg. Blur layers never stack: rail, header island, and composer
+   sit directly on the base; the appearance overlay is the one stronger layer
+   (--rc-blur-overlay) and its children carry no blur of their own. Motion
+   tokens drive every transition and keyframe; the motion axis and
+   prefers-reduced-motion zero them together. */
 
 /* shell frame: rail left, main column right */
 .rc-shell[data-rc-shell] {
@@ -58,25 +67,6 @@
 	gap: var(--rc-space-2);
 }
 
-/* single-column stack under 900px: rail above the main column */
-@media (width < 900px) {
-	.rc-shell[data-rc-shell] {
-		flex-direction: column;
-	}
-
-	.rc-rail {
-		width: 100%;
-		max-height: 40vh;
-		border-right: none;
-		border-bottom: 1px solid var(--rc-hairline);
-	}
-
-	.rc-main {
-		height: auto;
-		flex: 1;
-	}
-}
-
 /* host rail */
 .rc-rail-inner {
 	display: flex;
@@ -93,44 +83,52 @@
 	color: var(--rc-fg-faint);
 }
 
-.rc-rail-empty {
+/* no-hosts onboarding: the card leads the rail and carries the add form */
+.rc-onboard {
+	background: var(--rc-raised);
+	border: 1px solid var(--rc-hairline);
+	border-radius: var(--rc-radius-md);
+	padding: var(--rc-space-3);
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-2);
+}
+
+.rc-onboard-title {
+	font-size: 0.95rem;
+	font-weight: 600;
+	color: var(--rc-fg);
+}
+
+.rc-onboard-hint {
+	margin: 0;
+	font-size: 0.82rem;
+	line-height: 1.5;
 	color: var(--rc-fg-faint);
-	font-size: 0.85rem;
-	padding: var(--rc-space-2) 0;
 }
 
 .rc-host-row {
 	display: flex;
 	align-items: stretch;
-	border-radius: var(--rc-radius-md);
+	border-radius: var(--rc-radius-sm);
 	border: 1px solid transparent;
-	transition: border-color var(--rc-duration-fast) var(--rc-ease-out-expo);
+	transition: border-color var(--rc-duration-fast) var(--rc-ease-out-expo), background var(--rc-duration-fast) var(--rc-ease-out-expo);
+}
+
+.rc-host-row:hover {
+	border-color: var(--rc-hairline);
+	background: var(--rc-track);
 }
 
 .rc-host-row-active {
 	border-color: var(--rc-primary-muted);
 	background: var(--rc-primary-faint);
+	box-shadow: inset 2px 0 0 var(--rc-primary);
 }
 
-.rc-host-row:hover {
-	border-color: var(--rc-hairline);
-}
-
-.rc-host-select {
-	display: flex;
-	align-items: baseline;
-	gap: var(--rc-space-2);
-	flex: 1;
-	min-width: 0;
-	background: transparent;
-	border: none;
-	color: var(--rc-fg);
-	text-align: left;
-	padding: var(--rc-space-2);
-	cursor: pointer;
-	font: inherit;
-}
-
+/* per-host state: the glyph carries the color, the sub text names the state,
+   so status is never color alone. Unreachable and unauthorized calm down:
+   dimmed label, the state word in --rc-bad. */
 .rc-host-glyph {
 	flex: none;
 	color: var(--rc-fg-faint);
@@ -152,6 +150,29 @@
 }
 
 .rc-host-row[data-rc-host-status="unauthorized"] .rc-host-glyph {
+	color: var(--rc-bad);
+}
+
+.rc-host-row[data-rc-host-status="unreachable"] .rc-host-glyph {
+	color: var(--rc-bad);
+}
+
+.rc-host-row[data-rc-host-status="unreachable"] .rc-host-label,
+.rc-host-row[data-rc-host-status="unauthorized"] .rc-host-label {
+	color: var(--rc-fg-dim);
+}
+
+.rc-host-row .rc-host-sub[data-rc-host-sub="stale"] {
+	color: var(--rc-warn);
+}
+
+.rc-host-row .rc-host-sub[data-rc-host-sub="connecting"],
+.rc-host-row .rc-host-sub[data-rc-host-sub="reconnecting"] {
+	color: var(--rc-primary);
+}
+
+.rc-host-row .rc-host-sub[data-rc-host-sub="unreachable"],
+.rc-host-row .rc-host-sub[data-rc-host-sub="unauthorized"] {
 	color: var(--rc-bad);
 }
 
@@ -203,6 +224,7 @@
 	cursor: pointer;
 	padding: var(--rc-space-2);
 	font: inherit;
+	transition: color var(--rc-duration-press) var(--rc-ease-out-expo);
 }
 
 .rc-host-remove:hover {
@@ -214,9 +236,42 @@
 	display: flex;
 	flex-direction: column;
 	gap: var(--rc-space-2);
-	margin-top: var(--rc-space-3);
+	margin-top: var(--rc-space-2);
 	padding-top: var(--rc-space-3);
 	border-top: 1px solid var(--rc-hairline);
+}
+
+.rc-add-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--rc-space-2);
+}
+
+.rc-add-toggle {
+	display: none;
+	background: transparent;
+	border: 1px solid var(--rc-hairline);
+	border-radius: var(--rc-radius-sm);
+	color: var(--rc-fg-dim);
+	font-family: var(--rc-font-mono);
+	font-size: 0.72rem;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	padding: var(--rc-space-1) var(--rc-space-2);
+	cursor: pointer;
+	transition: color var(--rc-duration-press) var(--rc-ease-out-expo), border-color var(--rc-duration-press) var(--rc-ease-out-expo);
+}
+
+.rc-add-toggle:hover {
+	color: var(--rc-fg);
+	border-color: var(--rc-primary-muted);
+}
+
+.rc-add-fields {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-2);
 }
 
 .rc-add-input {
@@ -248,11 +303,15 @@
 	font-size: 0.85rem;
 	padding: var(--rc-space-1) var(--rc-space-3);
 	cursor: pointer;
-	transition: background var(--rc-duration-press) var(--rc-ease-out-expo);
+	transition: background var(--rc-duration-press) var(--rc-ease-out-expo), transform var(--rc-duration-press) var(--rc-ease-out-expo);
 }
 
 .rc-add-submit:hover {
 	background: var(--rc-primary-hover);
+}
+
+.rc-add-submit:active {
+	transform: translateY(1px);
 }
 
 .rc-add-submit:disabled {
@@ -261,7 +320,7 @@
 	cursor: default;
 }
 
-/* header island */
+/* header island: a floating machined card, one blur layer, concentric radius */
 .rc-header-inner {
 	display: flex;
 	flex-wrap: wrap;
@@ -269,14 +328,23 @@
 	gap: var(--rc-space-3);
 	width: 100%;
 	min-width: 0;
+	background: var(--rc-surface);
+	border: 1px solid var(--rc-hairline);
+	border-radius: var(--rc-radius-lg);
+	padding: var(--rc-space-3) var(--rc-space-4);
+	backdrop-filter: var(--rc-blur);
+	box-shadow: var(--rc-shadow-raise), inset 0 1px 0 var(--rc-glass-highlight);
 }
 
 .rc-header-status {
 	font-family: var(--rc-font-mono);
-	font-size: 0.8rem;
+	font-size: 0.78rem;
 	text-transform: uppercase;
 	letter-spacing: 0.06em;
 	color: var(--rc-fg-accent-soft);
+	background: var(--rc-track);
+	border-radius: var(--rc-radius-sm);
+	padding: var(--rc-space-1) var(--rc-space-2);
 }
 
 .rc-header-model,
@@ -325,7 +393,9 @@
 	gap: var(--rc-space-1);
 }
 
-.rc-preset-btn {
+.rc-preset-btn,
+.rc-appear-open,
+.rc-appear-motion-btn {
 	background: transparent;
 	border: 1px solid var(--rc-hairline);
 	border-radius: var(--rc-radius-sm);
@@ -336,30 +406,48 @@
 	letter-spacing: 0.06em;
 	padding: var(--rc-space-1) var(--rc-space-2);
 	cursor: pointer;
-	transition: color var(--rc-duration-press) var(--rc-ease-out-expo), border-color var(--rc-duration-press) var(--rc-ease-out-expo);
+	transition: color var(--rc-duration-press) var(--rc-ease-out-expo), border-color var(--rc-duration-press) var(--rc-ease-out-expo), background var(--rc-duration-press) var(--rc-ease-out-expo);
 }
 
-.rc-preset-btn:hover {
+.rc-preset-btn:hover,
+.rc-appear-open:hover,
+.rc-appear-motion-btn:hover {
 	color: var(--rc-fg);
 }
 
-.rc-preset-btn[aria-pressed="true"] {
+.rc-preset-btn[aria-pressed="true"],
+.rc-appear-motion-btn[aria-pressed="true"] {
 	color: var(--rc-primary);
 	border-color: var(--rc-primary-muted);
 	background: var(--rc-primary-faint);
 }
 
-/* approval card */
+/* approval card: an attention surface. The warn edge is paired with the
+   "approval" label chip and the glyph, never color alone; the entrance is a
+   short rise on the motion tokens. No blur here: the card lives inside the
+   composer surface, which is already the one blur layer of that region. */
 .rc-approval {
 	display: flex;
 	align-items: baseline;
+	flex-wrap: wrap;
 	gap: var(--rc-space-2);
 	background: var(--rc-raised);
 	border: 1px solid var(--rc-warn);
 	border-radius: var(--rc-radius-md);
 	padding: var(--rc-space-2) var(--rc-space-3);
-	backdrop-filter: var(--rc-blur);
-	box-shadow: 0 0 0 1px var(--rc-glass-highlight);
+	box-shadow: inset 0 1px 0 var(--rc-glass-highlight);
+	animation: rc-approval-in var(--rc-duration-base) var(--rc-ease-out-expo);
+}
+
+@keyframes rc-approval-in {
+	from {
+		opacity: 0;
+		transform: translateY(var(--rc-space-2));
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
 }
 
 .rc-approval-glyph {
@@ -372,11 +460,26 @@
 	flex-direction: column;
 	gap: var(--rc-space-1);
 	flex: 1;
-	min-width: 0;
+	min-width: 12rem;
 }
 
 .rc-approval-title {
 	font-size: 0.9rem;
+	display: inline-flex;
+	align-items: baseline;
+	gap: var(--rc-space-2);
+	flex-wrap: wrap;
+}
+
+.rc-approval-label {
+	font-family: var(--rc-font-mono);
+	font-size: 0.68rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	background: var(--rc-warn);
+	color: var(--rc-base);
+	border-radius: var(--rc-radius-sm);
+	padding: 0.1em 0.4em;
 }
 
 .rc-approval-tool {
@@ -408,7 +511,7 @@
 	font-size: 0.85rem;
 	padding: var(--rc-space-1) var(--rc-space-3);
 	cursor: pointer;
-	transition: background var(--rc-duration-press) var(--rc-ease-out-expo);
+	transition: background var(--rc-duration-press) var(--rc-ease-out-expo), color var(--rc-duration-press) var(--rc-ease-out-expo), transform var(--rc-duration-press) var(--rc-ease-out-expo);
 }
 
 .rc-approval-allow {
@@ -418,6 +521,11 @@
 
 .rc-approval-allow:hover {
 	background: var(--rc-primary-hover);
+}
+
+.rc-approval-allow:active,
+.rc-approval-deny:active {
+	transform: translateY(1px);
 }
 
 .rc-approval-deny {
@@ -496,6 +604,7 @@
 	font-size: 0.92rem;
 	line-height: 1.5;
 	padding: var(--rc-space-2) var(--rc-space-3);
+	transition: border-color var(--rc-duration-fast) var(--rc-ease-out-expo);
 }
 
 .rc-composer-input::placeholder {
@@ -510,6 +619,7 @@
 	font: inherit;
 	font-size: 0.82rem;
 	padding: var(--rc-space-2);
+	transition: border-color var(--rc-duration-fast) var(--rc-ease-out-expo);
 }
 
 .rc-composer-send,
@@ -521,7 +631,7 @@
 	font-size: 0.85rem;
 	padding: var(--rc-space-2) var(--rc-space-4);
 	cursor: pointer;
-	transition: background var(--rc-duration-press) var(--rc-ease-out-expo);
+	transition: background var(--rc-duration-press) var(--rc-ease-out-expo), color var(--rc-duration-press) var(--rc-ease-out-expo), transform var(--rc-duration-press) var(--rc-ease-out-expo);
 }
 
 .rc-composer-send {
@@ -533,11 +643,17 @@
 	background: var(--rc-primary-hover);
 }
 
+.rc-composer-send:active,
+.rc-composer-abort:active {
+	transform: translateY(1px);
+}
+
 .rc-composer-send:disabled,
 .rc-composer-abort:disabled {
 	background: var(--rc-track);
 	color: var(--rc-fg-faint);
 	cursor: default;
+	transform: none;
 }
 
 .rc-composer-abort {
@@ -551,12 +667,438 @@
 	color: var(--rc-base);
 }
 
+/* appearance overlay: scrim dims (no blur), the panel is the one stronger
+   blur layer. Overlay z-index is the only elevated layer in the shell. */
+.rc-appear {
+	position: fixed;
+	inset: 0;
+	z-index: 40;
+	display: flex;
+	justify-content: flex-end;
+}
+
+.rc-appear-scrim {
+	position: absolute;
+	inset: 0;
+	background: var(--rc-scrim);
+	animation: rc-scrim-in var(--rc-duration-base) var(--rc-ease-out-expo);
+}
+
+@keyframes rc-scrim-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+.rc-appear-panel {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	right: 0;
+	width: min(22rem, 94vw);
+	background: var(--rc-surface);
+	border-left: 1px solid var(--rc-hairline);
+	backdrop-filter: var(--rc-blur-overlay);
+	box-shadow: var(--rc-shadow-raise), inset 0 1px 0 var(--rc-glass-highlight);
+	border-radius: 0;
+	overflow-y: auto;
+	padding: var(--rc-space-4);
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-4);
+	animation: rc-panel-in var(--rc-duration-slow) var(--rc-ease-out-expo);
+}
+
+.rc-appear-panel:focus {
+	outline: none;
+}
+
+@keyframes rc-panel-in {
+	from {
+		opacity: 0;
+		transform: translateX(var(--rc-space-5));
+	}
+	to {
+		opacity: 1;
+		transform: translateX(0);
+	}
+}
+
+/* phone: the panel becomes a bottom sheet so the console peeks above it */
+@media (width < 900px) {
+	.rc-appear {
+		align-items: flex-end;
+	}
+
+	.rc-appear-panel {
+		top: auto;
+		right: 0;
+		left: 0;
+		width: 100%;
+		max-height: 82dvh;
+		border-left: none;
+		border-top: 1px solid var(--rc-hairline);
+		border-radius: var(--rc-radius-lg) var(--rc-radius-lg) 0 0;
+		animation-name: rc-sheet-in;
+	}
+}
+
+@keyframes rc-sheet-in {
+	from {
+		opacity: 0;
+		transform: translateY(var(--rc-space-6));
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+/* panel content: groups carry no blur of their own (one blur layer rule) */
+.rc-appear-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--rc-space-2);
+}
+
+.rc-appear-title {
+	margin: 0;
+	font-size: 1rem;
+	font-weight: 600;
+	color: var(--rc-fg);
+}
+
+.rc-appear-close {
+	flex: none;
+	background: transparent;
+	border: 1px solid var(--rc-hairline);
+	border-radius: var(--rc-radius-sm);
+	color: var(--rc-fg-dim);
+	font: inherit;
+	font-size: 0.9rem;
+	line-height: 1;
+	padding: var(--rc-space-1) var(--rc-space-2);
+	cursor: pointer;
+	transition: color var(--rc-duration-press) var(--rc-ease-out-expo), border-color var(--rc-duration-press) var(--rc-ease-out-expo);
+}
+
+.rc-appear-close:hover {
+	color: var(--rc-fg);
+	border-color: var(--rc-primary-muted);
+}
+
+/* live preview: a fake transcript row, a status pill, and a primary button,
+   all rendered with the current tokens so edits read instantly */
+.rc-appear-preview {
+	background: var(--rc-raised);
+	border: 1px solid var(--rc-hairline);
+	border-radius: var(--rc-radius-md);
+	padding: var(--rc-space-3);
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-2);
+}
+
+.rc-appear-preview-msg {
+	background: var(--rc-surface);
+	border: 1px solid var(--rc-hairline);
+	border-left: 2px solid var(--rc-primary-muted);
+	border-radius: var(--rc-radius-sm);
+	padding: var(--rc-space-2);
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.rc-appear-preview-role {
+	font-family: var(--rc-font-mono);
+	font-size: 0.72rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--rc-fg-faint);
+}
+
+.rc-appear-preview-text {
+	font-size: 0.88rem;
+	color: var(--rc-fg);
+}
+
+.rc-appear-preview-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--rc-space-2);
+}
+
+.rc-appear-pill {
+	display: inline-flex;
+	align-items: baseline;
+	gap: var(--rc-space-1);
+	font-family: var(--rc-font-mono);
+	font-size: 0.72rem;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--rc-good);
+	background: var(--rc-track);
+	border: 1px solid var(--rc-hairline);
+	border-radius: var(--rc-radius-sm);
+	padding: var(--rc-space-1) var(--rc-space-2);
+}
+
+.rc-appear-pill-dot {
+	align-self: center;
+	width: 0.45rem;
+	height: 0.45rem;
+	border-radius: 50%;
+	background: var(--rc-good);
+}
+
+.rc-appear-preview-btn {
+	background: var(--rc-primary);
+	color: var(--rc-base);
+	border: none;
+	border-radius: var(--rc-radius-sm);
+	font: inherit;
+	font-size: 0.82rem;
+	padding: var(--rc-space-1) var(--rc-space-3);
+	cursor: default;
+}
+
+.rc-appear-group {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-2);
+}
+
+.rc-appear-label {
+	font-family: var(--rc-font-mono);
+	font-size: 0.72rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--rc-fg-faint);
+}
+
+.rc-appear-label-row {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--rc-space-2);
+}
+
+.rc-appear-value {
+	font-family: var(--rc-font-mono);
+	font-size: 0.78rem;
+	color: var(--rc-fg-dim);
+}
+
+/* preset swatches: each card re-resolves the token sheet for its own preset
+   via the data-rc-preset attribute, so the swatch previews the real surfaces */
+.rc-appear-swatches {
+	display: flex;
+	gap: var(--rc-space-2);
+}
+
+.rc-appear-swatch {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-1);
+	background: var(--rc-surface);
+	border: 1px solid var(--rc-hairline);
+	border-radius: var(--rc-radius-md);
+	padding: var(--rc-space-2);
+	cursor: pointer;
+	font: inherit;
+	transition: border-color var(--rc-duration-fast) var(--rc-ease-out-expo), background var(--rc-duration-fast) var(--rc-ease-out-expo);
+}
+
+.rc-appear-swatch:hover {
+	border-color: var(--rc-primary-muted);
+}
+
+.rc-appear-swatch[aria-pressed="true"] {
+	border-color: var(--rc-primary);
+	background: var(--rc-primary-faint);
+}
+
+.rc-appear-swatch-chip {
+	display: flex;
+	flex-direction: column;
+	justify-content: flex-end;
+	gap: 4px;
+	min-height: 3.4rem;
+	background: var(--rc-raised);
+	border: 1px solid var(--rc-hairline);
+	border-radius: var(--rc-radius-sm);
+	padding: var(--rc-space-2);
+}
+
+.rc-appear-swatch-line {
+	display: block;
+	width: 72%;
+	height: 3px;
+	border-radius: var(--rc-radius-sm);
+	background: var(--rc-track);
+}
+
+.rc-appear-swatch-line:last-of-type {
+	width: 48%;
+}
+
+.rc-appear-swatch-dot {
+	align-self: flex-end;
+	width: 0.8rem;
+	height: 0.8rem;
+	border-radius: 50%;
+	background: var(--rc-primary);
+}
+
+.rc-appear-swatch-name {
+	font-family: var(--rc-font-ui);
+	font-size: 0.8rem;
+	color: var(--rc-fg-dim);
+}
+
+.rc-appear-swatch[aria-pressed="true"] .rc-appear-swatch-name {
+	color: var(--rc-fg);
+}
+
+/* sliders: native range with a token-drawn track; the density slider reads
+   its filled length from the inline --rc-slider-fill, the hue slider shows
+   the full spectrum token */
+.rc-appear-slider {
+	appearance: none;
+	width: 100%;
+	height: 0.75rem;
+	margin: 0;
+	border-radius: var(--rc-radius-sm);
+	background: linear-gradient(to right, var(--rc-primary-muted) var(--rc-slider-fill, 0%), var(--rc-track) var(--rc-slider-fill, 0%));
+	cursor: pointer;
+}
+
+.rc-appear-slider-hue {
+	background: var(--rc-hue-spectrum);
+}
+
+.rc-appear-slider::-webkit-slider-thumb {
+	appearance: none;
+	width: 1.1rem;
+	height: 1.1rem;
+	border-radius: 50%;
+	background: var(--rc-fg);
+	border: 2px solid var(--rc-surface-solid);
+	box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
+}
+
+.rc-appear-slider::-moz-range-thumb {
+	width: 1.1rem;
+	height: 1.1rem;
+	border-radius: 50%;
+	background: var(--rc-fg);
+	border: 2px solid var(--rc-surface-solid);
+	box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
+}
+
+.rc-appear-motion {
+	display: inline-flex;
+	gap: var(--rc-space-1);
+}
+
+.rc-appear-hint {
+	margin: 0;
+	font-size: 0.78rem;
+	line-height: 1.5;
+	color: var(--rc-fg-faint);
+}
+
+/* single-column stack under 900px: the rail becomes a horizontal chip strip
+   above the main column; host rows wrap as chips, the add form collapses
+   behind its toggle (the onboarding card leads when no hosts exist). Declared
+   after the base sections it overrides: equal-specificity rules fall back to
+   source order, so this block has to come last. */
+@media (width < 900px) {
+	.rc-shell[data-rc-shell] {
+		flex-direction: column;
+	}
+
+	.rc-rail {
+		width: 100%;
+		max-height: none;
+		overflow-y: visible;
+		border-right: none;
+		border-bottom: 1px solid var(--rc-hairline);
+	}
+
+	.rc-rail-inner {
+		flex-flow: row wrap;
+		align-items: center;
+		gap: var(--rc-space-2);
+		padding: var(--rc-space-2) var(--rc-space-3);
+	}
+
+	/* hide the rail's own caption but keep the form's "add host" label */
+	.rc-rail-inner > .rc-rail-title {
+		display: none;
+	}
+
+	.rc-onboard,
+	.rc-add-host {
+		flex-basis: 100%;
+	}
+
+	.rc-host-row {
+		flex: none;
+	}
+
+	.rc-host-select {
+		flex-direction: row;
+		align-items: center;
+		padding: var(--rc-space-1) var(--rc-space-2);
+	}
+
+	.rc-host-model {
+		display: none;
+	}
+
+	.rc-host-remove {
+		padding: var(--rc-space-1);
+	}
+
+	.rc-add-toggle {
+		display: inline-flex;
+	}
+
+	.rc-add-fields[data-rc-add-open="false"] {
+		display: none;
+	}
+
+	.rc-add-head {
+		margin-bottom: var(--rc-space-1);
+	}
+
+	.rc-main {
+		height: auto;
+		flex: 1;
+	}
+}
+
 /* keyboard focus, one rule for the shell's own controls */
 .rc-host-select:focus-visible,
 .rc-host-remove:focus-visible,
 .rc-add-input:focus-visible,
+.rc-add-toggle:focus-visible,
 .rc-add-submit:focus-visible,
 .rc-preset-btn:focus-visible,
+.rc-appear-open:focus-visible,
+.rc-appear-close:focus-visible,
+.rc-appear-swatch:focus-visible,
+.rc-appear-slider:focus-visible,
+.rc-appear-motion-btn:focus-visible,
 .rc-approval-allow:focus-visible,
 .rc-approval-deny:focus-visible,
 .rc-composer-input:focus-visible,
