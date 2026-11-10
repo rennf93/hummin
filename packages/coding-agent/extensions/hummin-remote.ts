@@ -1,33 +1,26 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+/**
+ * hummin-remote: the /remote-control command. Starts the remote console
+ * server (lib/remote-console) on the live session and keeps the terminal
+ * surface honest: the status line, the usage notify, and the console-tracked
+ * queue (what the console sent with which delivery mode). Appearance prefs
+ * live browser-side; this wrapper owns nothing about them.
+ */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { startRemoteControl } from "./lib/remote.ts";
-
-function visibleText(message: AgentMessage): string {
-	if (!("content" in message)) return "";
-	if (typeof message.content === "string") return message.content.slice(-6000);
-	return message.content
-		.filter((part) => part.type === "text")
-		.map((part) => part.text)
-		.join("\n")
-		.slice(-6000);
-}
+import { effectiveSettings, resolveRemoteConsoleConfig, startRemoteConsole, type RemoteConsoleHandle } from "./lib/remote-console/index.ts";
 
 export default function humminRemote(pi: ExtensionAPI): void {
-	let remote: Awaited<ReturnType<typeof startRemoteControl>> | undefined;
+	let handle: RemoteConsoleHandle | undefined;
 	let context: ExtensionContext | undefined;
-	let partial: AgentMessage | undefined;
 	let waiting: string | undefined;
 	let starting = false;
 	let closed = false;
-	pi.on("message_update", (event, ctx) => {
-		partial = event.message;
+
+	// Keep enough context to send prompts and judge busyness; the console
+	// module subscribes the same events for its own mapping.
+	pi.on("message_update", (_event, ctx) => {
 		context = ctx;
 	});
-	pi.on("message_end", (_event, ctx) => {
-		partial = undefined;
-		context = ctx;
-	});
-	pi.on("model_select", (_event, ctx) => {
+	pi.on("agent_settled", (_event, ctx) => {
 		context = ctx;
 	});
 	pi.on("ui_prompt_start", (event) => {
@@ -38,18 +31,19 @@ export default function humminRemote(pi: ExtensionAPI): void {
 	});
 	pi.on("session_shutdown", async () => {
 		closed = true;
-		await remote?.close();
-		remote = undefined;
+		await handle?.close();
+		handle = undefined;
 	});
+
 	pi.registerCommand("remote-control", {
-		description: "Start a browser control endpoint; use stop to disconnect",
+		description: "Start the browser remote console; use stop to disconnect",
 		category: "Session",
 		handler: async (args, ctx) => {
 			if (args.trim() === "stop") {
-				await remote?.close();
-				remote = undefined;
+				await handle?.close();
+				handle = undefined;
 				ctx.ui.setStatus("remote-control", undefined);
-				ctx.ui.notify("Remote control stopped.", "info");
+				ctx.ui.notify("Remote console stopped.", "info");
 				return;
 			}
 			if (args.trim()) {
@@ -58,54 +52,42 @@ export default function humminRemote(pi: ExtensionAPI): void {
 			}
 			if (starting) return;
 			context = ctx;
-			if (!remote) {
-				starting = true;
-				try {
-					remote = await startRemoteControl({
-						approvals: {
-							// Terminal dialogs cannot be auto-resolved remotely: the
-							// browser banner is visibility-only (buttons disabled).
-							pending: () => (waiting ? { id: "terminal", tool: waiting, input: "" } : undefined),
-							resolve: () => "observed",
-							answerable: false,
-						},
-						state: () => {
-							const current = context!;
-							const messages = current.sessionManager
-								.getBranch()
-								.flatMap((entry) =>
-									entry.type === "message"
-										? [{ role: entry.message.role, text: visibleText(entry.message) }]
-										: [],
-								)
-								.slice(-60);
-							if (partial) messages.push({ role: partial.role, text: visibleText(partial) });
-							return {
-								sessionId: current.sessionManager.getSessionId(),
-								name: pi.getSessionName() ?? "Session",
-								model: current.model ? `${current.model.provider}/${current.model.id}` : "No model",
-								status: waiting ? `Waiting in terminal: ${waiting}` : current.isIdle() ? "Idle" : "Working",
-								messages,
-							};
-						},
-						prompt: (text) => {
-							if (waiting) throw new Error("Answer the pending approval dialog in the terminal first");
-							pi.sendUserMessage(text, { deliverAs: "followUp", expandPromptTemplates: false });
-						},
-						abort: () => context?.abort(),
-					});
-					if (closed) {
-						await remote.close();
-						remote = undefined;
-						return;
-					}
-				} finally {
-					starting = false;
-				}
+			const config = resolveRemoteConsoleConfig(effectiveSettings(pi), process.env);
+			if (config.disabled) {
+				ctx.ui.notify("Remote console is disabled (HUMMIN_REMOTE=off).", "info");
+				return;
 			}
-			ctx.ui.setStatus("remote-control", "remote control on");
+			if (handle) {
+				ctx.ui.notify(`Remote console already running: ${handle.url}`, "info");
+				return;
+			}
+			starting = true;
+			try {
+				handle = await startRemoteConsole(pi, {
+					context: ctx,
+					sendPrompt: (text, deliverAs) => {
+						if (waiting) throw new Error("Answer the pending dialog in the terminal first");
+						// Record before sending: once sent, a busy agent may consume
+						// the message immediately and the item is no longer queued.
+						const busy = context ? !context.isIdle() : false;
+						if (busy) handle?.trackQueued(text, deliverAs);
+						pi.sendUserMessage(text, { deliverAs, expandPromptTemplates: false });
+					},
+					abort: () => context?.abort(),
+				});
+			} finally {
+				starting = false;
+			}
+			if (closed) {
+				await handle.close();
+				handle = undefined;
+				return;
+			}
+			ctx.ui.setStatus("remote-control", "remote console on");
 			ctx.ui.notify(
-				`Remote control: ${remote.url}\nLoopback only. For another device, forward port ${remote.port} over SSH and open this URL there. /remote-control stop disconnects clients.`,
+				config.lan
+					? `Remote console: ${handle.url}\nBound beyond loopback (${config.host}): anyone on this network holding the token can control this session. /remote-control stop disconnects clients.`
+					: `Remote console: ${handle.url}\nLoopback only. For another device, forward port ${handle.port} over SSH and open this URL there. /remote-control stop disconnects clients.`,
 				"info",
 			);
 		},

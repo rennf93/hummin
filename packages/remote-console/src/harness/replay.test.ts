@@ -121,18 +121,21 @@ function loadEvents(dir: string, file: string): AnyRemoteEvent[] {
 	return assertRemoteEvents(raw, file);
 }
 
-/** Narrows a protocol event by its type discriminator or fails loudly. */
-function expectKind<K extends RemoteEventType>(event: AnyRemoteEvent, kind: K): RemoteEvent<K> {
-	if (event.type !== kind) throw new Error(`expected ${kind}, got ${event.type}`);
+/** Narrows a protocol event by its type discriminator or fails loudly. Accepts
+ * undefined so index-access results (noUncheckedIndexedAccess) can flow in. */
+function expectKind<K extends RemoteEventType>(event: AnyRemoteEvent | undefined, kind: K): RemoteEvent<K> {
+	if (event === undefined || event.type !== kind) {
+		throw new Error(`expected ${kind}, got ${event === undefined ? "no event" : event.type}`);
+	}
 	// Cast is sound: type is the discriminator of the AnyRemoteEvent union.
 	return event as RemoteEvent<K>;
 }
 
 /** Widens the server's event type to its discriminated union form. */
-function anyEvent(event: RemoteEvent): AnyRemoteEvent {
+function anyEvent(event: RemoteEvent | undefined): AnyRemoteEvent | undefined {
 	// Cast is sound: AnyRemoteEvent is RemoteEvent's union form; consume returns
 	// RemoteEvent[] per the SSE contract, and only the test needs narrowing.
-	return event as AnyRemoteEvent;
+	return event as AnyRemoteEvent | undefined;
 }
 
 function ping(seq: number): RemoteEvent {
@@ -270,7 +273,11 @@ describe("ReplayServer", () => {
 		const stream = loadEvents(FIXTURES_DIR, "hummin-longest.stream.events.json");
 		const server = new ReplayServer(fixture, { delayMs: 1 });
 		const yielded: AnyRemoteEvent[] = [];
-		for await (const event of server.simulateStream([...fixture, ...stream])) yielded.push(anyEvent(event));
+		for await (const event of server.simulateStream([...fixture, ...stream])) {
+			const any = anyEvent(event);
+			if (!any) throw new Error("simulateStream yielded no event");
+			yielded.push(any);
+		}
 		expect(yielded[0]?.type).toBe("snapshot");
 		const streamEvents = yielded.filter(
 			(e) => e.type === "message_start" || e.type === "message_delta" || e.type === "message_end",
@@ -304,14 +311,16 @@ describe("ReplayServer", () => {
 	});
 
 	it("simulateStream honors delayMs", async () => {
-		const server = new ReplayServer([], { delayMs: 2 });
+		// Large delays and a coarse floor: timer resolution on loaded CI hosts
+		// jittered a 2ms x 2 gap assertion below its 4ms floor once already.
+		const server = new ReplayServer([], { delayMs: 25 });
 		const events = seqRange(0, 2).map((seq) => ping(seq));
 		const started = performance.now();
 		const yielded: RemoteEvent[] = [];
 		for await (const event of server.simulateStream(events)) yielded.push(event);
 		expect(yielded).toHaveLength(3);
-		// two inter-yield gaps of at least 2ms each
-		expect(performance.now() - started).toBeGreaterThanOrEqual(4);
+		// two inter-yield gaps of 25ms each, floor 10ms under the nominal 50ms
+		expect(performance.now() - started).toBeGreaterThanOrEqual(40);
 	});
 });
 
@@ -381,17 +390,20 @@ describe("fixtures and corpus", () => {
 	it("oversize carries a single 51318-char text block", () => {
 		const snapshot = expectKind(loadEvents(CORPUS_DIR, "oversize.txt")[0], "snapshot");
 		expect(snapshot.payload.messages).toHaveLength(1);
-		expect(snapshot.payload.messages[0].message.blocks).toHaveLength(1);
-		const block = snapshot.payload.messages[0].message.blocks[0];
-		expect(block.type).toBe("text");
-		if (block.type !== "text") throw new Error("expected a text block");
+		const entry = snapshot.payload.messages[0];
+		if (!entry) throw new Error("oversize snapshot has no messages");
+		expect(entry.message.blocks).toHaveLength(1);
+		const block = entry.message.blocks[0];
+		if (!block || block.type !== "text") throw new Error("expected a text block");
 		expect(block.text).toHaveLength(51318);
 	});
 
 	it("broken-unicode carries lone surrogates, zero-width joins, and RTL overrides", () => {
 		const snapshot = expectKind(loadEvents(CORPUS_DIR, "broken-unicode.txt")[0], "snapshot");
-		const block = snapshot.payload.messages[0].message.blocks[0];
-		if (block.type !== "text") throw new Error("expected a text block");
+		const entry = snapshot.payload.messages[0];
+		if (!entry) throw new Error("broken-unicode snapshot has no messages");
+		const block = entry.message.blocks[0];
+		if (!block || block.type !== "text") throw new Error("expected a text block");
 		expect(block.text.includes("\ud800")).toBe(true);
 		expect(block.text.includes("\udfff")).toBe(true);
 		expect(block.text.includes("\u200d")).toBe(true);
@@ -400,8 +412,9 @@ describe("fixtures and corpus", () => {
 
 	it("bad-tool-call carries a toolCall with argumentsError and empty arguments", () => {
 		const snapshot = expectKind(loadEvents(CORPUS_DIR, "bad-tool-call.json")[0], "snapshot");
-		const blocks = snapshot.payload.messages[0].message.blocks;
-		const call = blocks.find((b) => b.type === "toolCall");
+		const entry = snapshot.payload.messages[0];
+		if (!entry) throw new Error("bad-tool-call snapshot has no messages");
+		const call = entry.message.blocks.find((b) => b.type === "toolCall");
 		if (!call || call.type !== "toolCall") throw new Error("expected a toolCall block");
 		expect(call.arguments).toEqual({});
 		expect(call.argumentsError).toBeTypeOf("string");
@@ -410,8 +423,10 @@ describe("fixtures and corpus", () => {
 
 	it("giant-args carries a toolCall argument string of 60000 chars", () => {
 		const snapshot = expectKind(loadEvents(CORPUS_DIR, "giant-args.json")[0], "snapshot");
-		const call = snapshot.payload.messages[0].message.blocks[0];
-		if (call.type !== "toolCall") throw new Error("expected a toolCall block");
+		const entry = snapshot.payload.messages[0];
+		if (!entry) throw new Error("giant-args snapshot has no messages");
+		const call = entry.message.blocks[0];
+		if (!call || call.type !== "toolCall") throw new Error("expected a toolCall block");
 		const longest = Math.max(...Object.values(call.arguments).map((v) => (typeof v === "string" ? v.length : 0)));
 		expect(longest).toBe(60000);
 	});

@@ -316,3 +316,25 @@ Multiple sessions per host (one live session per host; session switching
 stays in the terminal), voice, notifications center beyond existing
 terminal notifications, TUI restyling, hummin core changes beyond none
 (this spec needs zero core edits), mobile-native app (responsive web only).
+
+## Addendum 2026-11-10 (Phase C refinements, orchestrator-locked)
+
+1. Approval holds are opt-in per tool: settings `remoteControl.approvalTools`
+   (comma-separated, DEFAULT EMPTY = zero behavior change) plus
+   `remoteControl.approvalTimeoutMs` (120s default). Rationale: hummin has no
+   blanket permission prompt to mirror (its gates are deterministic-allow or
+   gray-zone-block-with-confirm), so holding every listed tool by default
+   would tax terminal-first users for no parity gain. Surfacing gate blocks
+   as remote approvals (the deeper integration) stays future work. Section
+   3.3's "the hold applies" reads as: applies to the configured tool list.
+2. Appearance preferences live browser-side (localStorage per console
+   origin). The server-side store under `<agentDir>/remote-console/` holds
+   only `console-origins.json` (the CORS allowlist of console origins) plus
+   the local host label. Section 3.2's hosts.json/appearance.json split is
+   superseded by this: the browser is the host registry (per-host tokens
+   included), the server holds only what CORS enforcement needs.
+3. Dependency stack note (Phase B): the console pins vite 8.3.4 and
+   @vitejs/plugin-react 6.2.1. A vite 6.4.5 pin silently downgraded the
+   hoisted vite the whole repo's vitest runs on; the fix restores the
+   upstream resolution. The repo .npmrc `min-release-age=2` guard rejects
+   versions published in the last 2 days (this blocked plugin-react 6.3.0).

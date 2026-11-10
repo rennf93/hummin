@@ -238,7 +238,11 @@ export function toWireMessage(message: AgentMessage): WireAgentMessage {
 	}
 	const usage = (message as { usage?: { input?: number; output?: number; total?: number } }).usage;
 	const wire: WireAgentMessage = {
-		role: message.role,
+		// Custom message types (bashExecution, branchSummary, compactionSummary,
+		// extension-registered ones) carry their type as the role. The wire union
+		// names the roles the console renders; unknown custom roles flow through
+		// as their string so no transcript entry is dropped.
+		role: message.role as WireAgentMessage["role"],
 		blocks,
 	};
 	const m = message as {
