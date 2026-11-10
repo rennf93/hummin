@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type MissingSessionCwdChoice, MissingSessionCwdError } from "../src/core/session-cwd.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -43,6 +43,13 @@ describe("InteractiveMode /resume with a missing session cwd", () => {
 			rmSync(path, { recursive: true, force: true });
 		}
 	});
+
+	// Fork: SessionManager.create() writes the session header eagerly (#9792), so the current
+	// session dir always holds the setup session's own file; these assertions guard against any
+	// file besides that one.
+	function expectNoStraySessions(context: ResumeContext, currentSessionDir: string): void {
+		expect(readdirSync(currentSessionDir)).toEqual([basename(context.sessionManager.getSessionFile()!)]);
+	}
 
 	function setup(options: { choice: MissingSessionCwdChoice | undefined; switchCancelled: boolean }) {
 		const currentCwd = createTempDir("pi-resume-missing-cwd");
@@ -115,7 +122,7 @@ describe("InteractiveMode /resume with a missing session cwd", () => {
 		expect(result).toEqual({ cancelled: false });
 		expect(switchSession).toHaveBeenLastCalledWith(sessionPath, expect.objectContaining({ cwdOverride: currentCwd }));
 		expect(readFileSync(sessionPath, "utf8")).toBe(original);
-		expect(readdirSync(currentSessionDir)).toEqual([]);
+		expectNoStraySessions(context, currentSessionDir);
 		expect(showStatus).toHaveBeenCalledWith(`Resumed session in ${currentCwd}`);
 	});
 
@@ -129,7 +136,7 @@ describe("InteractiveMode /resume with a missing session cwd", () => {
 
 		expect(result).toEqual({ cancelled: true });
 		expect(existsSync(switchSession.mock.calls[1][0])).toBe(false);
-		expect(readdirSync(currentSessionDir)).toEqual([]);
+		expectNoStraySessions(context, currentSessionDir);
 	});
 
 	it("creates no fork when the user cancels", async () => {
@@ -142,7 +149,7 @@ describe("InteractiveMode /resume with a missing session cwd", () => {
 
 		expect(result).toEqual({ cancelled: true });
 		expect(switchSession).toHaveBeenCalledTimes(1);
-		expect(readdirSync(currentSessionDir)).toEqual([]);
+		expectNoStraySessions(context, currentSessionDir);
 		expect(showStatus).toHaveBeenCalledWith("Resume cancelled");
 	});
 });
