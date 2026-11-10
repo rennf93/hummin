@@ -3,9 +3,10 @@
  * registered host; a snapshot replaces the slices it carries, protocol events
  * fold incrementally (message_start opens the live slot, deltas append,
  * message_end freezes the slot into a transcript entry keyed by entryId,
- * tool_update patches the live tool map, status/queue/session/approval replace
- * their slices). Entry ids dedupe: a message_end for an entryId already in the
- * transcript is a no-op. No React, no I/O; receivedAt is an action input.
+ * tool_update patches the live tool map, status/queue/session/holds replace
+ * their slices). Entry ids dedupe: a message_end for a non-empty entryId
+ * already in the transcript is a no-op; empty entryIds always append. No
+ * React, no I/O; receivedAt is an action input.
  */
 
 import type { ConnectionState } from "./connection.ts";
@@ -34,7 +35,8 @@ export interface HostState {
 	slot: LiveSlot | null;
 	/** tool_update phases keyed by toolCallId. */
 	toolUpdates: ReadonlyMap<string, ToolLiveState>;
-	approval: WireApproval | null;
+	/** Pending approval holds, oldest first. */
+	holds: WireApproval[];
 	queue: WireQueue | null;
 	/** Seq of the newest applied event; reconnects resume from it. */
 	lastSeq: number | null;
@@ -60,7 +62,7 @@ export function initialHostState(label: string, origin: string): HostState {
 		entries: [],
 		slot: null,
 		toolUpdates: new Map<string, ToolLiveState>(),
-		approval: null,
+		holds: [],
 		queue: null,
 		lastSeq: null,
 		lastSeenMs: null,
@@ -110,9 +112,9 @@ function applyEvent(state: HostState, event: AnyRemoteEvent, receivedAt: number)
 		case "status":
 			return { ...seen, status: event.payload.status };
 		case "approval":
-			return { ...seen, approval: event.payload.approval };
+			return { ...seen, holds: [...event.payload.holds] };
 		case "approval_done":
-			return seen.approval !== null && seen.approval.id === event.payload.id ? { ...seen, approval: null } : seen;
+			return { ...seen, holds: seen.holds.filter((hold) => hold.id !== event.payload.id) };
 		case "queue":
 			return { ...seen, queue: event.payload.queue };
 		case "session":
@@ -130,13 +132,14 @@ function applySnapshot(state: HostState, payload: SnapshotPayload): HostState {
 		status: payload.status,
 		entries: [...payload.messages],
 		slot: null,
-		approval: payload.approval,
+		holds: [...payload.holds],
 		queue: payload.queue,
 	};
 }
 
-/** Deltas without a matching open slot open an implicit one: the server may
- * coalesce away the start, and assistant messages are the only streamed kind. */
+/** Deltas without a matching open slot open an implicit one: a rebuild from a
+ * snapshot (or a join mid-stream) starts after the message_start, and
+ * assistant messages are the only streamed kind. */
 function applyMessageDelta(state: HostState, event: Extract<AnyRemoteEvent, { type: "message_delta" }>): HostState {
 	const slotKey = event.payload.slotKey;
 	if (state.slot !== null && !state.slot.frozen && state.slot.slotKey === slotKey) {
@@ -149,7 +152,10 @@ function applyMessageDelta(state: HostState, event: Extract<AnyRemoteEvent, { ty
 function applyMessageEnd(state: HostState, event: Extract<AnyRemoteEvent, { type: "message_end" }>): HostState {
 	const { slotKey, entryId, message } = event.payload;
 	const entry: WireTranscriptEntry = { entryId, timestamp: event.ts, message };
-	if (state.entries.some((existing) => existing.entryId === entryId)) {
+	// Empty entry ids (identity lookup failed server-side) carry no identity to
+	// dedupe against, so they always append.
+	const duplicate = entryId !== "" && state.entries.some((existing) => existing.entryId === entryId);
+	if (duplicate) {
 		// Duplicate end (replay after reconnect): drop the matching slot, keep
 		// the entry already in the transcript.
 		return { ...state, slot: state.slot?.slotKey === slotKey ? null : state.slot };

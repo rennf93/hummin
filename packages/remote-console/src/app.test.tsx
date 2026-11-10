@@ -21,13 +21,14 @@ import {
 	consumeStream,
 	parseProtocolEvent,
 	postApproval,
+	postConsoleOrigin,
 	SseFrameParser,
 	type ConnectionState,
 	type SseConnection,
 	type SseFrame,
 } from "./connection.ts";
 import { ApprovalCard, countdownSeconds } from "./components/ApprovalCard.tsx";
-import { railStatus } from "./components/HostRail.tsx";
+import { HostRail, railStatus } from "./components/HostRail.tsx";
 import type {
 	AnyRemoteEvent,
 	RemoteEventPayloadMap,
@@ -119,6 +120,16 @@ function consoleFetch(events: readonly AnyRemoteEvent[], posts: RecordedFetch[])
 }
 
 const TEST_HOST = { id: "h1", label: "main", origin: "http://127.0.0.1:9", token: "secret" };
+
+/** Private-mode simulation: every localStorage write throws, like Safari
+ * private mode or a full quota. happy-dom binds Storage methods onto the
+ * instance (ClassMethodBinder), so a Storage.prototype spy never fires here;
+ * spying on the instance is the same contract (the write itself throws). */
+function failStorageWrites() {
+	return vi.spyOn(localStorage, "setItem").mockImplementation(() => {
+		throw new Error("quota");
+	});
+}
 
 function seedRegistry(): void {
 	localStorage.setItem("rc.hosts", JSON.stringify([TEST_HOST]));
@@ -339,6 +350,17 @@ describe("connection: reconnect state machine", () => {
 		expect(posted?.body).toEqual({ id: "a1", allow: true });
 		expect(posted?.headers).toMatchObject({ authorization: "Bearer secret", "content-type": "application/json" });
 	});
+
+	it("registers a console origin on a host with a fresh id", async () => {
+		const posts: RecordedFetch[] = [];
+		const fetchImpl = consoleFetch([], posts);
+		const result = await postConsoleOrigin({ origin: "http://127.0.0.1:9", token: "host-token", consoleOrigin: "https://console.example:5173", fetchImpl });
+		expect(result).toEqual({ ok: true, status: 202 });
+		const posted = postBodies(posts)[0];
+		expect(posted?.url).toBe("http://127.0.0.1:9/settings/console-origins");
+		expect(posted?.body).toEqual({ id: expect.stringMatching(/^[0-9a-f-]{36}$/), origin: "https://console.example:5173" });
+		expect(posted?.headers).toMatchObject({ authorization: "Bearer host-token" });
+	});
 });
 
 describe("store: per-host reducer", () => {
@@ -349,7 +371,7 @@ describe("store: per-host reducer", () => {
 		sessionName: "session one",
 		status: { kind: "idle", model: { provider: "acme", modelId: "big-1" }, thinkingLevel: "high", contextUsage: { tokens: 100, contextWindow: 200, percent: 50 } },
 		messages: [{ entryId: "e0", message: { role: "user", blocks: [{ type: "text", text: "hello doc" }] } }],
-		approval: null,
+		holds: [],
 		queue: { items: [{ id: "q1", preview: "queued text", deliverAs: "steer" }], terminalQueued: 2 },
 	};
 
@@ -386,7 +408,7 @@ describe("store: per-host reducer", () => {
 		expect(state?.status?.model).toEqual({ provider: "acme", modelId: "big-1" });
 		expect(state?.entries).toHaveLength(1);
 		expect(state?.entries[0]?.entryId).toBe("e0");
-		expect(state?.approval).toBeNull();
+		expect(state?.holds).toEqual([]);
 		expect(state?.queue?.items).toHaveLength(1);
 		expect(state?.lastSeq).toBe(5);
 		expect(state?.lastSeenMs).toBe(1234);
@@ -410,7 +432,7 @@ describe("store: per-host reducer", () => {
 		expect(state?.lastSeq).toBe(4);
 	});
 
-	it("a delta without a start opens an implicit slot (coalescing tolerance)", () => {
+	it("a delta without a start opens an implicit slot (replay tolerance)", () => {
 		const store = dispatch(ensured(), makeEvent("message_delta", 1, { slotKey: "k2", event: { type: "text_delta", contentIndex: 0, delta: "implicit" } }));
 		const state = store.h1;
 		expect(state?.slot?.slotKey).toBe("k2");
@@ -436,6 +458,15 @@ describe("store: per-host reducer", () => {
 		expect(state?.slot).toBeNull();
 	});
 
+	it("an empty entryId never dedupes: every such end appends its entry", () => {
+		let store = dispatch(ensured(), makeEvent("message_end", 1, { slotKey: "k1", entryId: "", message: { role: "assistant", blocks: [{ type: "text", text: "first" }] } }));
+		store = dispatch(store, makeEvent("message_end", 2, { slotKey: "k2", entryId: "", message: { role: "assistant", blocks: [{ type: "text", text: "second" }] } }));
+		const state = store.h1;
+		expect(state?.entries.map((entry) => entry.entryId)).toEqual(["", ""]);
+		expect(state?.entries[0]?.message.blocks).toEqual([{ type: "text", text: "first" }]);
+		expect(state?.entries[1]?.message.blocks).toEqual([{ type: "text", text: "second" }]);
+	});
+
 	it("tool_update patches the live map by toolCallId; unknown ids change no transcript", () => {
 		let store = dispatch(ensured(), makeEvent("snapshot", 0, SNAPSHOT));
 		store = dispatch(store, makeEvent("tool_update", 1, { toolCallId: "t1", phase: "start", toolName: "bash" }));
@@ -452,7 +483,7 @@ describe("store: per-host reducer", () => {
 		expect(state?.toolUpdates.get("ghost")).toEqual({ phase: "start" });
 	});
 
-	it("status, queue, session, and approval events replace their slices", () => {
+	it("status, queue, session, and holds events replace their slices", () => {
 		let store = dispatch(ensured(), makeEvent("snapshot", 0, SNAPSHOT));
 		store = dispatch(store, makeEvent("status", 1, { status: { kind: "working", model: { provider: "acme", modelId: "big-1" }, contextUsage: { tokens: null, contextWindow: 200, percent: 12 } } }));
 		expect(store.h1?.status?.kind).toBe("working");
@@ -462,13 +493,18 @@ describe("store: per-host reducer", () => {
 		store = dispatch(store, makeEvent("session", 3, { sessionId: "s2", sessionName: "renamed" }));
 		expect(store.h1?.sessionId).toBe("s2");
 		expect(store.h1?.sessionName).toBe("renamed");
-		const approval: WireApproval = { id: "a1", toolName: "edit", argsPreview: "/tmp/x", deadlineMs: 9999, createdAt: TS };
-		store = dispatch(store, makeEvent("approval", 4, { approval }));
-		expect(store.h1?.approval).toEqual(approval);
+		const first: WireApproval = { id: "a1", toolName: "edit", argsPreview: "/tmp/x", deadlineMs: 9999, createdAt: TS };
+		const second: WireApproval = { id: "a2", toolName: "bash", argsPreview: "ls", deadlineMs: 10_000, createdAt: TS };
+		store = dispatch(store, makeEvent("approval", 4, { holds: [first, second] }));
+		expect(store.h1?.holds).toEqual([first, second]);
+		// approval_done removes by id and leaves the other holds alone.
 		store = dispatch(store, makeEvent("approval_done", 5, { id: "other", resolution: "expired" }));
-		expect(store.h1?.approval).toEqual(approval);
+		expect(store.h1?.holds).toEqual([first, second]);
 		store = dispatch(store, makeEvent("approval_done", 6, { id: "a1", resolution: "denied" }));
-		expect(store.h1?.approval).toBeNull();
+		expect(store.h1?.holds).toEqual([second]);
+		// A fresh full list replaces the slice wholesale.
+		store = dispatch(store, makeEvent("approval", 7, { holds: [second] }));
+		expect(store.h1?.holds).toEqual([second]);
 	});
 
 	it("ping touches only lastSeen and lastSeq", () => {
@@ -593,6 +629,22 @@ describe("hosts: fragment adoption", () => {
 		expect(history.replaceState).not.toHaveBeenCalled();
 		expect(listHosts()).toEqual([]);
 	});
+
+	it("adopts the fragment and strips it even when storage writes throw (private mode)", () => {
+		const setItem = failStorageWrites();
+		try {
+			const location = fakeLocation("http://127.0.0.1:59711");
+			const history = fakeHistory();
+			const entry = adoptLocalHost("#tok-private", location, history);
+			expect(entry).toMatchObject({ origin: "http://127.0.0.1:59711", token: "tok-private" });
+			// The fragment is stripped regardless of the storage failure.
+			expect(history.replaceState).toHaveBeenCalledWith(null, "", location.pathname + location.search);
+			// Nothing persisted, nothing thrown.
+			expect(listHosts()).toEqual([]);
+		} finally {
+			setItem.mockRestore();
+		}
+	});
 });
 
 describe("components: rail status and approval countdown", () => {
@@ -616,6 +668,59 @@ describe("components: rail status and approval countdown", () => {
 		const approval: WireApproval = { id: "a1", toolName: "bash", argsPreview: "ls", deadlineMs: 100_000, createdAt: TS };
 		expect(countdownSeconds(approval, 90_000)).toBe(10);
 		expect(countdownSeconds(approval, 100_001)).toBe(0);
+	});
+
+	it("renders one card per hold, each with its own countdown and resolution buttons", async () => {
+		const holds: WireApproval[] = [
+			{ id: "a1", toolName: "bash", argsPreview: "one", deadlineMs: Date.now() + 100_000, createdAt: TS },
+			{ id: "a2", toolName: "edit", argsPreview: "two", deadlineMs: Date.now() + 200_000, createdAt: TS },
+		];
+		const resolved: Array<[string, boolean]> = [];
+		const mounted = await mount(
+			<ApprovalCard holds={holds} onResolve={(id, allow) => resolved.push([id, allow])} />,
+		);
+		try {
+			await flush();
+			const cards = document.querySelectorAll("[data-rc-approval]");
+			expect(cards).toHaveLength(2);
+			expect(cards[0]?.getAttribute("data-rc-approval-tool")).toBe("bash");
+			expect(cards[1]?.getAttribute("data-rc-approval-tool")).toBe("edit");
+			// The honest expiry terms: a deadline hit proceeds with the call.
+			const hints = document.querySelectorAll(".rc-approval-hint");
+			expect(hints).toHaveLength(2);
+			expect(hints[0]?.textContent).toContain("expiry proceeds with the call");
+			await click(document.querySelector('[data-rc-approve="a2"]'));
+			await click(document.querySelector('[data-rc-deny="a1"]'));
+			expect(resolved).toEqual([
+				["a2", true],
+				["a1", false],
+			]);
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("shows the token-rotation recovery hint on an unauthorized row", async () => {
+		const hosts = [{ id: "h1", label: "main", origin: "http://127.0.0.1:9", token: "secret" }];
+		const state = { ...initialHostState("main", "http://127.0.0.1:9"), connection: "unauthorized" as ConnectionState };
+		const mounted = await mount(
+			<HostRail
+				hosts={hosts}
+				states={{ h1: state }}
+				activeId="h1"
+				originWarnings={{}}
+				onSelect={() => undefined}
+				onAdd={() => undefined}
+				onRemove={() => undefined}
+			/>,
+		);
+		try {
+			await flush();
+			const hint = document.querySelector("[data-rc-auth-hint]");
+			expect(hint?.textContent).toContain("token rotated - run /remote-control and reopen its URL, or remove and re-add this host");
+		} finally {
+			await mounted.unmount();
+		}
 	});
 });
 
@@ -795,10 +900,10 @@ describe("app: shell integration", () => {
 			sessionName: "session one",
 			status: { kind: "working", model: { provider: "acme", modelId: "big-1" }, thinkingLevel: "high", contextUsage: { tokens: 84, contextWindow: 200, percent: 42 } },
 			messages: [{ entryId: "e0", message: { role: "user", blocks: [{ type: "text", text: "hello doc" }] } }],
-			approval: null,
+			holds: [],
 			queue: { items: [{ id: "q1", preview: "queued text", deliverAs: "steer" }], terminalQueued: 2 },
 		};
-		const approvalEvent = makeEvent("approval", 1, { approval: { id: "a1", toolName: "bash", argsPreview: "rm -rf /tmp/scratch", deadlineMs: Date.now() + 120_000, createdAt: TS } });
+		const approvalEvent = makeEvent("approval", 1, { holds: [{ id: "a1", toolName: "bash", argsPreview: "rm -rf /tmp/scratch", deadlineMs: Date.now() + 120_000, createdAt: TS }] });
 		const queueEvent = makeEvent("queue", 2, { queue: { items: [{ id: "q2", preview: "later please", deliverAs: "followUp" }], terminalQueued: 0 } });
 		const events: AnyRemoteEvent[] = [makeEvent("snapshot", 0, snapshot), approvalEvent, queueEvent];
 		const posts: RecordedFetch[] = [];
@@ -821,7 +926,9 @@ describe("app: shell integration", () => {
 			expect(card?.getAttribute("data-rc-approval-tool")).toBe("bash");
 			// The attention state is never color alone: the label chip names it.
 			expect(document.querySelector("[data-rc-approval-label]")?.textContent).toBe("approval");
-			await click(document.querySelector("[data-rc-approve]"));
+			// Expiry is honest: the card states the fail-open terms.
+			expect(document.querySelector(".rc-approval-hint")?.textContent).toContain("expiry proceeds with the call");
+			await click(document.querySelector('[data-rc-approve="a1"]'));
 			const approvalPost = postBodies(posts).find((post) => post.url.endsWith("/approval"));
 			expect(approvalPost?.body).toEqual({ id: "a1", allow: true });
 			expect(approvalPost?.headers).toMatchObject({ authorization: "Bearer secret" });
@@ -882,11 +989,11 @@ describe("app: shell integration", () => {
 		}
 	});
 
-	it("renders the approval card hidden when no approval is pending", async () => {
+	it("renders the approval cards hidden when no hold is pending", async () => {
 		localStorage.clear();
 		const records: RecordedFetch[] = [];
 		vi.stubGlobal("fetch", hangingFetch(records));
-		const mounted = await mount(<ApprovalCard approval={null} onResolve={() => undefined} />);
+		const mounted = await mount(<ApprovalCard holds={[]} onResolve={() => undefined} />);
 		try {
 			await flush();
 			expect(document.querySelector("[data-rc-approval]")).toBeNull();
@@ -931,6 +1038,90 @@ describe("app: shell integration", () => {
 			expect(document.querySelector(".rc-add-fields")?.getAttribute("data-rc-add-open")).toBe("false");
 		} finally {
 			await mounted.unmount();
+		}
+	});
+
+	it("registers a cross-origin host's console origin and warns on the rail when that fails", async () => {
+		localStorage.clear();
+		const posts: RecordedFetch[] = [];
+		let failRegistration = true;
+		const fetchImpl = (url: string | URL, init?: RequestInit): Promise<Response> => {
+			const urlText = url.toString();
+			if (urlText.endsWith("/events")) {
+				return Promise.resolve(fakeResponse({ ok: true, status: 200, body: liveStreamOf([new TextEncoder().encode("")]) }));
+			}
+			posts.push({ url: urlText, init });
+			return Promise.resolve(fakeResponse({ ok: !failRegistration, status: failRegistration ? 403 : 202 }));
+		};
+		vi.stubGlobal("fetch", fetchImpl as unknown as typeof fetch);
+		const mounted = await mount(<App />);
+		try {
+			await flush();
+
+			// First host: cross-origin, and the registration POST fails.
+			await act(async () => {
+				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-origin]") as HTMLInputElement, "http://127.0.0.1:7777");
+				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-token]") as HTMLInputElement, "tok");
+			});
+			await click(document.querySelector("[data-rc-add-submit]"));
+			await flush();
+			const registration = postBodies(posts).find((post) => post.url.endsWith("/settings/console-origins"));
+			expect(registration).toBeDefined();
+			expect(registration?.body).toEqual({ id: expect.stringMatching(/^[0-9a-f-]{36}$/), origin: window.location.origin });
+			expect(registration?.headers).toMatchObject({ authorization: "Bearer tok" });
+			const warning = document.querySelector("[data-rc-origin-warn]");
+			expect(warning?.textContent).toContain("origins not registered - cross-origin may fail");
+			expect(warning?.textContent).toContain("status 403");
+
+			// Second host: the registration succeeds, so its row stays silent.
+			failRegistration = false;
+			await act(async () => {
+				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-origin]") as HTMLInputElement, "http://127.0.0.1:8888");
+				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-token]") as HTMLInputElement, "tok2");
+			});
+			await click(document.querySelector("[data-rc-add-submit]"));
+			await flush();
+			expect(posts.filter((post) => post.url.endsWith("/settings/console-origins"))).toHaveLength(2);
+			expect(document.querySelectorAll("[data-rc-origin-warn]")).toHaveLength(1);
+
+			// The page's own origin needs no registration.
+			await act(async () => {
+				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-origin]") as HTMLInputElement, window.location.origin);
+				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-token]") as HTMLInputElement, "tok3");
+			});
+			await click(document.querySelector("[data-rc-add-submit]"));
+			await flush();
+			expect(posts.filter((post) => post.url.endsWith("/settings/console-origins"))).toHaveLength(2);
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("renders the adopted host when storage writes fail (private mode)", async () => {
+		localStorage.clear();
+		const setItem = failStorageWrites();
+		const records: RecordedFetch[] = [];
+		vi.stubGlobal("fetch", hangingFetch(records));
+		try {
+			window.location.hash = "#tok-private";
+			const mounted = await mount(<App />);
+			try {
+				await flush();
+				// The adopted entry is in memory even though nothing persisted.
+				const row = document.querySelector("[data-rc-host-row]");
+				expect(row).not.toBeNull();
+				expect(row?.getAttribute("data-rc-host-status")).toBe("connecting");
+				expect(records[0]?.init?.headers).toMatchObject({ authorization: "Bearer tok-private" });
+				// The token never stays in the address bar.
+				expect(window.location.hash).toBe("");
+				// The appearance panel's persistence failure is equally silent.
+				expect(document.querySelector("[data-rc-region='header']")).not.toBeNull();
+			} finally {
+				await mounted.unmount();
+			}
+		} finally {
+			setItem.mockRestore();
+			window.location.hash = "";
 		}
 	});
 });

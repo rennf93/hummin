@@ -1,11 +1,11 @@
 /**
  * Tests for the hummin remote console extension server: real HTTP against
  * 127.0.0.1 on an ephemeral port via fetch. Covers the SSE contract (frames,
- * replay, stale cursors, backpressure coalescing and disconnect), the action
- * endpoints with their idempotency map, the opt-in approval holds, CORS for
- * registered console origins, the origins store, the config resolution, the
- * event mapping from pi runtime events to protocol frames, and the carried
- * security perimeter.
+ * replay, stale and ahead-of-head cursors, backpressure disconnect with
+ * lossless replay), the action endpoints with their idempotency map, the
+ * opt-in approval holds (single and concurrent), CORS for registered console
+ * origins, the origins store, the config resolution, the event mapping from
+ * pi runtime events to protocol frames, and the carried security perimeter.
  */
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -269,8 +269,9 @@ describe("ReplayLog", () => {
 		expect(log.headSeq).toBe(2);
 		expect(log.events_since(0)?.map((event) => event.seq)).toEqual([1, 2]);
 		expect(log.events_since(2)).toEqual([]);
-		// Past-the-end and pre-log cursors: empty replay and the stale signal.
-		expect(log.events_since(5)).toEqual([]);
+		// A cursor above the head (a restarted server reset the seqs) and a
+		// pre-log cursor are both unusable: the caller must snapshot.
+		expect(log.events_since(5)).toBeUndefined();
 		expect(log.events_since(-1)).toBeUndefined();
 	});
 
@@ -335,6 +336,21 @@ describe("boot, page, and auth", () => {
 		expect(other.status).toBe(404);
 	});
 
+	test("loopback bind names normalize to 127.0.0.1 in the URL and the snapshot origin", async () => {
+		const { handle } = await startTestConsole({ host: "localhost" });
+		expect(new URL(handle.url).hostname).toBe("127.0.0.1");
+		// Connect through the name the server actually bound (localhost resolves
+		// to either loopback family); the advertised origin is normalized.
+		const response = await fetch(`http://localhost:${handle.port}/events`, {
+			headers: { authorization: `Bearer ${tokenOf(handle)}` },
+		});
+		expect(response.status).toBe(200);
+		const reader = new SseReader(response);
+		const snapshot = await reader.next("loopback snapshot");
+		expect((snapshot.payload as SnapshotPayload).host.origin).toBe(`http://127.0.0.1:${handle.port}`);
+		await reader.close();
+	});
+
 	test("requires the bearer token from the fragment URL and shuts down", async () => {
 		const { handle } = await startTestConsole();
 		const base = new URL(handle.url).origin;
@@ -378,7 +394,7 @@ describe("SSE stream", () => {
 		});
 		expect(payload.status.kind).toBe("idle");
 		expect(payload.sessionId).toBe("sess-test");
-		expect(payload.approval).toBeNull();
+		expect(payload.holds).toEqual([]);
 		expect(payload.queue).toEqual({ items: [], terminalQueued: 0 });
 
 		fake.fire("message_update", {
@@ -556,8 +572,9 @@ describe("approvals", () => {
 		const approval = await connected.reader.next("approval");
 		expect(approval.type).toBe("approval");
 		const wire = (
-			approval.payload as { approval: { id: string; toolName: string; argsPreview: string; deadlineMs: number } }
-		).approval;
+			approval.payload as { holds: { id: string; toolName: string; argsPreview: string; deadlineMs: number }[] }
+		).holds[0];
+		if (!wire) throw new Error("approval event carried no hold");
 		expect(wire.toolName).toBe("bash");
 		expect(wire.argsPreview).toContain("ls -la");
 		expect(wire.deadlineMs).toBeGreaterThan(Date.now());
@@ -565,6 +582,10 @@ describe("approvals", () => {
 		expect(resolved.status).toBe(202);
 		expect(await resolved.json()).toEqual({ accepted: true, resolution: "allowed" });
 		expect(await held).toBeUndefined();
+		// The resolution re-serves the (now empty) hold list before the done event.
+		const emptied = await connected.reader.next("emptied holds");
+		expect(emptied.type).toBe("approval");
+		expect((emptied.payload as { holds: unknown[] }).holds).toEqual([]);
 		const done = await connected.reader.next("approval done");
 		expect(done.type).toBe("approval_done");
 		expect(done.payload).toEqual({ id: wire.id, resolution: "allowed" });
@@ -585,7 +606,8 @@ describe("approvals", () => {
 			fakeContext(),
 		) as Promise<unknown>;
 		const approval = await connected.reader.next("approval");
-		const wire = (approval.payload as { approval: { id: string } }).approval;
+		const wire = (approval.payload as { holds: { id: string }[] }).holds[0];
+		if (!wire) throw new Error("approval event carried no hold");
 		await postAction(handle, "/approval", { id: wire.id, allow: false });
 		const result = (await held) as { block: boolean; reason: string } | undefined;
 		expect(result?.block).toBe(true);
@@ -594,10 +616,10 @@ describe("approvals", () => {
 	});
 
 	test("expires holds and continues (fake timers)", async () => {
-		const published: { approval?: unknown; done?: unknown }[] = [];
+		const published: { holds?: unknown; done?: unknown }[] = [];
 		const registry = new ApprovalRegistry({
 			publisher: {
-				approval: (wire) => published.push({ approval: wire }),
+				pending: (holds) => published.push({ holds }),
 				approvalDone: (id, resolution) => published.push({ done: { id, resolution } }),
 			},
 			tools: () => ["bash"],
@@ -606,14 +628,68 @@ describe("approvals", () => {
 		});
 		vi.useFakeTimers();
 		const held = registry.hold("bash", { command: "make deploy" });
-		expect(registry.pending()?.toolName).toBe("bash");
+		expect(registry.pendingAll().map((hold) => hold.toolName)).toEqual(["bash"]);
 		await vi.advanceTimersByTimeAsync(120_001);
 		expect(await held).toBeUndefined();
-		expect(registry.pending()).toBeNull();
+		expect(registry.pendingAll()).toEqual([]);
 		expect(published.at(-1)?.done).toEqual({
-			id: (published[0]?.approval as { id: string }).id,
+			id: (published[0]?.holds as { id: string }[])[0]?.id,
 			resolution: "expired",
 		});
+	});
+
+	test("serves concurrent holds as an oldest-first array on every publish", async () => {
+		const { handle, fake } = await startTestConsole({ approvalTools: ["bash", "edit"] });
+		const connected = await connectStream(handle);
+		await connected.reader.next("snapshot");
+		const handler = fake.handlers("tool_call")[0];
+		const first = handler(
+			{ type: "tool_call", toolName: "bash", input: { command: "one" } },
+			fakeContext(),
+		) as Promise<unknown>;
+		const second = handler(
+			{ type: "tool_call", toolName: "edit", input: { path: "two" } },
+			fakeContext(),
+		) as Promise<unknown>;
+		const firstEvent = await connected.reader.next("first approval");
+		const secondEvent = await connected.reader.next("second approval");
+		expect(firstEvent.type).toBe("approval");
+		expect(secondEvent.type).toBe("approval");
+		const firstHolds = (firstEvent.payload as { holds: { id: string; toolName: string }[] }).holds;
+		const secondHolds = (secondEvent.payload as { holds: { id: string; toolName: string }[] }).holds;
+		expect(firstHolds.map((hold) => hold.toolName)).toEqual(["bash"]);
+		expect(secondHolds.map((hold) => hold.toolName)).toEqual(["bash", "edit"]);
+		expect(secondHolds[0]?.id).toBe(firstHolds[0]?.id);
+
+		// A fresh connection's snapshot carries the full pending list too.
+		const late = await connectStream(handle);
+		const snapshot = await late.reader.next("late snapshot");
+		expect((snapshot.payload as SnapshotPayload).holds.map((hold) => hold.id)).toEqual(
+			secondHolds.map((hold) => hold.id),
+		);
+		await late.reader.close();
+
+		// Resolving the oldest hold leaves the newer one visible and pending.
+		const resolved = await postAction(handle, "/approval", { id: firstHolds[0]?.id, allow: true });
+		expect(resolved.status).toBe(202);
+		expect(await first).toBeUndefined();
+		const remaining = await connected.reader.next("remaining holds");
+		expect((remaining.payload as { holds: { id: string }[] }).holds.map((hold) => hold.id)).toEqual([
+			secondHolds[1]?.id,
+		]);
+		const done = await connected.reader.next("approval done");
+		expect(done.type).toBe("approval_done");
+		expect(done.payload).toEqual({ id: firstHolds[0]?.id, resolution: "allowed" });
+
+		// Denying the rest still blocks, and expiry still continues: the wire
+		// change does not touch the resolutions.
+		await postAction(handle, "/approval", { id: secondHolds[1]?.id, allow: false });
+		const denied = (await second) as { block: boolean; reason: string } | undefined;
+		expect(denied?.block).toBe(true);
+		expect(denied?.reason).toContain("denied");
+		const emptyList = await connected.reader.next("empty holds");
+		expect((emptyList.payload as { holds: unknown[] }).holds).toEqual([]);
+		await connected.reader.close();
 	});
 
 	test("expires holds end to end and publishes approval_done expired", async () => {
@@ -627,6 +703,9 @@ describe("approvals", () => {
 		) as Promise<unknown>;
 		expect((await connected.reader.next("approval")).type).toBe("approval");
 		expect(await withTimeout(held, 2000, "expiry")).toBeUndefined();
+		// Expiry re-serves the emptied list before the done event.
+		const emptied = await connected.reader.next("emptied holds");
+		expect((emptied.payload as { holds: unknown[] }).holds).toEqual([]);
 		const done = await connected.reader.next("approval done");
 		expect(done.type).toBe("approval_done");
 		expect((done.payload as { resolution: string }).resolution).toBe("expired");
@@ -916,6 +995,28 @@ describe("event mapping", () => {
 		await connected.reader.close();
 	});
 
+	test("message_end without an identity match serves an empty entryId instead of guessing", async () => {
+		const { handle, fake } = await startTestConsole();
+		const connected = await connectStream(handle);
+		await connected.reader.next("snapshot");
+		const stranger = { role: "assistant", content: [{ type: "text", text: "?" }] };
+		const unrelated = {
+			type: "message",
+			id: "entry-9",
+			parentId: null,
+			timestamp: "2026-11-10T00:00:00Z",
+			message: { role: "user", content: "unrelated" },
+		};
+		const withBranch = fakeContext({
+			sessionManager: { getBranch: () => [unrelated], getSessionId: () => "sess-test" },
+		});
+		fake.fire("message_end", { type: "message_end", message: stranger }, withBranch);
+		const ended = await connected.reader.next("message end");
+		expect(ended.type).toBe("message_end");
+		expect((ended.payload as { entryId: string }).entryId).toBe("");
+		await connected.reader.close();
+	});
+
 	test("keeps the console-tracked queue honest through trackQueued and settle", async () => {
 		const { handle, fake } = await startTestConsole();
 		const connected = await connectStream(handle);
@@ -973,47 +1074,52 @@ describe("backpressure", () => {
 			sessionName: "",
 			status: { kind: "idle", model: null },
 			messages: [],
-			approval: null,
+			holds: [],
 			queue: { items: [], terminalQueued: 0 },
 		}));
 	}
 
-	test("coalesces superseded deltas under pressure instead of disconnecting", () => {
+	test("disconnects a consumer over the queue cap without dropping events", () => {
 		const source = testSource();
+		// Seed the log so the opening snapshot anchors at a real head (seq 0),
+		// like the production wiring does.
+		source.publish("status", { status: { kind: "idle", model: null } });
 		const response = fakeResponse(false);
 		source.attach(response, undefined);
-		const base = response.writes.length; // snapshot frame
 		for (let i = 0; i < 250; i++)
 			source.publish("message_delta", {
 				slotKey: "live-0",
 				event: { type: "text_delta", contentIndex: 0, delta: `d${i}` },
 			});
-		expect(response.destroy).not.toHaveBeenCalled();
-		// One frame was flushed before the socket filled. The queue kept the
-		// newest delta of the slot (d201) plus the deltas published after the
-		// coalescing pass (d202..d249); the fake socket always reports full, so
-		// each drain releases exactly one frame until the queue empties.
-		for (let i = 0; i < 60; i++) response.drain();
-		expect(response.writes.length).toBe(base + 50);
-		expect(response.writes.at(-1)).toContain('"d249"');
-		expect(response.writes.some((frame) => frame.includes('"d248"'))).toBe(true);
-		expect(source.connectionCount()).toBe(1);
-	});
-
-	test("disconnects a consumer that stays over the cap after coalescing", () => {
-		const source = testSource();
-		const response = fakeResponse(false);
-		source.attach(response, undefined);
-		for (let i = 0; i < 250; i++) {
-			source.publish("message_delta", {
-				slotKey: `live-${i}`,
-				event: { type: "text_delta", contentIndex: 0, delta: "d" },
-			});
-		}
+		// Over the cap: disconnect, never coalesce. Every delta stayed in the log.
 		expect(response.destroy).toHaveBeenCalledTimes(1);
 		expect(source.connectionCount()).toBe(0);
 		// Publishing after the disconnect never touches the dead stream.
 		expect(() => source.publish("status", { status: { kind: "idle", model: null } })).not.toThrow();
+	});
+
+	test("a reconnecting client with the last applied cursor receives the full stream", () => {
+		const source = testSource();
+		source.publish("status", { status: { kind: "idle", model: null } });
+		const slow = fakeResponse(false);
+		source.attach(slow, undefined);
+		for (let i = 0; i < 250; i++)
+			source.publish("message_delta", {
+				slotKey: "live-0",
+				event: { type: "text_delta", contentIndex: 0, delta: `d${i}` },
+			});
+		expect(slow.destroy).toHaveBeenCalledTimes(1);
+		// The slow consumer had applied the seed status (seq 0) and nothing
+		// else; the replay answers with every delta published since, first to
+		// last - losslessness comes from the log, not from coalescing.
+		const reconnected = fakeResponse(true);
+		source.attach(reconnected, 0);
+		expect(reconnected.writes).toHaveLength(250);
+		expect(reconnected.writes[0]).toContain('"d0"');
+		expect(reconnected.writes.at(-1)).toContain('"d249"');
+		for (let i = 0; i < 250; i++) {
+			expect(reconnected.writes.some((frame) => frame.includes(`"d${i}"`))).toBe(true);
+		}
 	});
 });
 

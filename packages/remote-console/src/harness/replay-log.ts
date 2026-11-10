@@ -79,7 +79,8 @@ export interface WireApproval {
 	id: string;
 	toolName: string;
 	argsPreview: string;
-	/** Epoch ms when the hold expires and the terminal takes over. */
+	/** Epoch ms when the hold expires and the call proceeds (fail-open by
+	 * design: approvals are a convenience surface, not a security boundary). */
 	deadlineMs: number;
 	createdAt: string;
 }
@@ -104,7 +105,8 @@ export interface SnapshotPayload {
 	status: WireStatus;
 	/** Branch tail in transcript order, oldest first. */
 	messages: WireTranscriptEntry[];
-	approval: WireApproval | null;
+	/** Every pending hold, oldest first. */
+	holds: WireApproval[];
 	queue: WireQueue;
 }
 
@@ -146,7 +148,9 @@ export interface StatusPayload {
 }
 
 export interface ApprovalPayload {
-	approval: WireApproval | null;
+	/** The full pending list at publish time, oldest first: concurrent holds
+	 * stay visible and the client can replace its slice wholesale. */
+	holds: WireApproval[];
 }
 
 export interface ApprovalDonePayload {
@@ -218,8 +222,8 @@ export class ReplayLog {
 
 	/** Assigns the next seq and stores the event; returns the stored form. */
 	append(event: ReplayEventInput): RemoteEvent {
-		// Seqs are contiguous by construction (one per append), so the buffer's
-		// oldest seq alone delimits which cursors are replayable.
+		// Seqs are contiguous by construction (one per append), so the window
+		// [oldest, head] alone delimits which cursors are replayable.
 		const stored: RemoteEvent = { ...event, seq: this.nextSeq };
 		this.nextSeq++;
 		this.buffer.push(stored);
@@ -227,11 +231,13 @@ export class ReplayLog {
 		return stored;
 	}
 
-	/** Events strictly after cursor, or undefined when cursor is older than the buffer
-	 * start (the caller must then send a fresh snapshot instead of a replay). */
+	/** Events strictly after cursor, or undefined when the cursor is unusable:
+	 * older than the buffer start (evicted), or above the head (a server
+	 * restart resets seqs, so a high cursor names events this log never saw).
+	 * Either way the caller must send a fresh snapshot instead of a replay. */
 	events_since(cursor: ReplayCursor): RemoteEvent[] | undefined {
 		const oldest = this.buffer[0]?.seq;
-		if (oldest === undefined || cursor < oldest) return undefined;
+		if (oldest === undefined || cursor < oldest || cursor > this.nextSeq - 1) return undefined;
 		// Contiguous seqs make the offset arithmetic exact; slice clamps past the end.
 		return this.buffer.slice(cursor - oldest + 1);
 	}

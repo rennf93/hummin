@@ -86,8 +86,15 @@ export function listHosts(): HostEntry[] {
 	return parseHosts(localStorage.getItem(HOSTS_KEY));
 }
 
+/** Best-effort persistence: localStorage writes throw in Safari private mode
+ * and when the quota is full, and losing a registry edit is better than
+ * breaking the session, so the failure is swallowed. */
 function writeHosts(hosts: readonly HostEntry[]): void {
-	localStorage.setItem(HOSTS_KEY, JSON.stringify(hosts));
+	try {
+		localStorage.setItem(HOSTS_KEY, JSON.stringify(hosts));
+	} catch {
+		// Unavailable storage: the registry stays in memory for this session.
+	}
 }
 
 /** Adds a host with a fresh id; the origin must parse as an absolute URL. */
@@ -132,20 +139,30 @@ export function removeHost(id: string): void {
  * origin: opening that URL is the intended one-click enrollment for the local
  * host. Upserts, because every /remote-control start rotates the token - an
  * existing registry entry for this origin gets the fresh token instead of a
- * duplicate error. Strips the fragment afterwards so the token never stays in
- * the address bar or history. Returns the adopted entry, or null when the
- * fragment carries no token. */
+ * duplicate error. The registry write is best-effort: when storage is
+ * unavailable (private mode, full quota) the entry is still returned so the
+ * session connects, and the fragment is stripped from the address bar either
+ * way - the token must never stay in the URL or history. Returns the adopted
+ * entry, or null when the fragment carries no token. */
 export function adoptLocalHost(fragment: string, location: Location, history: History): HostEntry | null {
 	const token = fragment.replace(/^#/, "").trim();
 	if (token === "") return null;
 	const origin = normalizeOrigin(location.origin);
 	const existing = listHosts().find((host) => host.origin === origin);
 	let entry: HostEntry;
-	if (existing !== undefined) {
-		if (existing.token !== token) updateHost(existing.id, { token });
-		entry = { ...existing, token };
-	} else {
-		entry = addHost({ label: hostLabel(origin), origin, token });
+	try {
+		if (existing !== undefined) {
+			if (existing.token !== token) updateHost(existing.id, { token });
+			entry = { ...existing, token };
+		} else {
+			entry = addHost({ label: hostLabel(origin), origin, token });
+		}
+	} catch {
+		// Registry write failed (storage unavailable): keep the entry in memory.
+		entry =
+			existing !== undefined
+				? { ...existing, token }
+				: { id: crypto.randomUUID(), label: hostLabel(origin), origin, token };
 	}
 	history.replaceState(null, "", location.pathname + location.search);
 	return entry;
@@ -193,9 +210,14 @@ export function loadAppearance(): Appearance {
 	return parseAppearance(localStorage.getItem(APPEARANCE_KEY));
 }
 
-/** Persists the appearance prefs to localStorage. */
+/** Persists the appearance prefs to localStorage; best-effort like the host
+ * registry (private mode and quota errors must not break the panel). */
 export function saveAppearance(appearance: Appearance): void {
-	localStorage.setItem(APPEARANCE_KEY, JSON.stringify(appearance));
+	try {
+		localStorage.setItem(APPEARANCE_KEY, JSON.stringify(appearance));
+	} catch {
+		// Unavailable storage: the prefs stay in memory for this session.
+	}
 }
 
 /** Applies appearance prefs to the document root: the preset switches the

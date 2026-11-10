@@ -8,7 +8,11 @@ hummin's browser remote console: a Vite + React 18 + Tailwind 4 workspace packag
 - `npm run build` - production build to `dist/` with a relative base
 - `npm run test` - vitest with the happy-dom environment
 
-`dist/` is consumed by the coding-agent extension in a later phase, which serves the built bundle over the console's local HTTP endpoint; the relative base keeps it loadable from any host path.
+`dist/` is built, committed, and served by the coding-agent extension's console server at `/`. The server resolves the build through three paths, first containing an `index.html` wins: the `HUMMIN_REMOTE_CONSOLE_DIST` env override, the workspace build at `packages/remote-console/dist` (source runs), and the seeded copy at `<agentDir>/remote-console/dist` (installed binaries). The seed step itself, copying a fresh `dist/` into the agent dir when release engineering packages the binary, is documented here and deliberately not implemented yet; until it runs, installed binaries serve the built-in fallback page. The relative base keeps the bundle loadable from any host path.
+
+## Reconnecting after a restart
+
+The console reconnects on its own: the stream is retried with backoff and resumes from the last seen event id. A hummin restart (or `/remote-control stop` followed by a fresh start) rotates the token, so the stored one stops working and the stream answers 401: run `/remote-control` again and reopen its URL (this re-enrolls the local host's token), or remove and re-add the host with the fresh token. A rail row in the unauthorized state carries that hint inline.
 
 ## Token and preset contract
 

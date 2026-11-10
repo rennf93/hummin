@@ -203,9 +203,11 @@ describe("ReplayLog", () => {
 		expect(log.events_since(-1)).toBeUndefined();
 		// cursor at the buffer start: everything except the cursor event itself
 		expect(log.events_since(0)?.map((e) => e.seq)).toEqual(seqRange(1, 9));
-		// cursor at the newest event and beyond it: empty window, still replayable
+		// cursor at the newest event: caught up, empty window
 		expect(log.events_since(9)).toEqual([]);
-		expect(log.events_since(10)).toEqual([]);
+		// cursor above the head (a restarted server reset the seqs): unusable,
+		// the caller must send a fresh snapshot instead of sitting deaf
+		expect(log.events_since(10)).toBeUndefined();
 	});
 
 	it("keeps the last 2000 events and drops the oldest without error", () => {
@@ -216,6 +218,8 @@ describe("ReplayLog", () => {
 		expect(log.events_since(24)).toBeUndefined();
 		const kept = log.events_since(25);
 		expect(kept?.map((e) => e.seq)).toEqual(seqRange(26, total - 1));
+		// A cursor above the head is unusable after eviction too, not an empty replay.
+		expect(log.events_since(total)).toBeUndefined();
 	});
 });
 
@@ -234,8 +238,9 @@ describe("ReplayServer", () => {
 		const server = new ReplayServer(seqRange(0, 9).map((seq) => ping(seq)));
 		expect(server.consume(0, 3).events.map((e) => e.seq)).toEqual([1, 2, 3]);
 		expect(server.consume(0, 0).events).toEqual([]);
-		// a cursor beyond the newest event is caught up, not stale
-		expect(server.consume(10, 5)).toEqual({ events: [], needsSnapshot: false });
+		// A cursor beyond the newest event is unusable (the seqs may belong to a
+		// restarted server generation): a fresh snapshot is required.
+		expect(server.consume(10, 5)).toEqual({ events: [], needsSnapshot: true });
 	});
 
 	it("consume serves the fixture snapshot when the cursor is absent or stale", () => {

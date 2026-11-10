@@ -152,7 +152,7 @@ describe("stream slot", () => {
 				sessionName: "s",
 				status: { kind: "idle", model: null },
 				messages: [],
-				approval: null,
+				holds: [],
 				queue: { items: [], terminalQueued: 0 },
 			},
 		};

@@ -175,14 +175,21 @@ function defaultDistDirs(): string[] {
 	return dirs;
 }
 
+/** URL-safe host part of the console URL and snapshot origin, derived from
+ * the resolved bind: loopback names and any-interface binds read as 127.0.0.1
+ * (the one address a loopback client can always use), a LAN bind passes its
+ * own host through with IPv6 literals bracketed for URL use. The scheme stays
+ * http: nothing in this stack terminates TLS; a fronting proxy would end TLS
+ * before these URLs are formed. */
 function displayHost(host: string): string {
-	return host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+	if (LOOPBACK_HOSTS.has(host) || host === "0.0.0.0" || host === "::") return "127.0.0.1";
+	return host.includes(":") ? `[${host}]` : host;
 }
 
 /** The session entry id of a message that just ended: identity match in the
- * branch tail, else the newest message entry there (normal flow: the ended
- * message is the newest). "" when the session is unreadable; the console
- * keys by slot instead. */
+ * branch tail, "" otherwise (including an unreadable session). The console
+ * keys such blocks by slotKey instead; guessing a neighbor's id would freeze
+ * the wrong slot into someone else's transcript entry. */
 function endedEntryId(ctx: ExtensionContext | undefined, message: AgentMessage): string {
 	try {
 		if (!ctx) return "";
@@ -190,10 +197,6 @@ function endedEntryId(ctx: ExtensionContext | undefined, message: AgentMessage):
 		for (let i = branch.length - 1; i >= 0 && i >= branch.length - ENTRY_LOOKUP_WINDOW; i--) {
 			const entry = branch[i];
 			if (entry.type === "message" && entry.message === message) return entry.id;
-		}
-		for (let i = branch.length - 1; i >= 0 && i >= branch.length - ENTRY_LOOKUP_WINDOW; i--) {
-			const entry = branch[i];
-			if (entry.type === "message") return entry.id;
 		}
 	} catch {
 		// Unreadable session: the console keys the block by slotKey instead.
@@ -263,7 +266,7 @@ export async function startRemoteConsole(pi: ExtensionAPI, options: RemoteConsol
 				sessionName: sessionName(pi),
 				status: wireStatus(context, waiting),
 				messages,
-				approval: approvals?.pending() ?? null,
+				holds: approvals?.pendingAll() ?? [],
 				queue: queueState(),
 			};
 		} catch {
@@ -275,7 +278,7 @@ export async function startRemoteConsole(pi: ExtensionAPI, options: RemoteConsol
 				sessionName: "Session",
 				status: { kind: "idle", model: null },
 				messages: [],
-				approval: null,
+				holds: [],
 				queue: { items: [], terminalQueued: 0 },
 			};
 		}
@@ -285,7 +288,7 @@ export async function startRemoteConsole(pi: ExtensionAPI, options: RemoteConsol
 
 	approvals = new ApprovalRegistry({
 		publisher: {
-			approval: (wire) => publish("approval", { approval: wire }),
+			pending: (holds) => publish("approval", { holds }),
 			approvalDone: (id, resolution) => publish("approval_done", { id, resolution }),
 		},
 		tools: () => approvalTools,

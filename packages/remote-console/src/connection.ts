@@ -378,3 +378,22 @@ export function postApproval(input: {
 		fetchImpl: input.fetchImpl,
 	});
 }
+
+/** Registers this console page's origin on a host so the host's CORS
+ * allowlist admits the page for cross-origin fleet aggregation: {id, origin}
+ * to POST /settings/console-origins, authenticated with the host's own
+ * (pasted) token. */
+export function postConsoleOrigin(input: {
+	origin: string;
+	token: string;
+	consoleOrigin: string;
+	fetchImpl?: typeof fetch;
+}): Promise<ActionResult> {
+	return postAction({
+		origin: input.origin,
+		token: input.token,
+		path: "/settings/console-origins",
+		body: { id: crypto.randomUUID(), origin: input.consoleOrigin },
+		fetchImpl: input.fetchImpl,
+	});
+}

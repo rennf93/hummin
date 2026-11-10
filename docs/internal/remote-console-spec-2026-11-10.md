@@ -338,3 +338,9 @@ terminal notifications, TUI restyling, hummin core changes beyond none
    hoisted vite the whole repo's vitest runs on; the fix restores the
    upstream resolution. The repo .npmrc `min-release-age=2` guard rejects
    versions published in the last 2 days (this blocked plugin-react 6.3.0).
+4. Approval expiry is fail-open by design (consolidated review, 2026-11-11):
+   an expired hold proceeds with the tool call, because the terminal's
+   deterministic gates remain the security boundary - approvals are a
+   convenience surface, not a security boundary. Concurrent holds ride the
+   wire as arrays (`holds`, oldest first) on snapshot and every approval
+   publish, and `approval_done` removes one hold by id.

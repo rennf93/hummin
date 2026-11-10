@@ -52,12 +52,12 @@ export function Header({
 				</span>
 			)}
 			{percent !== null && (
-				<span className="rc-header-ctx" data-rc-ctx={String(percent)} aria-label={`context usage ${percent} percent`}>
+				<span className="rc-header-ctx" data-rc-ctx={String(percent)} aria-label={`context usage ${Math.round(percent)} percent`}>
 					<span className="rc-header-ctx-label">ctx</span>
 					<span className="rc-header-ctx-track" aria-hidden="true">
 						<span className="rc-header-ctx-fill" style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
 					</span>
-					<span className="rc-header-ctx-num">{percent}%</span>
+					<span className="rc-header-ctx-num">{Math.round(percent)}%</span>
 				</span>
 			)}
 			<span className="rc-header-spacer" />

@@ -2,10 +2,11 @@
  * lib/remote-console/approvals: the opt-in remote approval surface for tool
  * calls. When the console server runs, at least one SSE client is connected,
  * and the tool name is listed in remoteControl.approvalTools, a tool_call
- * handler holds the call open, publishes an `approval` event, and waits for
- * POST /approval or the deadline. Fail-open everywhere: a disabled surface,
- * an empty tool list, no console, an error, or an expired hold never blocks
- * a tool call.
+ * handler holds the call open, publishes an `approval` event carrying the
+ * full pending list, and waits for POST /approval or the deadline. Concurrent
+ * holds each resolve on their own id. Fail-open everywhere: a disabled
+ * surface, an empty tool list, no console, an error, or an expired hold never
+ * blocks a tool call (expiry proceeds with the call).
  *
  * Handler order vs the bashguard/sys1 tool_call gates is discovery order and
  * cannot be controlled; a gate-blocked call may also be held. Bounded (holds
@@ -31,9 +32,10 @@ interface PendingHold {
 }
 
 /** Publishes the wire events a hold produces. Injected so the registry stays
- * free of transport concerns. */
+ * free of transport concerns. `pending` re-serves the full hold list after
+ * every change, so concurrent holds stay visible on the wire. */
 export interface ApprovalPublisher {
-	approval(wire: WireApproval): void;
+	pending(holds: WireApproval[]): void;
 	approvalDone(id: string, resolution: ApprovalResolution): void;
 }
 
@@ -106,7 +108,7 @@ export class ApprovalRegistry {
 			};
 			hold.timer.unref();
 			this.holds.set(id, hold);
-			this.options.publisher.approval(wireApproval(hold));
+			this.options.publisher.pending(this.pendingAll());
 			const resolution = await settled;
 			this.options.publisher.approvalDone(id, resolution);
 			if (resolution === "denied") {
@@ -130,10 +132,10 @@ export class ApprovalRegistry {
 		return allow ? "allowed" : "denied";
 	}
 
-	/** The oldest pending hold, for snapshot payloads. */
-	pending(): WireApproval | null {
-		for (const hold of this.holds.values()) return wireApproval(hold);
-		return null;
+	/** All pending holds, oldest first (insertion order), for snapshot
+	 * payloads and approval events. */
+	pendingAll(): WireApproval[] {
+		return [...this.holds.values()].map((hold) => wireApproval(hold));
 	}
 
 	/** Expire every outstanding hold (server shutdown). */
@@ -147,5 +149,8 @@ export class ApprovalRegistry {
 		this.holds.delete(id);
 		clearTimeout(hold.timer);
 		hold.resolve(resolution);
+		// Every resolution re-serves the remaining list, so the console drops
+		// the settled hold even when the approval_done frame is missed.
+		this.options.publisher.pending(this.pendingAll());
 	}
 }

@@ -2,7 +2,9 @@
  * components/HostRail: the fleet column. One row per registered host with its
  * live status glyph (connected, stale after 30 quiet seconds, reconnecting,
  * unreachable, unauthorized), label, session name, and model; clicking a row
- * selects the active host. With no hosts the rail shows the onboarding card
+ * selects the active host. An unauthorized row carries the token-rotation
+ * recovery hint, and a failed console-origin registration shows a non-fatal
+ * warning line on that row. With no hosts the rail shows the onboarding card
  * with the add form inline. The add-host form appends to the browser registry
  * (expanded by the toggle on phones, always visible on desktop); remove drops
  * the entry (its token stays local to this browser either way).
@@ -50,6 +52,10 @@ export interface AddHostInput {
 	token: string;
 }
 
+/** Recovery step for a row whose token stopped working: every
+ * /remote-control start rotates the token, so the stored one is stale. */
+const AUTH_HINT = "token rotated - run /remote-control and reopen its URL, or remove and re-add this host";
+
 /** Re-renders on a 2s tick so staleness becomes visible without traffic. */
 function useNowInterval(enabled: boolean): number {
 	const [now, setNow] = useState(() => Date.now());
@@ -65,6 +71,7 @@ export function HostRail({
 	hosts,
 	states,
 	activeId,
+	originWarnings,
 	onSelect,
 	onAdd,
 	onRemove,
@@ -72,6 +79,8 @@ export function HostRail({
 	hosts: readonly HostEntry[];
 	states: Record<string, HostState>;
 	activeId: string | null;
+	/** Registration failure detail per host id; absence means registered. */
+	originWarnings: Record<string, string>;
 	onSelect(hostId: string): void;
 	onAdd(input: AddHostInput): void;
 	onRemove(hostId: string): void;
@@ -93,7 +102,16 @@ export function HostRail({
 				</div>
 			)}
 			{hosts.map((host) => (
-				<HostRow key={host.id} host={host} state={states[host.id]} active={host.id === activeId} now={now} onSelect={onSelect} onRemove={onRemove} />
+				<HostRow
+					key={host.id}
+					host={host}
+					state={states[host.id]}
+					active={host.id === activeId}
+					now={now}
+					originWarning={originWarnings[host.id]}
+					onSelect={onSelect}
+					onRemove={onRemove}
+				/>
 			))}
 			<AddHostForm onAdd={onAdd} open={formOpen} onToggle={() => setFormOpen((current) => !current)} />
 		</div>
@@ -105,6 +123,7 @@ function HostRow({
 	state,
 	active,
 	now,
+	originWarning,
 	onSelect,
 	onRemove,
 }: {
@@ -112,6 +131,7 @@ function HostRow({
 	state: HostState | undefined;
 	active: boolean;
 	now: number;
+	originWarning: string | undefined;
 	onSelect(hostId: string): void;
 	onRemove(hostId: string): void;
 }) {
@@ -131,6 +151,16 @@ function HostRow({
 						{session !== null && ` \u00B7 ${session}`}
 					</span>
 					{model !== null && <span className="rc-host-model">{model.provider}/{model.modelId}</span>}
+					{status === "unauthorized" && (
+						<span className="rc-host-hint" data-rc-auth-hint="true">
+							{AUTH_HINT}
+						</span>
+					)}
+					{originWarning !== undefined && (
+						<span className="rc-host-hint" data-rc-origin-warn="true">
+							{`origins not registered - cross-origin may fail (${originWarning})`}
+						</span>
+					)}
 				</span>
 			</button>
 			<button type="button" className="rc-host-remove" data-rc-remove={host.id} aria-label={`remove ${host.label}`} onClick={() => onRemove(host.id)}>

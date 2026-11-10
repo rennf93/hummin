@@ -216,6 +216,22 @@
 	white-space: nowrap;
 }
 
+/* inline recovery hints (token rotation, failed origin registration): wrap
+   freely, unlike the one-line status words above them */
+.rc-host-hint {
+	font-family: var(--rc-font-mono);
+	font-size: 0.7rem;
+	line-height: 1.4;
+	color: var(--rc-warn);
+	overflow-wrap: anywhere;
+	white-space: normal;
+	text-align: left;
+}
+
+.rc-host-row[data-rc-host-status="unauthorized"] .rc-host-hint {
+	color: var(--rc-bad);
+}
+
 .rc-host-remove {
 	flex: none;
 	background: transparent;
@@ -493,6 +509,12 @@
 	font-size: 0.78rem;
 	color: var(--rc-fg-dim);
 	overflow-wrap: anywhere;
+}
+
+.rc-approval-hint {
+	font-size: 0.72rem;
+	line-height: 1.4;
+	color: var(--rc-fg-faint);
 }
 
 .rc-approval-countdown {

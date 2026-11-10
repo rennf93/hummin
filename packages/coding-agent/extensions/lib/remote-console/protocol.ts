@@ -8,12 +8,15 @@
  *
  * Transport: one SSE stream per host connection carries RemoteEvents with
  * per-host monotonic `seq`. The server keeps a bounded replay buffer and
- * resumes from the SSE Last-Event-ID header; a cursor older than the buffer
- * replays a fresh `snapshot` instead, so the client never errors on a stale
- * cursor. Actions (prompt, abort, approval, settings) are POSTs and stay out
- * of this module. Deltas of the same streaming slot may be coalesced by the
- * server under backpressure; `slotKey` exists so coalescing is lossless at
- * the block level.
+ * resumes from the SSE Last-Event-ID header. A cursor the buffer cannot
+ * answer - older than its start, or above its head after a server restart
+ * reset the seqs - replays a fresh `snapshot` instead, so the client never
+ * errors on an unusable cursor. Actions (prompt, abort, approval, settings)
+ * are POSTs and stay out of this module. Queue pressure never drops events:
+ * the server disconnects the slowest consumers instead, and losslessness
+ * comes from the replay log - a disconnected client reconnects with
+ * Last-Event-ID and replays everything it missed (up to the buffer bound,
+ * which a snapshot rebuild covers beyond).
  */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
@@ -93,7 +96,8 @@ export interface WireApproval {
 	id: string;
 	toolName: string;
 	argsPreview: string;
-	/** Epoch ms when the hold expires and the terminal takes over. */
+	/** Epoch ms when the hold expires and the call proceeds (fail-open by
+	 * design: approvals are a convenience surface, not a security boundary). */
 	deadlineMs: number;
 	createdAt: string;
 }
@@ -119,7 +123,8 @@ export interface SnapshotPayload {
 	status: WireStatus;
 	/** Branch tail in transcript order, oldest first. */
 	messages: WireTranscriptEntry[];
-	approval: WireApproval | null;
+	/** Every pending hold, oldest first. */
+	holds: WireApproval[];
 	queue: WireQueue;
 }
 
@@ -161,7 +166,9 @@ export interface StatusPayload {
 }
 
 export interface ApprovalPayload {
-	approval: WireApproval | null;
+	/** The full pending list at publish time, oldest first: concurrent holds
+	 * stay visible and the client can replace its slice wholesale. */
+	holds: WireApproval[];
 }
 
 export interface ApprovalDonePayload {

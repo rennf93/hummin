@@ -60,7 +60,7 @@ describe("tokens gate", () => {
 		for (const file of files) {
 			const text = readFileSync(file, "utf8");
 			for (const offense of rawValueOffenses(text)) {
-				offenders.push(`${file.replace(SRC + "/", "")}: ${offense}`);
+				offenders.push(`${file.replace(`${SRC}/`, "")}: ${offense}`);
 			}
 		}
 		expect(offenders).toEqual([]);
@@ -81,7 +81,7 @@ describe("tokens gate", () => {
 		for (const file of files) {
 			const text = readFileSync(file, "utf8");
 			for (const match of text.matchAll(/var\((--rc-[a-z0-9-]+)/g)) {
-				if (!defined.has(match[1])) unresolved.push(`${file.replace(SRC + "/", "")}: ${match[1]}`);
+				if (!defined.has(match[1])) unresolved.push(`${file.replace(`${SRC}/`, "")}: ${match[1]}`);
 			}
 		}
 		expect(unresolved).toEqual([]);

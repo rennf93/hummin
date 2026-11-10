@@ -28,8 +28,9 @@ export const REPLAY_BUFFER_LIMIT = 2000;
  * socket cap (server.ts); this is the stream-only cap. */
 export const MAX_STREAMS = 4;
 
-/** Per-connection outbound queue bound. Pressure first drops superseded
- * events (coalescing), then disconnects the consumer. */
+/** Per-connection outbound queue bound. Pressure disconnects the consumer
+ * (never drops events): the client reconnects with Last-Event-ID and the
+ * replay log delivers everything it missed. */
 const MAX_QUEUED_EVENTS = 200;
 
 /** Heartbeat comment period. Comments carry no id, so they never disturb
@@ -39,19 +40,14 @@ const HEARTBEAT_MS = 15_000;
 /** Longest tool partial result carried on the wire. */
 const PREVIEW_MAX_CHARS = 2000;
 
-/** Discriminated union form of RemoteEvent: narrows the payload by event
- * type. protocol.ts does not export this derived form; the console package
- * derives the same shape. */
-type AnyRemoteEvent = { [K in RemoteEventType]: RemoteEvent<K> }[RemoteEventType];
-
 /** Event accepted by append; the log assigns seq, so a caller-supplied one is ignored. */
 type ReplayEventInput = Omit<RemoteEvent, "seq"> & { seq?: number };
 
 /** Bounded replay buffer over protocol events with per-instance monotonic
  * seq. Semantics mirror packages/remote-console/src/harness/replay-log.ts:
- * seqs are contiguous (one per append), so the buffer's oldest seq alone
- * delimits which cursors are replayable; a cursor below it must be answered
- * with a fresh snapshot instead of a replay. */
+ * seqs are contiguous (one per append), so the window [oldest, head] alone
+ * delimits which cursors are replayable; a cursor below the oldest or above
+ * the head must be answered with a fresh snapshot instead of a replay. */
 export class ReplayLog {
 	private buffer: RemoteEvent[] = [];
 	private nextSeq = 0;
@@ -65,11 +61,13 @@ export class ReplayLog {
 		return stored;
 	}
 
-	/** Events strictly after cursor, or undefined when cursor is older than
-	 * the buffer start (the caller must send a fresh snapshot instead). */
+	/** Events strictly after cursor, or undefined when the cursor is unusable:
+	 * older than the buffer start (evicted), or above the head (a server
+	 * restart resets seqs, so a high cursor names events this log never saw).
+	 * Either way the caller must send a fresh snapshot instead of a replay. */
 	events_since(cursor: number): RemoteEvent[] | undefined {
 		const oldest = this.buffer[0]?.seq;
-		if (oldest === undefined || cursor < oldest) return undefined;
+		if (oldest === undefined || cursor < oldest || cursor > this.nextSeq - 1) return undefined;
 		return this.buffer.slice(cursor - oldest + 1);
 	}
 
@@ -169,36 +167,16 @@ export class ConsoleEventSource {
 	private enqueue(conn: Connection, event: RemoteEvent): void {
 		if (conn.detached) return;
 		conn.queue.push(event);
-		if (conn.queue.length > MAX_QUEUED_EVENTS && !this.coalesce(conn)) {
-			// Slow consumer: still over the cap after dropping superseded
-			// events. Disconnect it instead of growing memory or stalling the
-			// publisher; the client reconnects and rebuilds from a snapshot.
+		if (conn.queue.length > MAX_QUEUED_EVENTS) {
+			// Slow consumer: disconnect it instead of dropping events, growing
+			// memory, or stalling the publisher. Losslessness comes from the
+			// replay log: the client reconnects with Last-Event-ID and replays
+			// everything, or rebuilds from a snapshot past the buffer bound.
 			this.detach(conn);
 			conn.response.destroy();
 			return;
 		}
 		this.flush(conn);
-	}
-
-	/** Drop superseded events under pressure: older deltas of the same
-	 * streaming slot (the newest delta carries the block forward) and older
-	 * status events. True when the queue is back under the cap. */
-	private coalesce(conn: Connection): boolean {
-		const keep: RemoteEvent[] = [];
-		const deltaSlots = new Set<string>();
-		for (let i = conn.queue.length - 1; i >= 0; i--) {
-			const event = conn.queue[i] as AnyRemoteEvent;
-			if (event.type === "message_delta") {
-				if (deltaSlots.has(event.payload.slotKey)) continue;
-				deltaSlots.add(event.payload.slotKey);
-			} else if (event.type === "status" && keep.some((kept) => kept.type === "status")) {
-				continue;
-			}
-			keep.push(conn.queue[i]);
-		}
-		keep.reverse();
-		conn.queue = keep;
-		return conn.queue.length <= MAX_QUEUED_EVENTS;
 	}
 
 	private flush(conn: Connection): void {
@@ -238,8 +216,8 @@ export class ConsoleEventSource {
 	}
 }
 
-/** Streaming slot keys: one fresh `live-<n>` per message, so coalescing under
- * pressure is lossless at the block level. */
+/** Streaming slot keys: one fresh `live-<n>` per message, so streamed deltas
+ * and the frozen transcript entry share one identity across replay. */
 export class StreamSlots {
 	private n = 0;
 

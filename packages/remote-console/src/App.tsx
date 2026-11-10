@@ -2,11 +2,14 @@
  * App: the console shell. One SSE connection per registered host folds its
  * frames into the per-host store; the active host's slices drive the header,
  * transcript (renderer's TranscriptList, including the live slot and tool
- * cards), the approval card, and the composer. The host registry and
+ * cards), the approval cards, and the composer. The host registry and
  * appearance prefs live browser-side (localStorage); the appearance panel
  * edits the same prefs live (applied to the document root and persisted on
- * every change). Connections rebuild only when a host's identity (origin or
- * token) changes, never on label edits.
+ * every change). Adding a cross-origin host registers this page's origin on
+ * it (POST /settings/console-origins) so fleet aggregation passes CSP; a
+ * failed registration surfaces as a non-fatal hint on that host's rail row.
+ * Connections rebuild only when a host's identity (origin or token) changes,
+ * never on label edits.
  */
 /// <reference lib="dom" />
 import { useCallback, useEffect, useReducer, useState } from "react";
@@ -15,6 +18,7 @@ import {
 	parseProtocolEvent,
 	postAbort,
 	postApproval,
+	postConsoleOrigin,
 	postPrompt,
 } from "./connection.ts";
 import { ApprovalCard } from "./components/ApprovalCard.tsx";
@@ -52,13 +56,20 @@ export function App() {
 	const [hosts, setHosts] = useState<readonly HostEntry[]>(() => {
 		// One-click enrollment: a /remote-control URL carries the current bearer
 		// token for its own origin in the fragment; adopt it before reading the
-		// registry so opening the URL connects immediately.
-		adoptLocalHost(window.location.hash, window.location, window.history);
-		return listHosts();
+		// registry so opening the URL connects immediately. When the registry
+		// write failed (private mode, full quota), the adopted entry still
+		// connects: it is kept in memory for this session.
+		const adopted = adoptLocalHost(window.location.hash, window.location, window.history);
+		const list = listHosts();
+		if (adopted !== null && !list.some((host) => host.id === adopted.id)) return [adopted, ...list];
+		return list;
 	});
 	const [activeId, setActiveId] = useState<string | null>(null);
 	const [appearance, setAppearance] = useState<Appearance>(loadAppearance);
 	const [panelOpen, setPanelOpen] = useState(false);
+	/** Per-host console-origin registration failure detail; a successful
+	 * registration stays silent. */
+	const [originWarnings, setOriginWarnings] = useState<Record<string, string>>({});
 	const [specs, setSpecs] = useState<readonly ConnectionSpec[]>([]);
 	const [store, dispatch] = useReducer(reduceHosts, {});
 
@@ -107,15 +118,40 @@ export function App() {
 
 	const selectHost = useCallback((hostId: string) => setActiveId(hostId), [setActiveId]);
 
-	const handleAdd = useCallback((input: AddHostInput) => {
-		addHost(input);
-		setHosts(listHosts());
-	}, [setHosts]);
+	const handleAdd = useCallback(
+		(input: AddHostInput) => {
+			const entry = addHost(input);
+			setHosts(listHosts());
+			if (entry.origin === window.location.origin) return;
+			// Fleet enrollment: the host must allow this console page's origin in
+			// its CORS registry or every cross-origin request fails CSP. Best
+			// effort: failure is a rail hint, never a broken add.
+			void postConsoleOrigin({ origin: entry.origin, token: entry.token, consoleOrigin: window.location.origin }).then(
+				(result) => {
+					if (result.ok) return;
+					setOriginWarnings((current) => ({
+						...current,
+						[entry.id]: result.status === 0 ? "network error" : `status ${result.status}`,
+					}));
+				},
+			);
+		},
+		[setHosts],
+	);
 
-	const handleRemove = useCallback((hostId: string) => {
-		removeHost(hostId);
-		setHosts(listHosts());
-	}, [setHosts]);
+	const handleRemove = useCallback(
+		(hostId: string) => {
+			removeHost(hostId);
+			setOriginWarnings((current) => {
+				if (!(hostId in current)) return current;
+				const next = { ...current };
+				delete next[hostId];
+				return next;
+			});
+			setHosts(listHosts());
+		},
+		[setHosts],
+	);
 
 	const handlePreset = useCallback((preset: Appearance["preset"]) => {
 		setAppearance((current) => ({ ...current, preset }));
@@ -143,18 +179,25 @@ export function App() {
 	}, [activeHost]);
 
 	const resolveApproval = useCallback(
-		(allow: boolean) => {
-			const approval = activeState?.approval;
-			if (activeHost === undefined || approval === undefined || approval === null) return;
-			void postApproval({ origin: activeHost.origin, token: activeHost.token, id: approval.id, allow });
+		(id: string, allow: boolean) => {
+			if (activeHost === undefined) return;
+			void postApproval({ origin: activeHost.origin, token: activeHost.token, id, allow });
 		},
-		[activeHost, activeState],
+		[activeHost],
 	);
 
 	return (
 			<div className="rc-shell" data-rc-shell="rail">
 				<nav className="rc-rail" aria-label="hosts">
-					<HostRail hosts={hosts} states={store} activeId={activeId} onSelect={selectHost} onAdd={handleAdd} onRemove={handleRemove} />
+					<HostRail
+						hosts={hosts}
+						states={store}
+						activeId={activeId}
+						originWarnings={originWarnings}
+						onSelect={selectHost}
+						onAdd={handleAdd}
+						onRemove={handleRemove}
+					/>
 				</nav>
 				<div className="rc-main">
 					<header className="rc-header" data-rc-region="header">
@@ -164,7 +207,7 @@ export function App() {
 						<TranscriptList entries={activeState?.entries ?? []} slot={activeState?.slot ?? null} toolUpdates={activeState?.toolUpdates} />
 					</main>
 					<footer className="rc-composer" data-rc-region="composer">
-						<ApprovalCard approval={activeState?.approval ?? null} onResolve={resolveApproval} />
+						<ApprovalCard holds={activeState?.holds ?? []} onResolve={resolveApproval} />
 						<Composer queue={activeState?.queue ?? null} disabled={activeHost === undefined} onSend={sendPrompt} onAbort={abort} />
 					</footer>
 				</div>
