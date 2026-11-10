@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### New Features
+
+- **Host-keyed documents and table rows**: `defineState` can key state by a host kind, tables take `host(Kind)` columns and contracts take `keyed(schema, Kind)` members; the store indexes the host column (store schema 3), and one address's data can be exported, imported (refusing, replacing, copying, or migrating older table versions through the owner's history) and deleted in a single batch coordinated with the live owners; the kit's `exportData`/`importData`/`deleteData` carry the server's part (archive format 2). See the [host-keyed data spec](docs/host-keyed/spec.md) and `test/examples/66-host-data.ts`.
+
+### Fixed
+
+- Workers fork without `--enable-source-maps` (apps may pass it themselves), the worker base's inline source map is linked as a file beside the base instead of being parsed whole at the first stack, and facet maps parse lazily at `mapStack`'s first lookup. The p2 session worker's RSS dropped from 216 to 140 MiB and its heap used from 97 to 36 MiB.
+
 ## [1.10.1] - 2026-11-10
 
 ### Breaking Changes
