@@ -83,6 +83,10 @@ html {
 	   panel) reads --rc-shadow-raise; the overlay scrim sits under the panel. */
 	--rc-scrim: rgb(2 8 12 / 0.62);
 	--rc-shadow-raise: 0 18px 40px -26px rgb(2 8 12 / 0.9), 0 2px 6px -2px rgb(2 8 12 / 0.5);
+	/* micro shadow for small raised controls (slider thumbs, chips); preset-agnostic */
+	--rc-shadow-thumb: 0 1px 4px rgb(0 0 0 / 0.4);
+	/* dynamic slider fill the appearance panel writes inline; the sheet carries the default */
+	--rc-slider-fill: 0%;
 
 	/* opaque equivalents, used by the reduced-transparency and no-backdrop-filter fallbacks below */
 	--rc-surface-solid: #0a1114;
