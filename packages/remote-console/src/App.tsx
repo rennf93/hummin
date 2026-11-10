@@ -23,7 +23,15 @@ import { Composer } from "./components/Composer.tsx";
 import { Header } from "./components/Header.tsx";
 import { HostRail, type AddHostInput } from "./components/HostRail.tsx";
 import type { Appearance, HostEntry } from "./hosts.ts";
-import { addHost, applyAppearance, listHosts, loadAppearance, removeHost, saveAppearance } from "./hosts.ts";
+import {
+	addHost,
+	adoptLocalHost,
+	applyAppearance,
+	listHosts,
+	loadAppearance,
+	removeHost,
+	saveAppearance,
+} from "./hosts.ts";
 import { TranscriptList } from "./renderer/transcript/TranscriptList.tsx";
 import { reduceHosts } from "./store.ts";
 import "./shell.css";
@@ -41,7 +49,13 @@ function specsEqual(a: readonly ConnectionSpec[], b: readonly ConnectionSpec[]):
 }
 
 export function App() {
-	const [hosts, setHosts] = useState<readonly HostEntry[]>(() => listHosts());
+	const [hosts, setHosts] = useState<readonly HostEntry[]>(() => {
+		// One-click enrollment: a /remote-control URL carries the current bearer
+		// token for its own origin in the fragment; adopt it before reading the
+		// registry so opening the URL connects immediately.
+		adoptLocalHost(window.location.hash, window.location, window.history);
+		return listHosts();
+	});
 	const [activeId, setActiveId] = useState<string | null>(null);
 	const [appearance, setAppearance] = useState<Appearance>(loadAppearance);
 	const [panelOpen, setPanelOpen] = useState(false);

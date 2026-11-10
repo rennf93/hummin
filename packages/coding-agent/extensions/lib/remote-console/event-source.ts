@@ -226,14 +226,13 @@ export class ConsoleEventSource {
 			return;
 		}
 		if (this.heartbeat) return;
+		// Liveness is a real protocol ping, not a comment: comments are dropped by
+		// the client's frame parser, so a comment-only idle stream would never
+		// refresh the console's last-seen time and healthy sessions would read
+		// "stale" on the rail. Pings carry seqs and enter the replay buffer like
+		// every other event (idle cost: 4/min against the 2000-event bound).
 		this.heartbeat = setInterval(() => {
-			for (const conn of this.connections) {
-				try {
-					conn.response.write(": heartbeat\n\n");
-				} catch {
-					// Dead socket: cleaned up by the close listener.
-				}
-			}
+			this.publish("ping", {});
 		}, HEARTBEAT_MS);
 		this.heartbeat.unref();
 	}

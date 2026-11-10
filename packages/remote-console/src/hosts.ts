@@ -128,6 +128,29 @@ export function removeHost(id: string): void {
 	writeHosts(listHosts().filter((host) => host.id !== id));
 }
 
+/** Adopts the fragment token of a /remote-control URL for the page's own
+ * origin: opening that URL is the intended one-click enrollment for the local
+ * host. Upserts, because every /remote-control start rotates the token - an
+ * existing registry entry for this origin gets the fresh token instead of a
+ * duplicate error. Strips the fragment afterwards so the token never stays in
+ * the address bar or history. Returns the adopted entry, or null when the
+ * fragment carries no token. */
+export function adoptLocalHost(fragment: string, location: Location, history: History): HostEntry | null {
+	const token = fragment.replace(/^#/, "").trim();
+	if (token === "") return null;
+	const origin = normalizeOrigin(location.origin);
+	const existing = listHosts().find((host) => host.origin === origin);
+	let entry: HostEntry;
+	if (existing !== undefined) {
+		if (existing.token !== token) updateHost(existing.id, { token });
+		entry = { ...existing, token };
+	} else {
+		entry = addHost({ label: hostLabel(origin), origin, token });
+	}
+	history.replaceState(null, "", location.pathname + location.search);
+	return entry;
+}
+
 /** Parses raw localStorage JSON into the appearance shape, with defaults for
  * missing or out-of-range fields (storage is a trust boundary). Records saved
  * before the motion axis existed parse as "auto". */

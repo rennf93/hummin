@@ -37,6 +37,7 @@ import type {
 } from "./harness/replay-log.ts";
 import {
 	addHost,
+	adoptLocalHost,
 	applyAppearance,
 	clampAccentHue,
 	clampDensity,
@@ -552,6 +553,45 @@ describe("hosts: registry and appearance", () => {
 		expect(clampDensity(9)).toBe(2);
 		expect(clampDensity(1.234)).toBe(1.25);
 		expect(clampDensity(Number.NaN)).toBe(1);
+	});
+});
+
+describe("hosts: fragment adoption", () => {
+	beforeEach(() => {
+		localStorage.clear();
+	});
+
+	const fakeLocation = (origin: string, pathname = "/") =>
+		({ origin, pathname, search: "" }) as unknown as Location;
+	const fakeHistory = () => ({ replaceState: vi.fn() }) as unknown as History;
+
+	it("enrolls the local host from a /remote-control fragment and strips the token from the URL", () => {
+		const location = fakeLocation("http://127.0.0.1:59711");
+		const history = fakeHistory();
+		const entry = adoptLocalHost("#tok-live", location, history);
+		expect(entry).toMatchObject({ origin: "http://127.0.0.1:59711", token: "tok-live" });
+		// the registry stores the token (browser-side by design); the URL must not
+		expect(history.replaceState).toHaveBeenCalledWith(null, "", location.pathname + location.search);
+	});
+
+	it("rotates the token for an existing origin entry instead of duplicating it", () => {
+		const location = fakeLocation("http://127.0.0.1:59711");
+		const history = fakeHistory();
+		const first = adoptLocalHost("#tok-1", location, history);
+		const second = adoptLocalHost("#tok-2", location, history);
+		expect(second?.id).toBe(first?.id);
+		expect(second?.token).toBe("tok-2");
+		expect(listHosts()).toHaveLength(1);
+		expect(listHosts()[0]?.token).toBe("tok-2");
+	});
+
+	it("returns null and touches nothing without a fragment token", () => {
+		const location = fakeLocation("http://127.0.0.1:59711");
+		const history = fakeHistory();
+		expect(adoptLocalHost("", location, history)).toBeNull();
+		expect(adoptLocalHost("#", location, history)).toBeNull();
+		expect(history.replaceState).not.toHaveBeenCalled();
+		expect(listHosts()).toEqual([]);
 	});
 });
 
