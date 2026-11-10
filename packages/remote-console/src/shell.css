@@ -1,0 +1,568 @@
+/* hummin remote console shell: layout and chrome for the host rail, header,
+   approval card, and composer. Every styled value reads an --rc-* token. The
+   bundle loads this sheet before index.css, so region rules qualify with their
+   data-rc attribute to win the tie against index.css's region classes. */
+
+/* shell frame: rail left, main column right */
+.rc-shell[data-rc-shell] {
+	flex-direction: row;
+	height: 100dvh;
+	min-height: 0;
+}
+
+.rc-rail {
+	flex: none;
+	width: 17rem;
+	min-height: 0;
+	overflow-y: auto;
+	background: var(--rc-surface);
+	border-right: 1px solid var(--rc-hairline);
+	backdrop-filter: var(--rc-blur);
+}
+
+.rc-main {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	height: 100dvh;
+}
+
+/* regions: layout only; index.css owns their surface and padding */
+.rc-header[data-rc-region] {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	flex: none;
+}
+
+.rc-transcript[data-rc-region] {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+	padding: 0;
+}
+
+.rc-transcript[data-rc-region] .rc-transcript-list {
+	flex: 1;
+	min-height: 0;
+}
+
+.rc-composer[data-rc-region] {
+	display: flex;
+	flex-direction: column;
+	flex: none;
+	gap: var(--rc-space-2);
+}
+
+/* single-column stack under 900px: rail above the main column */
+@media (width < 900px) {
+	.rc-shell[data-rc-shell] {
+		flex-direction: column;
+	}
+
+	.rc-rail {
+		width: 100%;
+		max-height: 40vh;
+		border-right: none;
+		border-bottom: 1px solid var(--rc-hairline);
+	}
+
+	.rc-main {
+		height: auto;
+		flex: 1;
+	}
+}
+
+/* host rail */
+.rc-rail-inner {
+	display: flex;
+	flex-direction: column;
+	padding: var(--rc-space-3);
+	gap: var(--rc-space-2);
+}
+
+.rc-rail-title {
+	font-family: var(--rc-font-mono);
+	font-size: 0.72rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--rc-fg-faint);
+}
+
+.rc-rail-empty {
+	color: var(--rc-fg-faint);
+	font-size: 0.85rem;
+	padding: var(--rc-space-2) 0;
+}
+
+.rc-host-row {
+	display: flex;
+	align-items: stretch;
+	border-radius: var(--rc-radius-md);
+	border: 1px solid transparent;
+	transition: border-color var(--rc-duration-fast) var(--rc-ease-out-expo);
+}
+
+.rc-host-row-active {
+	border-color: var(--rc-primary-muted);
+	background: var(--rc-primary-faint);
+}
+
+.rc-host-row:hover {
+	border-color: var(--rc-hairline);
+}
+
+.rc-host-select {
+	display: flex;
+	align-items: baseline;
+	gap: var(--rc-space-2);
+	flex: 1;
+	min-width: 0;
+	background: transparent;
+	border: none;
+	color: var(--rc-fg);
+	text-align: left;
+	padding: var(--rc-space-2);
+	cursor: pointer;
+	font: inherit;
+}
+
+.rc-host-glyph {
+	flex: none;
+	color: var(--rc-fg-faint);
+	font-size: 0.8rem;
+}
+
+.rc-host-row[data-rc-host-status="connected"] .rc-host-glyph {
+	color: var(--rc-good);
+}
+
+.rc-host-row[data-rc-host-status="stale"] .rc-host-glyph {
+	color: var(--rc-warn);
+}
+
+.rc-host-row[data-rc-host-status="connecting"] .rc-host-glyph,
+.rc-host-row[data-rc-host-status="reconnecting"] .rc-host-glyph {
+	color: var(--rc-primary);
+	animation: rc-rail-pulse var(--rc-duration-slow) var(--rc-ease-in-out-soft) infinite alternate;
+}
+
+.rc-host-row[data-rc-host-status="unauthorized"] .rc-host-glyph {
+	color: var(--rc-bad);
+}
+
+@keyframes rc-rail-pulse {
+	from {
+		opacity: 1;
+	}
+	to {
+		opacity: 0.35;
+	}
+}
+
+.rc-host-text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	gap: 2px;
+}
+
+.rc-host-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.rc-host-sub {
+	font-family: var(--rc-font-mono);
+	font-size: 0.72rem;
+	color: var(--rc-fg-dim);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.rc-host-model {
+	font-family: var(--rc-font-mono);
+	font-size: 0.7rem;
+	color: var(--rc-fg-faint);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.rc-host-remove {
+	flex: none;
+	background: transparent;
+	border: none;
+	color: var(--rc-fg-faint);
+	cursor: pointer;
+	padding: var(--rc-space-2);
+	font: inherit;
+}
+
+.rc-host-remove:hover {
+	color: var(--rc-bad);
+}
+
+/* add-host form */
+.rc-add-host {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-2);
+	margin-top: var(--rc-space-3);
+	padding-top: var(--rc-space-3);
+	border-top: 1px solid var(--rc-hairline);
+}
+
+.rc-add-input {
+	background: var(--rc-raised);
+	border: 1px solid var(--rc-hairline);
+	border-radius: var(--rc-radius-sm);
+	color: var(--rc-fg);
+	font: inherit;
+	font-size: 0.85rem;
+	padding: var(--rc-space-1) var(--rc-space-2);
+}
+
+.rc-add-input::placeholder {
+	color: var(--rc-fg-faint);
+}
+
+.rc-add-error {
+	color: var(--rc-bad);
+	font-size: 0.78rem;
+	overflow-wrap: anywhere;
+}
+
+.rc-add-submit {
+	background: var(--rc-primary);
+	color: var(--rc-base);
+	border: none;
+	border-radius: var(--rc-radius-sm);
+	font: inherit;
+	font-size: 0.85rem;
+	padding: var(--rc-space-1) var(--rc-space-3);
+	cursor: pointer;
+	transition: background var(--rc-duration-press) var(--rc-ease-out-expo);
+}
+
+.rc-add-submit:hover {
+	background: var(--rc-primary-hover);
+}
+
+.rc-add-submit:disabled {
+	background: var(--rc-track);
+	color: var(--rc-fg-faint);
+	cursor: default;
+}
+
+/* header island */
+.rc-header-inner {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--rc-space-3);
+	width: 100%;
+	min-width: 0;
+}
+
+.rc-header-status {
+	font-family: var(--rc-font-mono);
+	font-size: 0.8rem;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--rc-fg-accent-soft);
+}
+
+.rc-header-model,
+.rc-header-thinking {
+	font-family: var(--rc-font-mono);
+	font-size: 0.78rem;
+	color: var(--rc-fg-dim);
+	overflow-wrap: anywhere;
+}
+
+.rc-header-ctx {
+	display: inline-flex;
+	align-items: baseline;
+	gap: var(--rc-space-1);
+	font-family: var(--rc-font-mono);
+	font-size: 0.78rem;
+	color: var(--rc-fg-dim);
+}
+
+.rc-header-ctx-track {
+	display: inline-block;
+	width: 6rem;
+	height: 4px;
+	background: var(--rc-track);
+	border-radius: var(--rc-radius-sm);
+	overflow: hidden;
+}
+
+.rc-header-ctx-fill {
+	display: block;
+	height: 100%;
+	background: var(--rc-primary-muted);
+}
+
+.rc-header-ctx-num {
+	font-size: 0.72rem;
+	color: var(--rc-fg-faint);
+}
+
+.rc-header-spacer {
+	flex: 1;
+}
+
+.rc-header-presets {
+	display: inline-flex;
+	gap: var(--rc-space-1);
+}
+
+.rc-preset-btn {
+	background: transparent;
+	border: 1px solid var(--rc-hairline);
+	border-radius: var(--rc-radius-sm);
+	color: var(--rc-fg-dim);
+	font-family: var(--rc-font-mono);
+	font-size: 0.72rem;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	padding: var(--rc-space-1) var(--rc-space-2);
+	cursor: pointer;
+	transition: color var(--rc-duration-press) var(--rc-ease-out-expo), border-color var(--rc-duration-press) var(--rc-ease-out-expo);
+}
+
+.rc-preset-btn:hover {
+	color: var(--rc-fg);
+}
+
+.rc-preset-btn[aria-pressed="true"] {
+	color: var(--rc-primary);
+	border-color: var(--rc-primary-muted);
+	background: var(--rc-primary-faint);
+}
+
+/* approval card */
+.rc-approval {
+	display: flex;
+	align-items: baseline;
+	gap: var(--rc-space-2);
+	background: var(--rc-raised);
+	border: 1px solid var(--rc-warn);
+	border-radius: var(--rc-radius-md);
+	padding: var(--rc-space-2) var(--rc-space-3);
+	backdrop-filter: var(--rc-blur);
+	box-shadow: 0 0 0 1px var(--rc-glass-highlight);
+}
+
+.rc-approval-glyph {
+	color: var(--rc-warn);
+	flex: none;
+}
+
+.rc-approval-body {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-1);
+	flex: 1;
+	min-width: 0;
+}
+
+.rc-approval-title {
+	font-size: 0.9rem;
+}
+
+.rc-approval-tool {
+	font-family: var(--rc-font-mono);
+	color: var(--rc-fg-accent-soft);
+	font-size: 0.85rem;
+}
+
+.rc-approval-args {
+	font-family: var(--rc-font-mono);
+	font-size: 0.78rem;
+	color: var(--rc-fg-dim);
+	overflow-wrap: anywhere;
+}
+
+.rc-approval-countdown {
+	flex: none;
+	font-family: var(--rc-font-mono);
+	font-size: 0.8rem;
+	color: var(--rc-warn);
+}
+
+.rc-approval-allow,
+.rc-approval-deny {
+	flex: none;
+	border: none;
+	border-radius: var(--rc-radius-sm);
+	font: inherit;
+	font-size: 0.85rem;
+	padding: var(--rc-space-1) var(--rc-space-3);
+	cursor: pointer;
+	transition: background var(--rc-duration-press) var(--rc-ease-out-expo);
+}
+
+.rc-approval-allow {
+	background: var(--rc-primary);
+	color: var(--rc-base);
+}
+
+.rc-approval-allow:hover {
+	background: var(--rc-primary-hover);
+}
+
+.rc-approval-deny {
+	background: transparent;
+	color: var(--rc-bad);
+	border: 1px solid var(--rc-bad);
+}
+
+.rc-approval-deny:hover {
+	background: var(--rc-bad);
+	color: var(--rc-base);
+}
+
+/* composer */
+.rc-composer-inner {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-2);
+}
+
+.rc-queue {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-1);
+}
+
+.rc-queue-item {
+	display: flex;
+	align-items: baseline;
+	gap: var(--rc-space-2);
+	font-family: var(--rc-font-mono);
+	font-size: 0.78rem;
+	color: var(--rc-fg-dim);
+}
+
+.rc-queue-deliver {
+	flex: none;
+	color: var(--rc-fg-faint);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	font-size: 0.7rem;
+}
+
+.rc-queue-preview {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.rc-queue-terminal {
+	font-family: var(--rc-font-mono);
+	font-size: 0.75rem;
+	color: var(--rc-fg-faint);
+}
+
+.rc-composer-row {
+	display: flex;
+	align-items: flex-end;
+	gap: var(--rc-space-2);
+}
+
+.rc-composer-input {
+	flex: 1;
+	min-height: 3.5em;
+	max-height: 12em;
+	resize: vertical;
+	background: var(--rc-raised);
+	border: 1px solid var(--rc-hairline);
+	border-radius: var(--rc-radius-md);
+	color: var(--rc-fg);
+	font: inherit;
+	font-size: 0.92rem;
+	line-height: 1.5;
+	padding: var(--rc-space-2) var(--rc-space-3);
+}
+
+.rc-composer-input::placeholder {
+	color: var(--rc-fg-faint);
+}
+
+.rc-composer-deliver {
+	background: var(--rc-raised);
+	border: 1px solid var(--rc-hairline);
+	border-radius: var(--rc-radius-sm);
+	color: var(--rc-fg);
+	font: inherit;
+	font-size: 0.82rem;
+	padding: var(--rc-space-2);
+}
+
+.rc-composer-send,
+.rc-composer-abort {
+	flex: none;
+	border: none;
+	border-radius: var(--rc-radius-md);
+	font: inherit;
+	font-size: 0.85rem;
+	padding: var(--rc-space-2) var(--rc-space-4);
+	cursor: pointer;
+	transition: background var(--rc-duration-press) var(--rc-ease-out-expo);
+}
+
+.rc-composer-send {
+	background: var(--rc-primary);
+	color: var(--rc-base);
+}
+
+.rc-composer-send:hover {
+	background: var(--rc-primary-hover);
+}
+
+.rc-composer-send:disabled,
+.rc-composer-abort:disabled {
+	background: var(--rc-track);
+	color: var(--rc-fg-faint);
+	cursor: default;
+}
+
+.rc-composer-abort {
+	background: transparent;
+	color: var(--rc-bad);
+	border: 1px solid var(--rc-bad);
+}
+
+.rc-composer-abort:hover {
+	background: var(--rc-bad);
+	color: var(--rc-base);
+}
+
+/* keyboard focus, one rule for the shell's own controls */
+.rc-host-select:focus-visible,
+.rc-host-remove:focus-visible,
+.rc-add-input:focus-visible,
+.rc-add-submit:focus-visible,
+.rc-preset-btn:focus-visible,
+.rc-approval-allow:focus-visible,
+.rc-approval-deny:focus-visible,
+.rc-composer-input:focus-visible,
+.rc-composer-deliver:focus-visible,
+.rc-composer-send:focus-visible,
+.rc-composer-abort:focus-visible {
+	outline: 1px solid var(--rc-primary);
+	outline-offset: 1px;
+}
