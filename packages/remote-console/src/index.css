@@ -1,0 +1,68 @@
+/* hummin remote console app stylesheet: tailwind, the token sheet, the theme bridge that
+   exposes --rc-* tokens to tailwind utilities, and the shell region styles. */
+
+@import "tailwindcss";
+@import "./tokens.css";
+
+/* The token contract is runtime-switchable (presets and appearance axes re-resolve the
+   --rc-* vars per element), so `inline` keeps the var() references instead of copying values. */
+@theme inline {
+	--color-rc-base: var(--rc-base);
+	--color-rc-surface: var(--rc-surface);
+	--color-rc-raised: var(--rc-raised);
+	--color-rc-hairline: var(--rc-hairline);
+	--color-rc-track: var(--rc-track);
+	--color-rc-fg: var(--rc-fg);
+	--color-rc-fg-dim: var(--rc-fg-dim);
+	--color-rc-fg-faint: var(--rc-fg-faint);
+	--color-rc-fg-accent-soft: var(--rc-fg-accent-soft);
+	--color-rc-primary: var(--rc-primary);
+	--color-rc-primary-hover: var(--rc-primary-hover);
+	--color-rc-primary-pressed: var(--rc-primary-pressed);
+	--color-rc-primary-muted: var(--rc-primary-muted);
+	--color-rc-primary-faint: var(--rc-primary-faint);
+	--color-rc-good: var(--rc-good);
+	--color-rc-warn: var(--rc-warn);
+	--color-rc-bad: var(--rc-bad);
+	--font-rc-ui: var(--rc-font-ui);
+	--font-rc-mono: var(--rc-font-mono);
+	--radius-rc-sm: var(--rc-radius-sm);
+	--radius-rc-md: var(--rc-radius-md);
+	--radius-rc-lg: var(--rc-radius-lg);
+}
+
+html {
+	color-scheme: dark;
+}
+
+body {
+	margin: 0;
+	background: var(--rc-base);
+	color: var(--rc-fg);
+	font-family: var(--rc-font-ui);
+}
+
+/* app shell: three regions, tokens only */
+.rc-shell {
+	display: flex;
+	flex-direction: column;
+	min-height: 100dvh;
+}
+
+.rc-header {
+	background: var(--rc-surface);
+	border-bottom: 1px solid var(--rc-hairline);
+	padding: var(--rc-space-3) var(--rc-space-4);
+}
+
+.rc-transcript {
+	flex: 1;
+	overflow-y: auto;
+	padding: var(--rc-space-4);
+}
+
+.rc-composer {
+	background: var(--rc-surface);
+	border-top: 1px solid var(--rc-hairline);
+	padding: var(--rc-space-3) var(--rc-space-4);
+}

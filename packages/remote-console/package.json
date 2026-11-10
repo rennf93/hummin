@@ -1,0 +1,24 @@
+{
+	"name": "@earendil-works/remote-console",
+	"version": "0.1.0",
+	"description": "hummin's browser remote console: Vite + React 18 + Tailwind 4 app shell and token system",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "vite build",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"react": "18.3.1",
+		"react-dom": "18.3.1"
+	},
+	"devDependencies": {
+		"@tailwindcss/vite": "4.3.5",
+		"@vitejs/plugin-react": "6.2.1",
+		"happy-dom": "21.0.4",
+		"tailwindcss": "4.3.5",
+		"vite": "8.3.4",
+		"vitest": "4.1.12"
+	}
+}
