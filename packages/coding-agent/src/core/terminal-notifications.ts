@@ -64,10 +64,15 @@ export function resolveNotificationWhen(env: unknown, setting: unknown): Termina
 	return parseNotificationWhen(env) ?? parseNotificationWhen(setting) ?? DEFAULT_NOTIFICATION_WHEN;
 }
 
-/** Strip bytes that would terminate the OSC sequence, then bound the length. */
-export function sanitizeNotificationMessage(raw: string): string {
+/** Strip bytes that would terminate an OSC sequence, then bound the length. */
+export function sanitizeOscText(raw: string, max: number): string {
 	const clean = raw.replace(/[\x00-\x1f\x7f]/g, " ").trim();
-	return clean.length > OSC9_MESSAGE_MAX ? `${clean.slice(0, OSC9_MESSAGE_MAX - 1)}…` : clean;
+	return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+}
+
+/** Sanitize a message payload for OSC 9 emission. */
+export function sanitizeNotificationMessage(raw: string): string {
+	return sanitizeOscText(raw, OSC9_MESSAGE_MAX);
 }
 
 export type NotificationWriter = (data: string) => void;
@@ -132,6 +137,14 @@ let notificationGate: (() => boolean) | undefined;
 
 export function setNotificationGate(gate: (() => boolean) | undefined): void {
 	notificationGate = gate;
+}
+
+/**
+ * True when mode wiring currently suppresses notification emission (print/RPC
+ * set the gate to false so piped stdout never receives control sequences).
+ */
+export function isTerminalNotificationSuppressed(): boolean {
+	return notificationGate !== undefined && !notificationGate();
 }
 
 export interface NotificationSentEvent {

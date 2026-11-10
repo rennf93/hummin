@@ -4,6 +4,7 @@
 
 ### New Features
 
+- **Warp CLI-agent integration**: when hummin runs inside Warp (or a Warpified SSH session), it emits Warp's CLI-agent events over OSC 777 (`session_start`, `prompt_submit`, `stop`, `stop_failure`, and `attention` while a blocking prompt waits), which drive Warp's task status badges and notification inbox entries — the same mechanism Claude Code uses for its tab icon and inbox handling. Inert outside Warp; nothing to configure.
 - **Shell login and logout**: use `pi auth login <provider>` and `pi auth logout <provider>` without starting a session, with API-key and no-browser sign-in options. See [Credential commands](docs/cli.md#credential-commands).
 - **Idle prompt cache warming**: eligible caches now stay warm for up to 30 minutes between runs when a refresh is expected to pay for itself. See [`cacheWarming`](docs/settings.md#model-and-thinking).
 - **Anthropic message threads**: requests send only new messages while the server continues the conversation, with full-request fallback when earlier context changes. See [Anthropic compatibility](docs/models-configuration.md#anthropic-messages).
