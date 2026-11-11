@@ -2,9 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Events, a third member kind beside state and methods: an object emits fire-and-forget JSON values with `self.events()` and references subscribe with `on()`. Events are sent per link and origin after the turn's state, are never folded or kept, and are dropped past a per-origin event window (`eventWindow`, default 32), with tickets through relays. Call windows now depend on trust: none on trusted links, `callWindow` (default 10,000) on untrusted ones, and relays queue per upstream window. Fixed a consumer acking a rebinding bound after its parked calls. Spec: `packages/chord/docs/events/spec.md`
+
 ### Fixed
 
 - The optional peer dependencies on `react`, `ws` and `esbuild` are ranges (`^19.3.0`, `^8.21.0`, `^0.28.2`), not exact versions: npm no longer refuses to install Chord in a project with another patch release of them, such as react 19.3.1 ([#12008](https://github.com/earendil-works/pi/issues/12008)).
+- Fixed plugin installs from npm failing with "object is not iterable" on npm 12, which prints `npm pack --json` as an object keyed by package name instead of a list
 
 ## [1.10.2] - 2026-11-10
 

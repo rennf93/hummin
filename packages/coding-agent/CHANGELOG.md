@@ -2,13 +2,24 @@
 
 ## [Unreleased]
 
+### New Features
+
+- **Remote console**: `/remote-control` serves a browser console for the live session, with an SSE event stream, a fleet view of every registered host, tool approval holds, and the new `studio` preset. See [Remote console](docs/environment-variables.md#remote-console).
+- **Per-kind System-1 calibration**: `/friction` reports each read kind against its own threshold and suggests a gate threshold only when the confirmed-safe and blocked score bands separate.
+- **Child task acceptance read**: finished child tasks carry a `sys1 acceptance` advisory line on their result; `HUMMIN_SYS1_ACCEPT=off` skips it.
+- **Background job tools**: `job_output` polls and `job_stop` stops a running exec or monitor job by id, with no interactive panel needed.
+- **Durable suspendable work**: signals, tools that park, gates, and hook tasks. See [suspendable work](../durable/docs/suspendable/spec.md).
+- **Chord events**: fire-and-forget event members beside state and methods, and call windows that depend on link trust. See [the events spec](../chord/docs/events/spec.md).
+
 ### Added
 
-- Per-kind System-1 calibration: `/friction` now renders one section per logged read kind (steer, gate, decide, triage, intake, ask) with score distributions and near-miss bands against each kind's own threshold. The gate's threshold suggestion ships behind a band-separation check: it appears only when the confirmed-safe and blocked score bands do not overlap, and the report says "not enough separation to suggest" otherwise (the old rule suggested a threshold for the 2026-09 data shape, where confirmed-safe scores sit inside the blocked band; the separation check suppresses it)
+- Per-kind System-1 calibration: `/friction` now renders one section per logged read kind (steer, decide, triage, intake, ask; the gate keeps its existing calibration section) with score distributions and near-miss bands against each kind's own threshold. The gate's threshold suggestion ships behind a band-separation check: it appears only when the confirmed-safe and blocked score bands do not overlap, and the report says "not enough separation to suggest" otherwise (the old rule suggested a threshold for the 2026-09 data shape, where confirmed-safe scores sit inside the blocked band; the separation check suppresses it)
 - Child result acceptance read: when a child task finishes, one System-1 read scores P(on-task, complete) from the child's final report and the result the parent sees gains a `sys1 acceptance` advisory line (asking to inspect below 0.5). Advisory only, fail-open, audited to sys1-gate.log as kind `accept`; `HUMMIN_SYS1_ACCEPT=off` skips it
 - Background shell job tools: `job_output` polls an exec or monitor job's state and output tail by job id, and `job_stop` stops a running one - exec jobs previously had no programmatic poll or stop (only the interactive /background panel). Subagent task jobs keep their dedicated `task_status` / `task_cancel` pair and are refused here with a pointer. No new spawn path: jobs start, gate, and deliver exactly as before
 - The remote console: `/remote-control` starts an extension HTTP server for the live session with an SSE event stream (per-host monotonic seqs, `Last-Event-ID` cursor replay from a bounded buffer, a fresh snapshot for unusable cursors, queue-pressure disconnects that never drop events), token-in-fragment auth with timing-safe bearer checks, opt-in tool approval holds (`remoteControl.approvalTools`; fail-open on expiry; concurrent holds served as arrays), LAN bind gates (`HUMMIN_REMOTE_HOST` plus `remoteControl.allowLan` and `HUMMIN_REMOTE_LAN`), and the rewritten `/remote-control` command (status line, usage notify, console-tracked queue). Environment variables are documented in `docs/environment-variables.md` (Remote console section).
 - The `@earendil-works/remote-console` workspace package: the browser console with token theming and three presets (glass, paper, terminal), a streaming renderer with a safe markdown pipeline, fleet host aggregation over one SSE stream per registered host (cross-origin console origins registered through `POST /settings/console-origins`), and an appearance panel (preset, accent, density, motion).
+- Remote console wire additions (protocol version stays 1): the status event carries optional session `stats`, `workspace`, `autoCompact` and `version`; new `fleet` (read from settings and the health file, no probe, omitted when no servers are explicitly configured) and `activity` events; custom messages travel with `customType` and bounded `details`. `hummin-memory` emits memory fold `start`, `end` and `failed` activity on the event bus ([#28](https://github.com/rennf93/hummin/pull/28))
+- The remote console's default preset is now `studio` (Geist Sans, flat warm-neutral surfaces); glass, paper and terminal remain and differ by tokens only. The transcript gains a prose column, one-line tool rows with merged results, typed notices, per-message footers (tokens, duration, tok/s) and paced streaming, and the header shows tok/s, context, cost, a todo chip and a session stats popover ([#28](https://github.com/rennf93/hummin/pull/28))
 
 ### Changed
 
@@ -25,6 +36,9 @@
 - Fixed Anthropic OAuth requests reporting an outdated Claude Code version
 - Fixed `pi update` on Windows managed installs failing with "Could not verify managed Pi" when an older system Node.js comes before the installer's standalone Node.js on PATH ([#12048](https://github.com/earendil-works/pi/issues/12048))
 - Fixed `/export` HTML showing raw terminal hyperlink escape codes around links in custom tool output; links are now clickable ([#12003](https://github.com/earendil-works/pi/issues/12003))
+- Fixed memory fold activity reaching the wrong session: a fold worker that outlived a reload or shutdown, or was spawned while no event bus was installed, reported its `end` into the bus of a later session. Activity now goes only to the bus the worker was spawned under ([#28](https://github.com/rennf93/hummin/pull/28), [#29](https://github.com/rennf93/hummin/pull/29))
+- Fixed the live `message_end` event sent to the remote console carrying an empty id, because core emits it before the entry is persisted; it now sends a unique `live:<slotKey>` id. The console's CSP gains `font-src 'self'` and `.woff` is served, so the bundled fonts are no longer blocked; a malformed entry no longer empties the snapshot ([#28](https://github.com/rennf93/hummin/pull/28))
+- Fixed `pi-ai` provider session resources of a durable Harness staying open after the Harness closed, which could keep the process alive with a legacy OpenAI Codex WebSocket ([#11961](https://github.com/earendil-works/pi/pull/11961) by [@carenthomas](https://github.com/carenthomas))
 
 ## [1.10.2] - 2026-11-10
 
