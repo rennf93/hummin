@@ -3,8 +3,10 @@
  * registered host; a snapshot replaces the slices it carries, protocol events
  * fold incrementally (message_start opens the live slot, deltas append,
  * message_end freezes the slot into a transcript entry keyed by entryId,
- * tool_update patches the live tool map, status/queue/session/holds replace
- * their slices). Entry ids dedupe: a message_end for a non-empty entryId
+ * tool_update patches the live tool map, status/queue/session/holds/fleet
+ * replace their slices; activity is set on start, cleared by the end of the same kind, and a
+ * failure stays visible until a new activity starts or the run resumes
+ * working). Entry ids dedupe: a message_end for a non-empty entryId
  * already in the transcript is a no-op; empty entryIds always append. No
  * React, no I/O; receivedAt is an action input.
  */
@@ -13,7 +15,9 @@ import type { ConnectionState } from "./connection.ts";
 import type {
 	AnyRemoteEvent,
 	SnapshotPayload,
+	WireActivity,
 	WireApproval,
+	WireFleetServer,
 	WireQueue,
 	WireStatus,
 	WireTranscriptEntry,
@@ -29,6 +33,8 @@ export interface HostState {
 	sessionId: string | null;
 	sessionName: string | null;
 	status: WireStatus | null;
+	/** Newest numeric tok/s seen; the server sends null between replies. */
+	lastTokensPerSecond: number | null;
 	/** Branch tail in transcript order, oldest first. */
 	entries: WireTranscriptEntry[];
 	/** The one live streaming slot, null when nothing streams. */
@@ -38,10 +44,16 @@ export interface HostState {
 	/** Pending approval holds, oldest first. */
 	holds: WireApproval[];
 	queue: WireQueue | null;
+	/** Configured model servers, read-only; empty when the host publishes none. */
+	fleet: WireFleetServer[];
+	/** Background activity (compaction, memory fold); a failed one lingers. */
+	activity: WireActivity | null;
 	/** Seq of the newest applied event; reconnects resume from it. */
 	lastSeq: number | null;
 	/** Wall-clock ms of the newest applied event (staleness input). */
 	lastSeenMs: number | null;
+	/** Browser receive time minus the event's host `ts`; hold deadlines are host-clock. */
+	clockOffsetMs: number;
 	connection: ConnectionState;
 }
 
@@ -50,7 +62,9 @@ export type HostStore = Record<string, HostState>;
 export type HostAction =
 	| { type: "ensure"; hostId: string; label: string; origin: string }
 	| { type: "event"; hostId: string; event: AnyRemoteEvent; receivedAt: number }
-	| { type: "connection"; hostId: string; state: ConnectionState };
+	| { type: "connection"; hostId: string; state: ConnectionState }
+	/** Drops a removed host's state. */
+	| { type: "forget"; hostId: string };
 
 export function initialHostState(label: string, origin: string): HostState {
 	return {
@@ -59,13 +73,17 @@ export function initialHostState(label: string, origin: string): HostState {
 		sessionId: null,
 		sessionName: null,
 		status: null,
+		lastTokensPerSecond: null,
 		entries: [],
 		slot: null,
 		toolUpdates: new Map<string, ToolLiveState>(),
 		holds: [],
 		queue: null,
+		fleet: [],
+		activity: null,
 		lastSeq: null,
 		lastSeenMs: null,
+		clockOffsetMs: 0,
 		connection: "connecting",
 	};
 }
@@ -88,16 +106,49 @@ export function reduceHosts(store: HostStore, action: HostAction): HostStore {
 			if (existing === undefined) return store;
 			return { ...store, [action.hostId]: { ...existing, connection: action.state } };
 		}
+		case "forget": {
+			if (store[action.hostId] === undefined) return store;
+			const { [action.hostId]: _dropped, ...rest } = store;
+			return rest;
+		}
 		case "event": {
 			const existing = store[action.hostId];
 			if (existing === undefined) return store;
-			return { ...store, [action.hostId]: applyEvent(existing, action.event, action.receivedAt) };
+			try {
+				return { ...store, [action.hostId]: applyEvent(existing, action.event, action.receivedAt) };
+			} catch {
+				// A malformed payload must not crash the app: keep the state, remember the seq.
+				return { ...store, [action.hostId]: { ...existing, lastSeq: action.event.seq } };
+			}
 		}
 	}
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+/** Minimal shape check of the payloads the reducer dereferences first; the
+ * envelope is validated by the parser, the rest is trusted or caught. */
+function assertApplicable(event: AnyRemoteEvent): void {
+	const payload: unknown = event.payload;
+	if (event.type === "snapshot") {
+		if (!isRecord(payload) || !Array.isArray(payload.messages) || !isRecord(payload.status))
+			throw new Error("malformed snapshot");
+	} else if (event.type === "status") {
+		if (!isRecord(payload) || !isRecord(payload.status)) throw new Error("malformed status");
+	}
+}
+
 function applyEvent(state: HostState, event: AnyRemoteEvent, receivedAt: number): HostState {
-	const seen: HostState = { ...state, lastSeq: event.seq, lastSeenMs: receivedAt };
+	assertApplicable(event);
+	const sentMs = Date.parse(event.ts);
+	const seen: HostState = {
+		...state,
+		lastSeq: event.seq,
+		lastSeenMs: receivedAt,
+		clockOffsetMs: Number.isFinite(sentMs) ? receivedAt - sentMs : state.clockOffsetMs,
+	};
 	switch (event.type) {
 		case "snapshot":
 			return applySnapshot(seen, event.payload);
@@ -109,31 +160,64 @@ function applyEvent(state: HostState, event: AnyRemoteEvent, receivedAt: number)
 			return applyMessageEnd(seen, event);
 		case "tool_update":
 			return { ...seen, toolUpdates: applyToolUpdate(seen.toolUpdates, event.payload) };
-		case "status":
-			return { ...seen, status: event.payload.status };
+		case "status": {
+			const resumed = event.payload.status.kind === "working" && seen.activity?.phase === "failed";
+			return {
+				...seen,
+				status: event.payload.status,
+				lastTokensPerSecond: rememberTokensPerSecond(seen.lastTokensPerSecond, event.payload.status),
+				activity: resumed ? null : seen.activity,
+			};
+		}
+		case "fleet":
+			return { ...seen, fleet: [...event.payload.servers] };
+		case "activity":
+			// An "end" closes only its own kind: a stale end must not hide a newer activity.
+			if (event.payload.activity.phase === "end") {
+				return { ...seen, activity: seen.activity?.kind === event.payload.activity.kind ? null : seen.activity };
+			}
+			return { ...seen, activity: event.payload.activity };
 		case "approval":
 			return { ...seen, holds: [...event.payload.holds] };
 		case "approval_done":
 			return { ...seen, holds: seen.holds.filter((hold) => hold.id !== event.payload.id) };
 		case "queue":
 			return { ...seen, queue: event.payload.queue };
-		case "session":
-			return { ...seen, sessionId: event.payload.sessionId, sessionName: event.payload.sessionName };
+		case "session": {
+			const changed = event.payload.sessionId !== seen.sessionId;
+			return {
+				...seen,
+				sessionId: event.payload.sessionId,
+				sessionName: event.payload.sessionName,
+				lastTokensPerSecond: changed ? null : seen.lastTokensPerSecond,
+				activity: changed ? null : seen.activity,
+			};
+		}
 		case "ping":
 			return seen;
 	}
 }
 
+function rememberTokensPerSecond(last: number | null, status: WireStatus | null): number | null {
+	const live = status?.stats?.tokensPerSecond;
+	return typeof live === "number" ? live : last;
+}
+
 function applySnapshot(state: HostState, payload: SnapshotPayload): HostState {
+	const carried = payload.sessionId === state.sessionId ? state.lastTokensPerSecond : null;
 	return {
 		...state,
+		lastTokensPerSecond: rememberTokensPerSecond(carried, payload.status),
 		sessionId: payload.sessionId,
 		sessionName: payload.sessionName,
 		status: payload.status,
 		entries: [...payload.messages],
 		slot: null,
+		toolUpdates: new Map<string, ToolLiveState>(),
 		holds: [...payload.holds],
 		queue: payload.queue,
+		fleet: [...(payload.fleet ?? [])],
+		activity: payload.activity ?? null,
 	};
 }
 

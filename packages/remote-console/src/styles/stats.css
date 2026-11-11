@@ -1,0 +1,113 @@
+/* session stats popover: portal to body, fixed under the header button */
+
+.rc-stats-anchor {
+	display: inline-flex;
+	flex: none;
+}
+
+.rc-stats-pop {
+	position: fixed;
+	z-index: 20;
+	box-sizing: border-box;
+	width: min(26rem, calc(100vw - var(--rc-space-2) * 2));
+	padding: calc(var(--rc-space-3) + var(--rc-bezel-gap)) calc(var(--rc-space-4) + var(--rc-bezel-gap));
+	background: var(--rc-overlay);
+	border-radius: var(--rc-radius-md);
+	backdrop-filter: var(--rc-blur-overlay);
+	box-shadow: inset 0 1px 0 var(--rc-glass-highlight), var(--rc-shadow-pop);
+	color: var(--rc-fg);
+	font-size: var(--rc-text-sm);
+	transform-origin: top right;
+	outline: none;
+}
+
+/* inner core of the double bezel (no blur of its own); z-index 20 above already scopes it */
+.rc-stats-pop::before {
+	content: "";
+	position: absolute;
+	inset: var(--rc-bezel-gap);
+	z-index: -1;
+	border-radius: var(--rc-radius-md-inner);
+	background: var(--rc-core-tint);
+	border: 1px solid var(--rc-core-border);
+	box-shadow: inset 0 1px 1px var(--rc-core-highlight);
+	pointer-events: none;
+}
+
+/* exit: the entry animation steps aside so the transition can fade it out */
+.rc-stats-pop[data-state="closed"] {
+	animation: none;
+	opacity: 0;
+	transform: scale(0.96);
+	transition:
+		opacity var(--rc-duration-exit) var(--rc-ease-in),
+		transform var(--rc-duration-exit) var(--rc-ease-in);
+}
+
+.rc-stats-list {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	column-gap: var(--rc-space-4);
+	row-gap: var(--rc-space-2);
+	margin: 0;
+}
+
+.rc-stats-row {
+	display: contents;
+}
+
+.rc-stats-row dt {
+	padding-top: 0.125rem;
+}
+
+.rc-stats-value {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	column-gap: var(--rc-space-2);
+	min-width: 0;
+	margin: 0;
+}
+
+.rc-stats-line,
+.rc-stats-branch {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--rc-space-2);
+}
+
+.rc-stats-branch {
+	color: var(--rc-fg-dim);
+}
+
+.rc-stats-branch .rc-icon {
+	width: var(--rc-icon-sm);
+	height: var(--rc-icon-sm);
+}
+
+/* cwd truncates from the left so the deepest directory stays visible */
+.rc-stats-path {
+	flex-basis: 100%;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	direction: rtl;
+	text-align: left;
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-xs);
+	color: var(--rc-fg-faint);
+}
+
+.rc-stats-dim {
+	font-size: var(--rc-text-xs);
+	color: var(--rc-fg-faint);
+}
+
+.rc-stats-added {
+	color: var(--rc-good);
+}
+
+.rc-stats-removed {
+	color: var(--rc-bad);
+}

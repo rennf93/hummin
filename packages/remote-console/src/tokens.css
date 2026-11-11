@@ -1,33 +1,266 @@
 /* hummin remote console token sheet: the customization contract. Every styleable value
    lives here as an --rc-* custom property; components read tokens and never hardcode
-   colors, radii, spacing, blur, motion, or fonts. Three presets override the same tokens
-   via [data-rc-preset] on the root element (glass is the :root default), and two axes,
-   --rc-accent-hue and --rc-density, are the one-knob appearance controls. */
+   colors, radii, spacing, blur, motion, or fonts. Four presets share the same token
+   names: studio (the :root default: quiet warm-neutral surfaces, proportional type,
+   motion only on state change), and glass, paper, terminal via [data-rc-preset] on the
+   root element. The appearance axes are the preset, the accent hue (--rc-accent-hue) and
+   motion (data-rc-motion); --rc-density is fixed at 1. */
 
-/* rem root-scaling: one knob scales every rem-based size (16px phone, 17.5px laptop, 19.5px desktop). */
+/* rem root-scaling: one knob scales every rem-based size (16px phone, 17px laptop, 18px desktop). */
 html {
 	font-size: 16px;
 	-webkit-text-size-adjust: 100%;
 }
 @media (min-width: 1280px) {
 	html {
-		font-size: 17.5px;
+		font-size: 17px;
 	}
 }
 @media (min-width: 1920px) {
 	html {
-		font-size: 19.5px;
+		font-size: 18px;
 	}
 }
 
-/* glass (default preset): layered translucent surfaces. --rc-surface and --rc-raised carry the
-   tint as translucent rgb so the backdrop blur shows through; --rc-blur belongs to bezel-level
-   panels and --rc-blur-overlay to floating overlays only, so blur layers never stack. */
-:root {
-	/* axes: the appearance panel turns these two knobs */
+/* studio (default preset): opaque warm-neutral layers, hairlines instead of boxes, no
+   blur, no ambient scene. Depth comes from three surface steps and soft shadows. */
+:root,
+[data-rc-preset="studio"] {
+	color-scheme: dark;
+	/* axes: the appearance panel turns the hue knob; density stays fixed at 1 */
 	--rc-accent-hue: 190;
 	--rc-density: 1;
 
+	--rc-hue-spectrum: linear-gradient(to right, hsl(0 62% 62%), hsl(60 62% 62%), hsl(120 62% 62%), hsl(180 62% 62%), hsl(240 62% 62%), hsl(300 62% 62%), hsl(360 62% 62%));
+
+	/* surface ramp: base (transcript ground), surface (rail, sunken wells), raised
+	   (composer, bubbles, cards), overlay (sheets, popovers) */
+	--rc-base: #1c1b19;
+	--rc-surface: #161514;
+	--rc-raised: #262523;
+	--rc-overlay: #2b2a27;
+	--rc-overlay-solid: #2b2a27;
+	--rc-hairline: rgb(255 244 226 / 0.09);
+	--rc-hairline-strong: rgb(255 244 226 / 0.16);
+	/* form control and checkbox border: at least 3:1 against --rc-raised */
+	--rc-control-edge: rgb(255 244 226 / 0.4);
+	--rc-track: rgb(255 244 226 / 0.06);
+	--rc-hover: rgb(255 244 226 / 0.05);
+	--rc-pressed: rgb(255 244 226 / 0.09);
+	--rc-code-bg: #141312;
+
+	/* foreground ramp */
+	--rc-fg: #ece8e1;
+	--rc-fg-dim: #b0aba1;
+	--rc-fg-faint: #9a958b;
+	--rc-fg-accent-soft: hsl(var(--rc-accent-hue) 48% 76%);
+	--rc-on-primary: #141312;
+
+	/* accent: every variant derives from --rc-accent-hue via hsl(); studio uses it
+	   sparingly (send, focus, links, the live dot) */
+	--rc-primary: hsl(var(--rc-accent-hue) 62% 62%);
+	--rc-primary-hover: hsl(var(--rc-accent-hue) 68% 70%);
+	--rc-primary-pressed: hsl(var(--rc-accent-hue) 60% 52%);
+	--rc-primary-muted: hsl(var(--rc-accent-hue) 62% 62% / 0.38);
+	--rc-primary-faint: hsl(var(--rc-accent-hue) 62% 62% / 0.12);
+
+	/* status: for status only, always paired with a text label or icon */
+	--rc-good: hsl(140 42% 58%);
+	--rc-warn: hsl(40 78% 62%);
+	--rc-bad: hsl(6 78% 66%);
+	--rc-good-faint: hsl(140 42% 58% / 0.14);
+	--rc-warn-faint: hsl(40 78% 62% / 0.14);
+	--rc-bad-faint: hsl(6 78% 66% / 0.14);
+
+	/* radius */
+	--rc-radius-sm: 6px;
+	--rc-radius-md: 10px;
+	--rc-radius-lg: 16px;
+	--rc-radius-xl: 22px;
+	--rc-radius-round: 999px;
+	/* concentric inner radii: one bezel gap step inside the outer radius, clamped for the
+	   sharp presets. Repeated in every preset block so they re-resolve per preset. */
+	--rc-radius-sm-inner: max(0px, calc(var(--rc-radius-sm) - var(--rc-bezel-gap)));
+	--rc-radius-md-inner: max(0px, calc(var(--rc-radius-md) - var(--rc-bezel-gap)));
+	--rc-radius-lg-inner: max(0px, calc(var(--rc-radius-lg) - var(--rc-bezel-gap)));
+	--rc-radius-xl-inner: max(0px, calc(var(--rc-radius-xl) - var(--rc-bezel-gap)));
+
+	/* spacing scale, multiplied by the density axis */
+	--rc-space-1: calc(4px * var(--rc-density));
+	--rc-space-2: calc(8px * var(--rc-density));
+	--rc-space-3: calc(12px * var(--rc-density));
+	--rc-space-4: calc(16px * var(--rc-density));
+	--rc-space-5: calc(24px * var(--rc-density));
+	--rc-space-6: calc(32px * var(--rc-density));
+	--rc-space-7: calc(48px * var(--rc-density));
+	--rc-space-8: calc(64px * var(--rc-density));
+
+	/* layout: rail width, reading column, header height, control heights, icon box */
+	--rc-rail-width: 16rem;
+	--rc-column: 46rem;
+	--rc-header-height: 3.25rem;
+	--rc-control-sm: 1.75rem;
+	--rc-control-md: 2.125rem;
+	--rc-icon: 1rem;
+	--rc-icon-sm: 0.875rem;
+	--rc-dot-size: 0.5rem;
+	--rc-hairline-width: 1px;
+
+	/* type scale. Labels are sentence-case in studio and paper; glass and terminal
+	   keep their uppercase tracked micro-labels through the two label tokens. */
+	--rc-text-xs: 0.75rem;
+	--rc-text-sm: 0.8125rem;
+	--rc-text-base: 0.9375rem;
+	--rc-text-md: 1rem;
+	--rc-text-lg: 1.1875rem;
+	--rc-text-xl: 1.4375rem;
+	--rc-leading-tight: 1.3;
+	--rc-leading-ui: 1.45;
+	--rc-leading-prose: 1.65;
+	--rc-weight-regular: 400;
+	--rc-weight-medium: 500;
+	--rc-weight-bold: 600;
+	--rc-tracking-ui: -0.006em;
+	--rc-label-transform: none;
+	--rc-label-tracking: 0;
+
+	/* blur layers (none in studio) and the glass top highlight */
+	--rc-blur: none;
+	--rc-blur-overlay: none;
+	--rc-glass-highlight: transparent;
+
+	/* depth scene: off in studio (the DepthScene layers render nothing visible) */
+	--rc-orb-a: none;
+	--rc-orb-b: none;
+	--rc-orb-c: none;
+	--rc-grain-image: none;
+	--rc-grain-opacity: 0;
+	--rc-scene-display: none;
+
+	--rc-shadow-island: 0 1px 0 rgb(255 244 226 / 0.04) inset, 0 8px 28px -12px rgb(0 0 0 / 0.5);
+	--rc-shadow-card: 0 1px 2px rgb(0 0 0 / 0.24);
+	--rc-shadow-pop: 0 12px 40px -8px rgb(0 0 0 / 0.55), 0 0 0 1px rgb(255 244 226 / 0.08);
+	--rc-core-tint: none;
+	--rc-core-border: transparent;
+	--rc-core-highlight: transparent;
+
+	/* glows collapse to quiet rings in studio */
+	--rc-dot-glow: none;
+	--rc-thumb-glow: 0 0 0 1px rgb(0 0 0 / 0.3);
+	--rc-focus-ring: 0 0 0 3px hsl(var(--rc-accent-hue) 62% 62% / 0.28);
+	--rc-shimmer: rgb(255 244 226 / 0.06);
+	/* shimmer-text: the highlight colour that sweeps across a working label */
+	--rc-shimmer-text: #ece8e1;
+	--rc-selection: hsl(var(--rc-accent-hue) 62% 62% / 0.3);
+	--rc-scrollbar: rgb(255 244 226 / 0.16);
+	--rc-lift: 0px;
+
+	--rc-scrim: rgb(10 9 8 / 0.56);
+	--rc-shadow-raise: 0 16px 48px -12px rgb(0 0 0 / 0.6), 0 0 0 1px rgb(255 244 226 / 0.07);
+	--rc-shadow-thumb: 0 1px 3px rgb(0 0 0 / 0.4);
+
+	--rc-surface-solid: #161514;
+	--rc-raised-solid: #262523;
+
+	/* motion: see DESIGN.md. press = tactile feedback, fast = hover and colour,
+	   base = enter, expand, move, slow = large surfaces (sheet, host switch).
+	   exit durations are shorter than enters. */
+	--rc-duration-press: 90ms;
+	--rc-duration-fast: 140ms;
+	--rc-duration-base: 240ms;
+	--rc-duration-slow: 380ms;
+	--rc-duration-exit: 160ms;
+	--rc-duration-arrive: 280ms;
+	--rc-duration-blink: 1100ms;
+	--rc-duration-shimmer: 1800ms;
+	--rc-duration-pulse: 2s;
+	--rc-duration-spin: 900ms;
+	--rc-duration-drift: 72s;
+	/* stream reveal: the fade of each newly revealed chunk; stagger: per-item delay
+	   in grouped entrances */
+	--rc-duration-reveal: 320ms;
+	--rc-stagger: 28ms;
+	--rc-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+	--rc-ease-in: cubic-bezier(0.5, 0, 0.9, 0.4);
+	--rc-ease-in-out-soft: cubic-bezier(0.4, 0, 0.2, 1);
+	/* critically damped spring (no visible overshoot): moves and expands */
+	--rc-ease-spring: linear(0, 0.006, 0.025 2.8%, 0.101 6.1%, 0.539 18.9%, 0.721 25.3%, 0.849 31.5%, 0.937 38.1%, 0.968 41.8%, 0.991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001);
+	/* soft overshoot: small things that pop (send button, jump pill, checkmark) */
+	--rc-ease-pop: linear(0, 0.23 7.6%, 0.57 16.4%, 0.87 26.6%, 1.03 35.6%, 1.085 43.6%, 1.092 50.6%, 1.04 68.5%, 1.008 84%, 1);
+
+	/* component accents. Studio keeps these neutral; glass points them at the
+	   accent so markdown, the segmented thumb, the user bubble and the sliders
+	   take the dashboard treatment (faint accent fill plus a muted accent line). */
+	--rc-md-heading: var(--rc-fg);
+	--rc-md-marker: var(--rc-fg-faint);
+	--rc-md-code-bg: var(--rc-track);
+	--rc-md-code-border: transparent;
+	--rc-md-code-fg: var(--rc-fg);
+	--rc-md-quote-rule: var(--rc-hairline-strong);
+	--rc-md-th-bg: var(--rc-track);
+	--rc-pill-thumb-bg: var(--rc-raised);
+	--rc-pill-thumb-border: transparent;
+	--rc-pill-thumb-fg: var(--rc-fg);
+	/* the thumb where its track sits on a raised surface (the composer) */
+	--rc-pill-thumb-bg-raised: var(--rc-pressed);
+	/* selected choice (preset swatch): a ring in studio, accent fill and line in glass */
+	--rc-select-fill: transparent;
+	--rc-select-border: var(--rc-hairline-strong);
+	--rc-bubble-bg: var(--rc-raised);
+	--rc-bubble-border: transparent;
+	--rc-bubble-fg: var(--rc-fg);
+	--rc-slider-thumb: var(--rc-fg);
+	--rc-slider-thumb-size: 1rem;
+	--rc-slider-track: var(--rc-track);
+	/* double bezel: the gap between a card's outer shell and its inner core.
+	   0 collapses the bezel to a plain card. */
+	--rc-bezel-gap: 0px;
+	/* streaming caret: 0 hides it (studio paces text instead), 1 shows the block */
+	--rc-caret-opacity: 0;
+	/* segmented thumb travel: no overshoot by default */
+	--rc-ease-pill: var(--rc-ease-spring);
+
+	--rc-font-ui: "Geist Sans", "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	--rc-font-mono: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+/* glass: layered translucent surfaces over the orb mesh. --rc-surface and --rc-raised carry
+   the tint as translucent rgb so the backdrop blur shows through; --rc-blur belongs to
+   bezel-level panels and --rc-blur-overlay to floating overlays only, so blur layers never
+   stack. Monospace identity with uppercase tracked micro-labels. */
+[data-rc-preset="glass"] {
+	color-scheme: dark;
+	--rc-scene-display: block;
+	--rc-md-heading: var(--rc-fg-accent-soft);
+	--rc-md-marker: var(--rc-primary);
+	--rc-md-code-bg: var(--rc-primary-faint);
+	--rc-md-code-border: var(--rc-primary-muted);
+	--rc-md-code-fg: var(--rc-fg-accent-soft);
+	--rc-md-quote-rule: var(--rc-primary-muted);
+	--rc-md-th-bg: var(--rc-primary-faint);
+	--rc-pill-thumb-bg: var(--rc-primary-faint);
+	--rc-pill-thumb-border: var(--rc-primary-muted);
+	--rc-pill-thumb-fg: var(--rc-primary);
+	--rc-pill-thumb-bg-raised: var(--rc-primary-faint);
+	--rc-select-fill: var(--rc-primary-faint);
+	--rc-select-border: var(--rc-primary-muted);
+	--rc-bubble-bg: var(--rc-primary-faint);
+	--rc-bubble-border: var(--rc-primary-muted);
+	--rc-bubble-fg: var(--rc-fg-accent-soft);
+	--rc-slider-thumb: var(--rc-primary);
+	--rc-slider-thumb-size: 1.4rem;
+	--rc-slider-track: var(--rc-primary-muted);
+	--rc-bezel-gap: 4px;
+	--rc-radius-md: 12px;
+	--rc-radius-lg: 20px;
+	--rc-radius-xl: 24px;
+	--rc-radius-sm-inner: max(0px, calc(var(--rc-radius-sm) - var(--rc-bezel-gap)));
+	--rc-radius-md-inner: max(0px, calc(var(--rc-radius-md) - var(--rc-bezel-gap)));
+	--rc-radius-lg-inner: max(0px, calc(var(--rc-radius-lg) - var(--rc-bezel-gap)));
+	--rc-radius-xl-inner: max(0px, calc(var(--rc-radius-xl) - var(--rc-bezel-gap)));
+	--rc-caret-opacity: 1;
+	/* spring overshoot for the segmented thumb (the dashboard's SlidingHighlight) */
+	--rc-ease-pill: linear(0, 0.0088 1.38%, 0.0343 2.79%, 0.0748 4.28%, 0.1286 5.92%, 0.1946 7.78%, 0.2711 9.86%, 0.3564 12.2%, 0.4484 14.82%, 0.5448 17.75%, 0.6435 21.02%, 0.7425 24.68%, 0.8398 28.78%, 0.9337 33.37%, 1.0213 38.5%, 1.0993 44.19%, 1.1647 50.4%, 1.2151 57.13%, 1.2481 64.35%, 1.2614 71.99%, 1.2529 80.01%, 1.2296 87.32%, 1.1990 93.79%, 1.1703 99.31%, 1.1622 103.54%, 1.1611);
 	/* the hue slider's live track: the full accent-hue range at the glass accent's
 	   saturation and lightness, so the swatch always previews the real accent. */
 	--rc-hue-spectrum: linear-gradient(to right, hsl(0 78% 60%), hsl(60 78% 60%), hsl(120 78% 60%), hsl(180 78% 60%), hsl(240 78% 60%), hsl(300 78% 60%), hsl(360 78% 60%));
@@ -36,6 +269,7 @@ html {
 	--rc-base: #060a0d;
 	--rc-surface: rgb(16 28 34 / 0.82);
 	--rc-raised: rgb(20 34 42 / 0.88);
+	--rc-control-edge: rgb(126 200 216 / 0.5);
 	--rc-hairline: rgb(126 200 216 / 0.16);
 	--rc-track: rgb(126 200 216 / 0.1);
 
@@ -58,23 +292,6 @@ html {
 	--rc-warn: hsl(45 88% 56%);
 	--rc-bad: hsl(8 92% 62%);
 
-	/* radius */
-	--rc-radius-sm: 6px;
-	--rc-radius-md: 12px;
-	--rc-radius-lg: 20px;
-	/* full round (pill shapes: scrollbar thumbs); preset-agnostic */
-	--rc-radius-round: 999px;
-
-	/* spacing scale, multiplied by the density axis (1 = comfortable, 0.85 = compact) */
-	--rc-space-1: calc(4px * var(--rc-density));
-	--rc-space-2: calc(8px * var(--rc-density));
-	--rc-space-3: calc(12px * var(--rc-density));
-	--rc-space-4: calc(16px * var(--rc-density));
-	--rc-space-5: calc(24px * var(--rc-density));
-	--rc-space-6: calc(32px * var(--rc-density));
-	--rc-space-7: calc(48px * var(--rc-density));
-	--rc-space-8: calc(64px * var(--rc-density));
-
 	/* blur layers and the glass top highlight */
 	--rc-blur: blur(18px) saturate(160%);
 	--rc-blur-overlay: blur(26px) saturate(170%);
@@ -90,9 +307,6 @@ html {
 	--rc-grain-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
 	--rc-grain-opacity: 0.02;
 
-	/* floating islands (header, composer): a deeper, more opaque surface than
-	   --rc-surface because their blur is the strong layer */
-	--rc-island: rgb(8 14 18 / 0.88);
 	--rc-shadow-island: 0 20px 50px -24px rgb(2 8 12 / 0.95);
 	/* bezel transcript cards: softer drop shadow than islands */
 	--rc-shadow-card: 0 14px 34px -24px rgb(2 8 12 / 0.85), 0 2px 6px -2px rgb(2 8 12 / 0.45);
@@ -100,129 +314,124 @@ html {
 	--rc-core-tint: linear-gradient(180deg, rgb(126 200 216 / 0.05), rgb(126 200 216 / 0.015));
 	--rc-core-border: rgb(126 200 216 / 0.14);
 	--rc-core-highlight: rgb(210 240 255 / 0.045);
-	/* concentric inner radii: one bezel gap step inside the outer radius, clamped
-	   for the sharp presets where the subtraction would go negative */
-	--rc-radius-md-inner: max(0px, calc(var(--rc-radius-md) - 5px));
-	--rc-radius-lg-inner: max(0px, calc(var(--rc-radius-lg) - 5px));
 
 	/* glows: status-dot halo, context-meter fill tip, slider thumb ring, the
 	   skeleton shimmer band, text selection, scrollbar, and the micro lift of a
 	   glass-lift hover. All derive from the accent axis. */
 	--rc-dot-glow: 0 0 0.5rem hsl(var(--rc-accent-hue) 78% 60% / 0.55);
-	--rc-meter-glow: 0 0 0.55rem hsl(var(--rc-accent-hue) 78% 60% / 0.5), 0 0 0.15rem hsl(var(--rc-accent-hue) 78% 60% / 0.8);
 	--rc-thumb-glow: 0 0 0 1px hsl(var(--rc-accent-hue) 78% 60% / 0.5), 0 0 0.6rem hsl(var(--rc-accent-hue) 78% 60% / 0.45);
 	--rc-shimmer: hsl(var(--rc-accent-hue) 78% 60% / 0.07);
 	--rc-selection: hsl(var(--rc-accent-hue) 78% 60% / 0.38);
 	--rc-scrollbar: hsl(var(--rc-accent-hue) 78% 60% / 0.32);
 	--rc-lift: -1px;
-	/* the severity-flash arrival tint on approval cards */
-	--rc-flash-warn: hsl(45 88% 56% / 0.16);
 
 	/* depth: overlay scrim and the raised-surface shadow, tinted to the preset's
 	   base hue (never pure black). Floating chrome (header island, appearance
 	   panel) reads --rc-shadow-raise; the overlay scrim sits under the panel. */
 	--rc-scrim: rgb(2 8 12 / 0.62);
 	--rc-shadow-raise: 0 18px 40px -26px rgb(2 8 12 / 0.9), 0 2px 6px -2px rgb(2 8 12 / 0.5);
-	/* micro shadow for small raised controls (slider thumbs, chips); preset-agnostic */
-	--rc-shadow-thumb: 0 1px 4px rgb(0 0 0 / 0.4);
-	/* dynamic slider fill the appearance panel writes inline; the sheet carries the default */
-	--rc-slider-fill: 0%;
 
 	/* opaque equivalents, used by the reduced-transparency and no-backdrop-filter fallbacks below */
 	--rc-surface-solid: #0a1114;
 	--rc-raised-solid: #0d161a;
-	--rc-island-solid: #0a1013;
-
-	/* motion */
-	--rc-duration-press: 120ms;
-	--rc-duration-fast: 180ms;
-	--rc-duration-base: 320ms;
-	--rc-duration-slow: 600ms;
-	/* transcript arrival entrance (dashboard msg-in) */
-	--rc-duration-arrive: 200ms;
-	/* approval severity flash decay */
-	--rc-duration-flash: 1600ms;
-	/* ambient loop cadences: caret blink, skeleton shimmer, status glow pulse,
-	   orb mesh drift */
-	--rc-duration-blink: 900ms;
-	--rc-duration-shimmer: 1400ms;
-	--rc-duration-pulse: 3s;
-	--rc-duration-drift: 72s;
-	--rc-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
-	--rc-ease-in-out-soft: cubic-bezier(0.4, 0, 0.2, 1);
-	/* spring overshoot for the sliding pill and overlay choreography */
-	--rc-ease-spring: linear(
-		0, 0.0088 1.38%, 0.0343 2.79%, 0.0748 4.28%, 0.1286 5.92%, 0.1946 7.78%,
-		0.2711 9.86%, 0.3564 12.2%, 0.4484 14.82%, 0.5448 17.75%, 0.6435 21.02%,
-		0.7425 24.68%, 0.8398 28.78%, 0.9337 33.37%, 1.0213 38.5%, 1.0993 44.19%,
-		1.1647 50.4%, 1.2151 57.13%, 1.2481 64.35%, 1.2614 71.99%, 1.2529 80.01%,
-		1.2296 87.32%, 1.1990 93.79%, 1.1703 99.31%, 1.1622 103.54%, 1.1611
-	);
 
 	/* fonts: Geist Mono is the console identity (weights 400/500/600 imported in
 	   index.css); the fallback stack keeps the console usable before fonts load */
 	--rc-font-ui: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 	--rc-font-mono: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+	--rc-overlay: rgb(16 28 34 / 0.92);
+	--rc-overlay-solid: #0f1b20;
+	--rc-hairline-strong: rgb(126 200 216 / 0.28);
+	--rc-hover: rgb(126 200 216 / 0.07);
+	--rc-pressed: rgb(126 200 216 / 0.12);
+	--rc-code-bg: #060a0d;
+	--rc-on-primary: #060a0d;
+	--rc-good-faint: hsl(140 62% 52% / 0.14);
+	--rc-warn-faint: hsl(45 88% 56% / 0.14);
+	--rc-bad-faint: hsl(8 92% 62% / 0.14);
+	--rc-shadow-pop: 0 18px 40px -26px rgb(2 8 12 / 0.9), 0 2px 6px -2px rgb(2 8 12 / 0.5);
+	--rc-focus-ring: 0 0 0 3px hsl(var(--rc-accent-hue) 78% 60% / 0.3);
+	--rc-shimmer-text: #e9f1f4;
+	--rc-label-transform: uppercase;
+	--rc-label-tracking: 0.08em;
+	--rc-tracking-ui: 0;
 }
 
 /* paper: opaque warm light, same token names, no translucency and no blur; the accent axis
    stays untouched so hue rotation works in every preset. */
 [data-rc-preset="paper"] {
+	color-scheme: light;
+	--rc-scene-display: none;
+	--rc-radius-sm-inner: max(0px, calc(var(--rc-radius-sm) - var(--rc-bezel-gap)));
+	--rc-radius-md-inner: max(0px, calc(var(--rc-radius-md) - var(--rc-bezel-gap)));
+	--rc-radius-lg-inner: max(0px, calc(var(--rc-radius-lg) - var(--rc-bezel-gap)));
+	--rc-radius-xl-inner: max(0px, calc(var(--rc-radius-xl) - var(--rc-bezel-gap)));
 	--rc-base: #f3efe6;
 	--rc-surface: #fbf8f1;
 	--rc-raised: #ffffff;
+	--rc-hue-spectrum: linear-gradient(to right, hsl(0 55% 33%), hsl(60 55% 33%), hsl(120 55% 33%), hsl(180 55% 33%), hsl(240 55% 33%), hsl(300 55% 33%), hsl(360 55% 33%));
+	--rc-control-edge: rgb(70 55 35 / 0.55);
 	--rc-hairline: rgb(70 55 35 / 0.16);
 	--rc-track: rgb(70 55 35 / 0.08);
 	--rc-fg: #2b241a;
 	--rc-fg-dim: #5c5142;
-	--rc-fg-faint: #8a7d6a;
+	--rc-fg-faint: #6b6052;
 	--rc-fg-accent-soft: hsl(var(--rc-accent-hue) 45% 40%);
-	--rc-primary: hsl(var(--rc-accent-hue) 55% 38%);
-	--rc-primary-hover: hsl(var(--rc-accent-hue) 60% 30%);
-	--rc-primary-pressed: hsl(var(--rc-accent-hue) 55% 28%);
-	--rc-primary-muted: hsl(var(--rc-accent-hue) 55% 38% / 0.35);
-	--rc-primary-faint: hsl(var(--rc-accent-hue) 55% 38% / 0.1);
-	--rc-good: hsl(140 55% 36%);
-	--rc-warn: hsl(38 85% 40%);
-	--rc-bad: hsl(8 75% 45%);
+	--rc-primary: hsl(var(--rc-accent-hue) 55% 33%);
+	--rc-primary-hover: hsl(var(--rc-accent-hue) 58% 27%);
+	--rc-primary-pressed: hsl(var(--rc-accent-hue) 55% 22%);
+	--rc-primary-muted: hsl(var(--rc-accent-hue) 55% 33% / 0.35);
+	--rc-primary-faint: hsl(var(--rc-accent-hue) 55% 33% / 0.1);
+	--rc-good: hsl(140 60% 26%);
+	--rc-warn: hsl(38 90% 28%);
+	--rc-bad: hsl(8 75% 38%);
 	--rc-blur: none;
 	--rc-blur-overlay: none;
 	--rc-glass-highlight: transparent;
-	/* paper keeps the depth scene as a very faint wash: grain reads warm on light ground */
-	--rc-orb-a: radial-gradient(circle, hsl(var(--rc-accent-hue) 55% 45% / 0.05) 0%, transparent 60%);
-	--rc-orb-b: radial-gradient(circle, hsl(var(--rc-accent-hue) 55% 35% / 0.06) 0%, transparent 58%);
-	--rc-orb-c: radial-gradient(circle, hsl(var(--rc-accent-hue) 55% 45% / 0.025) 0%, transparent 60%);
-	--rc-grain-opacity: 0.03;
-	--rc-island: #fffdf8;
 	--rc-shadow-island: 0 20px 44px -26px rgb(43 36 26 / 0.3), 0 2px 8px -4px rgb(43 36 26 / 0.14);
 	--rc-shadow-card: 0 12px 28px -22px rgb(43 36 26 / 0.22), 0 2px 5px -2px rgb(43 36 26 / 0.1);
-	--rc-core-tint: linear-gradient(180deg, rgb(70 55 35 / 0.04), rgb(70 55 35 / 0.015));
-	--rc-core-border: rgb(70 55 35 / 0.12);
-	--rc-core-highlight: rgb(255 255 255 / 0.6);
-	--rc-dot-glow: 0 0 0.5rem hsl(var(--rc-accent-hue) 55% 38% / 0.35);
-	--rc-meter-glow: 0 0 0.55rem hsl(var(--rc-accent-hue) 55% 38% / 0.4), 0 0 0.15rem hsl(var(--rc-accent-hue) 55% 38% / 0.7);
-	--rc-thumb-glow: 0 0 0 1px hsl(var(--rc-accent-hue) 55% 38% / 0.4), 0 0 0.6rem hsl(var(--rc-accent-hue) 55% 38% / 0.3);
+	--rc-core-tint: none;
+	--rc-core-border: transparent;
+	--rc-core-highlight: transparent;
+	--rc-dot-glow: 0 0 0.5rem hsl(var(--rc-accent-hue) 55% 33% / 0.35);
 	--rc-shimmer: rgb(70 55 35 / 0.06);
-	--rc-selection: hsl(var(--rc-accent-hue) 55% 38% / 0.25);
+	--rc-selection: hsl(var(--rc-accent-hue) 55% 33% / 0.25);
 	--rc-scrollbar: rgb(70 55 35 / 0.3);
-	--rc-flash-warn: hsl(38 85% 40% / 0.14);
 	--rc-scrim: rgb(43 36 26 / 0.38);
 	--rc-shadow-raise: 0 18px 40px -26px rgb(43 36 26 / 0.28), 0 2px 6px -2px rgb(43 36 26 / 0.16);
 	--rc-surface-solid: #fbf8f1;
 	--rc-raised-solid: #ffffff;
-	--rc-island-solid: #fffdf8;
+	--rc-overlay: #ffffff;
+	--rc-overlay-solid: #ffffff;
+	--rc-hairline-strong: rgb(70 55 35 / 0.28);
+	--rc-hover: rgb(70 55 35 / 0.05);
+	--rc-pressed: rgb(70 55 35 / 0.1);
+	--rc-code-bg: #f1ece1;
+	--rc-on-primary: #fffdf8;
+	--rc-good-faint: hsl(140 60% 26% / 0.1);
+	--rc-warn-faint: hsl(38 90% 28% / 0.1);
+	--rc-bad-faint: hsl(8 75% 38% / 0.1);
+	--rc-shadow-pop: 0 14px 40px -12px rgb(43 36 26 / 0.3), 0 0 0 1px rgb(70 55 35 / 0.1);
+	--rc-focus-ring: 0 0 0 3px hsl(var(--rc-accent-hue) 55% 33% / 0.22);
+	--rc-shimmer-text: #2b241a;
+	--rc-thumb-glow: 0 0 0 1px rgb(70 55 35 / 0.25);
+	--rc-shadow-thumb: 0 1px 3px rgb(43 36 26 / 0.22);
 }
 
 /* terminal: monospace-first near-black with sharp radii. */
 [data-rc-preset="terminal"] {
+	color-scheme: dark;
+	--rc-scene-display: none;
 	--rc-base: #050505;
 	--rc-surface: #0b0b0b;
 	--rc-raised: #121212;
+	--rc-hue-spectrum: linear-gradient(to right, hsl(0 70% 58%), hsl(60 70% 58%), hsl(120 70% 58%), hsl(180 70% 58%), hsl(240 70% 58%), hsl(300 70% 58%), hsl(360 70% 58%));
+	--rc-control-edge: rgb(255 255 255 / 0.42);
 	--rc-hairline: rgb(255 255 255 / 0.14);
 	--rc-track: rgb(255 255 255 / 0.07);
 	--rc-fg: #d6d6d6;
 	--rc-fg-dim: #9a9a9a;
-	--rc-fg-faint: #666666;
+	--rc-fg-faint: #858585;
 	--rc-fg-accent-soft: hsl(var(--rc-accent-hue) 50% 72%);
 	--rc-primary: hsl(var(--rc-accent-hue) 70% 58%);
 	--rc-primary-hover: hsl(var(--rc-accent-hue) 75% 66%);
@@ -235,33 +444,45 @@ html {
 	--rc-radius-sm: 2px;
 	--rc-radius-md: 3px;
 	--rc-radius-lg: 4px;
+	--rc-radius-xl: 4px;
+	--rc-radius-sm-inner: max(0px, calc(var(--rc-radius-sm) - var(--rc-bezel-gap)));
+	--rc-radius-md-inner: max(0px, calc(var(--rc-radius-md) - var(--rc-bezel-gap)));
+	--rc-radius-lg-inner: max(0px, calc(var(--rc-radius-lg) - var(--rc-bezel-gap)));
+	--rc-radius-xl-inner: max(0px, calc(var(--rc-radius-xl) - var(--rc-bezel-gap)));
 	--rc-blur: none;
 	--rc-blur-overlay: none;
 	--rc-glass-highlight: transparent;
-	/* terminal: the scene is nearly none - a whisper of accent and grain */
-	--rc-orb-a: radial-gradient(circle, hsl(var(--rc-accent-hue) 70% 55% / 0.04) 0%, transparent 60%);
-	--rc-orb-b: radial-gradient(circle, hsl(var(--rc-accent-hue) 70% 45% / 0.05) 0%, transparent 58%);
-	--rc-orb-c: radial-gradient(circle, hsl(var(--rc-accent-hue) 70% 55% / 0.015) 0%, transparent 60%);
-	--rc-grain-opacity: 0.012;
-	--rc-island: rgb(10 10 10 / 0.92);
 	--rc-shadow-island: 0 16px 40px -26px rgb(0 0 0 / 0.95);
 	--rc-shadow-card: 0 10px 24px -20px rgb(0 0 0 / 0.8);
-	--rc-core-tint: linear-gradient(180deg, rgb(255 255 255 / 0.03), transparent);
-	--rc-core-border: rgb(255 255 255 / 0.1);
-	--rc-core-highlight: rgb(255 255 255 / 0.04);
+	--rc-core-tint: none;
+	--rc-core-border: transparent;
+	--rc-core-highlight: transparent;
 	--rc-dot-glow: 0 0 0.5rem hsl(var(--rc-accent-hue) 70% 58% / 0.45);
-	--rc-meter-glow: 0 0 0.55rem hsl(var(--rc-accent-hue) 70% 58% / 0.4), 0 0 0.15rem hsl(var(--rc-accent-hue) 70% 58% / 0.7);
 	--rc-thumb-glow: 0 0 0 1px hsl(var(--rc-accent-hue) 70% 58% / 0.45), 0 0 0.6rem hsl(var(--rc-accent-hue) 70% 58% / 0.35);
 	--rc-shimmer: rgb(255 255 255 / 0.05);
 	--rc-selection: hsl(var(--rc-accent-hue) 70% 58% / 0.32);
 	--rc-scrollbar: hsl(var(--rc-accent-hue) 70% 58% / 0.3);
-	--rc-flash-warn: hsl(55 90% 58% / 0.12);
 	--rc-scrim: rgb(0 0 0 / 0.7);
 	--rc-shadow-raise: 0 14px 32px -24px rgb(0 0 0 / 0.95);
 	--rc-surface-solid: #0b0b0b;
 	--rc-raised-solid: #121212;
-	--rc-island-solid: #0a0a0a;
 	--rc-font-ui: var(--rc-font-mono);
+	--rc-overlay: #161616;
+	--rc-overlay-solid: #161616;
+	--rc-hairline-strong: rgb(255 255 255 / 0.26);
+	--rc-hover: rgb(255 255 255 / 0.06);
+	--rc-pressed: rgb(255 255 255 / 0.1);
+	--rc-code-bg: #000000;
+	--rc-on-primary: #050505;
+	--rc-good-faint: hsl(120 55% 55% / 0.14);
+	--rc-warn-faint: hsl(55 90% 58% / 0.14);
+	--rc-bad-faint: hsl(0 90% 60% / 0.14);
+	--rc-shadow-pop: 0 14px 32px -24px rgb(0 0 0 / 0.95), 0 0 0 1px rgb(255 255 255 / 0.14);
+	--rc-focus-ring: 0 0 0 2px hsl(var(--rc-accent-hue) 70% 58% / 0.45);
+	--rc-shimmer-text: #ffffff;
+	--rc-label-transform: uppercase;
+	--rc-label-tracking: 0.08em;
+	--rc-tracking-ui: 0;
 }
 
 /* motion off: the appearance panel's forced-reduced-motion switch. The root
@@ -273,11 +494,14 @@ html {
 	--rc-duration-base: 0ms;
 	--rc-duration-slow: 0ms;
 	--rc-duration-arrive: 0ms;
-	--rc-duration-flash: 0ms;
 	--rc-duration-blink: 0ms;
 	--rc-duration-shimmer: 0ms;
 	--rc-duration-pulse: 0ms;
 	--rc-duration-drift: 0ms;
+	--rc-duration-exit: 0ms;
+	--rc-duration-spin: 0ms;
+	--rc-duration-reveal: 0ms;
+	--rc-stagger: 0ms;
 }
 
 [data-rc-motion="off"],
@@ -298,11 +522,14 @@ html {
 		--rc-duration-base: 0ms;
 		--rc-duration-slow: 0ms;
 		--rc-duration-arrive: 0ms;
-		--rc-duration-flash: 0ms;
 		--rc-duration-blink: 0ms;
 		--rc-duration-shimmer: 0ms;
 		--rc-duration-pulse: 0ms;
 		--rc-duration-drift: 0ms;
+		--rc-duration-exit: 0ms;
+		--rc-duration-spin: 0ms;
+		--rc-duration-reveal: 0ms;
+		--rc-stagger: 0ms;
 	}
 	*,
 	*::before,
@@ -321,7 +548,7 @@ html {
 	:root {
 		--rc-surface: var(--rc-surface-solid);
 		--rc-raised: var(--rc-raised-solid);
-		--rc-island: var(--rc-island-solid);
+		--rc-overlay: var(--rc-overlay-solid);
 		--rc-blur: none;
 		--rc-blur-overlay: none;
 		--rc-glass-highlight: transparent;
@@ -331,7 +558,7 @@ html {
 	:root {
 		--rc-surface: var(--rc-surface-solid);
 		--rc-raised: var(--rc-raised-solid);
-		--rc-island: var(--rc-island-solid);
+		--rc-overlay: var(--rc-overlay-solid);
 		--rc-blur: none;
 		--rc-blur-overlay: none;
 		--rc-glass-highlight: transparent;

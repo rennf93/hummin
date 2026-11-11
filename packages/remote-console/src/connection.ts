@@ -26,8 +26,16 @@ const EVENT_TYPES: readonly RemoteEventType[] = [
 	"approval_done",
 	"queue",
 	"session",
+	"fleet",
+	"activity",
 	"ping",
 ];
+
+/** The server pings every HEARTBEAT_MS (15s, extensions/lib/remote-console/event-source.ts;
+ * the console cannot import it). A stream silent for 3 heartbeats is dead
+ * (half-open socket, sleeping proxy) and is recycled through the normal
+ * reconnect path. */
+const STALL_TIMEOUT_MS = 3 * 15_000;
 
 export type ConnectionState = "connecting" | "connected" | "reconnecting" | "unreachable" | "unauthorized" | "closed";
 
@@ -173,6 +181,12 @@ export function connectSse(options: SseConnectionOptions): SseConnection {
 	let disposed = false;
 	let abort: AbortController | null = null;
 	let timer: ReturnType<typeof setTimeout> | null = null;
+	let watchdog: ReturnType<typeof setTimeout> | null = null;
+
+	function clearWatchdog(): void {
+		if (watchdog !== null) clearTimeout(watchdog);
+		watchdog = null;
+	}
 
 	function setState(next: ConnectionState): void {
 		if (state === next) return;
@@ -202,14 +216,24 @@ export function connectSse(options: SseConnectionOptions): SseConnection {
 		const firstAttempt = attemptsStarted === 0;
 		attemptsStarted++;
 		setState(firstAttempt ? "connecting" : "reconnecting");
-		abort = new AbortController();
+		const controller = new AbortController();
+		abort = controller;
+		let stalled = false;
+		/** Re-armed on every received chunk; firing aborts the silent stream. */
+		const armWatchdog = (): void => {
+			clearWatchdog();
+			watchdog = setTimeout(() => {
+				stalled = true;
+				controller.abort();
+			}, STALL_TIMEOUT_MS);
+		};
 		const headers: Record<string, string> = {
 			accept: "text/event-stream",
 			authorization: `Bearer ${options.token}`,
 		};
 		if (lastId !== "") headers["last-event-id"] = lastId;
 		try {
-			const response = await doFetch(eventsUrl, { headers, signal: abort.signal });
+			const response = await doFetch(eventsUrl, { headers, signal: controller.signal });
 			if (disposed) return;
 			if (response.status === 401) {
 				// The token is wrong: hot-reconnecting cannot fix it.
@@ -223,16 +247,23 @@ export function connectSse(options: SseConnectionOptions): SseConnection {
 			}
 			failures = 0;
 			setState("connected");
-			await consumeStream(response.body, (frame) => {
-				if (frame.id !== undefined) lastId = frame.id;
-				options.onFrame(frame);
-			});
+			armWatchdog();
+			await consumeStream(
+				response.body,
+				(frame) => {
+					if (frame.id !== undefined) lastId = frame.id;
+					options.onFrame(frame);
+				},
+				{ signal: controller.signal, onChunk: armWatchdog },
+			);
+			clearWatchdog();
 			if (disposed) return;
 			setState("reconnecting");
 			scheduleRetry();
 		} catch {
+			clearWatchdog();
 			if (disposed) return;
-			setState("unreachable");
+			setState(stalled ? "reconnecting" : "unreachable");
 			scheduleRetry();
 		}
 	}
@@ -248,6 +279,7 @@ export function connectSse(options: SseConnectionOptions): SseConnection {
 				clearTimeout(timer);
 				timer = null;
 			}
+			clearWatchdog();
 			abort?.abort();
 			setState("closed");
 		},
@@ -259,15 +291,20 @@ export function connectSse(options: SseConnectionOptions): SseConnection {
 export async function consumeStream(
 	body: ReadableStream<Uint8Array>,
 	onFrame: (frame: SseFrame) => void,
+	hooks: { signal?: AbortSignal; onChunk?: () => void } = {},
 ): Promise<void> {
 	const parser = new SseFrameParser();
 	const decoder = new TextDecoder();
 	const reader = body.getReader();
 	let first = true;
+	// Real fetch bodies error on abort; a cancel also ends bodies that do not.
+	const cancel = (): void => void reader.cancel().catch(() => undefined);
+	hooks.signal?.addEventListener("abort", cancel, { once: true });
 	try {
 		while (true) {
 			const { done, value } = await reader.read();
 			if (done) break;
+			hooks.onChunk?.();
 			let text = decoder.decode(value, { stream: true });
 			if (first) {
 				text = text.replace(/^\uFEFF/, "");
@@ -277,6 +314,7 @@ export async function consumeStream(
 		}
 		for (const frame of parser.flush()) onFrame(frame);
 	} finally {
+		hooks.signal?.removeEventListener("abort", cancel);
 		reader.releaseLock();
 	}
 }
@@ -306,6 +344,13 @@ export interface ActionResult {
 	ok: boolean;
 	/** HTTP status; 0 when the fetch itself failed. */
 	status: number;
+}
+
+/** Inline failure text for a rejected action (status 0 is a failed fetch). */
+export function describeSendFailure(result: ActionResult): string {
+	if (result.status === 0) return "Not sent: host unreachable";
+	if (result.status === 401) return "Not sent: unauthorized (status 401)";
+	return `Not sent: status ${result.status}`;
 }
 
 async function postAction(input: {

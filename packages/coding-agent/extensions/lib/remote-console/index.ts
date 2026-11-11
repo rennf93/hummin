@@ -15,26 +15,51 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { type ExtensionAPI, type ExtensionContext, getAgentDir, getPackageDir } from "@earendil-works/pi-coding-agent";
+import {
+	type ExtensionAPI,
+	type ExtensionContext,
+	getAgentDir,
+	getPackageDir,
+	VERSION,
+} from "@earendil-works/pi-coding-agent";
 import { ApprovalRegistry } from "./approvals.ts";
+import { customEntryToWire, customToWireMessage, isCustomAgentMessage } from "./custom-messages.ts";
 import {
 	ConsoleEventSource,
+	type StatusExtras,
 	StreamSlots,
 	boundedPreview,
 	streamDeltaFromAssistantEvent,
 	toolUpdateFromExecution,
 	wireStatus,
 } from "./event-source.ts";
+import { readFleetServers } from "./fleet.ts";
 import {
+	type ActivityPayload,
 	PROTOCOL_VERSION,
 	type RemoteEventPayloadMap,
 	type RemoteEventType,
 	type SnapshotPayload,
+	type WireActivity,
+	type WireAgentMessage,
+	type WireFleetServer,
 	type WireQueueItem,
+	type WireStats,
+	type WireTranscriptEntry,
+	type WireWorkspace,
 	toWireMessage,
 } from "./protocol.ts";
 import { startConsoleServer, type ConsoleServerHandle } from "./server.ts";
+import { SessionStatsCache, TokenRateTracker } from "./stats.ts";
 import { openConsoleOriginStore, type ConsoleOriginStore } from "./store.ts";
+import { readWorkspace } from "./workspace.ts";
+
+interface ToolUpdateThrottle {
+	toolName: string;
+	lastAt: number;
+	timer: NodeJS.Timeout | undefined;
+	latest: string | undefined;
+}
 
 export interface RemoteConsoleConfig {
 	/** True when HUMMIN_REMOTE=off: the endpoint must not start at all. */
@@ -86,6 +111,13 @@ const MAX_TRACKED_QUEUE_ITEMS = 50;
 const QUEUE_PREVIEW_MAX_CHARS = 200;
 /** How far back a message_end looks for its session entry id. */
 const ENTRY_LOOKUP_WINDOW = 8;
+/** Minimum gap between status publishes triggered by streaming updates. */
+const STREAM_STATUS_INTERVAL_MS = 1000;
+const FLEET_POLL_MS = 30_000;
+/** Longest activity detail on the wire (error messages arrive raw). */
+const ACTIVITY_DETAIL_MAX_CHARS = 200;
+/** Minimum gap between published partial results of one running tool call. */
+const TOOL_UPDATE_INTERVAL_MS = 250;
 
 /** Copy of the effective settings; a guarded runtime must not break the
  * endpoint over settings reads. */
@@ -187,21 +219,34 @@ function displayHost(host: string): string {
 }
 
 /** The session entry id of a message that just ended: identity match in the
- * branch tail, "" otherwise (including an unreadable session). The console
- * keys such blocks by slotKey instead; guessing a neighbor's id would freeze
- * the wrong slot into someone else's transcript entry. */
-function endedEntryId(ctx: ExtensionContext | undefined, message: AgentMessage): string {
+ * branch tail, undefined otherwise (including an unreadable session). Core
+ * emits message_end before persisting the entry, so a live message normally
+ * has no match yet; the caller then publishes a synthetic `live:<slotKey>` id
+ * (guessing a neighbor's id would freeze the wrong slot into someone else's
+ * transcript entry). The next snapshot carries the real ids. */
+function endedEntryId(ctx: ExtensionContext | undefined, message: AgentMessage): string | undefined {
 	try {
-		if (!ctx) return "";
+		if (!ctx) return undefined;
 		const branch = ctx.sessionManager.getBranch();
 		for (let i = branch.length - 1; i >= 0 && i >= branch.length - ENTRY_LOOKUP_WINDOW; i--) {
 			const entry = branch[i];
 			if (entry.type === "message" && entry.message === message) return entry.id;
 		}
 	} catch {
-		// Unreadable session: the console keys the block by slotKey instead.
+		// Unreadable session: the caller falls back to the synthetic id.
 	}
-	return "";
+	return undefined;
+}
+
+/** Custom messages come from extensions (untrusted shape): a conversion
+ * failure drops the event instead of throwing out of the handler. */
+function wireMessageOf(message: AgentMessage): WireAgentMessage | undefined {
+	if (!isCustomAgentMessage(message)) return toWireMessage(message);
+	try {
+		return customToWireMessage(message);
+	} catch {
+		return undefined;
+	}
 }
 
 function sessionId(ctx: ExtensionContext | undefined): string {
@@ -228,6 +273,20 @@ export async function startRemoteConsole(pi: ExtensionAPI, options: RemoteConsol
 	let trackedQueue: WireQueueItem[] = [];
 	let boundPort = 0;
 	let approvals: ApprovalRegistry | undefined;
+	// Totals cover every entry of the session file like the TUI footer; todos
+	// follow the current branch.
+	const entriesStatsCache = new SessionStatsCache();
+	const branchStatsCache = new SessionStatsCache();
+	const tokenRate = new TokenRateTracker();
+	let streaming = false;
+	let lastStreamStatusAt = 0;
+	let workspace: WireWorkspace | undefined;
+	let lastFleetJson = "";
+	// The activity a console that attaches now should still see: in progress,
+	// or the last failure until the next start or agent run.
+	let currentActivity: WireActivity | undefined;
+	let compactionStarted = false;
+	const toolUpdates = new Map<string, ToolUpdateThrottle>();
 
 	function publish<K extends RemoteEventType>(type: K, payload: RemoteEventPayloadMap[K]): void {
 		try {
@@ -249,25 +308,74 @@ export async function startRemoteConsole(pi: ExtensionAPI, options: RemoteConsol
 		return { items: trackedQueue, terminalQueued };
 	}
 
+	function currentStats(): WireStats | undefined {
+		let fromSession: WireStats = {};
+		try {
+			if (context) {
+				fromSession = entriesStatsCache.compute(context.sessionManager.getEntries());
+				delete fromSession.todos;
+				const { todos } = branchStatsCache.compute(context.sessionManager.getBranch());
+				if (todos) fromSession.todos = todos;
+			}
+		} catch {
+			fromSession = {};
+		}
+		if (Object.keys(fromSession).length === 0 && !streaming) return undefined;
+		return { ...fromSession, tokensPerSecond: streaming ? tokenRate.rate : null };
+	}
+
+	// Mirrors SETTINGS_DEFAULTS.compaction.enabled (true), which core does not export.
+	function autoCompact(): boolean | undefined {
+		try {
+			const enabled = (pi.getSettings() as { compaction?: { enabled?: unknown } }).compaction?.enabled;
+			return typeof enabled === "boolean" ? enabled : true;
+		} catch {
+			return undefined;
+		}
+	}
+
+	function statusExtras(): StatusExtras {
+		return { stats: currentStats(), workspace, autoCompact: autoCompact(), version: VERSION };
+	}
+
+	function currentFleet(): WireFleetServer[] {
+		return readFleetServers({
+			settings: effectiveSettings(pi),
+			activeProvider: context?.model?.provider,
+		});
+	}
+
 	function snapshot(): SnapshotPayload {
 		try {
-			const messages = [];
+			const messages: WireTranscriptEntry[] = [];
 			if (context) {
-				for (const entry of context.sessionManager.getBranch().slice(-SNAPSHOT_MAX_ENTRIES)) {
-					if (entry.type === "message") {
-						messages.push({ entryId: entry.id, timestamp: entry.timestamp, message: toWireMessage(entry.message) });
+				const visible = context.sessionManager
+					.getBranch()
+					.filter((entry) => entry.type === "message" || entry.type === "custom_message");
+				for (const entry of visible.slice(-SNAPSHOT_MAX_ENTRIES)) {
+					try {
+						if (entry.type === "message") {
+							messages.push({ entryId: entry.id, timestamp: entry.timestamp, message: toWireMessage(entry.message) });
+						} else if (entry.type === "custom_message") {
+							messages.push(customEntryToWire(entry));
+						}
+					} catch {
+						// One malformed entry must not empty the whole snapshot.
 					}
 				}
 			}
+			const fleet = currentFleet();
 			return {
 				host: { origin: `http://${displayHost(host)}:${boundPort}`, label: hostLabel },
 				protocolVersion: PROTOCOL_VERSION,
 				sessionId: sessionId(context),
 				sessionName: sessionName(pi),
-				status: wireStatus(context, waiting),
+				status: wireStatus(context, waiting, statusExtras()),
 				messages,
 				holds: approvals?.pendingAll() ?? [],
 				queue: queueState(),
+				...(fleet.length > 0 ? { fleet } : {}),
+				...(currentActivity ? { activity: currentActivity } : {}),
 			};
 		} catch {
 			// Fail-open snapshot: an unreadable session still serves a valid frame.
@@ -296,7 +404,42 @@ export async function startRemoteConsole(pi: ExtensionAPI, options: RemoteConsol
 		timeoutMs: () => approvalTimeoutMs,
 	});
 
-	const publishStatus = () => publish("status", { status: wireStatus(context, waiting) });
+	const publishStatus = () => publish("status", { status: wireStatus(context, waiting, statusExtras()) });
+
+	const publishActivity = (input: ActivityPayload["activity"]) => {
+		const activity: WireActivity =
+			input.detail === undefined ? input : { ...input, detail: input.detail.slice(0, ACTIVITY_DETAIL_MAX_CHARS) };
+		if (activity.phase === "end") {
+			if (currentActivity?.kind === activity.kind) currentActivity = undefined;
+		} else {
+			currentActivity = activity;
+		}
+		publish("activity", { activity });
+	};
+
+	// Fleet list changes are detected by comparing the serialized list; the
+	// startup baseline is recorded without publishing (the snapshot carries it).
+	const checkFleet = () => {
+		const servers = currentFleet();
+		const json = JSON.stringify(servers);
+		if (json === lastFleetJson) return;
+		lastFleetJson = json;
+		publish("fleet", { servers });
+	};
+
+	// Async and off the hot path; true when repo or branch changed.
+	const refreshWorkspace = async (): Promise<boolean> => {
+		try {
+			const cwd = context?.cwd;
+			if (typeof cwd !== "string") return false;
+			const next = await readWorkspace(cwd);
+			if (JSON.stringify(next) === JSON.stringify(workspace)) return false;
+			workspace = next;
+			return true;
+		} catch {
+			return false;
+		}
+	};
 	const publishQueue = () => publish("queue", { queue: queueState() });
 
 	const trackQueued = (text: string, deliverAs: "steer" | "followUp"): void => {
@@ -315,37 +458,99 @@ export async function startRemoteConsole(pi: ExtensionAPI, options: RemoteConsol
 		}
 	};
 
+	function publishToolPartial(toolCallId: string, toolName: string, partialResult: string): void {
+		publish("tool_update", toolUpdateFromExecution({ phase: "update", toolCallId, toolName, partialResult }));
+	}
+
+	// Trailing edge: the latest partial result held back by the throttle goes out.
+	function flushToolThrottle(toolCallId: string): void {
+		const throttle = toolUpdates.get(toolCallId);
+		if (!throttle) return;
+		if (throttle.timer !== undefined) clearTimeout(throttle.timer);
+		throttle.timer = undefined;
+		if (throttle.latest === undefined) return;
+		const latest = throttle.latest;
+		throttle.latest = undefined;
+		throttle.lastAt = Date.now();
+		publishToolPartial(toolCallId, throttle.toolName, latest);
+	}
+
+	function dropToolThrottle(toolCallId: string): void {
+		const throttle = toolUpdates.get(toolCallId);
+		if (throttle?.timer !== undefined) clearTimeout(throttle.timer);
+		toolUpdates.delete(toolCallId);
+	}
+
 	// Event mapping (spec section 3.2). message_start opens a streaming slot
 	// per message; updates and the end carry that slot.
 	const slots = new StreamSlots();
 	let currentSlot = "live-0";
+	let slotOpen = false;
 
 	unsubscribe.push(
 		pi.on("message_start", (event) => {
 			currentSlot = slots.next();
-			publish("message_start", { slotKey: currentSlot, message: toWireMessage(event.message) });
+			slotOpen = true;
+			const message = wireMessageOf(event.message);
+			if (message) publish("message_start", { slotKey: currentSlot, message });
+			if (event.message.role === "assistant") {
+				streaming = true;
+				tokenRate.reset();
+			}
 		}),
 	);
 	unsubscribe.push(
 		pi.on("message_update", (event, ctx) => {
 			context = ctx;
 			const delta = streamDeltaFromAssistantEvent(event.assistantMessageEvent);
-			if (delta === undefined) return;
-			publish("message_delta", { slotKey: currentSlot, event: delta });
+			if (delta !== undefined) publish("message_delta", { slotKey: currentSlot, event: delta });
+			const output = (event.message as { usage?: { output?: unknown } }).usage?.output;
+			if (typeof output !== "number") return;
+			const now = Date.now();
+			streaming = true;
+			tokenRate.sample(output, now);
+			if (now - lastStreamStatusAt >= STREAM_STATUS_INTERVAL_MS) {
+				lastStreamStatusAt = now;
+				publishStatus();
+			}
 		}),
 	);
 	unsubscribe.push(
 		pi.on("message_end", (event, ctx) => {
 			context = ctx;
-			publish("message_end", {
-				slotKey: currentSlot,
-				entryId: endedEntryId(ctx, event.message),
-				message: toWireMessage(event.message),
-			});
+			const message = wireMessageOf(event.message);
+			// A message_end with no message_start still needs its own unique slot.
+			const slotKey = slotOpen ? currentSlot : slots.next();
+			slotOpen = false;
+			if (message) {
+				publish("message_end", {
+					slotKey,
+					entryId: endedEntryId(ctx, event.message) ?? `live:${slotKey}`,
+					message,
+				});
+			}
+			if (event.message.role === "assistant") {
+				// The status only exists to clear a stale tok/s; without a rate there is nothing to clear.
+				const hadRate = tokenRate.rate !== null;
+				streaming = false;
+				tokenRate.reset();
+				if (hadRate) publishStatus();
+			}
+		}),
+	);
+	// The assistant entry is persisted by turn end, so the totals read here
+	// include it (message_end can fire before persistence).
+	unsubscribe.push(
+		pi.on("turn_end", (_event, ctx) => {
+			context = ctx;
+			streaming = false;
+			tokenRate.reset();
+			publishStatus();
 		}),
 	);
 	unsubscribe.push(
 		pi.on("tool_execution_start", (event) => {
+			dropToolThrottle(event.toolCallId);
 			publish(
 				"tool_update",
 				toolUpdateFromExecution({ phase: "start", toolCallId: event.toolCallId, toolName: event.toolName, args: event.args }),
@@ -354,19 +559,24 @@ export async function startRemoteConsole(pi: ExtensionAPI, options: RemoteConsol
 	);
 	unsubscribe.push(
 		pi.on("tool_execution_update", (event) => {
-			publish(
-				"tool_update",
-				toolUpdateFromExecution({
-					phase: "update",
-					toolCallId: event.toolCallId,
-					toolName: event.toolName,
-					partialResult: boundedPreview(event.partialResult),
-				}),
-			);
+			const partialResult = boundedPreview(event.partialResult);
+			const now = Date.now();
+			const throttle = toolUpdates.get(event.toolCallId);
+			if (!throttle || (throttle.timer === undefined && now - throttle.lastAt >= TOOL_UPDATE_INTERVAL_MS)) {
+				toolUpdates.set(event.toolCallId, { toolName: event.toolName, lastAt: now, timer: undefined, latest: undefined });
+				publishToolPartial(event.toolCallId, event.toolName, partialResult);
+				return;
+			}
+			throttle.latest = partialResult;
+			if (throttle.timer !== undefined) return;
+			throttle.timer = setTimeout(() => flushToolThrottle(event.toolCallId), TOOL_UPDATE_INTERVAL_MS - (now - throttle.lastAt));
+			throttle.timer.unref();
 		}),
 	);
 	unsubscribe.push(
 		pi.on("tool_execution_end", (event) => {
+			flushToolThrottle(event.toolCallId);
+			dropToolThrottle(event.toolCallId);
 			publish(
 				"tool_update",
 				toolUpdateFromExecution({
@@ -395,6 +605,7 @@ export async function startRemoteConsole(pi: ExtensionAPI, options: RemoteConsol
 		pi.on("model_select", (_event, ctx) => {
 			context = ctx;
 			publishStatus();
+			checkFleet();
 		}),
 	);
 	unsubscribe.push(
@@ -405,11 +616,57 @@ export async function startRemoteConsole(pi: ExtensionAPI, options: RemoteConsol
 	unsubscribe.push(
 		pi.on("agent_settled", (_event, ctx) => {
 			context = ctx;
+			streaming = false;
+			tokenRate.reset();
 			publishStatus();
 			trackedQueue = [];
 			publishQueue();
+			checkFleet();
+			void refreshWorkspace().then((changed) => {
+				if (changed && !closed) publishStatus();
+			});
 		}),
 	);
+	unsubscribe.push(
+		pi.on("agent_start", () => {
+			if (currentActivity?.phase === "failed") currentActivity = undefined;
+		}),
+	);
+	unsubscribe.push(
+		pi.on("session_before_compact", (event) => {
+			compactionStarted = true;
+			publishActivity({ kind: "compaction", phase: "start", detail: event.reason });
+		}),
+	);
+	unsubscribe.push(
+		pi.on("session_compact", (event) => {
+			compactionStarted = false;
+			publishActivity({ kind: "compaction", phase: "end", detail: event.reason });
+		}),
+	);
+	// A failure with no start never showed activity ("nothing to compact"), and
+	// an abort is not an error: it just ends what had started.
+	unsubscribe.push(
+		pi.on("session_compact_failed", (event) => {
+			const hadStart = compactionStarted;
+			compactionStarted = false;
+			if (!hadStart) return;
+			if (event.aborted) publishActivity({ kind: "compaction", phase: "end", detail: "aborted" });
+			else publishActivity({ kind: "compaction", phase: "failed", detail: event.errorMessage ?? event.reason });
+		}),
+	);
+	// Memory fold activity is emitted by hummin-memory on the shared bus.
+	try {
+		const off = pi.events?.on("hummin:memory_fold", (data) => {
+			const phase = (data as { phase?: unknown } | null)?.phase;
+			if (phase !== "start" && phase !== "end" && phase !== "failed") return;
+			const detail = (data as { detail?: unknown }).detail;
+			publishActivity({ kind: "memory_fold", phase, ...(typeof detail === "string" ? { detail } : {}) });
+		});
+		if (off) unsubscribe.push(off);
+	} catch {
+		// A bus that cannot subscribe only loses fold activity.
+	}
 	unsubscribe.push(
 		pi.on("session_info_changed", (event, ctx) => {
 			publish("session", { sessionId: sessionId(ctx), sessionName: event.name ?? "Session" });
@@ -432,6 +689,13 @@ export async function startRemoteConsole(pi: ExtensionAPI, options: RemoteConsol
 	});
 	boundPort = server.port;
 
+	await refreshWorkspace();
+	lastFleetJson = JSON.stringify(currentFleet());
+	const fleetTimer = setInterval(() => {
+		if (!closed && source.connectionCount() > 0) checkFleet();
+	}, FLEET_POLL_MS);
+	fleetTimer.unref();
+
 	// Seed the log (seq 0) so every connection's snapshot anchors at a real
 	// log head and reconnect cursors replay exactly the post-snapshot events.
 	if (!closed) publishStatus();
@@ -439,6 +703,8 @@ export async function startRemoteConsole(pi: ExtensionAPI, options: RemoteConsol
 	const close = async (): Promise<void> => {
 		if (closed) return;
 		closed = true;
+		clearInterval(fleetTimer);
+		for (const toolCallId of [...toolUpdates.keys()]) dropToolThrottle(toolCallId);
 		for (const off of unsubscribe) {
 			try {
 				off();

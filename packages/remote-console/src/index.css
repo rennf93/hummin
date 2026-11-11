@@ -1,13 +1,18 @@
-/* hummin remote console app stylesheet: the Geist Mono identity, tailwind, the
-   token sheet, the theme bridge that exposes --rc-* tokens to tailwind
-   utilities, the depth scene (orb mesh + film grain), global selection /
-   scrollbar / focus treatment, and the shell region styles. */
+/* hummin remote console app stylesheet: tailwind, the Geist fonts, the token
+   sheet, the shared primitives, the theme bridge that exposes --rc-* tokens to
+   tailwind utilities, global type and body defaults, the depth scene (orb mesh
+   + film grain, shown only by presets that set --rc-scene-display), and global
+   selection / scrollbar / focus treatment. Shell regions live in shell.css. */
 
 @import "tailwindcss";
+@import "@fontsource/geist-sans/400.css";
+@import "@fontsource/geist-sans/500.css";
+@import "@fontsource/geist-sans/600.css";
 @import "@fontsource/geist-mono/400.css";
 @import "@fontsource/geist-mono/500.css";
 @import "@fontsource/geist-mono/600.css";
 @import "./tokens.css";
+@import "./ui/ui.css";
 
 /* The token contract is runtime-switchable (presets and appearance axes re-resolve the
    --rc-* vars per element), so `inline` keeps the var() references instead of copying values. */
@@ -37,7 +42,6 @@
 }
 
 html {
-	color-scheme: dark;
 	/* the base color lives on the canvas so the fixed depth scene (z -1) paints
 	   above it and every glass surface can blur the scene */
 	background: var(--rc-base);
@@ -47,14 +51,21 @@ body {
 	margin: 0;
 	color: var(--rc-fg);
 	font-family: var(--rc-font-ui);
+	font-size: var(--rc-text-base);
+	line-height: var(--rc-leading-ui);
+	letter-spacing: var(--rc-tracking-ui);
+	font-feature-settings: "cv11";
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
 }
 
 /* ---- depth scene ----
    Layer 0 of the glass system: three accent-tinted orbs on a slow transform
    drift plus a film-grain tile, fixed behind the app (z -1, pointer-events
-   none). Colors and opacity are preset tokens; the orbs drift on transform
-   only so the layer stays on the compositor. */
+   none). Colors, opacity and visibility are preset tokens; the orbs drift on
+   transform only so the layer stays on the compositor. */
 .rc-scene {
+	display: var(--rc-scene-display);
 	position: fixed;
 	inset: 0;
 	z-index: -1;
@@ -152,49 +163,9 @@ body {
 	background: transparent;
 }
 
-/* keyboard focus: one accent ring for everything (the appearance panel's
-   programmatic focus opts out in shell.css) */
+/* keyboard focus: a 1px accent outline plus the soft ring, no layout shift */
 :focus-visible {
-	outline: 2px solid var(--rc-primary);
+	outline: 1px solid var(--rc-primary);
 	outline-offset: 2px;
-}
-
-/* app shell: three regions, tokens only. The header region is a transparent
-   stage: the island inside it (shell.css) carries the floating surface. The
-   composer region is the stage for the composer island: the island surface
-   lives on the region itself so the approval card sits inside it. Focusing
-   any of its controls lights its border. */
-.rc-shell {
-	display: flex;
-	flex-direction: column;
-	min-height: 100dvh;
-}
-
-.rc-header {
-	background: transparent;
-	border: none;
-	padding: var(--rc-space-3) var(--rc-space-4) var(--rc-space-2);
-}
-
-.rc-transcript {
-	flex: 1;
-	overflow-y: auto;
-	padding: var(--rc-space-4);
-}
-
-/* composer island: a floating machined card, the strong blur layer of its
-   region, concentric radius, inset top highlight and deep tinted shadow */
-.rc-composer {
-	background: linear-gradient(160deg, var(--rc-island), var(--rc-surface));
-	border: 1px solid var(--rc-hairline);
-	border-radius: var(--rc-radius-lg);
-	margin: 0 var(--rc-space-4) var(--rc-space-4);
-	padding: var(--rc-space-3) var(--rc-space-4);
-	backdrop-filter: var(--rc-blur-overlay);
-	box-shadow: inset 0 1px 0 var(--rc-glass-highlight), var(--rc-shadow-island);
-	transition: border-color var(--rc-duration-fast) var(--rc-ease-out-expo);
-}
-
-.rc-composer:focus-within {
-	border-color: var(--rc-primary-muted);
+	box-shadow: var(--rc-focus-ring);
 }

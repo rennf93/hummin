@@ -1,23 +1,30 @@
-/* hummin remote console renderer: transcript rows, markdown elements, code blocks, and
-   tool cards. Every color, radius, spacing, blur, motion, and font value reads an --rc-*
-   token; components never hardcode styled values. The only raw values here are the
-   contain-intrinsic-size scroll-anchoring estimates, which are layout hints for the
-   content-visibility virtualization, not styled output.
+/* hummin remote console transcript: one reading column of prose, soft user bubbles,
+   quiet notices. Every color, radius, spacing, motion and font value reads an --rc-*
+   token. The only raw lengths are the content-visibility size estimate, a layout hint
+   for the per-entry virtualization, not styled output. Markdown lives in
+   markdown/markdown.css, tool rows in tool/tool.css.
 
    Virtualization note: happy-dom does not implement content-visibility or layout, so tests
    observe every row in the DOM; the real render-skipping behavior is verified under
-   Playwright in the hardening phase. */
+   Playwright. */
 
-/* transcript rows: one centered reading column, rhythm from the density-scaled
-   spacing scale */
+/* the scroller is full width so its scrollbar sits at the pane edge; the reading
+   column is the inner wrapper the ResizeObserver watches */
 .rc-transcript-list {
 	position: relative;
+	overflow-y: auto;
+	/* reserve the gutter on both edges so the reading column is centred with or without a scrollbar */
+	scrollbar-gutter: stable both-edges;
+	padding: var(--rc-space-5) var(--rc-space-4) var(--rc-space-6);
+	/* keyboard focus scrolled flush to an edge keeps its full ring visible */
+	scroll-padding-block: var(--rc-space-3);
+}
+
+.rc-transcript-content {
 	display: flex;
 	flex-direction: column;
-	gap: var(--rc-space-3);
-	overflow-y: auto;
-	padding: var(--rc-space-4) var(--rc-space-5);
-	width: min(100%, 56rem);
+	gap: var(--rc-space-5);
+	width: min(100%, var(--rc-column));
 	margin-inline: auto;
 }
 
@@ -26,189 +33,240 @@
 	contain-intrinsic-size: auto 120px;
 }
 
-/* arrival: only entries that appear after the transcript is watching animate
-   (TranscriptList stamps data-rc-arrived on ids first seen after its initial
-   snapshot); replayed and snapshot entries stay static */
-.rc-entry[data-rc-arrived="true"] {
-	animation: rc-msg-in var(--rc-duration-arrive) var(--rc-ease-out-expo) both;
+/* consecutive tool-only messages read as one tight run */
+.rc-msg-tools + .rc-msg-tools,
+.rc-msg-tools + .rc-toolresult,
+.rc-toolresult + .rc-msg-tools,
+.rc-toolresult + .rc-toolresult {
+	margin-top: calc(var(--rc-space-1) - var(--rc-space-5));
 }
 
-@keyframes rc-msg-in {
-	from {
-		opacity: 0;
-		transform: translateY(var(--rc-space-1));
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
+/* a live slot that has nothing to paint yet must not add a gap */
+.rc-msg:has(> .rc-msg-blocks:empty) {
+	display: none;
 }
 
-/* message cards: the two-layer bezel from the dashboard glass system - the
-   card is the one blurred surface (gradient tint, top highlight, card shadow);
-   the ::after core is the translucent inner layer with NO backdrop-filter, so
-   blur never stacks. z-index 0 keeps the negative-z core inside the card's own
-   stacking context even when the preset turns blur off (paper, terminal). */
-.rc-msg-user,
-.rc-msg-custom,
-.rc-msg-system {
-	position: relative;
-	z-index: 0;
-	padding: var(--rc-space-3) var(--rc-space-4);
-	border-radius: var(--rc-radius-md);
-	background: linear-gradient(160deg, var(--rc-raised), var(--rc-surface));
-	border: 1px solid var(--rc-hairline);
-	backdrop-filter: var(--rc-blur);
-	box-shadow: inset 0 1px 0 var(--rc-glass-highlight), var(--rc-shadow-card);
+.rc-msg-blocks {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-3);
 }
 
-.rc-msg-user::after,
-.rc-msg-custom::after,
-.rc-msg-system::after {
-	content: "";
-	position: absolute;
-	z-index: -1;
-	inset: var(--rc-space-1);
-	border-radius: var(--rc-radius-md-inner);
-	background: var(--rc-core-tint);
-	border: 1px solid var(--rc-core-border);
-	box-shadow: inset 0 1px 1px var(--rc-core-highlight);
-	pointer-events: none;
-}
-
+/* user: soft right-aligned bubble, no role tag, no border */
 .rc-msg-user {
-	border-left: 2px solid var(--rc-primary);
+	display: flex;
+	justify-content: flex-end;
 }
 
-.rc-msg-system,
-.rc-msg-custom {
-	color: var(--rc-fg-dim);
+.rc-msg-user .rc-msg-blocks {
+	max-width: 85%;
+	padding: var(--rc-space-2) var(--rc-space-4);
+	background: var(--rc-bubble-bg);
+	color: var(--rc-bubble-fg);
+	border: var(--rc-hairline-width) solid var(--rc-bubble-border);
+	border-radius: var(--rc-radius-lg);
 }
 
-.rc-msg-assistant {
-	background: transparent;
-	border-color: transparent;
-	padding: var(--rc-space-2) var(--rc-space-3);
-}
-
-.rc-role-tag {
+/* per-message footer: output tokens, duration, rate */
+.rc-msg-meta {
+	margin-top: var(--rc-space-1);
 	font-family: var(--rc-font-mono);
-	font-size: 0.72rem;
-	text-transform: uppercase;
-	letter-spacing: 0.1em;
+	font-size: var(--rc-text-xs);
+	font-variant-numeric: tabular-nums;
 	color: var(--rc-fg-faint);
-	margin-bottom: var(--rc-space-1);
 }
 
-/* streaming caret: an accent block blinking at the end of the live slot's
-   current text - inside the last markdown line while text streams, on the
-   trailing non-markdown block (tool card, thinking) otherwise, and on the
-   empty blocks shell before the first token lands */
-.rc-streaming .rc-md > :last-child::after,
-.rc-streaming .rc-md:empty::after,
-.rc-streaming .rc-msg-blocks > :not(.rc-md):last-child::after,
-.rc-streaming .rc-msg-blocks:empty::after {
+/* streaming caret: a block at the end of the live text; studio sets the opacity token to 0 */
+.rc-streaming .rc-msg-blocks > .rc-md:last-child > .rc-md-p:last-child::after {
 	content: "";
 	display: inline-block;
-	width: 0.55em;
+	/* scaled by the token so a hidden caret (studio, opacity 0) takes no space and cannot wrap */
+	width: calc(0.55em * var(--rc-caret-opacity));
 	height: 1.05em;
-	margin-left: 2px;
+	margin-left: calc(0.15em * var(--rc-caret-opacity));
 	vertical-align: text-bottom;
 	background: var(--rc-primary);
+	opacity: var(--rc-caret-opacity);
 	animation: rc-caret-blink var(--rc-duration-blink) steps(1) infinite;
 }
 
 @keyframes rc-caret-blink {
-	0%,
-	55% {
-		opacity: 1;
+	50% {
+		visibility: hidden;
 	}
-	56%,
-	100% {
-		opacity: 0;
-	}
+}
+
+/* system and custom: a quiet one-line notice */
+.rc-notice {
+	color: var(--rc-fg-faint);
+	font-size: var(--rc-text-sm);
+	line-height: var(--rc-leading-ui);
+}
+
+.rc-notice-row {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--rc-space-2);
+	max-width: 100%;
+	color: inherit;
+	font: inherit;
+}
+
+.rc-notice-toggle {
+	background: transparent;
+	border: none;
+	border-radius: var(--rc-radius-sm);
+	padding: var(--rc-space-1) var(--rc-space-2);
+	margin-left: calc(-1 * var(--rc-space-2));
+	cursor: pointer;
+	text-align: left;
+	transition:
+		background var(--rc-duration-fast) var(--rc-ease-out),
+		color var(--rc-duration-fast) var(--rc-ease-out),
+		box-shadow var(--rc-duration-fast) var(--rc-ease-out);
+}
+
+.rc-notice-toggle:hover {
+	background: var(--rc-hover);
+	color: var(--rc-fg-dim);
+}
+
+.rc-notice-toggle:active {
+	background: var(--rc-pressed);
+}
+
+.rc-notice-toggle:focus-visible {
+	outline: 1px solid var(--rc-primary);
+	outline-offset: 2px;
+	box-shadow: var(--rc-focus-ring);
+}
+
+.rc-notice-toggle[aria-expanded="true"] .rc-chevron {
+	transform: rotate(90deg);
+}
+
+/* wraps up to three lines; Notice measures the clamp and adds a toggle when it cuts text */
+.rc-notice-text {
+	min-width: 0;
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+	line-clamp: 3;
+	overflow: hidden;
+	overflow-wrap: anywhere;
+}
+
+.rc-notice-body {
+	margin-top: var(--rc-space-2);
+	color: var(--rc-fg-dim);
 }
 
 .rc-elided {
 	color: var(--rc-fg-faint);
-	font-size: 0.85rem;
-	padding: var(--rc-space-1) 0;
+	font-size: var(--rc-text-sm);
 }
 
-/* thinking blocks: collapsed by default */
+/* thinking: a quiet toggle row over a dim, hairline-ruled body */
 .rc-thinking-toggle {
-	background: var(--rc-track);
-	color: var(--rc-fg-faint);
+	display: inline-flex;
+	align-items: center;
+	gap: var(--rc-space-1);
+	background: transparent;
 	border: none;
 	border-radius: var(--rc-radius-sm);
-	font-family: var(--rc-font-mono);
-	font-size: 0.78rem;
+	color: var(--rc-fg-faint);
+	font: inherit;
+	font-size: var(--rc-text-sm);
+	line-height: var(--rc-leading-ui);
 	padding: var(--rc-space-1) var(--rc-space-2);
+	margin-left: calc(-1 * var(--rc-space-2));
 	cursor: pointer;
 	transition:
-		color var(--rc-duration-fast) var(--rc-ease-out-expo),
-		transform var(--rc-duration-press) var(--rc-ease-out-expo);
+		background var(--rc-duration-fast) var(--rc-ease-out),
+		color var(--rc-duration-fast) var(--rc-ease-out),
+		box-shadow var(--rc-duration-fast) var(--rc-ease-out);
 }
 
 .rc-thinking-toggle:hover {
+	background: var(--rc-hover);
 	color: var(--rc-fg-dim);
 }
 
 .rc-thinking-toggle:active {
-	transform: scale(0.97);
+	background: var(--rc-pressed);
+}
+
+.rc-thinking-toggle:focus-visible {
+	outline: 1px solid var(--rc-primary);
+	outline-offset: 2px;
+	box-shadow: var(--rc-focus-ring);
+}
+
+[data-rc-thinking="open"] .rc-chevron {
+	transform: rotate(90deg);
 }
 
 .rc-md-thinking {
-	border-left: 2px solid var(--rc-track);
-	padding-left: var(--rc-space-3);
-	margin-top: var(--rc-space-2);
+	margin: var(--rc-space-1) 0 var(--rc-space-2);
+	padding-left: var(--rc-space-4);
+	border-left: 2px solid var(--rc-hairline-strong);
+	color: var(--rc-fg-dim);
+}
+
+/* working indicator: the line between sending and the first streamed content */
+.rc-working {
+	display: flex;
+	align-items: center;
+	gap: var(--rc-space-2);
+	color: var(--rc-fg-dim);
+	font-size: var(--rc-text-sm);
+	line-height: var(--rc-leading-ui);
+}
+
+/* connecting / empty transcript: three quiet bars, each swept by a transform-only
+   highlight on the shimmer token */
+.rc-skeleton {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-3);
+	padding-top: var(--rc-space-5);
+}
+
+.rc-empty-state {
+	margin: 0;
+	padding-top: var(--rc-space-6);
+	text-align: center;
+	font-size: var(--rc-text-sm);
+	line-height: var(--rc-leading-ui);
 	color: var(--rc-fg-faint);
 }
 
-/* compact tool result rows */
-.rc-toolresult {
-	display: flex;
-	align-items: baseline;
-	gap: var(--rc-space-2);
-	font-family: var(--rc-font-mono);
-	font-size: 0.82rem;
-	color: var(--rc-fg-dim);
-	background: transparent;
-	border: 1px solid var(--rc-track);
-	border-radius: var(--rc-radius-sm);
-	padding: var(--rc-space-1) var(--rc-space-2);
-}
-
-.rc-toolresult-error {
-	border-color: var(--rc-bad);
-	color: var(--rc-fg);
-}
-
-/* connecting / empty transcript state: three quiet bars that shimmer. The bars
-   are static background layers on the empty list; the sweep is a transform-only
-   gradient pass over the region, gated to the empty state with :has(). */
-.rc-transcript-list:empty::before {
-	content: "";
+.rc-skeleton-line {
+	position: relative;
 	display: block;
-	margin: var(--rc-space-5) auto 0;
-	width: 100%;
-	max-width: 40rem;
-	height: 8em;
-	background-image:
-		linear-gradient(var(--rc-track), var(--rc-track)),
-		linear-gradient(var(--rc-track), var(--rc-track)),
-		linear-gradient(var(--rc-track), var(--rc-track));
-	background-repeat: no-repeat;
-	background-size: 62% 1.1em, 78% 1.1em, 44% 1.1em;
-	background-position: 0 0, 0 2.6em, 0 5.2em;
+	height: 1em;
+	background: var(--rc-track);
 	border-radius: var(--rc-radius-sm);
+	overflow: hidden;
+	opacity: 0.6;
 }
 
-.rc-transcript[data-rc-region]:has(.rc-transcript-list:empty)::after {
+.rc-skeleton-line:nth-child(1) {
+	width: 62%;
+}
+
+.rc-skeleton-line:nth-child(2) {
+	width: 90%;
+}
+
+.rc-skeleton-line:nth-child(3) {
+	width: 44%;
+}
+
+.rc-skeleton-line::after {
 	content: "";
 	position: absolute;
 	inset: 0;
-	pointer-events: none;
 	background: linear-gradient(100deg, transparent 32%, var(--rc-shimmer) 50%, transparent 68%);
 	transform: translateX(-100%);
 	animation: rc-skeleton-sweep var(--rc-duration-shimmer) var(--rc-ease-in-out-soft) infinite;
@@ -220,416 +278,73 @@
 	}
 }
 
-/* jump to latest */
-.rc-jump {
+/* jump to latest: a round pill docked above the bottom edge of the scroller; the dock
+   has no height so it never adds scrollable space */
+.rc-jump-dock {
 	position: sticky;
-	bottom: var(--rc-space-2);
-	align-self: center;
+	bottom: var(--rc-space-4);
+	display: flex;
+	align-items: flex-end;
+	justify-content: center;
+	height: 0;
+	z-index: 1;
+	pointer-events: none;
+}
+
+.rc-jump {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--rc-space-1);
 	background: var(--rc-raised);
 	color: var(--rc-fg);
-	border: 1px solid var(--rc-hairline);
-	border-radius: var(--rc-radius-sm);
-	padding: var(--rc-space-1) var(--rc-space-3);
+	border: var(--rc-hairline-width) solid var(--rc-hairline);
+	border-radius: var(--rc-radius-round);
+	box-shadow: var(--rc-shadow-pop);
+	font: inherit;
+	font-size: var(--rc-text-sm);
+	height: var(--rc-control-sm);
+	line-height: var(--rc-leading-ui);
+	padding: 0 var(--rc-space-3) 0 var(--rc-space-2);
 	cursor: pointer;
-	box-shadow: 0 0 0 1px var(--rc-glass-highlight), var(--rc-shadow-thumb);
+	pointer-events: auto;
 	transition:
-		border-color var(--rc-duration-press) var(--rc-ease-out-expo),
-		transform var(--rc-duration-press) var(--rc-ease-out-expo);
+		background var(--rc-duration-fast) var(--rc-ease-out),
+		box-shadow var(--rc-duration-fast) var(--rc-ease-out),
+		opacity var(--rc-duration-exit) var(--rc-ease-in),
+		transform var(--rc-duration-exit) var(--rc-ease-in);
 }
 
 .rc-jump:hover {
-	border-color: var(--rc-primary-muted);
+	background: var(--rc-overlay);
 }
 
+/* the pill floats over text, so --rc-pressed (translucent) is layered over the opaque fill, not swapped in */
 .rc-jump:active {
-	transform: scale(0.97);
+	background-image: linear-gradient(var(--rc-pressed), var(--rc-pressed));
 }
 
-/* markdown body */
-.rc-md {
-	font-size: 0.92rem;
-	line-height: 1.55;
-	overflow-wrap: anywhere;
+.rc-jump:focus-visible {
+	outline: 1px solid var(--rc-primary);
+	outline-offset: 2px;
+	box-shadow: var(--rc-shadow-pop), var(--rc-focus-ring);
 }
 
-.rc-md > :first-child {
-	margin-top: 0;
+/* exit: the pop-in animation would otherwise pin opacity, so drop it and fade */
+.rc-jump[data-state="closed"] {
+	animation: none;
+	opacity: 0;
+	transform: scale(0.96);
+	pointer-events: none;
 }
 
-.rc-md > :last-child {
-	margin-bottom: 0;
-}
-
-.rc-md-p {
-	margin: var(--rc-space-2) 0;
-	white-space: pre-wrap;
-}
-
-.rc-md-h {
-	margin: var(--rc-space-4) 0 var(--rc-space-2);
-	line-height: 1.3;
-	color: var(--rc-fg-accent-soft);
-}
-
-.rc-md-h1 {
-	font-size: 1.35rem;
-}
-
-.rc-md-h2 {
-	font-size: 1.2rem;
-}
-
-.rc-md-h3 {
-	font-size: 1.05rem;
-}
-
-.rc-md-h4,
-.rc-md-h5,
-.rc-md-h6 {
-	font-size: 0.95rem;
-}
-
-.rc-md-ul,
-.rc-md-ol {
-	margin: var(--rc-space-2) 0;
-	padding-left: var(--rc-space-5);
-}
-
-.rc-md-ul {
-	list-style: disc;
-}
-
-.rc-md-ol {
-	list-style: decimal;
-}
-
-.rc-md li {
-	margin: var(--rc-space-1) 0;
-}
-
-.rc-md li > .rc-md-ul,
-.rc-md li > .rc-md-ol {
-	margin: var(--rc-space-1) 0;
-}
-
-.rc-md-task {
-	font-family: var(--rc-font-mono);
-	color: var(--rc-fg-faint);
-}
-
-.rc-md-quote {
-	margin: var(--rc-space-2) 0;
-	padding: var(--rc-space-1) var(--rc-space-3);
-	border-left: 2px solid var(--rc-primary-muted);
-	color: var(--rc-fg-dim);
-}
-
-.rc-md-hr {
-	border: none;
-	border-top: 1px solid var(--rc-hairline);
-	margin: var(--rc-space-3) 0;
-}
-
-.rc-md-code {
-	font-family: var(--rc-font-mono);
-	font-size: 0.85em;
-	background: var(--rc-track);
-	border-radius: var(--rc-radius-sm);
-	padding: 0.1em 0.35em;
-}
-
-.rc-md-link {
-	color: var(--rc-primary);
-	text-decoration-color: var(--rc-primary-muted);
-	text-underline-offset: 2px;
-}
-
-.rc-md-link:hover {
-	color: var(--rc-primary-hover);
-}
-
-.rc-md-strong {
-	color: var(--rc-fg);
-	font-weight: 600;
-}
-
-.rc-md-del {
-	color: var(--rc-fg-faint);
-}
-
-.rc-md-table-wrap {
-	margin: var(--rc-space-2) 0;
-	overflow-x: auto;
-}
-
-.rc-md-table {
-	border-collapse: collapse;
-	font-size: 0.85rem;
-}
-
-.rc-md-table th,
-.rc-md-table td {
-	border: 1px solid var(--rc-hairline);
-	padding: var(--rc-space-1) var(--rc-space-2);
-	text-align: left;
-}
-
-.rc-md-table th {
-	background: var(--rc-track);
-	font-weight: 600;
-}
-
-/* code blocks */
-.rc-code {
-	margin: var(--rc-space-2) 0;
-	background: var(--rc-raised);
-	border: 1px solid var(--rc-hairline);
-	border-radius: var(--rc-radius-md);
-	overflow: hidden;
-}
-
-.rc-code-head {
-	display: flex;
-	gap: var(--rc-space-2);
-	align-items: baseline;
-	background: var(--rc-track);
-	padding: var(--rc-space-1) var(--rc-space-2);
-}
-
-.rc-code-lang {
-	font-family: var(--rc-font-mono);
-	font-size: 0.72rem;
-	text-transform: uppercase;
-	letter-spacing: 0.1em;
-	color: var(--rc-fg-faint);
-}
-
-.rc-code-unclosed {
-	font-family: var(--rc-font-mono);
-	font-size: 0.72rem;
-	color: var(--rc-warn);
-}
-
-.rc-code-body {
-	display: block;
-	font-family: var(--rc-font-mono);
-	font-size: 0.82rem;
-	line-height: 1.5;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-	padding: var(--rc-space-2) var(--rc-space-3);
-	margin: 0;
-}
-
-/* truncation notices */
-.rc-truncated {
-	font-family: var(--rc-font-mono);
-	font-size: 0.72rem;
-	color: var(--rc-warn);
-	background: var(--rc-track);
-	border-radius: var(--rc-radius-sm);
-	padding: var(--rc-space-1) var(--rc-space-2);
-	margin-top: var(--rc-space-1);
-}
-
-/* tool cards: glass-lift hover (micro raise, accent-leaning border), like the
-   rail's host rows */
-.rc-tool {
-	background: var(--rc-raised);
-	border: 1px solid var(--rc-hairline);
-	border-radius: var(--rc-radius-md);
-	margin: var(--rc-space-2) 0;
-	overflow: hidden;
-	transition:
-		border-color var(--rc-duration-fast) var(--rc-ease-out-expo),
-		transform var(--rc-duration-fast) var(--rc-ease-out-expo);
-}
-
-.rc-tool:hover {
-	border-color: var(--rc-primary-muted);
-	transform: translateY(var(--rc-lift));
-}
-
-.rc-tool-error,
-.rc-tool[data-rc-tool-state="error"] .rc-tool-state {
-	color: var(--rc-bad);
-}
-
-.rc-tool[data-rc-tool-state="error"] {
-	border-color: var(--rc-bad);
-}
-
-.rc-tool-row {
-	display: flex;
-	align-items: baseline;
-	gap: var(--rc-space-2);
-	width: 100%;
-	background: transparent;
-	border: none;
-	color: var(--rc-fg);
-	font-size: 0.85rem;
-	padding: var(--rc-space-2) var(--rc-space-3);
-	cursor: pointer;
-	text-align: left;
-	transition: transform var(--rc-duration-press) var(--rc-ease-out-expo);
-}
-
-.rc-tool-row:active {
-	transform: scale(0.97);
-}
-
-.rc-tool-glyph {
-	color: var(--rc-fg-faint);
-	flex: none;
-}
-
-.rc-tool[data-rc-tool-state="running"] .rc-tool-glyph,
-.rc-tool[data-rc-tool-state="running"] .rc-tool-state {
-	color: var(--rc-primary);
-}
-
-.rc-tool[data-rc-tool-state="completed"] .rc-tool-glyph {
-	color: var(--rc-good);
-}
-
-.rc-tool[data-rc-tool-state="error"] .rc-tool-glyph {
-	color: var(--rc-bad);
-}
-
-.rc-tool[data-rc-tool-state="queued"] .rc-tool-glyph,
-.rc-tool[data-rc-tool-state="queued"] .rc-tool-state {
-	color: var(--rc-fg-faint);
-}
-
-.rc-tool-state {
+/* repeat count of collapsed identical notices, and a failing exit code word */
+.rc-notice-repeat {
 	flex: none;
 	font-family: var(--rc-font-mono);
-	font-size: 0.72rem;
-	text-transform: uppercase;
-	letter-spacing: 0.06em;
-	color: var(--rc-fg-faint);
-}
-
-.rc-tool-name {
-	flex: none;
-	font-family: var(--rc-font-mono);
-	font-weight: 600;
-	color: var(--rc-fg-accent-soft);
-}
-
-.rc-tool-preview {
-	flex: 1;
-	min-width: 0;
-	font-family: var(--rc-font-mono);
-	font-size: 0.8rem;
-	color: var(--rc-fg-dim);
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.rc-tool-duration {
-	flex: none;
-	font-family: var(--rc-font-mono);
-	font-size: 0.72rem;
-	color: var(--rc-fg-faint);
+	font-size: var(--rc-text-xs);
 	font-variant-numeric: tabular-nums;
 }
 
-.rc-tool-error-inline {
-	border-top: 1px solid var(--rc-hairline);
-	padding: var(--rc-space-1) var(--rc-space-3) var(--rc-space-2);
-	font-size: 0.8rem;
-	overflow-wrap: anywhere;
-}
-
-.rc-tool-body {
-	border-top: 1px solid var(--rc-hairline);
-	padding: var(--rc-space-2) var(--rc-space-3);
-	display: flex;
-	flex-direction: column;
-	gap: var(--rc-space-2);
-}
-
-.rc-tool-section {
-	margin: 0;
-}
-
-.rc-tool-section-label {
-	font-family: var(--rc-font-mono);
-	font-size: 0.7rem;
-	text-transform: uppercase;
-	letter-spacing: 0.1em;
-	color: var(--rc-fg-faint);
-	margin-bottom: var(--rc-space-1);
-}
-
-.rc-tool-command,
-.rc-tool-args,
-.rc-tool-result,
-.rc-tool-diff {
-	margin: 0;
-	font-family: var(--rc-font-mono);
-	font-size: 0.8rem;
-	line-height: 1.5;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-	background: var(--rc-base);
-	border: 1px solid var(--rc-track);
-	border-radius: var(--rc-radius-sm);
-	padding: var(--rc-space-2);
-}
-
-.rc-tool-args {
-	color: var(--rc-fg-dim);
-	max-height: 16rem;
-	overflow-y: auto;
-}
-
-.rc-tool-diff-del {
+.rc-notice-bad {
 	color: var(--rc-bad);
-}
-
-.rc-tool-diff-add {
-	color: var(--rc-good);
-}
-
-.rc-tool-result-error {
-	color: var(--rc-bad);
-}
-
-.rc-tool-error {
-	color: var(--rc-bad);
-	font-size: 0.8rem;
-	overflow-wrap: anywhere;
-}
-
-.rc-tool-error-label {
-	font-family: var(--rc-font-mono);
-	font-size: 0.7rem;
-	text-transform: uppercase;
-	letter-spacing: 0.06em;
-	background: var(--rc-bad);
-	color: var(--rc-base);
-	border-radius: var(--rc-radius-sm);
-	padding: 0.1em 0.4em;
-	margin-right: var(--rc-space-1);
-}
-
-.rc-tool-path {
-	font-family: var(--rc-font-mono);
-	font-size: 0.82rem;
-	color: var(--rc-fg);
-	overflow-wrap: anywhere;
-}
-
-.rc-tool-choices {
-	margin: var(--rc-space-1) 0 0;
-	padding-left: var(--rc-space-5);
-	color: var(--rc-fg-dim);
-	font-size: 0.85rem;
-}
-
-.rc-tool-choices li {
-	margin: var(--rc-space-1) 0;
 }

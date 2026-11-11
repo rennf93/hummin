@@ -1,0 +1,278 @@
+/* host rail: header row, rows, sliding active indicator, add-host form.
+   One left edge: the rail pads --rc-space-2, host rows pad their content
+   another --rc-space-3, so the "Hosts" label, the host dots, the fleet dots and
+   the add-form fields all start --rc-space-2 + --rc-space-3 from the rail edge. */
+
+.rc-rail-inner {
+	display: flex;
+	flex-direction: column;
+	padding: var(--rc-space-3) var(--rc-space-2);
+	gap: var(--rc-space-3);
+}
+
+.rc-rail-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding-left: var(--rc-space-3);
+}
+
+/* the plus turns into a close mark while the form is open */
+.rc-rail-add .rc-icon {
+	transition: transform var(--rc-duration-base) var(--rc-ease-spring);
+}
+
+.rc-rail-add[aria-expanded="true"] .rc-icon {
+	transform: rotate(45deg);
+}
+
+/* no-hosts onboarding: plain text leading the rail, no box */
+.rc-onboard {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-1);
+	padding: var(--rc-space-2) var(--rc-space-3);
+}
+
+.rc-onboard-title {
+	font-size: var(--rc-text-md);
+	font-weight: var(--rc-weight-medium);
+	color: var(--rc-fg);
+}
+
+.rc-onboard-hint {
+	margin: 0;
+	font-size: var(--rc-text-sm);
+	line-height: var(--rc-leading-prose);
+	color: var(--rc-fg-dim);
+}
+
+.rc-host-list {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+/* the one active-row marker: slides on transform, height set from measurement */
+.rc-rail-indicator {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	border-radius: var(--rc-radius-sm);
+	background: var(--rc-pressed);
+	pointer-events: none;
+	transition:
+		transform var(--rc-duration-base) var(--rc-ease-spring),
+		opacity var(--rc-duration-fast) var(--rc-ease-out);
+}
+
+.rc-host-row {
+	position: relative;
+	display: flex;
+	align-items: flex-start;
+	border-radius: var(--rc-radius-sm);
+	transition:
+		background var(--rc-duration-fast) var(--rc-ease-out),
+		transform var(--rc-duration-fast) var(--rc-ease-out);
+}
+
+.rc-host-row:hover {
+	background: var(--rc-hover);
+	transform: translateY(var(--rc-lift));
+}
+
+.rc-host-select {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: var(--rc-space-2) var(--rc-space-3);
+	background: transparent;
+	border: none;
+	border-radius: var(--rc-radius-sm);
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.rc-host-line {
+	display: flex;
+	align-items: center;
+	gap: var(--rc-space-2);
+	min-width: 0;
+}
+
+.rc-host-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: var(--rc-text-sm);
+	font-weight: var(--rc-weight-medium);
+	color: var(--rc-fg);
+}
+
+/* the sub lines align under the label, past the dot */
+.rc-host-sub,
+.rc-host-model,
+.rc-host-hint {
+	margin-left: calc(var(--rc-dot-size, 0.5rem) + var(--rc-space-2));
+}
+
+/* the "·" between sub-line parts: its spacing is margin, not text spaces, so a
+   truncated line never ends in a stray space before the ellipsis */
+.rc-sep {
+	margin-inline: 0.5em;
+}
+
+/* strip layout only (responsive.css shows it): the active host's hints below the chips */
+.rc-strip-hints {
+	display: none;
+}
+
+.rc-host-sub {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: var(--rc-text-xs);
+	color: var(--rc-fg-faint);
+}
+
+.rc-host-model {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-xs);
+	color: var(--rc-fg-faint);
+}
+
+/* recovery hints (token rotation, failed origin registration): wrap freely */
+.rc-host-hint {
+	font-size: var(--rc-text-xs);
+	line-height: var(--rc-leading-ui);
+	color: var(--rc-warn);
+	overflow-wrap: anywhere;
+	white-space: normal;
+}
+
+.rc-host-hint-bad {
+	color: var(--rc-bad);
+}
+
+.rc-host-remove {
+	flex: none;
+	margin: var(--rc-space-1) var(--rc-space-1) 0 0;
+	opacity: 0;
+	transition: opacity var(--rc-duration-fast) var(--rc-ease-out);
+}
+
+.rc-host-row:hover .rc-host-remove,
+.rc-host-row:focus-within .rc-host-remove {
+	opacity: 1;
+}
+
+@media (hover: none) {
+	.rc-host-remove {
+		opacity: 1;
+	}
+}
+
+/* add-host form */
+.rc-add-fields {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-2);
+	padding: var(--rc-space-1) var(--rc-space-3) var(--rc-space-2);
+}
+
+/* the control edge token keeps the field boundary at 3:1 (a hairline is below it) */
+.rc-add-input {
+	height: var(--rc-control-md);
+	min-width: 0;
+	padding: 0 var(--rc-space-3);
+	background: var(--rc-raised);
+	border: var(--rc-hairline-width) solid var(--rc-control-edge, var(--rc-hairline-strong));
+	border-radius: var(--rc-radius-sm);
+	color: var(--rc-fg);
+	font: inherit;
+	font-size: var(--rc-text-sm);
+	text-overflow: ellipsis;
+	transition: border-color var(--rc-duration-fast) var(--rc-ease-out);
+}
+
+.rc-add-input:hover {
+	border-color: var(--rc-fg-faint);
+}
+
+.rc-add-input:focus-visible {
+	border-color: var(--rc-primary);
+	outline: none;
+	box-shadow: var(--rc-focus-ring);
+}
+
+.rc-add-input:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.rc-add-input::placeholder {
+	color: var(--rc-fg-faint);
+	text-overflow: ellipsis;
+}
+
+.rc-add-error {
+	color: var(--rc-bad);
+	font-size: var(--rc-text-xs);
+	overflow-wrap: anywhere;
+}
+
+/* fleet: informational rows under the hosts, never controls */
+.rc-fleet {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-2);
+	padding: 0 var(--rc-space-3);
+}
+
+.rc-fleet-row {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.rc-fleet-line {
+	display: flex;
+	align-items: center;
+	gap: var(--rc-space-2);
+	min-width: 0;
+}
+
+.rc-fleet-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: var(--rc-text-sm);
+	color: var(--rc-fg);
+}
+
+/* a word, not just a colour: marks the server the session is using */
+.rc-fleet-inuse {
+	flex: none;
+	font-size: var(--rc-text-xs);
+	color: var(--rc-fg-dim);
+}
+
+.rc-fleet-sub {
+	margin-left: calc(var(--rc-dot-size, 0.5rem) + var(--rc-space-2));
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-xs);
+	color: var(--rc-fg-faint);
+}

@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import remoteExtension from "../extensions/hummin-remote.ts";
 import { ApprovalRegistry } from "../extensions/lib/remote-console/approvals.ts";
+import { boundDetails, customToWireMessage } from "../extensions/lib/remote-console/custom-messages.ts";
 import { ConsoleEventSource, ReplayLog } from "../extensions/lib/remote-console/event-source.ts";
 import {
 	type RemoteConsoleHandle,
@@ -23,9 +24,11 @@ import {
 	resolveRemoteConsoleConfig,
 	startRemoteConsole,
 } from "../extensions/lib/remote-console/index.ts";
-import type { SnapshotPayload } from "../extensions/lib/remote-console/protocol.ts";
+import type { SnapshotPayload, WireStatus } from "../extensions/lib/remote-console/protocol.ts";
+import { SessionStatsCache, TokenRateTracker } from "../extensions/lib/remote-console/stats.ts";
 import { openConsoleOriginStore } from "../extensions/lib/remote-console/store.ts";
-import type { ExtensionAPI, ExtensionContext } from "../src/index.ts";
+import { readWorkspace, tildify } from "../extensions/lib/remote-console/workspace.ts";
+import { type ExtensionAPI, type ExtensionContext, VERSION } from "../src/index.ts";
 
 // --- fixtures ----------------------------------------------------------------
 
@@ -33,6 +36,8 @@ type RegisteredHandler = (event: unknown, ctx: ExtensionContext) => unknown;
 
 interface FakePi {
 	pi: ExtensionAPI;
+	/** Emit on the shared extension bus (pi.events). */
+	emitBus(channel: string, data: unknown): void;
 	fire(event: string, payload: unknown, ctx?: ExtensionContext): unknown[];
 	handlers(event: string): RegisteredHandler[];
 }
@@ -46,6 +51,7 @@ function fakeContext(overrides: Record<string, unknown> = {}): ExtensionContext 
 		thinkingLevel: undefined,
 		sessionManager: {
 			getBranch: () => [],
+			getEntries: () => [],
 			getSessionId: () => "sess-test",
 		},
 		...overrides,
@@ -64,11 +70,34 @@ function fakePi(settings: unknown = {}): FakePi {
 				list.filter((kept) => kept !== handler),
 			);
 	};
+	const bus = new Map<string, ((data: unknown) => void)[]>();
+	const events = {
+		emit: (channel: string, data: unknown) => {
+			for (const handler of bus.get(channel) ?? []) handler(data);
+		},
+		on: (channel: string, handler: (data: unknown) => void) => {
+			bus.set(channel, [...(bus.get(channel) ?? []), handler]);
+			return () =>
+				bus.set(
+					channel,
+					(bus.get(channel) ?? []).filter((kept) => kept !== handler),
+				);
+		},
+	};
 	return {
+		emitBus: events.emit,
 		fire: (event, payload, ctx) =>
 			(registered.get(event) ?? []).map((handler) => handler(payload, ctx ?? fakeContext())),
 		handlers: (event) => registered.get(event) ?? [],
-		pi: { on, getSettings: () => settings, getSessionName: () => undefined } as unknown as ExtensionAPI,
+		pi: {
+			on,
+			events,
+			getSettings: () => {
+				if (settings instanceof Error) throw settings;
+				return settings;
+			},
+			getSessionName: () => undefined,
+		} as unknown as ExtensionAPI,
 	};
 }
 
@@ -89,9 +118,12 @@ afterEach(async () => {
 	vi.useRealTimers();
 });
 
-async function startTestConsole(overrides: Partial<RemoteConsoleOptions> = {}): Promise<StartedConsole> {
+async function startTestConsole(
+	overrides: Partial<RemoteConsoleOptions> = {},
+	settings: unknown = {},
+): Promise<StartedConsole> {
 	const tmp = mkdtempSync(join(tmpdir(), "remote-console-test-"));
-	const fake = fakePi();
+	const fake = fakePi(settings);
 	const sendPrompt = vi.fn<(text: string, deliverAs: "steer" | "followUp") => void>();
 	const abort = vi.fn<() => void>();
 	const handle = await startRemoteConsole(fake.pi, {
@@ -320,6 +352,15 @@ describe("boot, page, and auth", () => {
 		const page = await fetch(new URL(handle.url).origin);
 		expect(await page.text()).toContain("assets/app.js");
 		expect(page.headers.get("content-security-policy")).toContain("script-src 'self'");
+		expect(page.headers.get("content-security-policy")).toContain("font-src 'self'");
+		writeFileSync(join(dist, "assets", "geist.woff"), "woff-bytes");
+		writeFileSync(join(dist, "assets", "geist.woff2"), "woff2-bytes");
+		expect((await fetch(`${new URL(handle.url).origin}/assets/geist.woff`)).headers.get("content-type")).toBe(
+			"font/woff",
+		);
+		expect((await fetch(`${new URL(handle.url).origin}/assets/geist.woff2`)).headers.get("content-type")).toBe(
+			"font/woff2",
+		);
 		const asset = await fetch(`${new URL(handle.url).origin}/assets/app.js`);
 		expect(asset.status).toBe(200);
 		expect(asset.headers.get("content-type")).toBe("text/javascript");
@@ -847,8 +888,10 @@ describe("event mapping", () => {
 			timestamp: "2026-11-10T00:00:00Z",
 			message: assistantMessage,
 		};
+		// Core emits message_end before persisting: the entry joins the branch afterwards.
+		const branch: unknown[] = [];
 		const withEntry = fakeContext({
-			sessionManager: { getBranch: () => [entry], getSessionId: () => "sess-test" },
+			sessionManager: { getBranch: () => branch, getSessionId: () => "sess-test" },
 			model: { provider: "prov", id: "model-1" },
 			thinkingLevel: "high",
 			getContextUsage: () => ({ tokens: 1000, contextWindow: 8000, percent: 12.5 }),
@@ -907,7 +950,7 @@ describe("event mapping", () => {
 		expect(ended.type).toBe("message_end");
 		expect(ended.payload).toEqual({
 			slotKey: "live-0",
-			entryId: "entry-1",
+			entryId: "live:live-0",
 			message: {
 				role: "assistant",
 				stopReason: "toolUse",
@@ -918,6 +961,8 @@ describe("event mapping", () => {
 				],
 			},
 		});
+		branch.push(entry);
+		// No tok/s was measured, so message_end publishes no status: the next frame is the tool start.
 
 		fake.fire("tool_execution_start", {
 			type: "tool_execution_start",
@@ -966,6 +1011,8 @@ describe("event mapping", () => {
 				model: { provider: "prov", modelId: "model-1" },
 				thinkingLevel: "high",
 				contextUsage: { tokens: 1000, contextWindow: 8000, percent: 12.5 },
+				autoCompact: true,
+				version: VERSION,
 			},
 		});
 		fake.fire("ui_prompt_end", { type: "ui_prompt_end", reason: "ui_prompt", kind: "confirm", title: "Run?" });
@@ -975,6 +1022,8 @@ describe("event mapping", () => {
 				model: { provider: "prov", modelId: "model-1" },
 				thinkingLevel: "high",
 				contextUsage: { tokens: 1000, contextWindow: 8000, percent: 12.5 },
+				autoCompact: true,
+				version: VERSION,
 			},
 		});
 		fake.fire("session_info_changed", { type: "session_info_changed", name: "Renamed" });
@@ -995,7 +1044,7 @@ describe("event mapping", () => {
 		await connected.reader.close();
 	});
 
-	test("message_end without an identity match serves an empty entryId instead of guessing", async () => {
+	test("message_end without an identity match serves a synthetic live id instead of guessing", async () => {
 		const { handle, fake } = await startTestConsole();
 		const connected = await connectStream(handle);
 		await connected.reader.next("snapshot");
@@ -1013,7 +1062,67 @@ describe("event mapping", () => {
 		fake.fire("message_end", { type: "message_end", message: stranger }, withBranch);
 		const ended = await connected.reader.next("message end");
 		expect(ended.type).toBe("message_end");
-		expect((ended.payload as { entryId: string }).entryId).toBe("");
+		expect((ended.payload as { entryId: string }).entryId).toBe("live:live-0");
+		await connected.reader.close();
+	});
+
+	test("live message_end ids are non-empty and unique across consecutive messages of every role", async () => {
+		const { handle, fake } = await startTestConsole();
+		const connected = await connectStream(handle);
+		await connected.reader.next("snapshot");
+		const messages: Record<string, unknown>[] = [
+			{ role: "assistant", content: [{ type: "text", text: "a" }] },
+			{ role: "user", content: "u" },
+			{
+				role: "toolResult",
+				toolCallId: "t",
+				toolName: "bash",
+				content: [{ type: "text", text: "r" }],
+				isError: false,
+			},
+			{ role: "custom", customType: "hummin-monitor", content: "c", display: true, timestamp: 1 },
+		];
+		const persisted: unknown[] = [];
+		const ctx = fakeContext({
+			sessionManager: { getBranch: () => persisted, getSessionId: () => "sess-test" },
+		});
+		const ids: string[] = [];
+		for (const role of messages.map((message) => message.role)) {
+			for (let n = 0; n < 2; n++) {
+				const message = { ...messages.find((candidate) => candidate.role === role), n };
+				fake.fire("message_start", { type: "message_start", message });
+				await connected.reader.next(`${String(role)} start`);
+				fake.fire("message_end", { type: "message_end", message }, ctx);
+				ids.push(((await connected.reader.next(`${String(role)} end`)).payload as { entryId: string }).entryId);
+				persisted.push({ type: "message", id: `entry-${persisted.length}`, message });
+				// Assistant ends publish a status only when a rate was measured; none here.
+			}
+		}
+		expect(ids.every((id) => id.startsWith("live:live-"))).toBe(true);
+		expect(new Set(ids).size).toBe(ids.length);
+		await connected.reader.close();
+	});
+
+	test("throttles tool partial results per call and delivers the latest before the end", async () => {
+		const { handle, fake } = await startTestConsole();
+		const connected = await connectStream(handle);
+		await connected.reader.next("snapshot");
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+		const call = { toolCallId: "t1", toolName: "bash" };
+		const update = (partialResult: string) =>
+			fake.fire("tool_execution_update", { type: "tool_execution_update", ...call, partialResult });
+		fake.fire("tool_execution_start", { type: "tool_execution_start", ...call, args: {} });
+		for (let i = 0; i < 50; i++) update(`p${i}`);
+		vi.advanceTimersByTime(250);
+		for (let i = 0; i < 5; i++) update(`q${i}`);
+		fake.fire("tool_execution_end", { type: "tool_execution_end", ...call, isError: false });
+		vi.useRealTimers();
+		const seen: unknown[] = [];
+		for (const what of ["start", "first", "trailing", "flushed at end", "end"]) {
+			const payload = (await connected.reader.next(what)).payload as { phase: string; partialResult?: string };
+			seen.push(payload.phase === "update" ? payload.partialResult : payload.phase);
+		}
+		expect(seen).toEqual(["start", "p0", "p49", "q4", "end"]);
 		await connected.reader.close();
 	});
 
@@ -1040,6 +1149,722 @@ describe("event mapping", () => {
 		expect(cleared.type).toBe("queue");
 		expect((cleared.payload as { queue: { items: unknown[] } }).queue.items).toEqual([]);
 		await connected.reader.close();
+	});
+});
+
+// --- wire contract extensions: stats, workspace, custom messages, activity, fleet ---
+
+const usage = (input: number, output: number, cacheRead: number, cacheWrite: number, cost: number) => ({
+	input,
+	output,
+	cacheRead,
+	cacheWrite,
+	cost: { total: cost },
+});
+
+function entry(id: string, message: Record<string, unknown>) {
+	return { type: "message", id, parentId: null, timestamp: "2026-11-10T00:00:00Z", message };
+}
+
+/** A small branch: two assistant turns, a todo list, an edit diff, a write
+ * count and a compaction that carried its own usage. */
+function statsBranch() {
+	return [
+		entry("e1", { role: "user", content: "go" }),
+		entry("e2", { role: "assistant", content: [], usage: usage(100, 50, 0, 200, 0.5) }),
+		entry("e3", {
+			role: "toolResult",
+			toolName: "todo",
+			toolCallId: "t1",
+			details: {
+				todos: [
+					{ text: "a", status: "completed" },
+					{ text: "b", status: "in_progress" },
+					{ text: "c", status: "pending" },
+				],
+			},
+		}),
+		entry("e4", {
+			role: "toolResult",
+			toolName: "edit",
+			toolCallId: "t2",
+			details: { diff: "--- a\n+++ b\n+x\n+y\n-z\n context" },
+		}),
+		entry("e5", { role: "toolResult", toolName: "write", toolCallId: "t3", details: { added: 10, removed: 0 } }),
+		{
+			type: "compaction",
+			id: "e6",
+			parentId: null,
+			timestamp: "2026-11-10T00:00:00Z",
+			usage: usage(5, 5, 0, 0, 0.25),
+		},
+		entry("e7", { role: "assistant", content: [], usage: usage(50, 20, 300, 50, 0.75) }),
+	];
+}
+
+async function snapshotOf(handle: RemoteConsoleHandle): Promise<SnapshotPayload> {
+	const connected = await connectStream(handle);
+	const frame = await connected.reader.next("snapshot");
+	await connected.reader.close();
+	return frame.payload as SnapshotPayload;
+}
+
+describe("session stats", () => {
+	test("sums totals, cache hit, cost, diff and todos from the branch like the footer", async () => {
+		const context = fakeContext({
+			sessionManager: { getBranch: statsBranch, getEntries: statsBranch, getSessionId: () => "sess-test" },
+		});
+		const { handle } = await startTestConsole({ context });
+		const stats = (await snapshotOf(handle)).status.stats;
+		expect(stats).toEqual({
+			tokens: { input: 155, output: 75, cacheRead: 300, cacheWrite: 250 },
+			// latest assistant: 300 / (50 + 300 + 50)
+			cacheHitPercent: 75,
+			costUsd: 1.5,
+			diff: { added: 12, removed: 1 },
+			todos: { done: 1, total: 3 },
+			tokensPerSecond: null,
+		});
+	});
+
+	test("scans only appended entries and rescans when the branch is replaced", () => {
+		const cache = new SessionStatsCache();
+		const branch = statsBranch();
+		expect(cache.compute(branch.slice(0, 2)).tokens?.input).toBe(100);
+		expect(cache.compute(branch).tokens?.input).toBe(155);
+		// Same prefix, nothing appended: stable totals, no double counting.
+		expect(cache.compute(branch).tokens?.input).toBe(155);
+		// A different branch (tree navigation) must not reuse the old totals.
+		const other = [entry("x1", { role: "assistant", content: [], usage: usage(1, 1, 0, 0, 0) })];
+		expect(cache.compute(other).tokens).toEqual({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0 });
+	});
+
+	test("re-folds the final entry so a changed usage updates the totals", () => {
+		const cache = new SessionStatsCache();
+		const last = entry("e2", { role: "assistant", content: [], usage: usage(10, 5, 0, 0, 0.1) });
+		const branch = [entry("e1", { role: "user", content: "go" }), last];
+		expect(cache.compute(branch).tokens?.output).toBe(5);
+		(last.message as { usage: unknown }).usage = usage(10, 40, 0, 0, 0.4);
+		expect(cache.compute(branch).tokens?.output).toBe(40);
+		expect(cache.compute(branch).costUsd).toBeCloseTo(0.4);
+		// Appending folds the previous last entry into the cached prefix exactly once.
+		branch.push(entry("e3", { role: "assistant", content: [], usage: usage(1, 1, 0, 0, 0) }));
+		expect(cache.compute(branch).tokens?.output).toBe(41);
+		expect(cache.compute(branch).tokens?.output).toBe(41);
+	});
+
+	test("counts an abandoned branch in totals like the footer, but takes todos from the current branch", async () => {
+		const abandoned = [
+			entry("a1", { role: "assistant", content: [], usage: usage(10, 5, 0, 0, 0.25) }),
+			entry("a2", {
+				role: "toolResult",
+				toolName: "todo",
+				toolCallId: "t1",
+				details: { todos: [{ text: "old", status: "pending" }] },
+			}),
+		];
+		const kept = entry("k1", { role: "assistant", content: [], usage: usage(20, 5, 0, 0, 0.5) });
+		const context = fakeContext({
+			sessionManager: { getBranch: () => [kept], getEntries: () => [...abandoned, kept], getSessionId: () => "s" },
+		});
+		const { handle } = await startTestConsole({ context });
+		const stats = (await snapshotOf(handle)).status.stats;
+		expect(stats?.tokens).toEqual({ input: 30, output: 10, cacheRead: 0, cacheWrite: 0 });
+		expect(stats?.costUsd).toBe(0.75);
+		expect(stats?.todos).toBeUndefined();
+		// A shrunk list rescans instead of keeping the larger totals.
+		const cache = new SessionStatsCache();
+		cache.compute([...abandoned, kept]);
+		expect(cache.compute([abandoned[0]]).tokens?.input).toBe(10);
+	});
+
+	test("omits every stat the branch cannot supply", () => {
+		const cache = new SessionStatsCache();
+		expect(cache.compute([entry("e1", { role: "user", content: "hi" })])).toEqual({});
+	});
+
+	test("token rate smooths output growth and resets to null", () => {
+		const rate = new TokenRateTracker();
+		expect(rate.rate).toBeNull();
+		rate.sample(0, 1000);
+		rate.sample(10, 1100); // under the sampling gap: ignored
+		expect(rate.rate).toBeNull();
+		rate.sample(50, 1500);
+		expect(rate.rate).toBeCloseTo(100, 5);
+		rate.reset();
+		expect(rate.rate).toBeNull();
+	});
+
+	test("tokensPerSecond is live while streaming, status publishes at most once a second, and resets at turn end", async () => {
+		const now = vi.spyOn(Date, "now");
+		cleanups.push(() => now.mockRestore());
+		const withUsage = fakeContext({
+			sessionManager: {
+				getBranch: () => [],
+				getEntries: () => [entry("e1", { role: "assistant", content: [], usage: usage(1, 1, 0, 0, 0) })],
+				getSessionId: () => "s",
+			},
+		});
+		const { handle, fake } = await startTestConsole({ context: withUsage });
+		const connected = await connectStream(handle);
+		await connected.reader.next("snapshot");
+		const streamingMessage = (output: number) => ({ role: "assistant", content: [], usage: { output } });
+		const update = (output: number, at: number) => {
+			now.mockReturnValue(at);
+			fake.fire("message_update", {
+				type: "message_update",
+				message: streamingMessage(output),
+				assistantMessageEvent: { type: "text_start", contentIndex: 0 },
+			});
+		};
+		fake.fire("message_start", { type: "message_start", message: streamingMessage(0) });
+		await connected.reader.next("message start");
+		update(0, 10_000); // first sample publishes
+		const first = await connected.reader.next("first status");
+		expect((first.payload as { status: WireStatus }).status.stats?.tokensPerSecond).toBeNull();
+		update(30, 10_300); // sampled, throttled: no publish
+		update(60, 10_600); // sampled, throttled: no publish
+		update(120, 11_100); // a second after the first publish
+		const second = await connected.reader.next("second status");
+		const tps = (second.payload as { status: WireStatus }).status.stats?.tokensPerSecond;
+		expect(typeof tps).toBe("number");
+		expect(tps).toBeGreaterThan(0);
+		fake.fire("message_end", { type: "message_end", message: streamingMessage(120) }, withUsage);
+		expect((await connected.reader.next("message end")).type).toBe("message_end");
+		// The assistant message_end itself publishes a status with no rate, before turn_end.
+		const afterEnd = await connected.reader.next("message end status");
+		expect(afterEnd.type).toBe("status");
+		expect((afterEnd.payload as { status: WireStatus }).status.stats?.tokensPerSecond).toBeNull();
+		fake.fire("turn_end", { type: "turn_end" }, withUsage);
+		const after = await connected.reader.next("turn end status");
+		expect(after.type).toBe("status");
+		expect((after.payload as { status: WireStatus }).status.stats?.tokensPerSecond).toBeNull();
+		await connected.reader.close();
+	});
+});
+
+describe("workspace", () => {
+	test("reads repo and branch by walking up to .git/HEAD, detached and worktree forms included", async () => {
+		const root = mkdtempSync(join(tmpdir(), "remote-console-ws-"));
+		cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+		mkdirSync(join(root, "myrepo", ".git"), { recursive: true });
+		mkdirSync(join(root, "myrepo", "pkg", "deep"), { recursive: true });
+		writeFileSync(join(root, "myrepo", ".git", "HEAD"), "ref: refs/heads/feature/x\n");
+		const deep = join(root, "myrepo", "pkg", "deep");
+		expect(await readWorkspace(deep)).toEqual({ cwd: deep, repo: "myrepo", branch: "feature/x" });
+		writeFileSync(join(root, "myrepo", ".git", "HEAD"), `${"a".repeat(40)}\n`);
+		expect((await readWorkspace(deep)).branch).toBe("detached");
+		mkdirSync(join(root, "wt"), { recursive: true });
+		mkdirSync(join(root, "gitdir-wt"), { recursive: true });
+		writeFileSync(join(root, "wt", ".git"), `gitdir: ${join(root, "gitdir-wt")}\n`);
+		writeFileSync(join(root, "gitdir-wt", "HEAD"), "ref: refs/heads/wt-branch\n");
+		expect(await readWorkspace(join(root, "wt"))).toEqual({
+			cwd: join(root, "wt"),
+			repo: "wt",
+			branch: "wt-branch",
+		});
+	});
+
+	test("the home directory prefix of cwd is shown as ~", () => {
+		expect(tildify("/home/u/proj/a", "/home/u")).toBe("~/proj/a");
+		expect(tildify("/home/u", "/home/u")).toBe("~");
+		expect(tildify("/home/user2/x", "/home/u")).toBe("/home/user2/x");
+		expect(tildify("/srv/x", "/home/u")).toBe("/srv/x");
+	});
+
+	test("outside a work tree only the cwd is reported", async () => {
+		const root = mkdtempSync(join(tmpdir(), "remote-console-ws-"));
+		cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+		expect(await readWorkspace(root)).toEqual({ cwd: root });
+	});
+
+	test("the snapshot status carries the workspace of the context cwd", async () => {
+		const root = mkdtempSync(join(tmpdir(), "remote-console-ws-"));
+		cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+		mkdirSync(join(root, "proj", ".git"), { recursive: true });
+		writeFileSync(join(root, "proj", ".git", "HEAD"), "ref: refs/heads/main\n");
+		const { handle } = await startTestConsole({ context: fakeContext({ cwd: join(root, "proj") }) });
+		expect((await snapshotOf(handle)).status.workspace).toEqual({
+			cwd: join(root, "proj"),
+			repo: "proj",
+			branch: "main",
+		});
+	});
+});
+
+describe("custom messages", () => {
+	test("bounds details to scalars, 20-item scalar arrays and 200-char strings", () => {
+		const bounded = boundDetails({
+			s: "x".repeat(500),
+			n: 3,
+			b: true,
+			nil: null,
+			nan: Number.NaN,
+			obj: { nested: 1 },
+			fn: () => 1,
+			list: Array.from({ length: 30 }, (_, i) => i),
+			mixed: ["a", { no: 1 }, 2],
+		});
+		expect(bounded).toEqual({
+			s: "x".repeat(200),
+			n: 3,
+			b: true,
+			nil: null,
+			list: Array.from({ length: 20 }, (_, i) => i),
+			mixed: ["a", 2],
+		});
+		expect(boundDetails("nope")).toBeUndefined();
+	});
+
+	test("display:false sends no text; the recall type reports lessonCount", () => {
+		const recall = customToWireMessage({
+			customType: "hummin-memory-recall",
+			content: [{ type: "text", text: "secret lesson bodies" }],
+			display: false,
+			details: { lessonIds: ["a", "b", "c"] },
+		});
+		expect(recall).toEqual({
+			role: "custom",
+			customType: "hummin-memory-recall",
+			details: { lessonCount: 3 },
+			blocks: [],
+		});
+		// The terminal hides on any falsy display, so text is sent only for a truthy one.
+		const undisplayed = customToWireMessage({
+			customType: "hummin-task",
+			content: [{ type: "text", text: "hidden" }],
+			details: { id: "t1" },
+		});
+		expect(undisplayed.blocks).toEqual([]);
+		const shown = customToWireMessage({
+			customType: "hummin-task",
+			content: [{ type: "text", text: "visible" }],
+			display: true,
+			details: { id: "t1" },
+		});
+		expect(shown.blocks).toEqual([{ type: "text", text: "visible" }]);
+		expect(shown.details).toEqual({ id: "t1" });
+	});
+
+	test("the snapshot includes custom_message entries and the live path carries customType and details", async () => {
+		const customEntry = {
+			type: "custom_message",
+			id: "c1",
+			parentId: null,
+			timestamp: "2026-11-10T00:00:00Z",
+			customType: "hummin-monitor",
+			content: "monitor says hi",
+			display: true,
+			details: { exitCode: 0, tail: ["l1", "l2"] },
+		};
+		const context = fakeContext({
+			sessionManager: { getBranch: () => [customEntry], getSessionId: () => "sess-test" },
+		});
+		const { handle, fake } = await startTestConsole({ context });
+		const connected = await connectStream(handle);
+		const snapshot = (await connected.reader.next("snapshot")).payload as SnapshotPayload;
+		expect(snapshot.messages).toEqual([
+			{
+				entryId: "c1",
+				timestamp: "2026-11-10T00:00:00Z",
+				message: {
+					role: "custom",
+					customType: "hummin-monitor",
+					details: { exitCode: 0, tail: ["l1", "l2"] },
+					blocks: [{ type: "text", text: "monitor says hi" }],
+				},
+			},
+		]);
+		const live = {
+			role: "custom",
+			customType: "hummin-memory-recall",
+			content: [{ type: "text", text: "bodies" }],
+			display: false,
+			details: { lessonIds: ["a", "b"] },
+			timestamp: 1,
+		};
+		const recallEntry = { ...customEntry, id: "c2", customType: "hummin-memory-recall" };
+		const withEntry = fakeContext({
+			sessionManager: { getBranch: () => [customEntry, recallEntry], getSessionId: () => "sess-test" },
+		});
+		fake.fire("message_start", { type: "message_start", message: live });
+		fake.fire("message_end", { type: "message_end", message: live }, withEntry);
+		const started = await connected.reader.next("custom start");
+		expect((started.payload as { message: unknown }).message).toEqual({
+			role: "custom",
+			customType: "hummin-memory-recall",
+			details: { lessonCount: 2 },
+			blocks: [],
+		});
+		const ended = await connected.reader.next("custom end");
+		expect((ended.payload as { entryId: string }).entryId).toBe("live:live-0");
+		await connected.reader.close();
+	});
+
+	test("two live custom messages of one type never share a non-empty entryId", async () => {
+		const first = {
+			type: "custom_message",
+			id: "c1",
+			parentId: null,
+			timestamp: "2026-11-10T00:00:00Z",
+			customType: "hummin-monitor",
+			content: "x",
+			display: true,
+		};
+		const live = { role: "custom", customType: "hummin-monitor", content: "x", display: true, timestamp: 1 };
+		const { handle, fake } = await startTestConsole();
+		const connected = await connectStream(handle);
+		await connected.reader.next("snapshot");
+		// Core emits message_end before persisting: the tail only holds the previous entry.
+		const beforeFirst = fakeContext();
+		const beforeSecond = fakeContext({
+			sessionManager: { getBranch: () => [first], getEntries: () => [first], getSessionId: () => "s" },
+		});
+		fake.fire("message_end", { type: "message_end", message: live }, beforeFirst);
+		fake.fire("message_end", { type: "message_end", message: { ...live } }, beforeSecond);
+		const ids = [
+			((await connected.reader.next("first end")).payload as { entryId: string }).entryId,
+			((await connected.reader.next("second end")).payload as { entryId: string }).entryId,
+		];
+		expect(ids).toEqual(["live:live-0", "live:live-1"]);
+		await connected.reader.close();
+	});
+
+	test("skips prototype-polluting and over-long detail keys", () => {
+		const hostile = JSON.parse('{"__proto__": {"x": 1}, "constructor": "c", "prototype": "p", "ok": 1}');
+		hostile[`${"k".repeat(65)}`] = 1;
+		hostile["k".repeat(64)] = 2;
+		const bounded = boundDetails(hostile);
+		expect(Object.keys(bounded ?? {})).toEqual(["ok", "k".repeat(64)]);
+		expect(Object.getPrototypeOf(bounded)).toBe(Object.prototype);
+	});
+
+	test("a malformed custom entry is skipped and the rest of the snapshot survives", async () => {
+		const good = entry("m1", { role: "user", content: "hello" });
+		const malformed = {
+			type: "custom_message",
+			id: "bad",
+			parentId: null,
+			timestamp: "2026-11-10T00:00:00Z",
+			customType: "hummin-monitor",
+			content: null,
+			display: true,
+		};
+		const throwing = {
+			type: "message",
+			id: "boom",
+			timestamp: "t",
+			get message(): never {
+				throw new Error("bad entry");
+			},
+		};
+		const context = fakeContext({
+			sessionManager: { getBranch: () => [good, malformed, throwing], getSessionId: () => "sess-test" },
+		});
+		const { handle } = await startTestConsole({ context });
+		const snapshot = await snapshotOf(handle);
+		expect(snapshot.sessionId).toBe("sess-test");
+		expect(snapshot.messages.map((m) => m.entryId)).toEqual(["m1", "bad"]);
+		expect(snapshot.messages[1]?.message).toEqual({ role: "custom", customType: "hummin-monitor", blocks: [] });
+	});
+
+	test("keeps at most 20 detail keys", () => {
+		const many = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`k${i}`, i]));
+		expect(Object.keys(boundDetails(many) ?? {})).toEqual(Array.from({ length: 20 }, (_, i) => `k${i}`));
+	});
+
+	test("the snapshot window counts only message and custom-message entries", async () => {
+		const branch: unknown[] = [entry("first", { role: "user", content: "oldest" })];
+		for (let i = 0; i < 300; i++) branch.push({ type: "thinking_level_change", id: `t${i}`, timestamp: "t" });
+		branch.push(entry("last", { role: "user", content: "newest" }));
+		const context = fakeContext({
+			sessionManager: { getBranch: () => branch, getSessionId: () => "sess-test" },
+		});
+		const { handle } = await startTestConsole({ context });
+		expect((await snapshotOf(handle)).messages.map((m) => m.entryId)).toEqual(["first", "last"]);
+		const dense: unknown[] = Array.from({ length: 250 }, (_, i) => entry(`d${i}`, { role: "user", content: "x" }));
+		const denseContext = fakeContext({
+			sessionManager: { getBranch: () => dense, getSessionId: () => "sess-test" },
+		});
+		const second = await startTestConsole({ context: denseContext });
+		const ids = (await snapshotOf(second.handle)).messages.map((m) => m.entryId);
+		expect(ids).toHaveLength(200);
+		expect(ids[0]).toBe("d50");
+		expect(ids.at(-1)).toBe("d249");
+	});
+
+	test("a throwing detail getter or content drops the live event instead of throwing", async () => {
+		const { handle, fake } = await startTestConsole();
+		const connected = await connectStream(handle);
+		await connected.reader.next("snapshot");
+		const hostile = {
+			role: "custom",
+			customType: "hummin-monitor",
+			display: true,
+			timestamp: 1,
+			get content(): unknown {
+				throw new Error("hostile content");
+			},
+		};
+		expect(() => fake.fire("message_start", { type: "message_start", message: hostile })).not.toThrow();
+		expect(() => fake.fire("message_end", { type: "message_end", message: hostile })).not.toThrow();
+		// Nothing was published for the hostile message: the next frame is the sentinel.
+		fake.fire("turn_end", { type: "turn_end" });
+		expect((await connected.reader.next("sentinel")).type).toBe("status");
+		await connected.reader.close();
+	});
+});
+
+describe("activity events", () => {
+	const compactFailed = (aborted: boolean, errorMessage?: string) => ({
+		type: "session_compact_failed",
+		reason: "manual",
+		aborted,
+		...(errorMessage ? { errorMessage } : {}),
+	});
+
+	test("publishes compaction start, end and failed, and republishes memory fold from the bus", async () => {
+		const { handle, fake } = await startTestConsole();
+		const connected = await connectStream(handle);
+		await connected.reader.next("snapshot");
+		const activity = async (what: string) => (await connected.reader.next(what)).payload as { activity: unknown };
+		fake.fire("session_before_compact", { type: "session_before_compact", reason: "threshold" });
+		expect(await activity("compact start")).toEqual({
+			activity: { kind: "compaction", phase: "start", detail: "threshold" },
+		});
+		fake.fire("session_compact", { type: "session_compact", reason: "threshold" });
+		expect(await activity("compact end")).toEqual({
+			activity: { kind: "compaction", phase: "end", detail: "threshold" },
+		});
+		fake.fire("session_before_compact", { type: "session_before_compact", reason: "manual" });
+		await activity("second compact start");
+		fake.fire("session_compact_failed", compactFailed(false, "boom"));
+		expect(await activity("compact failed")).toEqual({
+			activity: { kind: "compaction", phase: "failed", detail: "boom" },
+		});
+		fake.emitBus("hummin:memory_fold", { phase: "start", detail: "agent_end" });
+		expect(await activity("fold start")).toEqual({
+			activity: { kind: "memory_fold", phase: "start", detail: "agent_end" },
+		});
+		fake.emitBus("hummin:memory_fold", { phase: "end" });
+		expect(await activity("fold end")).toEqual({ activity: { kind: "memory_fold", phase: "end" } });
+		fake.emitBus("hummin:memory_fold", { phase: "bogus" });
+		fake.emitBus("hummin:memory_fold", { phase: "failed", detail: "held" });
+		expect(await activity("fold failed")).toEqual({
+			activity: { kind: "memory_fold", phase: "failed", detail: "held" },
+		});
+		await connected.reader.close();
+	});
+
+	test("an abort ends a started compaction, a failure without a start publishes nothing, details are capped", async () => {
+		const { handle, fake } = await startTestConsole();
+		const connected = await connectStream(handle);
+		await connected.reader.next("snapshot");
+		const activity = async (what: string) => (await connected.reader.next(what)).payload as { activity: unknown };
+		// "nothing to compact": no preceding start, so no frame (the next frame is the sentinel).
+		fake.fire("session_compact_failed", compactFailed(false, "nothing to compact"));
+		fake.fire("session_compact_failed", compactFailed(true));
+		fake.fire("turn_end", { type: "turn_end" });
+		expect((await connected.reader.next("sentinel")).type).toBe("status");
+		fake.fire("session_before_compact", { type: "session_before_compact", reason: "manual" });
+		await activity("start");
+		fake.fire("session_compact_failed", compactFailed(true));
+		expect(await activity("aborted")).toEqual({
+			activity: { kind: "compaction", phase: "end", detail: "aborted" },
+		});
+		fake.fire("session_before_compact", { type: "session_before_compact", reason: "manual" });
+		await activity("start again");
+		fake.fire("session_compact_failed", compactFailed(false, "e".repeat(500)));
+		expect(await activity("long failure")).toEqual({
+			activity: { kind: "compaction", phase: "failed", detail: "e".repeat(200) },
+		});
+		await connected.reader.close();
+	});
+
+	test("the snapshot carries the activity in progress or last failed, until it ends or the next start", async () => {
+		const { handle, fake } = await startTestConsole();
+		expect((await snapshotOf(handle)).activity).toBeUndefined();
+		fake.fire("session_before_compact", { type: "session_before_compact", reason: "threshold" });
+		expect((await snapshotOf(handle)).activity).toEqual({ kind: "compaction", phase: "start", detail: "threshold" });
+		fake.fire("session_compact", { type: "session_compact", reason: "threshold" });
+		expect((await snapshotOf(handle)).activity).toBeUndefined();
+		fake.fire("session_before_compact", { type: "session_before_compact", reason: "manual" });
+		fake.fire("session_compact_failed", compactFailed(false, "boom"));
+		expect((await snapshotOf(handle)).activity).toEqual({ kind: "compaction", phase: "failed", detail: "boom" });
+		// A fold ending does not clear a different kind's failure.
+		fake.emitBus("hummin:memory_fold", { phase: "end" });
+		expect((await snapshotOf(handle)).activity?.phase).toBe("failed");
+		fake.emitBus("hummin:memory_fold", { phase: "start", detail: "x" });
+		expect((await snapshotOf(handle)).activity).toEqual({ kind: "memory_fold", phase: "start", detail: "x" });
+		fake.emitBus("hummin:memory_fold", { phase: "failed", detail: "exit 1" });
+		fake.fire("agent_start", { type: "agent_start" });
+		expect((await snapshotOf(handle)).activity).toBeUndefined();
+	});
+});
+
+describe("fleet", () => {
+	const settingsWith = (servers: unknown[]) => ({ fleet: { servers } });
+	const serverA = { id: "a", host: "Fleet-A.test", hostIp: "fleet-a.test", port: 8081, kind: "docker", target: "a" };
+	const serverB = {
+		id: "b",
+		hostIp: "fleet-b.test",
+		port: 8082,
+		engine: "colibri",
+		kind: "launchd",
+		target: "b",
+		models: [{ id: "staged-model", contextWindow: 4096 }],
+	};
+
+	function healthFile(records: Record<string, unknown>): string {
+		const dir = mkdtempSync(join(tmpdir(), "remote-console-fleet-"));
+		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+		const path = join(dir, "fleet-health.json");
+		writeFileSync(path, JSON.stringify({ servers: records }));
+		vi.stubEnv("HUMMIN_FLEET_HEALTH_FILE", path);
+		vi.stubEnv("HUMMIN_INSTANCES", "");
+		vi.stubEnv("HUMMIN_COLIBRI_INSTANCES", "");
+		cleanups.push(() => {
+			vi.unstubAllEnvs();
+		});
+		return path;
+	}
+	const record = (models: string[]) => ({
+		lastSeen: new Date().toISOString(),
+		contextWindow: 8192,
+		models,
+		endpoint: "http://fleet-a.test:8081",
+	});
+
+	test("joins settings, health records and catalogs; marks the active server; publishes on change", async () => {
+		const path = healthFile({ "llamacpp-Fleet-A.test-8081": record(["model-1"]) });
+		const onA = fakeContext({ model: { provider: "llamacpp-fleet-a.test-8081", id: "model-1" } });
+		const { handle, fake } = await startTestConsole({ context: onA }, settingsWith([serverA, serverB]));
+		const connected = await connectStream(handle);
+		const snapshot = (await connected.reader.next("snapshot")).payload as SnapshotPayload;
+		expect(snapshot.fleet).toEqual([
+			{
+				id: "llamacpp-fleet-a.test-8081",
+				engine: "llamacpp",
+				host: "Fleet-A.test",
+				port: 8081,
+				discovery: "fresh",
+				models: ["model-1"],
+				active: true,
+			},
+			{
+				id: "colibri-fleet-b.test-8082",
+				engine: "colibri",
+				host: "fleet-b.test",
+				port: 8082,
+				discovery: "none",
+				models: ["staged-model"],
+				active: false,
+			},
+		]);
+		// No change: settling publishes no fleet event.
+		fake.fire("agent_settled", { type: "agent_settled", aborted: false }, onA);
+		expect((await connected.reader.next("status")).type).toBe("status");
+		expect((await connected.reader.next("queue")).type).toBe("queue");
+		// The health file gains a record for B: the next check publishes the new list.
+		writeFileSync(
+			path,
+			JSON.stringify({
+				servers: {
+					"llamacpp-Fleet-A.test-8081": record(["model-1"]),
+					"colibri-fleet-b.test-8082": record(["live-model"]),
+				},
+			}),
+		);
+		fake.fire("model_select", { type: "model_select" }, onA);
+		expect((await connected.reader.next("model status")).type).toBe("status");
+		const changed = await connected.reader.next("fleet");
+		expect(changed.type).toBe("fleet");
+		const servers = (changed.payload as { servers: { id: string; discovery: string; models: string[] }[] }).servers;
+		expect(servers[1]).toMatchObject({ discovery: "fresh", models: ["live-model", "staged-model"] });
+		await connected.reader.close();
+	});
+
+	test("an environment instance list beats settings", async () => {
+		healthFile({});
+		vi.stubEnv("HUMMIN_INSTANCES", "http://fleet-env.test:9000");
+		const { handle } = await startTestConsole({}, settingsWith([serverA]));
+		expect((await snapshotOf(handle)).fleet).toEqual([
+			{
+				id: "llamacpp-fleet-env.test-9000",
+				engine: "llamacpp",
+				host: "fleet-env.test",
+				port: 9000,
+				discovery: "none",
+				models: [],
+				active: false,
+			},
+		]);
+	});
+
+	test("falls back to explicitly set legacy local instances, never to the built-in defaults", async () => {
+		healthFile({});
+		const legacy = await startTestConsole({}, { localInstances: ["http://Fleet-Legacy.test:9100"] });
+		expect((await snapshotOf(legacy.handle)).fleet?.map((server) => server.id)).toEqual([
+			"llamacpp-fleet-legacy.test-9100",
+		]);
+		const bare = await startTestConsole();
+		// Nothing configured: the built-in default instances were never set up, so none are listed.
+		expect((await snapshotOf(bare.handle)).fleet).toBeUndefined();
+		const legacyColibri = await startTestConsole({}, { colibriInstances: ["http://fleet-old.test:9200"] });
+		expect((await snapshotOf(legacyColibri.handle)).fleet?.map((server) => server.id)).toEqual([
+			"llamacpp-fleet-old.test-9200",
+		]);
+	});
+
+	test("lists only fleet entries hummin-local would register", async () => {
+		healthFile({});
+		const incomplete = { id: "c", hostIp: "fleet-c.test", port: 8083, kind: "docker" };
+		const { handle } = await startTestConsole({}, settingsWith([incomplete, serverA]));
+		expect((await snapshotOf(handle)).fleet?.map((server) => server.id)).toEqual(["llamacpp-fleet-a.test-8081"]);
+	});
+
+	test("discovery is fresh, stale or none from the health record", async () => {
+		const old = { ...record(["m"]), lastSeen: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString() };
+		healthFile({ "llamacpp-Fleet-A.test-8081": old, "colibri-fleet-b.test-8082": record(["m"]) });
+		const serverC = { id: "c", hostIp: "fleet-c.test", port: 8083, kind: "docker", target: "c" };
+		const { handle } = await startTestConsole({}, settingsWith([serverA, serverB, serverC]));
+		expect((await snapshotOf(handle)).fleet?.map((server) => server.discovery)).toEqual(["stale", "fresh", "none"]);
+	});
+});
+
+function settingsWithFleetServer() {
+	return { fleet: { servers: [{ id: "a", hostIp: "fleet-a.test", port: 8081, kind: "docker", target: "a" }] } };
+}
+
+describe("fail-open status", () => {
+	test("a context and settings that cannot provide the new fields omit them", async () => {
+		const throwingBranch = fakeContext({
+			sessionManager: {
+				getBranch: () => {
+					throw new Error("unreadable");
+				},
+				getSessionId: () => "sess-test",
+			},
+		});
+		const { handle } = await startTestConsole({ context: throwingBranch }, settingsWithFleetServer());
+		// An unreadable session degrades to the minimal snapshot frame.
+		const snapshot = await snapshotOf(handle);
+		expect(snapshot.status).toEqual({ kind: "idle", model: null });
+		expect("fleet" in snapshot).toBe(false);
+	});
+
+	test("unreadable settings drop autoCompact but keep the rest", async () => {
+		const { handle } = await startTestConsole({}, new Error("settings unreadable"));
+		const snapshot = await snapshotOf(handle);
+		expect(snapshot.status.autoCompact).toBeUndefined();
+		expect(snapshot.status.stats).toBeUndefined();
+		expect(snapshot.status.workspace).toBeUndefined();
+		expect(snapshot.status.version).toBe(VERSION);
+	});
+
+	test("autoCompact follows compaction.enabled", async () => {
+		const { handle } = await startTestConsole({}, { compaction: { enabled: false } });
+		expect((await snapshotOf(handle)).status.autoCompact).toBe(false);
 	});
 });
 

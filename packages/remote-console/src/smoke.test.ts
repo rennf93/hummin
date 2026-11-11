@@ -37,7 +37,7 @@ describe("remote console smoke", () => {
 			for (const region of ["header", "transcript", "composer"] as const) {
 				expect(document.querySelector(`[data-rc-region="${region}"]`)).not.toBeNull();
 			}
-			expect(document.documentElement.dataset.rcPreset).toBe("glass");
+			expect(document.documentElement.dataset.rcPreset).toBe("studio");
 		} finally {
 			await act(async () => {
 				root.unmount();

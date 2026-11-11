@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
-import {
+import humminMemory, {
 	enqueueDistill,
 	enqueueFold,
 	markProcessed,
@@ -280,4 +280,57 @@ test("markProcessed prunes stamps older than 90 days and keeps fresh ones", () =
 	expect(typeof state.processed["/new/d.jsonl"]).toBe("string");
 	// the atomic write leaves no tmp file behind
 	expect(existsSync(join(memory, "state.json.tmp"))).toBe(false);
+});
+
+test("fold activity is truthful: held emits nothing, exit 0 ends, a non-zero exit fails, shutdown drops the bus", async () => {
+	const vault = tempDir("hummin-memory-activity-vault-");
+	process.env.HUMMIN_MEMORY_DIR = tempDir("hummin-memory-activity-mem-");
+	process.env.HUMMIN_MEMORY_VAULT_DIR = vault;
+	mkdirSync(join(vault, "inbox"), { recursive: true });
+	writeFileSync(join(vault, "inbox", "lesson-a.md"), "lesson\n");
+	const seen: { phase: string; detail?: string }[] = [];
+	const shutdown: ((event: unknown, ctx: unknown) => unknown)[] = [];
+	const fakePi = {
+		on: (event: string, handler: (event: unknown, ctx: unknown) => unknown) => {
+			if (event === "session_shutdown") shutdown.push(handler);
+		},
+		registerCommand: () => {},
+		registerTool: () => {},
+		events: { emit: (_channel: string, data: unknown) => seen.push(data as { phase: string }), on: () => () => {} },
+	};
+	humminMemory(fakePi as unknown as Parameters<typeof humminMemory>[0]);
+	const heldCtx = { ...context("block"), agentDir: tempDir("hummin-memory-reviews-") };
+	expect(await enqueueFold(vault, "held", heldCtx)).toBe(false);
+	expect(seen).toEqual([]);
+	const bin = tempDir("hummin-memory-activity-bin-");
+	const hummin = join(bin, "hummin");
+	writeFileSync(hummin, "#!/bin/sh\necho spawned\n");
+	chmodSync(hummin, 0o755);
+	process.env.HUMMIN_BIN = hummin;
+	const allowCtx = { ...context("allow"), agentDir: tempDir("hummin-memory-reviews-") };
+	expect(await enqueueFold(vault, "x".repeat(300), allowCtx)).toBe(true);
+	expect(seen[0]).toEqual({ phase: "start", detail: "x".repeat(200) });
+	for (let i = 0; i < 100 && seen.length < 2; i++) await new Promise((resolve) => setTimeout(resolve, 50));
+	expect(seen).toEqual([{ phase: "start", detail: "x".repeat(200) }, { phase: "end" }]);
+	// A child that exits non-zero is a failure with its exit code (the worker propagates it).
+	writeFileSync(hummin, "#!/bin/sh\nexit 1\n");
+	seen.length = 0;
+	writeFileSync(join(vault, "inbox", "lesson-b.md"), "lesson\n");
+	expect(
+		await enqueueFold(vault, "failing", { ...context("allow"), agentDir: tempDir("hummin-memory-reviews-") }),
+	).toBe(true);
+	for (let i = 0; i < 100 && seen.length < 2; i++) await new Promise((resolve) => setTimeout(resolve, 50));
+	expect(seen).toEqual([
+		{ phase: "start", detail: "failing" },
+		{ phase: "failed", detail: "exit 1" },
+	]);
+	await shutdown[0]?.(
+		{ type: "session_shutdown", reason: "quit" },
+		{ sessionManager: { getSessionFile: () => undefined } },
+	);
+	seen.length = 0;
+	expect(await enqueueFold(vault, "after", { ...context("block"), agentDir: tempDir("hummin-memory-reviews-") })).toBe(
+		false,
+	);
+	expect(seen).toEqual([]);
 });

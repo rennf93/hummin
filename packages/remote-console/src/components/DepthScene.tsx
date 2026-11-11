@@ -1,9 +1,9 @@
 /**
  * components/DepthScene: layer 0 of the glass system, fixed behind the app -
  * three accent-tinted orbs on a slow transform drift plus the film-grain tile.
- * Every glass surface blurs this scene through its own backdrop-filter. Colors
- * and grain opacity are preset tokens, so the appearance panel re-themes the
- * whole scene (glass: visible mesh, paper: faint wash, terminal: whisper).
+ * Colors, grain opacity and visibility (--rc-scene-display) are preset tokens,
+ * so the appearance panel re-themes the whole scene (studio: not rendered,
+ * glass: visible mesh, paper: faint wash, terminal: whisper).
  */
 /// <reference lib="dom" />
 export function DepthScene() {

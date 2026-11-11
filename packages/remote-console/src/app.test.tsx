@@ -38,6 +38,7 @@ import type {
 	RemoteEventType,
 	SnapshotPayload,
 	WireApproval,
+	WireStatus,
 	WireTranscriptEntry,
 } from "./harness/replay-log.ts";
 import {
@@ -45,7 +46,6 @@ import {
 	adoptLocalHost,
 	applyAppearance,
 	clampAccentHue,
-	clampDensity,
 	listHosts,
 	loadAppearance,
 	parseAppearance,
@@ -124,6 +124,8 @@ function consoleFetch(events: readonly AnyRemoteEvent[], posts: RecordedFetch[])
 	return handler as unknown as typeof fetch;
 }
 
+const TOKEN_A = "a".repeat(64);
+const TOKEN_B = "b".repeat(64);
 const TEST_HOST = { id: "h1", label: "main", origin: "http://127.0.0.1:9", token: "secret" };
 
 /** Private-mode simulation: every localStorage write throws, like Safari
@@ -388,6 +390,19 @@ describe("store: per-host reducer", () => {
 		return reduceHosts(store, { type: "event", hostId: "h1", event, receivedAt });
 	}
 
+	it("keeps the last tok/s across a null status and clears it on a new session", () => {
+		const withRate = (rate: number | null): WireStatus => ({ kind: "idle", model: null, stats: { tokensPerSecond: rate } });
+		let store = dispatch(ensured(), makeEvent("snapshot", 1, SNAPSHOT));
+		store = dispatch(store, makeEvent("status", 2, { status: withRate(42.5) }));
+		expect(store.h1?.lastTokensPerSecond).toBe(42.5);
+		store = dispatch(store, makeEvent("status", 3, { status: withRate(null) }));
+		expect(store.h1?.lastTokensPerSecond).toBe(42.5);
+		store = dispatch(store, makeEvent("snapshot", 4, { ...SNAPSHOT, status: withRate(null) }));
+		expect(store.h1?.lastTokensPerSecond).toBe(42.5);
+		store = dispatch(store, makeEvent("snapshot", 5, { ...SNAPSHOT, sessionId: "s2", status: withRate(null) }));
+		expect(store.h1?.lastTokensPerSecond).toBeNull();
+	});
+
 	it("starts a host from ensure with the registry identity", () => {
 		const store = ensured();
 		const state = store.h1;
@@ -565,22 +580,28 @@ describe("hosts: registry and appearance", () => {
 	});
 
 	it("appearance parses, persists, and applies to the document root", () => {
-		expect(parseAppearance(null)).toEqual({ preset: "glass", accentHue: 190, density: 1, motion: "auto" });
-		expect(parseAppearance("garbage")).toEqual({ preset: "glass", accentHue: 190, density: 1, motion: "auto" });
-		expect(parseAppearance(JSON.stringify({ preset: "terminal", accentHue: 400, density: 9 }))).toEqual({ preset: "terminal", accentHue: 190, density: 1, motion: "auto" });
+		expect(parseAppearance(null)).toEqual({ preset: "studio", accentHue: 190, motion: "auto" });
+		expect(parseAppearance("garbage")).toEqual({ preset: "studio", accentHue: 190, motion: "auto" });
+		expect(parseAppearance(JSON.stringify({ preset: "terminal", accentHue: 400, density: 9 }))).toEqual({ preset: "terminal", accentHue: 190, motion: "auto" });
 		// Records saved before the motion axis existed parse as "auto"; an unknown
 		// motion value falls back the same way.
-		expect(parseAppearance(JSON.stringify({ preset: "paper", accentHue: 200, density: 1.5 }))).toEqual({ preset: "paper", accentHue: 200, density: 1.5, motion: "auto" });
-		expect(parseAppearance(JSON.stringify({ motion: "off" }))).toEqual({ preset: "glass", accentHue: 190, density: 1, motion: "off" });
+		expect(parseAppearance(JSON.stringify({ preset: "paper", accentHue: 200, density: 1.5 }))).toEqual({ preset: "paper", accentHue: 200, motion: "auto" });
+		expect(parseAppearance(JSON.stringify({ motion: "off" }))).toEqual({ preset: "studio", accentHue: 190, motion: "off" });
 		expect(parseAppearance(JSON.stringify({ motion: "sometimes" }))).toMatchObject({ motion: "auto" });
-		const appearance: Appearance = { preset: "paper", accentHue: 250, density: 0.85, motion: "off" };
+		// Stored presets from before studio existed keep working; unknown ones fall back to studio.
+		expect(parseAppearance(JSON.stringify({ preset: "glass" })).preset).toBe("glass");
+		expect(parseAppearance(JSON.stringify({ preset: "studio" })).preset).toBe("studio");
+		expect(parseAppearance(JSON.stringify({ preset: "neon" })).preset).toBe("studio");
+		const appearance: Appearance = { preset: "paper", accentHue: 250, motion: "off" };
 		saveAppearance(appearance);
 		expect(loadAppearance()).toEqual(appearance);
+		document.documentElement.style.setProperty("--rc-density", "0.85");
 		applyAppearance(document.documentElement, appearance);
 		expect(document.documentElement.dataset.rcPreset).toBe("paper");
 		expect(document.documentElement.dataset.rcMotion).toBe("off");
 		expect(document.documentElement.style.getPropertyValue("--rc-accent-hue")).toBe("250");
-		expect(document.documentElement.style.getPropertyValue("--rc-density")).toBe("0.85");
+		// An inline density left by an older build is removed.
+		expect(document.documentElement.style.getPropertyValue("--rc-density")).toBe("");
 	});
 
 	it("clamps the live axes onto their ranges", () => {
@@ -589,11 +610,6 @@ describe("hosts: registry and appearance", () => {
 		expect(clampAccentHue(400)).toBe(360);
 		expect(clampAccentHue(250.6)).toBe(251);
 		expect(clampAccentHue(Number.NaN)).toBe(190);
-		expect(clampDensity(1)).toBe(1);
-		expect(clampDensity(0.1)).toBe(0.5);
-		expect(clampDensity(9)).toBe(2);
-		expect(clampDensity(1.234)).toBe(1.25);
-		expect(clampDensity(Number.NaN)).toBe(1);
 	});
 
 	it("never turns an empty slider value into hue 0", () => {
@@ -617,8 +633,8 @@ describe("hosts: fragment adoption", () => {
 	it("enrolls the local host from a /remote-control fragment and strips the token from the URL", () => {
 		const location = fakeLocation("http://127.0.0.1:59711");
 		const history = fakeHistory();
-		const entry = adoptLocalHost("#tok-live", location, history);
-		expect(entry).toMatchObject({ origin: "http://127.0.0.1:59711", token: "tok-live" });
+		const entry = adoptLocalHost("#"+TOKEN_A, location, history);
+		expect(entry).toMatchObject({ origin: "http://127.0.0.1:59711", token: TOKEN_A });
 		// the registry stores the token (browser-side by design); the URL must not
 		expect(history.replaceState).toHaveBeenCalledWith(null, "", location.pathname + location.search);
 	});
@@ -626,12 +642,12 @@ describe("hosts: fragment adoption", () => {
 	it("rotates the token for an existing origin entry instead of duplicating it", () => {
 		const location = fakeLocation("http://127.0.0.1:59711");
 		const history = fakeHistory();
-		const first = adoptLocalHost("#tok-1", location, history);
-		const second = adoptLocalHost("#tok-2", location, history);
+		const first = adoptLocalHost("#"+TOKEN_A, location, history);
+		const second = adoptLocalHost("#"+TOKEN_B, location, history);
 		expect(second?.id).toBe(first?.id);
-		expect(second?.token).toBe("tok-2");
+		expect(second?.token).toBe(TOKEN_B);
 		expect(listHosts()).toHaveLength(1);
-		expect(listHosts()[0]?.token).toBe("tok-2");
+		expect(listHosts()[0]?.token).toBe(TOKEN_B);
 	});
 
 	it("returns null and touches nothing without a fragment token", () => {
@@ -648,8 +664,8 @@ describe("hosts: fragment adoption", () => {
 		try {
 			const location = fakeLocation("http://127.0.0.1:59711");
 			const history = fakeHistory();
-			const entry = adoptLocalHost("#tok-private", location, history);
-			expect(entry).toMatchObject({ origin: "http://127.0.0.1:59711", token: "tok-private" });
+			const entry = adoptLocalHost("#"+TOKEN_A, location, history);
+			expect(entry).toMatchObject({ origin: "http://127.0.0.1:59711", token: TOKEN_A });
 			// The fragment is stripped regardless of the storage failure.
 			expect(history.replaceState).toHaveBeenCalledWith(null, "", location.pathname + location.search);
 			// Nothing persisted, nothing thrown.
@@ -690,7 +706,10 @@ describe("components: rail status and approval countdown", () => {
 		];
 		const resolved: Array<[string, boolean]> = [];
 		const mounted = await mount(
-			<ApprovalCard holds={holds} onResolve={(id, allow) => resolved.push([id, allow])} />,
+			<ApprovalCard holds={holds} onResolve={(id, allow) => {
+					resolved.push([id, allow]);
+					return Promise.resolve({ ok: true, status: 202 });
+				}} />,
 		);
 		try {
 			await flush();
@@ -766,9 +785,15 @@ describe("app: appearance panel", () => {
 			expect(panel?.getAttribute("aria-modal")).toBe("true");
 			expect(panel?.getAttribute("aria-label")).toBe("appearance");
 			expect(document.querySelector("[data-rc-appear-preview]")).not.toBeNull();
-			expect(document.querySelector('[data-rc-appear-swatch="glass"]')).not.toBeNull();
+			for (const preset of ["studio", "glass", "paper", "terminal"]) {
+				const swatch = document.querySelector(`[data-rc-appear-swatch="${preset}"]`);
+				expect(swatch).not.toBeNull();
+				// Each swatch re-resolves its own preset's tokens.
+				expect(swatch?.getAttribute("data-rc-preset")).toBe(preset);
+			}
+			expect(document.querySelector('[data-rc-appear-swatch="studio"]')?.getAttribute("aria-pressed")).toBe("true");
 			expect(document.querySelector("[data-rc-appear-hue]")).not.toBeNull();
-			expect(document.querySelector("[data-rc-appear-density]")).not.toBeNull();
+			expect(document.querySelector("[data-rc-appear-density]")).toBeNull();
 			expect(document.querySelector('[data-rc-appear-motion="auto"]')).not.toBeNull();
 			// Opening moves focus into the dialog.
 			expect(document.activeElement?.getAttribute("data-rc-appear-panel")).toBe("true");
@@ -838,7 +863,7 @@ describe("app: appearance panel", () => {
 		}
 	});
 
-	it("applies preset, hue, density, and motion live and persists them", async () => {
+	it("applies preset, hue, and motion live and persists them", async () => {
 		const mounted = await openPanel();
 		try {
 			// Preset swatch switches the root preset and persists.
@@ -850,20 +875,14 @@ describe("app: appearance panel", () => {
 				setNativeValue(hue as HTMLInputElement, "250");
 			});
 			expect(document.documentElement.style.getPropertyValue("--rc-accent-hue")).toBe("250");
-			const density = document.querySelector<HTMLInputElement>("[data-rc-appear-density]");
-			await act(async () => {
-				setNativeValue(density as HTMLInputElement, "0.85");
-			});
-			expect(document.documentElement.style.getPropertyValue("--rc-density")).toBe("0.85");
 			// Motion off applies the root attribute.
 			await click(document.querySelector('[data-rc-appear-motion="off"]'));
 			expect(document.documentElement.dataset.rcMotion).toBe("off");
 			// Everything persisted in the same tick.
-			const saved = JSON.parse(localStorage.getItem("rc.appearance") ?? "{}") as { preset?: string; accentHue?: number; density?: number; motion?: string };
-			expect(saved).toEqual({ preset: "paper", accentHue: 250, density: 0.85, motion: "off" });
+			const saved = JSON.parse(localStorage.getItem("rc.appearance") ?? "{}") as { preset?: string; accentHue?: number; motion?: string };
+			expect(saved).toEqual({ preset: "paper", accentHue: 250, motion: "off" });
 			// The panel's readouts track the applied values.
 			expect(document.querySelector("[data-rc-appear-hue-value]")?.getAttribute("data-rc-appear-hue-value")).toBe("250");
-			expect(document.querySelector("[data-rc-appear-density-value]")?.getAttribute("data-rc-appear-density-value")).toBe("0.85");
 		} finally {
 			await mounted.unmount();
 		}
@@ -894,6 +913,11 @@ describe("app: shell integration", () => {
 			const row = document.querySelector('[data-rc-host-row="h1"]');
 			expect(row).not.toBeNull();
 			expect(row?.getAttribute("data-rc-host-status")).toBe("connecting");
+			// One indicator marks the active row; the header names the host and its state.
+			expect(row?.getAttribute("data-rc-active")).toBe("true");
+			expect(document.querySelectorAll("[data-rc-rail-indicator]")).toHaveLength(1);
+			expect(document.querySelector("[data-rc-status-dot]")?.getAttribute("data-rc-status-dot")).toBe("connecting");
+			expect(document.querySelector(".rc-header-title")?.textContent).not.toBe("");
 			// The token is sent only as the Authorization header, never in a URL.
 			expect(records.length).toBeGreaterThanOrEqual(1);
 			expect(records[0]?.url).toBe("http://127.0.0.1:9/events");
@@ -974,7 +998,7 @@ describe("app: shell integration", () => {
 		const mounted = await mount(<App />);
 		try {
 			await flush();
-			expect(document.documentElement.dataset.rcPreset).toBe("glass");
+			expect(document.documentElement.dataset.rcPreset).toBe("studio");
 			await click(document.querySelector('[data-rc-preset-btn="paper"]'));
 			expect(document.documentElement.dataset.rcPreset).toBe("paper");
 			const saved = JSON.parse(localStorage.getItem("rc.appearance") ?? "{}") as { preset?: string };
@@ -996,7 +1020,7 @@ describe("app: shell integration", () => {
 			await flush();
 			expect(document.documentElement.dataset.rcPreset).toBe("terminal");
 			expect(document.documentElement.style.getPropertyValue("--rc-accent-hue")).toBe("250");
-			expect(document.documentElement.style.getPropertyValue("--rc-density")).toBe("0.85");
+			expect(document.documentElement.style.getPropertyValue("--rc-density")).toBe("");
 		} finally {
 			await mounted.unmount();
 		}
@@ -1006,7 +1030,7 @@ describe("app: shell integration", () => {
 		localStorage.clear();
 		const records: RecordedFetch[] = [];
 		vi.stubGlobal("fetch", hangingFetch(records));
-		const mounted = await mount(<ApprovalCard holds={[]} onResolve={() => undefined} />);
+		const mounted = await mount(<ApprovalCard holds={[]} onResolve={() => Promise.resolve({ ok: true, status: 202 })} />);
 		try {
 			await flush();
 			expect(document.querySelector("[data-rc-approval]")).toBeNull();
@@ -1048,7 +1072,9 @@ describe("app: shell integration", () => {
 			await click(collapsed);
 			await flush();
 			expect(collapsed?.getAttribute("aria-expanded")).toBe("false");
-			expect(document.querySelector(".rc-add-fields")?.getAttribute("data-rc-add-open")).toBe("false");
+			// The Disclosure unmounts its fields synchronously when motion resolves to 0ms.
+			expect(document.querySelector(".rc-add-fields")).toBeNull();
+			expect(document.querySelector("[data-rc-add-origin]")).toBeNull();
 		} finally {
 			await mounted.unmount();
 		}
@@ -1116,7 +1142,7 @@ describe("app: shell integration", () => {
 		const records: RecordedFetch[] = [];
 		vi.stubGlobal("fetch", hangingFetch(records));
 		try {
-			window.location.hash = "#tok-private";
+			window.location.hash = "#"+TOKEN_A;
 			const mounted = await mount(<App />);
 			try {
 				await flush();
@@ -1124,7 +1150,7 @@ describe("app: shell integration", () => {
 				const row = document.querySelector("[data-rc-host-row]");
 				expect(row).not.toBeNull();
 				expect(row?.getAttribute("data-rc-host-status")).toBe("connecting");
-				expect(records[0]?.init?.headers).toMatchObject({ authorization: "Bearer tok-private" });
+				expect(records[0]?.init?.headers).toMatchObject({ authorization: `Bearer ${TOKEN_A}` });
 				// The token never stays in the address bar.
 				expect(window.location.hash).toBe("");
 				// The appearance panel's persistence failure is equally silent.
@@ -1200,14 +1226,50 @@ describe("components: sliding pill", () => {
 		}
 	});
 
+	it("re-measures the thumb when a ResizeObserver reports a size change", async () => {
+		const spies = stubPillLayout();
+		let notify: () => void = () => undefined;
+		class StubObserver {
+			constructor(callback: () => void) {
+				notify = callback;
+			}
+			observe(): void {}
+			disconnect(): void {}
+		}
+		vi.stubGlobal("ResizeObserver", StubObserver);
+		const mounted = await mount(
+			<SlidingPill options={[{ value: "a", label: "A" }, { value: "b", label: "B" }]} active="a" onChange={() => undefined} ariaLabel="pick" />,
+		);
+		try {
+			await flush();
+			const thumb = document.querySelector<HTMLElement>(".rc-pill-thumb");
+			expect(thumb?.style.width).toBe("60px");
+			spies[1]?.mockImplementation(function (this: HTMLElement) {
+				return this.classList.contains("rc-pill-btn") ? 90 : 0;
+			});
+			await act(async () => {
+				notify();
+			});
+			expect(thumb?.style.width).toBe("90px");
+		} finally {
+			vi.unstubAllGlobals();
+			for (const spy of spies) spy.mockRestore();
+			await mounted.unmount();
+		}
+	});
+
 	it("carries the delivery mode as a labelled segmented control with aria-pressed semantics", async () => {
 		const sent: Array<[string, string]> = [];
 		const mounted = await mount(
 			<Composer
+				hostId="h1"
 				queue={null}
 				disabled={false}
-				onSend={(text, deliverAs) => sent.push([text, deliverAs])}
-				onAbort={() => undefined}
+				onSend={(text, deliverAs) => {
+					sent.push([text, deliverAs]);
+					return Promise.resolve({ ok: true, status: 202 });
+				}}
+				onAbort={() => Promise.resolve({ ok: true, status: 202 })}
 			/>,
 		);
 		try {
@@ -1229,6 +1291,65 @@ describe("components: sliding pill", () => {
 			});
 			await click(document.querySelector("[data-rc-send]"));
 			expect(sent).toEqual([["go", "steer"]]);
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("sends on Enter, inserts a newline on Shift+Enter, and ignores Enter during IME composition", async () => {
+		const sent: Array<[string, string]> = [];
+		const mounted = await mount(
+			<Composer hostId="h1" queue={null} disabled={false} onSend={(text, deliverAs) => {
+					sent.push([text, deliverAs]);
+					return Promise.resolve({ ok: true, status: 202 });
+				}} onAbort={() => Promise.resolve({ ok: true, status: 202 })} />,
+		);
+		try {
+			await flush();
+			const input = document.querySelector<HTMLTextAreaElement>("[data-rc-composer-input]") as HTMLTextAreaElement;
+			const press = async (init: KeyboardEventInit): Promise<boolean> => {
+				const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init });
+				await act(async () => {
+					input.dispatchEvent(event);
+				});
+				return event.defaultPrevented;
+			};
+			await act(async () => {
+				setNativeValue(input, "line one");
+			});
+			// Shift+Enter is left to the browser (a newline) and sends nothing.
+			expect(await press({ shiftKey: true })).toBe(false);
+			expect(sent).toEqual([]);
+			// IME composition: Enter confirms the candidate, it must not send.
+			expect(await press({ isComposing: true })).toBe(false);
+			expect(sent).toEqual([]);
+			expect(await press({})).toBe(true);
+			expect(sent).toEqual([["line one", "followUp"]]);
+			expect(input.value).toBe("");
+			// Cmd/Ctrl+Enter still sends.
+			await act(async () => {
+				setNativeValue(input, "line two");
+			});
+			await press({ ctrlKey: true });
+			await act(async () => {
+				setNativeValue(input, "line three");
+			});
+			await press({ metaKey: true });
+			expect(sent.map(([text]) => text)).toEqual(["line one", "line two", "line three"]);
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("offers the stop button only while the agent works", async () => {
+		const mounted = await mount(<Composer hostId="h1" queue={null} disabled={false} working={false} onSend={() => Promise.resolve({ ok: true, status: 202 })} onAbort={() => Promise.resolve({ ok: true, status: 202 })} />);
+		try {
+			await flush();
+			expect(document.querySelector("[data-rc-abort]")).toBeNull();
+			await mounted.render(<Composer hostId="h1" queue={null} disabled={false} working onSend={() => Promise.resolve({ ok: true, status: 202 })} onAbort={() => Promise.resolve({ ok: true, status: 202 })} />);
+			expect(document.querySelector("[data-rc-abort]")?.getAttribute("aria-label")).toBe("abort");
+			await mounted.render(<Composer hostId="h1" queue={null} disabled={false} working={false} onSend={() => Promise.resolve({ ok: true, status: 202 })} onAbort={() => Promise.resolve({ ok: true, status: 202 })} />);
+			expect(document.querySelector("[data-rc-abort]")).toBeNull();
 		} finally {
 			await mounted.unmount();
 		}
@@ -1275,6 +1396,397 @@ describe("renderer: transcript arrivals", () => {
 			// none of the new population animates.
 			await mounted.render(<TranscriptList entries={[entry("x"), entry("y")]} />);
 			expect(document.querySelectorAll('[data-rc-arrived="true"]')).toHaveLength(0);
+		} finally {
+			await mounted.unmount();
+		}
+	});
+});
+
+describe("connection: stalled stream watchdog", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("recycles a stream silent for 3 heartbeats through the Last-Event-ID reconnect path", async () => {
+		vi.useFakeTimers();
+		const records: RecordedFetch[] = [];
+		const states: ConnectionState[] = [];
+		const fetchImpl = (url: string | URL, init?: RequestInit): Promise<Response> => {
+			records.push({ url: url.toString(), init });
+			return Promise.resolve(fakeResponse({ ok: true, status: 200, body: liveStreamOf([new TextEncoder().encode("id: 9\ndata: {}\n\n")]) }));
+		};
+		const connection = connectSse({
+			origin: "http://127.0.0.1:9",
+			token: "secret",
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+			onFrame: () => undefined,
+			onState: (state) => states.push(state),
+		});
+		await vi.advanceTimersByTimeAsync(44_999);
+		expect(records).toHaveLength(1);
+		expect(states.at(-1)).toBe("connected");
+		await vi.advanceTimersByTimeAsync(1);
+		expect(states.at(-1)).toBe("reconnecting");
+		await vi.advanceTimersByTimeAsync(250);
+		expect(records).toHaveLength(2);
+		expect(records[1]?.init?.headers).toMatchObject({ "last-event-id": "9" });
+		connection.close();
+	});
+
+	it("any received bytes re-arm the watchdog", async () => {
+		vi.useFakeTimers();
+		let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+		const body = new ReadableStream<Uint8Array>({
+			start(c) {
+				controller = c;
+			},
+		});
+		const fetchMock = vi.fn(() => Promise.resolve(fakeResponse({ ok: true, status: 200, body })));
+		const connection = connectSse({ origin: "http://127.0.0.1:9", token: "secret", fetchImpl: fetchMock as unknown as typeof fetch, onFrame: () => undefined, onState: () => undefined });
+		await vi.advanceTimersByTimeAsync(40_000);
+		(controller as ReadableStreamDefaultController<Uint8Array> | null)?.enqueue(new TextEncoder().encode(": ping\n\n"));
+		await vi.advanceTimersByTimeAsync(40_000);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		connection.close();
+	});
+});
+
+describe("store: fail-safe and correctness", () => {
+	const STATUS: WireStatus = { kind: "idle", model: null };
+	const SNAP: SnapshotPayload = {
+		host: { origin: "http://127.0.0.1:9", label: "main" },
+		protocolVersion: 1,
+		sessionId: "s1",
+		sessionName: "one",
+		status: STATUS,
+		messages: [],
+		holds: [],
+		queue: { items: [], terminalQueued: 0 },
+	};
+	const ensured = (): HostStore => reduceHosts({}, { type: "ensure", hostId: "h1", label: "lab", origin: "http://127.0.0.1:9" });
+	const apply = (store: HostStore, event: AnyRemoteEvent, receivedAt = 1000): HostStore => reduceHosts(store, { type: "event", hostId: "h1", event, receivedAt });
+
+	it("keeps the state and records the seq when a payload is malformed", () => {
+		const good = apply(ensured(), makeEvent("snapshot", 1, SNAP));
+		const bad = apply(good, { v: 1, seq: 2, ts: TS, type: "snapshot", payload: { sessionId: "x" } } as unknown as AnyRemoteEvent);
+		expect(bad.h1?.sessionId).toBe("s1");
+		expect(bad.h1?.lastSeq).toBe(2);
+		const badStatus = apply(good, { v: 1, seq: 3, ts: TS, type: "status", payload: {} } as unknown as AnyRemoteEvent);
+		expect(badStatus.h1?.status).toEqual(STATUS);
+		expect(badStatus.h1?.lastSeq).toBe(3);
+		const throwing = apply(good, { v: 1, seq: 4, ts: TS, type: "approval", payload: {} } as unknown as AnyRemoteEvent);
+		expect(throwing.h1?.holds).toEqual([]);
+		expect(throwing.h1?.lastSeq).toBe(4);
+	});
+
+	it("an activity end clears only the same kind; a snapshot carries its own activity", () => {
+		let store = apply(ensured(), makeEvent("snapshot", 1, SNAP));
+		store = apply(store, makeEvent("activity", 2, { activity: { kind: "compaction", phase: "start" } }));
+		store = apply(store, makeEvent("activity", 3, { activity: { kind: "memory_fold", phase: "end" } }));
+		expect(store.h1?.activity?.kind).toBe("compaction");
+		store = apply(store, makeEvent("activity", 4, { activity: { kind: "compaction", phase: "end" } }));
+		expect(store.h1?.activity).toBeNull();
+		store = apply(store, makeEvent("snapshot", 5, { ...SNAP, activity: { kind: "memory_fold", phase: "failed" } }));
+		expect(store.h1?.activity).toEqual({ kind: "memory_fold", phase: "failed" });
+		store = apply(store, makeEvent("snapshot", 6, SNAP));
+		expect(store.h1?.activity).toBeNull();
+	});
+
+	it("a different session resets tok/s and activity; a snapshot clears tool updates", () => {
+		let store = apply(ensured(), makeEvent("snapshot", 1, SNAP));
+		store = apply(store, makeEvent("status", 2, { status: { kind: "working", model: null, stats: { tokensPerSecond: 30 } } }));
+		store = apply(store, makeEvent("activity", 3, { activity: { kind: "compaction", phase: "start" } }));
+		store = apply(store, makeEvent("tool_update", 4, { toolCallId: "t1", phase: "update", toolName: "bash", partialResult: "x" }));
+		expect(store.h1?.toolUpdates.size).toBe(1);
+		const same = apply(store, makeEvent("session", 5, { sessionId: "s1", sessionName: "renamed" }));
+		expect(same.h1?.lastTokensPerSecond).toBe(30);
+		expect(same.h1?.activity).not.toBeNull();
+		const other = apply(store, makeEvent("session", 6, { sessionId: "s2", sessionName: "two" }));
+		expect(other.h1?.lastTokensPerSecond).toBeNull();
+		expect(other.h1?.activity).toBeNull();
+		const snap = apply(store, makeEvent("snapshot", 7, { ...SNAP, sessionId: "s2" }));
+		expect(snap.h1?.lastTokensPerSecond).toBeNull();
+		expect(snap.h1?.toolUpdates.size).toBe(0);
+	});
+
+	it("tracks the host clock offset from event ts and ignores unparsable ts", () => {
+		const sent = Date.parse(TS);
+		let store = apply(ensured(), makeEvent("ping", 1, {}), sent + 5000);
+		expect(store.h1?.clockOffsetMs).toBe(5000);
+		store = apply(store, { v: 1, seq: 2, ts: "garbage", type: "ping", payload: {} } as AnyRemoteEvent, sent + 9000);
+		expect(store.h1?.clockOffsetMs).toBe(5000);
+	});
+
+	it("forget drops a host's state", () => {
+		const store = reduceHosts(ensured(), { type: "forget", hostId: "h1" });
+		expect(store.h1).toBeUndefined();
+	});
+});
+
+describe("hosts: strict origins and token adoption", () => {
+	beforeEach(() => {
+		localStorage.clear();
+	});
+
+	const fakeLocation = { origin: "http://127.0.0.1:59711", pathname: "/", search: "" } as unknown as Location;
+
+	it("requires an absolute http(s) URL and stores url.origin so default ports dedupe", () => {
+		const message = "origin must be an http(s) URL, e.g. http://127.0.0.1:8080";
+		expect(() => addHost({ label: "x", origin: "example.com", token: "t" })).toThrow(message);
+		expect(() => addHost({ label: "x", origin: "ftp://example.com", token: "t" })).toThrow(message);
+		const added = addHost({ label: "x", origin: "http://example.com:80/path", token: "t" });
+		expect(added.origin).toBe("http://example.com");
+		expect(() => addHost({ label: "y", origin: "http://example.com", token: "t" })).toThrow("already exists");
+		expect(() => updateHost(added.id, { origin: "nope" })).toThrow(message);
+		updateHost(added.id, { token: "  padded  " });
+		expect(listHosts()[0]?.token).toBe("padded");
+	});
+
+	it("drops later registry entries repeating an id or origin", () => {
+		const raw = JSON.stringify([
+			{ id: "a", origin: "http://x:1", token: "t" },
+			{ id: "a", origin: "http://y:1", token: "t" },
+			{ id: "b", origin: "http://x:1/", token: "t" },
+			{ id: "c", origin: "not a url", token: "t" },
+			{ id: "d", origin: "http://z:1", token: "t" },
+		]);
+		expect(parseHosts(raw).map((host) => host.id)).toEqual(["a", "d"]);
+	});
+
+	it("adopts only a fragment shaped like the server token and leaves any other untouched", () => {
+		const history = { replaceState: vi.fn() } as unknown as History;
+		expect(adoptLocalHost("#section-2", fakeLocation, history)).toBeNull();
+		expect(adoptLocalHost("#" + "a".repeat(31), fakeLocation, history)).toBeNull();
+		expect(adoptLocalHost("#" + "a".repeat(63) + "!", fakeLocation, history)).toBeNull();
+		expect(history.replaceState).not.toHaveBeenCalled();
+		expect(listHosts()).toEqual([]);
+		expect(adoptLocalHost("#" + "0123456789abcdef".repeat(4), fakeLocation, history)?.token).toHaveLength(64);
+		expect(history.replaceState).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("components: composer failures, availability, and drafts", () => {
+	function composerProps(over: Partial<Parameters<typeof Composer>[0]> = {}): Parameters<typeof Composer>[0] {
+		return {
+			hostId: "h1",
+			queue: null,
+			disabled: false,
+			onSend: () => Promise.resolve({ ok: true, status: 202 }),
+			onAbort: () => Promise.resolve({ ok: true, status: 202 }),
+			...over,
+		};
+	}
+	const type = (text: string) =>
+		act(async () => {
+			setNativeValue(document.querySelector<HTMLTextAreaElement>("[data-rc-composer-input]") as HTMLTextAreaElement, text);
+		});
+
+	it("keeps the draft and shows an alert on a failed send, then clears it on edit", async () => {
+		const mounted = await mount(<Composer {...composerProps({ onSend: () => Promise.resolve({ ok: false, status: 401 }) })} />);
+		try {
+			await type("keep me");
+			await click(document.querySelector("[data-rc-send]"));
+			const input = document.querySelector<HTMLTextAreaElement>("[data-rc-composer-input]");
+			expect(input?.value).toBe("keep me");
+			const error = document.querySelector("[data-rc-send-error]");
+			expect(error?.getAttribute("role")).toBe("alert");
+			expect(error?.textContent).toBe("Not sent: unauthorized (status 401)");
+			await type("keep me!");
+			expect(document.querySelector("[data-rc-send-error]")).toBeNull();
+			await mounted.render(<Composer {...composerProps({ onSend: () => Promise.resolve({ ok: false, status: 0 }) })} />);
+			await click(document.querySelector("[data-rc-send]"));
+			expect(document.querySelector("[data-rc-send-error]")?.textContent).toBe("Not sent: host unreachable");
+			await mounted.render(<Composer {...composerProps({ onSend: () => Promise.resolve({ ok: false, status: 503 }) })} />);
+			await click(document.querySelector("[data-rc-send]"));
+			expect(document.querySelector("[data-rc-send-error]")?.textContent).toBe("Not sent: status 503");
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("disables send while a send is in flight and clears the error after a success", async () => {
+		let finish: (result: { ok: boolean; status: number }) => void = () => undefined;
+		const onSend = vi.fn(() => new Promise<{ ok: boolean; status: number }>((resolve) => (finish = resolve)));
+		const mounted = await mount(<Composer {...composerProps({ onSend })} />);
+		try {
+			await type("once");
+			await click(document.querySelector("[data-rc-send]"));
+			expect(document.querySelector<HTMLButtonElement>("[data-rc-send]")?.disabled).toBe(true);
+			await click(document.querySelector("[data-rc-send]"));
+			expect(onSend).toHaveBeenCalledTimes(1);
+			await act(async () => finish({ ok: true, status: 202 }));
+			expect(document.querySelector<HTMLTextAreaElement>("[data-rc-composer-input]")?.value).toBe("");
+			expect(document.querySelector("[data-rc-send-error]")).toBeNull();
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("shows an error line when abort fails", async () => {
+		const mounted = await mount(<Composer {...composerProps({ working: true, onAbort: () => Promise.resolve({ ok: false, status: 0 }) })} />);
+		try {
+			await click(document.querySelector("[data-rc-abort]"));
+			expect(document.querySelector("[data-rc-send-error]")?.textContent).toContain("host unreachable");
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("names why the composer is disabled in the placeholder", async () => {
+		const mounted = await mount(<Composer {...composerProps({ disabled: true, disabledReason: "reconnecting..." })} />);
+		try {
+			const input = document.querySelector<HTMLTextAreaElement>("[data-rc-composer-input]");
+			expect(input?.placeholder).toBe("reconnecting...");
+			expect(input?.disabled).toBe(true);
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("disables the delivery pill and marks the container when the composer is disabled", async () => {
+		const mounted = await mount(<Composer {...composerProps({ disabled: true })} />);
+		try {
+			const pills = document.querySelectorAll<HTMLButtonElement>("[data-rc-deliver-mode]");
+			expect(pills.length).toBe(2);
+			for (const pill of pills) expect(pill.disabled).toBe(true);
+			expect(document.querySelector("[data-rc-composer]")?.getAttribute("data-rc-disabled")).toBe("true");
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("keeps the delivery pill enabled and the container unmarked when the composer is enabled", async () => {
+		const mounted = await mount(<Composer {...composerProps()} />);
+		try {
+			for (const pill of document.querySelectorAll<HTMLButtonElement>("[data-rc-deliver-mode]")) expect(pill.disabled).toBe(false);
+			expect(document.querySelector("[data-rc-composer]")?.hasAttribute("data-rc-disabled")).toBe(false);
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("keeps one draft and delivery mode per host", async () => {
+		const mounted = await mount(<Composer {...composerProps({ hostId: "A" })} />);
+		try {
+			await type("for A");
+			await click(document.querySelector('[data-rc-deliver-mode="steer"]'));
+			await mounted.render(<Composer {...composerProps({ hostId: "B" })} />);
+			const input = document.querySelector<HTMLTextAreaElement>("[data-rc-composer-input]");
+			expect(input?.value).toBe("");
+			expect(document.querySelector("[data-rc-deliver-as]")?.getAttribute("data-rc-deliver-as")).toBe("followUp");
+			await type("for B");
+			await mounted.render(<Composer {...composerProps({ hostId: "A" })} />);
+			expect(document.querySelector<HTMLTextAreaElement>("[data-rc-composer-input]")?.value).toBe("for A");
+			expect(document.querySelector("[data-rc-deliver-as]")?.getAttribute("data-rc-deliver-as")).toBe("steer");
+		} finally {
+			await mounted.unmount();
+		}
+	});
+});
+
+describe("components: approval card resilience", () => {
+	const hold = (over: Partial<WireApproval> = {}): WireApproval => ({ id: "a1", toolName: "bash", argsPreview: "ls", deadlineMs: Date.now() + 60_000, createdAt: TS, ...over });
+
+	it("disables both buttons while resolving, posts once, and shows an alert on failure", async () => {
+		let finish: (result: { ok: boolean; status: number }) => void = () => undefined;
+		const onResolve = vi.fn(() => new Promise<{ ok: boolean; status: number }>((resolve) => (finish = resolve)));
+		const mounted = await mount(<ApprovalCard holds={[hold()]} onResolve={onResolve} />);
+		try {
+			await click(document.querySelector('[data-rc-approve="a1"]'));
+			expect(document.querySelector<HTMLButtonElement>('[data-rc-approve="a1"]')?.disabled).toBe(true);
+			expect(document.querySelector<HTMLButtonElement>('[data-rc-deny="a1"]')?.disabled).toBe(true);
+			await click(document.querySelector('[data-rc-approve="a1"]'));
+			expect(onResolve).toHaveBeenCalledTimes(1);
+			await act(async () => finish({ ok: false, status: 0 }));
+			const error = document.querySelector("[data-rc-approval-error]");
+			expect(error?.getAttribute("role")).toBe("alert");
+			expect(error?.textContent).toContain("host unreachable");
+			expect(error?.textContent).toContain("may still expire");
+			expect(document.querySelector<HTMLButtonElement>('[data-rc-approve="a1"]')?.disabled).toBe(false);
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("discloses long args with Show all / Show less and exposes group semantics in a live region", async () => {
+		const args = "line one\nline two\nline three\nline four";
+		const mounted = await mount(<ApprovalCard holds={[hold({ argsPreview: args })]} onResolve={() => Promise.resolve({ ok: true, status: 202 })} />);
+		try {
+			const card = document.querySelector("[data-rc-approval]");
+			expect(card?.getAttribute("role")).toBe("group");
+			expect(card?.getAttribute("aria-label")).toBe("approval needed: bash");
+			expect(card?.closest("[aria-live]")?.getAttribute("aria-live")).toBe("assertive");
+			const more = document.querySelector("[data-rc-approval-more]");
+			expect(more?.textContent).toBe("Show all");
+			expect(more?.getAttribute("aria-expanded")).toBe("false");
+			expect(document.querySelector("[data-rc-approval-args]")?.getAttribute("data-rc-approval-args")).toBe("clamped");
+			await click(more);
+			expect(document.querySelector("[data-rc-approval-more]")?.textContent).toBe("Show less");
+			expect(document.querySelector("[data-rc-approval-args]")?.getAttribute("data-rc-approval-args")).toBe("expanded");
+			expect(document.querySelector("[data-rc-approval-args]")?.textContent).toBe(args);
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("short args get no disclosure", async () => {
+		const mounted = await mount(<ApprovalCard holds={[hold()]} onResolve={() => Promise.resolve({ ok: true, status: 202 })} />);
+		try {
+			expect(document.querySelector("[data-rc-approval-more]")).toBeNull();
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("counts down against the host clock and refreshes at once when a hold arrives", async () => {
+		const onResolve = () => Promise.resolve({ ok: true, status: 202 });
+		// Host clock runs 1h behind the browser: the browser sees the deadline 1h + 30s ahead of its own clock minus offset.
+		const skew = 3_600_000;
+		const mounted = await mount(<ApprovalCard holds={[]} clockOffsetMs={skew} onResolve={onResolve} />);
+		try {
+			await mounted.render(<ApprovalCard holds={[hold({ deadlineMs: Date.now() - skew + 30_000 })]} clockOffsetMs={skew} onResolve={onResolve} />);
+			const seconds = Number(document.querySelector("[data-rc-countdown]")?.getAttribute("data-rc-countdown"));
+			expect(seconds).toBeGreaterThan(27);
+			expect(seconds).toBeLessThanOrEqual(30);
+		} finally {
+			await mounted.unmount();
+		}
+	});
+});
+
+describe("app: availability and recovery", () => {
+	beforeEach(() => {
+		localStorage.clear();
+		vi.unstubAllGlobals();
+	});
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("disables the composer and hides stop on an unauthorized host", async () => {
+		seedRegistry();
+		const unauthorized = (() => Promise.resolve(fakeResponse({ status: 401 }))) as unknown as typeof fetch;
+		vi.stubGlobal("fetch", unauthorized);
+		const mounted = await mount(<App />);
+		try {
+			await flush();
+			const input = document.querySelector<HTMLTextAreaElement>("[data-rc-composer-input]");
+			expect(input?.disabled).toBe(true);
+			expect(input?.placeholder).toBe("unauthorized: reopen the /remote-control URL");
+			expect(document.querySelector("[data-rc-abort]")).toBeNull();
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("keeps stop reachable right after connect while status is still unknown", async () => {
+		seedRegistry();
+		vi.stubGlobal("fetch", consoleFetch([], []));
+		const mounted = await mount(<App />);
+		try {
+			await flush();
+			expect(document.querySelector<HTMLTextAreaElement>("[data-rc-composer-input]")?.disabled).toBe(false);
+			expect(document.querySelector("[data-rc-abort]")).not.toBeNull();
 		} finally {
 			await mounted.unmount();
 		}

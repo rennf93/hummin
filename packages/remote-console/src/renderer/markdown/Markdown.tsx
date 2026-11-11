@@ -11,6 +11,7 @@ import { capForDisplay, RENDER_CAP_CHARS } from "../display-caps.ts";
 import { TruncationNotice } from "../TruncationNotice.tsx";
 import { CodeBlock } from "./CodeBlock.tsx";
 import { parseMarkdown, type MdBlock, type MdSpan } from "./parse.ts";
+import "./markdown.css";
 
 export function Markdown({ text, className }: { text: string; className?: string }) {
 	const capped = capForDisplay(text, RENDER_CAP_CHARS);
@@ -45,12 +46,23 @@ function BlockView({ block }: { block: MdBlock }) {
 			);
 		case "list": {
 			const items = block.items.map((item, index) => (
-				<li key={index}>
-					{item.task !== null && <span className="rc-md-task">{item.task === "checked" ? "[x] " : "[ ] "}</span>}
-					{spans(item.spans, index)}
-					{item.blocks.map((inner, innerIndex) => (
-						<BlockView key={innerIndex} block={inner} />
-					))}
+				<li key={index} className={item.task === null ? undefined : "rc-md-task-item"}>
+					{item.task !== null && (
+						<span
+							className="rc-md-check"
+							role="img"
+							data-checked={item.task === "checked"}
+							aria-label={item.task === "checked" ? "completed" : "not completed"}
+						/>
+					)}
+					{item.blocks.map((inner, innerIndex) =>
+						// The leading paragraph renders inline (no <p>) so tight lists keep their spacing.
+						innerIndex === 0 && inner.kind === "paragraph" ? (
+							spans(inner.spans, index)
+						) : (
+							<BlockView key={innerIndex} block={inner} />
+						),
+					)}
 				</li>
 			));
 			return block.ordered ? (
@@ -65,15 +77,17 @@ function BlockView({ block }: { block: MdBlock }) {
 			return (
 				<div className="rc-md-table-wrap">
 					<table className="rc-md-table">
-						<thead>
-							<tr>
-								{block.head.map((cell, index) => (
-									<th key={index} style={cellAlign(block.align[index])}>
-										{spans(cell, index)}
-									</th>
-								))}
-							</tr>
-						</thead>
+						{block.head.some((cell) => cell.length > 0) && (
+							<thead>
+								<tr>
+									{block.head.map((cell, index) => (
+										<th key={index} style={cellAlign(block.align[index])}>
+											{spans(cell, index)}
+										</th>
+									))}
+								</tr>
+							</thead>
+						)}
 						<tbody>
 							{block.rows.map((row, rowIndex) => (
 								<tr key={rowIndex}>

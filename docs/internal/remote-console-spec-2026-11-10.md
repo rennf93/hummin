@@ -344,3 +344,47 @@ terminal notifications, TUI restyling, hummin core changes beyond none
    convenience surface, not a security boundary. Concurrent holds ride the
    wire as arrays (`holds`, oldest first) on snapshot and every approval
    publish, and `approval_done` removes one hold by id.
+
+## Addendum 2026-11-11: premium design pass
+
+- Default preset is now `studio` (quiet warm-neutral surfaces, Geist Sans for UI and prose, Geist Mono for code only, no blur, no ambient scene). `glass`, `paper`, and `terminal` stay as presets; installs that already saved a preset keep it.
+- `packages/remote-console/DESIGN.md` is the design contract: direction, design rules, token reference, primitives API (`src/ui/`), and the motion spec.
+- Composer behaviour change: Enter sends, Shift+Enter inserts a newline, and Cmd/Ctrl+Enter also sends.
+- A tool result with a matching tool call renders inside that call's row instead of as its own transcript row.
+- Demo mode: dev-only `/?demo=<fixture>` plays a scripted live turn against a fixture snapshot with a fake host; excluded from production builds (`import.meta.env.DEV` gate).
+- New dependency: `@fontsource/geist-sans` 5.3.0, pinned exact, for the studio UI font.
+
+## Addendum 2026-11-11 (2): hummin session stats, notices, activity, fleet
+
+- Wire: `WireStatus` gains optional `stats`, `workspace`, `autoCompact` and `version`; `SnapshotPayload.fleet` and the `fleet` and `activity` events are new. All additions are optional and additive, and `PROTOCOL_VERSION` stays 1.
+- Wire: `WireAgentMessage.customType` and bounded `details` carry extension custom messages in the snapshot and in live events.
+- Refresh: stats totals, cost and diff counts update at the end of each turn; `tokensPerSecond` updates about once a second while streaming and is null otherwise.
+- Fleet is read-only: the console lists configured local model servers and never starts, stops or probes one.
+- Discovery: `discovery` (fresh, stale, none) reports when the server was last seen in the fleet health file, not a live health probe.
+- Hidden messages: custom messages with `display: false` (such as memory recall) send their type and details only, never their text.
+- Drift: `lib/remote-console/stats.ts` copies the TUI footer's stats logic because the footer imports TUI code an extension cannot load; change both together.
+- Activity: `activity` events cover compaction and memory fold start, end and failed; they are not transcript entries.
+- Dev demo: `?demo=<fixture>` plays fake stats, a fake two-server fleet and a compaction activity; dev builds only.
+
+## Addendum 2026-11-11 (3): density removed, glass treatment restored
+
+- Density removed: the appearance panel edits preset, accent hue and motion only, saved as `{preset, accentHue, motion}`; this reverses the density part of the locked customization decision at the top of this spec, by the owner's decision on 2026-11-11; a stored density is ignored and its inline `--rc-density` is cleared, the token stays fixed at 1.
+- Pill re-measure: `SlidingPill` re-measures its thumb on a ResizeObserver over the track and option buttons, and when `document.fonts.ready` resolves.
+- Tok/s persistence and per-message footer: the header keeps the last measured rate, dimmed, after a reply until the session changes; each completed assistant message shows output tokens, duration and tokens per second when known.
+- Markdown rhythm: lists are flex columns with a 0.35em gap and coloured markers; task items draw a checkbox; tables are full width in an overflow wrapper with a tinted header; inline code and blockquotes use dedicated tokens.
+- Glass via component accent tokens: `--rc-md-*`, `--rc-pill-thumb-*`, `--rc-bubble-*`, `--rc-select-*`, `--rc-slider-*`, `--rc-bezel-gap`, `--rc-caret-opacity` and `--rc-ease-pill` are neutral in studio and carry the accent, blur and double bezel in glass; components never branch on the preset.
+
+## Addendum 2026-11-11 (4): defect hunt fixes
+
+- Live `message_end` events carry a unique non-empty `entryId` of the form `live:<slotKey>` because hummin emits the extension event before it persists the entry; a later snapshot replaces the list with real entry ids.
+- The snapshot carries an optional `activity` (the activity in progress, or the last failed one) so a console that connects mid-compaction shows it; compaction publishes start, then end (also for an abort that had a start) or failed, and a failure with no start publishes nothing.
+- Memory fold activity publishes start when the worker is spawned, end when it exits 0 (or is terminated by a signal), and failed for a non-zero exit; a fold held for dispatch review publishes nothing; every activity detail is capped at 200 characters.
+- Custom messages send text only when their `display` flag is truthy, matching the terminal; memory recall notices carry `lessonCount` only.
+- The snapshot window takes the last 200 message and custom-message entries (other entry types do not count); a malformed entry is skipped instead of emptying the snapshot.
+- The fleet list is omitted entirely when nothing is explicitly configured (no `HUMMIN_INSTANCES`, no `fleet.servers`, no explicit legacy local instances); the built-in default local addresses are never listed on their own.
+- Session totals, cost and diff are summed over every entry of the session file (all branches), like the terminal footer; todos come from the current branch.
+- `workspace.cwd` is sent with the home directory shown as `~`.
+- Tool partial-result updates are throttled to one per 250 ms per tool call; the last partial always arrives before the tool's end event.
+- The console server's Content-Security-Policy includes `font-src 'self'` and serves `.woff`; the bundled Geist fonts depend on it.
+- `scripts/sync-extensions.sh` copies the `extensions/lib/` tree recursively (it previously skipped `lib/remote-console/`).
+- Known limits: tabbing into the transcript focuses its first focusable row (the top of the list); the paper accent fails contrast for yellow-green hues (the hue is user-chosen); the segmented thumb still transitions `width`; the workspace branch refreshes only when the agent settles.

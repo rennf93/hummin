@@ -36,6 +36,7 @@ const ASSET_TYPES: Record<string, string> = {
 	".jpg": "image/jpeg",
 	".ico": "image/x-icon",
 	".woff2": "font/woff2",
+	".woff": "font/woff",
 	".json": "application/json",
 	".map": "application/json",
 	".txt": "text/plain; charset=utf-8",
@@ -358,7 +359,7 @@ function servePageOrAsset(
 			}
 			response.setHeader(
 				"Content-Security-Policy",
-				`default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ${registry.join(" ")}; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
+				`default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ${registry.join(" ")}; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
 			);
 			response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
 			response.end(page);

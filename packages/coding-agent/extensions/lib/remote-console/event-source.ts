@@ -17,7 +17,9 @@ import {
 	type SnapshotPayload,
 	type StreamDeltaEvent,
 	type ToolUpdatePayload,
+	type WireStats,
 	type WireStatus,
+	type WireWorkspace,
 } from "./protocol.ts";
 
 /** Newest events the log retains before the oldest are dropped. Same bound as
@@ -235,10 +237,23 @@ export interface StatusSource {
 	getContextUsage?: () => { tokens: number | null; contextWindow: number; percent: number | null } | undefined;
 }
 
+/** Optional status fields computed by the wiring layer (stats cache, workspace
+ * cache, settings); each is already omitted when unreadable. */
+export interface StatusExtras {
+	stats?: WireStats | undefined;
+	workspace?: WireWorkspace | undefined;
+	autoCompact?: boolean | undefined;
+	version?: string | undefined;
+}
+
 /** Build the wire status from the live context. Fail-open: an unreadable
  * context degrades to a minimal status instead of throwing into the event
  * path. */
-export function wireStatus(ctx: StatusSource | undefined, waitingTitle: string | undefined): WireStatus {
+export function wireStatus(
+	ctx: StatusSource | undefined,
+	waitingTitle: string | undefined,
+	extras: StatusExtras = {},
+): WireStatus {
 	const detail = waitingTitle ? `Waiting in terminal: ${waitingTitle}` : undefined;
 	try {
 		const usage = ctx?.getContextUsage?.();
@@ -248,6 +263,10 @@ export function wireStatus(ctx: StatusSource | undefined, waitingTitle: string |
 			model: ctx?.model ? { provider: ctx.model.provider, modelId: ctx.model.id } : null,
 			...(ctx?.thinkingLevel !== undefined ? { thinkingLevel: ctx.thinkingLevel } : {}),
 			...(usage ? { contextUsage: { tokens: usage.tokens, contextWindow: usage.contextWindow, percent: usage.percent } } : {}),
+			...(extras.stats ? { stats: extras.stats } : {}),
+			...(extras.workspace ? { workspace: extras.workspace } : {}),
+			...(extras.autoCompact !== undefined ? { autoCompact: extras.autoCompact } : {}),
+			...(extras.version !== undefined ? { version: extras.version } : {}),
 		};
 	} catch {
 		return { kind: waitingTitle ? "waiting" : "idle", ...(detail ? { detail } : {}), model: null };

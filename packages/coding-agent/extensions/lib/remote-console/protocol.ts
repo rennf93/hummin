@@ -64,6 +64,12 @@ export interface WireAgentMessage {
 	durationMs?: number;
 	stopReason?: string;
 	usage?: { input: number; output: number; total: number };
+	/** Extension message type for role "custom" (e.g. "hummin-memory-recall",
+	 * "hummin-monitor", "hummin-task"); the console renders known types as
+	 * typed notices. */
+	customType?: string;
+	/** Bounded, JSON-safe details of a custom message (scalars and short arrays only). */
+	details?: Record<string, unknown>;
 	blocks: WireContentBlock[];
 }
 
@@ -89,6 +95,60 @@ export interface WireStatus {
 	model: WireModelRef | null;
 	thinkingLevel?: string;
 	contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
+	stats?: WireStats;
+	workspace?: WireWorkspace;
+	/** Auto-compaction is enabled for this session. */
+	autoCompact?: boolean;
+	/** hummin version string. */
+	version?: string;
+}
+
+/** Session totals as the terminal footer shows them. Every field is optional:
+ * a value the extension cannot read is omitted, never guessed. */
+export interface WireStats {
+	/** Summed over every entry of the session file, all branches, like the terminal
+	 * footer (assistant, tool, usage and compaction usage). */
+	tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+	/** Latest assistant message: cacheRead / (input + cacheRead + cacheWrite), 0-100. */
+	cacheHitPercent?: number | null;
+	costUsd?: number;
+	/** Output tokens per second while a message streams; null when nothing streams. */
+	tokensPerSecond?: number | null;
+	/** Lines added and removed by edit and write tool results, all branches. */
+	diff?: { added: number; removed: number };
+	/** Latest todo list on the current branch: completed items over all items. */
+	todos?: { done: number; total: number };
+}
+
+export interface WireWorkspace {
+	cwd: string;
+	/** Repository directory name, when cwd is inside a git work tree. */
+	repo?: string;
+	branch?: string;
+}
+
+/** One configured local model server (hummin fleet). Read-only on the wire:
+ * the console never starts, stops or reconfigures a server. */
+export interface WireFleetServer {
+	/** Fleet provider id: `<engine>-<host>-<port>`. */
+	id: string;
+	engine: string;
+	host: string;
+	port: number;
+	/** The server's record in the fleet health file, written at discovery: "fresh"
+	 * (seen within hummin's freshness window), "stale" (older), "none" (no record).
+	 * This is when the server was last seen, not a live health probe. */
+	discovery: "fresh" | "stale" | "none";
+	models: string[];
+	/** True when the session's current model is served by this server. */
+	active: boolean;
+}
+
+/** A transient background activity the transcript does not carry. */
+export interface WireActivity {
+	kind: "compaction" | "memory_fold";
+	phase: "start" | "end" | "failed";
+	detail?: string;
 }
 
 /** A tool call held open by the remote approval surface. */
@@ -126,6 +186,11 @@ export interface SnapshotPayload {
 	/** Every pending hold, oldest first. */
 	holds: WireApproval[];
 	queue: WireQueue;
+	/** Configured fleet servers; omitted when no fleet is configured. */
+	fleet?: WireFleetServer[];
+	/** The background activity in progress (or the last failure) at snapshot
+	 * time, so a console that connects mid-activity still shows it. */
+	activity?: WireActivity;
 }
 
 export interface MessageStartPayload {
@@ -180,6 +245,15 @@ export interface QueuePayload {
 	queue: WireQueue;
 }
 
+export interface FleetPayload {
+	/** The full server list at publish time; the client replaces its slice. */
+	servers: WireFleetServer[];
+}
+
+export interface ActivityPayload {
+	activity: WireActivity;
+}
+
 export interface SessionPayload {
 	sessionId: string;
 	sessionName: string;
@@ -196,6 +270,8 @@ export type RemoteEventType =
 	| "approval_done"
 	| "queue"
 	| "session"
+	| "fleet"
+	| "activity"
 	| "ping";
 
 export type RemoteEventPayloadMap = {
@@ -209,6 +285,8 @@ export type RemoteEventPayloadMap = {
 	approval_done: ApprovalDonePayload;
 	queue: QueuePayload;
 	session: SessionPayload;
+	fleet: FleetPayload;
+	activity: ActivityPayload;
 	ping: Record<string, never>;
 };
 

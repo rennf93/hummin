@@ -1,0 +1,181 @@
+/* approval card: sits above the composer container at the same width. The warn
+   bar across the top depletes over the hold's lifetime; the alert icon and the
+   "approval" chip carry the state, never colour alone. */
+/* live region wrapper: the list stacks cards like the footer does; empty, it
+   cancels the footer gap so it costs no space */
+.rc-approval-list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-2);
+}
+
+.rc-approval-list:empty {
+	margin-bottom: calc(-1 * var(--rc-space-2));
+}
+
+.rc-approval {
+	position: relative;
+	z-index: 0;
+	display: flex;
+	align-items: flex-start;
+	flex-wrap: wrap;
+	gap: var(--rc-space-2) var(--rc-space-3);
+	overflow: hidden;
+	background: var(--rc-raised);
+	border: var(--rc-hairline-width) solid var(--rc-hairline);
+	border-radius: var(--rc-radius-xl);
+	padding: calc(var(--rc-space-3) + var(--rc-bezel-gap)) calc(var(--rc-space-4) + var(--rc-bezel-gap));
+	backdrop-filter: var(--rc-blur);
+	box-shadow: inset 0 1px 0 var(--rc-glass-highlight);
+	animation: rc-approval-in var(--rc-duration-base) var(--rc-ease-spring) both;
+}
+
+/* inner core of the double bezel (no blur of its own) */
+.rc-approval::before {
+	content: "";
+	position: absolute;
+	inset: var(--rc-bezel-gap);
+	z-index: -1;
+	border-radius: var(--rc-radius-xl-inner);
+	background: var(--rc-core-tint);
+	border: var(--rc-hairline-width) solid var(--rc-core-border);
+	box-shadow: inset 0 1px 1px var(--rc-core-highlight);
+	pointer-events: none;
+}
+
+@keyframes rc-approval-in {
+	from {
+		opacity: 0;
+		transform: translateY(var(--rc-space-3));
+	}
+}
+
+/* duration is the inline per-hold remaining lifetime (the one computed value) */
+.rc-approval-bar {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 2px;
+	background: var(--rc-warn);
+	transform-origin: left;
+	animation: rc-approval-drain 1ms linear both;
+}
+
+@keyframes rc-approval-drain {
+	to {
+		transform: scaleX(0);
+	}
+}
+
+/* motion off or reduced: the bar just stays full */
+:root[data-rc-motion="off"] .rc-approval-bar {
+	animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.rc-approval-bar {
+		animation: none;
+	}
+}
+
+.rc-approval-glyph {
+	align-self: flex-start;
+	color: var(--rc-warn);
+}
+
+.rc-approval-body {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-1);
+	flex: 1;
+	min-width: 12rem;
+	/* baseline-aligns with the countdown: a lone baseline item has nothing to align to and sits at the line top */
+	align-self: baseline;
+}
+
+.rc-approval-title {
+	display: inline-flex;
+	align-items: baseline;
+	gap: var(--rc-space-2);
+	flex-wrap: wrap;
+	font-size: var(--rc-text-base);
+	font-weight: var(--rc-weight-medium);
+	color: var(--rc-fg);
+}
+
+.rc-approval-label {
+	background: var(--rc-warn-faint);
+	color: var(--rc-warn);
+	border-radius: var(--rc-radius-sm);
+	padding: 0 var(--rc-space-2);
+	font-size: var(--rc-text-xs);
+	font-weight: var(--rc-weight-medium);
+	text-transform: var(--rc-label-transform);
+	letter-spacing: var(--rc-label-tracking);
+}
+
+.rc-approval-tool {
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-sm);
+}
+
+.rc-approval-args {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-sm);
+	line-height: var(--rc-leading-ui);
+	color: var(--rc-fg-dim);
+}
+
+/* two lines until expanded; an expanded or short preview is never clamped */
+.rc-approval-args[data-rc-approval-args="clamped"] {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	line-clamp: 2;
+	overflow: hidden;
+}
+
+.rc-approval-more {
+	align-self: flex-start;
+	padding: 0;
+	background: none;
+	border: 0;
+	color: var(--rc-fg-dim);
+	font: inherit;
+	font-size: var(--rc-text-xs);
+	cursor: pointer;
+}
+
+.rc-approval-more:hover {
+	color: var(--rc-fg);
+}
+
+.rc-approval-error {
+	font-size: var(--rc-text-xs);
+	line-height: var(--rc-leading-ui);
+	color: var(--rc-bad);
+}
+
+.rc-approval-hint {
+	font-size: var(--rc-text-xs);
+	line-height: var(--rc-leading-ui);
+	color: var(--rc-fg-faint);
+}
+
+.rc-approval-countdown {
+	flex: none;
+	align-self: baseline;
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-xs);
+	color: var(--rc-fg-faint);
+	font-variant-numeric: tabular-nums;
+}
+
+.rc-approval-actions {
+	flex: none;
+	display: inline-flex;
+	gap: var(--rc-space-1);
+}

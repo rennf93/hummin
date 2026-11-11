@@ -81,7 +81,8 @@ describe("tokens gate", () => {
 		for (const file of files) {
 			const text = readFileSync(file, "utf8");
 			for (const match of text.matchAll(/var\((--rc-[a-z0-9-]+)/g)) {
-				if (!defined.has(match[1])) unresolved.push(`${file.replace(`${SRC}/`, "")}: ${match[1]}`);
+				const token = match[1];
+				if (token !== undefined && !defined.has(token)) unresolved.push(`${file.replace(`${SRC}/`, "")}: ${token}`);
 			}
 		}
 		expect(unresolved).toEqual([]);

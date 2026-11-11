@@ -1,0 +1,401 @@
+/* appearance overlay: scrim, sheet, preview, swatches, sliders. Scrim fades; the
+   sheet slides in and both leave through usePresence (data-state="closed"). */
+.rc-appear {
+	position: fixed;
+	inset: 0;
+	z-index: 40;
+	display: flex;
+	justify-content: flex-end;
+}
+
+.rc-appear[data-state="closed"] {
+	pointer-events: none;
+}
+
+.rc-appear-scrim {
+	position: absolute;
+	inset: 0;
+	background: var(--rc-scrim);
+	animation: rc-scrim-in var(--rc-duration-slow) var(--rc-ease-out) both;
+}
+
+.rc-appear-scrim[data-state="closed"] {
+	animation: rc-scrim-out var(--rc-duration-exit) var(--rc-ease-in) both;
+}
+
+@keyframes rc-scrim-in {
+	from {
+		opacity: 0;
+	}
+}
+
+@keyframes rc-scrim-out {
+	to {
+		opacity: 0;
+	}
+}
+
+.rc-appear-panel {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	right: 0;
+	width: min(22rem, 94vw);
+	background: var(--rc-overlay);
+	border-radius: var(--rc-radius-lg) 0 0 var(--rc-radius-lg);
+	backdrop-filter: var(--rc-blur-overlay);
+	box-shadow: inset 0 1px 0 var(--rc-glass-highlight), var(--rc-shadow-raise);
+	overflow-y: auto;
+	padding: var(--rc-space-4);
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-5);
+	animation: rc-panel-in var(--rc-duration-slow) var(--rc-ease-out) backwards;
+}
+
+.rc-appear-panel[data-state="closed"] {
+	animation: rc-panel-out var(--rc-duration-exit) var(--rc-ease-in) both;
+}
+
+/* the panel takes programmatic focus for a11y; the global focus ring would
+   frame the whole panel, so focus keeps the panel's normal shadow */
+.rc-appear-panel:focus,
+.rc-appear-panel:focus-visible {
+	outline: none;
+	box-shadow: inset 0 1px 0 var(--rc-glass-highlight), var(--rc-shadow-raise);
+}
+
+@keyframes rc-panel-in {
+	from {
+		opacity: 0;
+		transform: translateX(1.5rem);
+	}
+}
+
+@keyframes rc-panel-out {
+	to {
+		opacity: 0;
+		transform: translateX(1.5rem);
+	}
+}
+
+/* phone: the panel becomes a bottom sheet so the console peeks above it */
+@media (width < 900px) {
+	.rc-appear {
+		align-items: flex-end;
+	}
+
+	.rc-appear-panel {
+		top: auto;
+		right: 0;
+		left: 0;
+		width: 100%;
+		max-height: 82dvh;
+		border-radius: var(--rc-radius-lg) var(--rc-radius-lg) 0 0;
+		animation-name: rc-sheet-in;
+	}
+
+	.rc-appear-panel[data-state="closed"] {
+		animation-name: rc-sheet-out;
+	}
+}
+
+@keyframes rc-sheet-in {
+	from {
+		opacity: 0;
+		transform: translateY(1.5rem);
+	}
+}
+
+@keyframes rc-sheet-out {
+	to {
+		opacity: 0;
+		transform: translateY(1.5rem);
+	}
+}
+
+.rc-appear-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--rc-space-2);
+}
+
+.rc-appear-title {
+	margin: 0;
+	font-size: var(--rc-text-md);
+	font-weight: var(--rc-weight-medium);
+	color: var(--rc-fg);
+}
+
+/* live preview: a user bubble, a status word and a primary button, rendered
+   with the current tokens so edits read instantly */
+.rc-appear-preview {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-3);
+}
+
+/* double-bezel trays inside the sheet: shell highlight and padding step, inner core
+   as a pseudo-element. With --rc-bezel-gap 0 (studio, paper, terminal) the tray has no
+   padding and a transparent core, so it is not a box at all; the sheet gap spaces it.
+   With a gap (glass) the padding is three gaps, so content clears the core edge.
+   No blur here: the sheet already blurs, and layers must not stack. */
+.rc-appear-preview,
+.rc-appear-group {
+	position: relative;
+	z-index: 0;
+	padding: calc(var(--rc-bezel-gap) * 3);
+	border-radius: var(--rc-radius-md);
+	box-shadow: inset 0 1px 0 var(--rc-glass-highlight);
+}
+
+.rc-appear-preview::before,
+.rc-appear-group::before {
+	content: "";
+	position: absolute;
+	inset: var(--rc-bezel-gap);
+	z-index: -1;
+	border-radius: var(--rc-radius-md-inner);
+	background: var(--rc-core-tint);
+	border: 1px solid var(--rc-core-border);
+	box-shadow: inset 0 1px 1px var(--rc-core-highlight);
+	pointer-events: none;
+}
+
+.rc-appear-preview-msg {
+	align-self: flex-end;
+	max-width: 80%;
+	background: var(--rc-raised);
+	border-radius: var(--rc-radius-md);
+	padding: var(--rc-space-2) var(--rc-space-3);
+	font-size: var(--rc-text-base);
+	line-height: var(--rc-leading-ui);
+	color: var(--rc-fg);
+}
+
+.rc-appear-preview-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--rc-space-2);
+}
+
+.rc-appear-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--rc-space-2);
+	font-size: var(--rc-text-sm);
+	color: var(--rc-fg-dim);
+}
+
+.rc-appear-group {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-2);
+}
+
+.rc-appear-label-row {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--rc-space-2);
+}
+
+.rc-appear-value {
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-xs);
+	color: var(--rc-fg-dim);
+	font-variant-numeric: tabular-nums;
+}
+
+/* preset swatches: each button carries data-rc-preset so its subtree
+   re-resolves the real tokens of that preset. Colours are set explicitly on
+   the root because custom properties alone do not change inherited colour. */
+.rc-appear-swatches {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: var(--rc-space-2);
+}
+
+.rc-appear-swatch {
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-2);
+	background: var(--rc-base);
+	color: var(--rc-fg);
+	border: 0;
+	box-shadow: inset 0 0 0 var(--rc-hairline-width) var(--rc-hairline);
+	border-radius: var(--rc-radius-md);
+	padding: var(--rc-space-2);
+	cursor: pointer;
+	font: inherit;
+	/* each swatch re-resolves --rc-font-ui from its own data-rc-preset */
+	font-family: var(--rc-font-ui);
+	transition:
+		box-shadow var(--rc-duration-fast) var(--rc-ease-out),
+		transform var(--rc-duration-press) var(--rc-ease-out);
+}
+
+.rc-appear-swatch:hover {
+	box-shadow: inset 0 0 0 var(--rc-hairline-width) var(--rc-hairline-strong);
+}
+
+.rc-appear-swatch:active {
+	transform: scale(0.98);
+}
+
+.rc-appear-swatch:focus-visible {
+	outline: 1px solid var(--rc-primary);
+	outline-offset: 2px;
+	box-shadow: var(--rc-focus-ring);
+}
+
+.rc-appear-swatch[aria-pressed="true"] {
+	background: var(--rc-select-fill);
+	box-shadow: inset 0 0 0 2px var(--rc-select-border);
+}
+
+.rc-appear-swatch-chip {
+	display: flex;
+	flex-direction: column;
+	justify-content: flex-end;
+	gap: var(--rc-space-1);
+	min-height: 3rem;
+	background: var(--rc-raised);
+	border-radius: max(0px, calc(var(--rc-radius-md) - var(--rc-space-2)));
+	padding: var(--rc-space-2);
+}
+
+.rc-appear-swatch-line {
+	display: block;
+	width: 72%;
+	height: 3px;
+	border-radius: var(--rc-radius-round);
+	background: var(--rc-fg-faint);
+}
+
+.rc-appear-swatch-line:last-of-type {
+	width: 48%;
+}
+
+.rc-appear-swatch-dot {
+	align-self: flex-end;
+	width: var(--rc-dot-size);
+	height: var(--rc-dot-size);
+	border-radius: var(--rc-radius-round);
+	background: var(--rc-primary);
+}
+
+.rc-appear-swatch-name {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	font-family: var(--rc-font-ui);
+	font-size: var(--rc-text-sm);
+	font-weight: var(--rc-weight-medium);
+	color: var(--rc-fg-dim);
+}
+
+.rc-appear-swatch .rc-appear-swatch-check {
+	flex: none;
+	width: var(--rc-icon-sm);
+	height: var(--rc-icon-sm);
+	margin-inline-start: var(--rc-space-2);
+	color: var(--rc-primary);
+}
+
+.rc-appear-swatch[aria-pressed="true"] .rc-appear-swatch-name {
+	color: var(--rc-fg);
+}
+
+/* sliders: 3px hue-spectrum track, round thumb sized and glowed by tokens. The
+   input is taller than the track so the hit area is comfortable. */
+.rc-appear-slider {
+	appearance: none;
+	width: 100%;
+	height: 1.75rem;
+	margin: 0;
+	background: transparent;
+	cursor: pointer;
+}
+
+@media (pointer: coarse) {
+	.rc-appear-slider {
+		height: 2.75rem;
+	}
+}
+
+.rc-appear-slider::-webkit-slider-runnable-track {
+	height: 3px;
+	border-radius: var(--rc-radius-round);
+	background: var(--rc-hue-spectrum);
+}
+
+.rc-appear-slider::-moz-range-track {
+	height: 3px;
+	border-radius: var(--rc-radius-round);
+	background: var(--rc-hue-spectrum);
+}
+
+.rc-appear-slider::-webkit-slider-thumb {
+	appearance: none;
+	box-sizing: border-box;
+	width: var(--rc-slider-thumb-size);
+	height: var(--rc-slider-thumb-size);
+	margin-top: calc((3px - var(--rc-slider-thumb-size)) / 2);
+	border: 2px solid var(--rc-surface-solid);
+	border-radius: var(--rc-radius-round);
+	background: var(--rc-slider-thumb);
+	box-shadow: var(--rc-shadow-thumb), var(--rc-thumb-glow);
+	transition: transform var(--rc-duration-press) var(--rc-ease-out);
+}
+
+.rc-appear-slider:hover::-webkit-slider-thumb {
+	transform: scale(1.15);
+}
+
+.rc-appear-slider::-moz-range-thumb {
+	box-sizing: border-box;
+	width: var(--rc-slider-thumb-size);
+	height: var(--rc-slider-thumb-size);
+	border: 2px solid var(--rc-surface-solid);
+	border-radius: var(--rc-radius-round);
+	background: var(--rc-slider-thumb);
+	box-shadow: var(--rc-shadow-thumb), var(--rc-thumb-glow);
+	transition: transform var(--rc-duration-press) var(--rc-ease-out);
+}
+
+.rc-appear-slider:hover::-moz-range-thumb {
+	transform: scale(1.15);
+}
+
+.rc-appear-slider:active::-webkit-slider-thumb {
+	transform: scale(0.92);
+}
+
+.rc-appear-slider:active::-moz-range-thumb {
+	transform: scale(0.92);
+}
+
+/* the thumb carries the focus ring; the global ring would frame the whole input */
+.rc-appear-slider:focus-visible {
+	outline: none;
+	box-shadow: none;
+}
+
+.rc-appear-slider:focus-visible::-webkit-slider-thumb {
+	box-shadow: var(--rc-shadow-thumb), var(--rc-thumb-glow), var(--rc-focus-ring);
+}
+
+.rc-appear-slider:focus-visible::-moz-range-thumb {
+	box-shadow: var(--rc-shadow-thumb), var(--rc-thumb-glow), var(--rc-focus-ring);
+}
+
+.rc-appear-hint {
+	margin: 0;
+	font-size: var(--rc-text-xs);
+	line-height: var(--rc-leading-ui);
+	color: var(--rc-fg-faint);
+}

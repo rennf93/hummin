@@ -73,7 +73,6 @@ export interface MdQuote {
 }
 
 export interface MdListItem {
-	spans: MdSpan[];
 	task: "checked" | "unchecked" | null;
 	blocks: MdBlock[];
 }
@@ -112,7 +111,6 @@ interface ListItemMatch {
 }
 
 interface ListProgress {
-	spans: MdSpan[];
 	task: "checked" | "unchecked" | null;
 	contentLines: string[];
 }
@@ -298,11 +296,11 @@ function consumeList(lines: readonly string[], start: number): [MdList, number] 
 function startItem(item: ListItemMatch): ListProgress {
 	const task = /^\[([ xX])\]\s+/.exec(item.text);
 	if (task === null) {
-		return { spans: parseInline(item.text), task: null, contentLines: [item.text] };
+		return { task: null, contentLines: [item.text] };
 	}
 	const checked = (task[1] ?? "") !== " ";
 	const body = item.text.slice(task[0].length);
-	return { spans: parseInline(body), task: checked ? "checked" : "unchecked", contentLines: [body] };
+	return { task: checked ? "checked" : "unchecked", contentLines: [body] };
 }
 
 function finishList(first: ListItemMatch, items: ListProgress[]): MdList {
@@ -310,7 +308,10 @@ function finishList(first: ListItemMatch, items: ListProgress[]): MdList {
 		kind: "list",
 		ordered: first.ordered,
 		start: first.ordered ? first.number : 1,
-		items: items.map((item) => ({ spans: item.spans, task: item.task, blocks: parseBlocks(item.contentLines) })),
+		items: items.map((item) => ({
+			task: item.task,
+			blocks: parseBlocks(item.contentLines),
+		})),
 	};
 }
 

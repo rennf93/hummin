@@ -37,6 +37,9 @@ export interface LiveSlot {
 	entryId: string | null;
 	frozen: boolean;
 	role: WireAgentMessage["role"];
+	/** Extension notice type and bounded details of a custom message. */
+	customType?: string;
+	details?: Record<string, unknown>;
 	blocks: LiveSlotBlock[];
 	durationMs?: number;
 	stopReason?: string;
@@ -65,6 +68,8 @@ function startSlot(slotKey: string, message: WireAgentMessage): LiveSlot {
 		entryId: null,
 		frozen: false,
 		role: message.role,
+		customType: message.customType,
+		details: message.details,
 		blocks: message.blocks.map(emptyLiveBlock),
 		durationMs: message.durationMs,
 		stopReason: message.stopReason,
@@ -78,6 +83,8 @@ function endSlot(slot: LiveSlot, payload: { entryId: string; message: WireAgentM
 		entryId: payload.entryId,
 		frozen: true,
 		role: payload.message.role,
+		customType: payload.message.customType,
+		details: payload.message.details,
 		blocks: payload.message.blocks.map(emptyLiveBlock),
 		durationMs: payload.message.durationMs,
 		stopReason: payload.message.stopReason,
@@ -95,7 +102,12 @@ function emptyLiveBlock(block: WireContentBlock): LiveSlotBlock {
 	return block;
 }
 
+/** Largest wire contentIndex the slot will pad up to; anything else is a hostile or corrupt delta. */
+const MAX_CONTENT_INDEX = 255;
+
 function applyDelta(slot: LiveSlot, event: StreamDeltaEvent): LiveSlot {
+	const index: unknown = event.contentIndex;
+	if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > MAX_CONTENT_INDEX) return slot;
 	if (event.type === "text_delta")
 		return { ...slot, blocks: appendDelta(slot.blocks, event.contentIndex, event.delta, "text") };
 	if (event.type === "thinking_delta") {

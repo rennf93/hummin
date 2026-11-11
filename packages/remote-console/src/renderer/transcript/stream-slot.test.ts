@@ -164,3 +164,21 @@ describe("stream slot", () => {
 		expect(replaced?.slotKey).not.toBe(slot.slotKey);
 	});
 });
+
+describe("stream slot contentIndex guard", () => {
+	it("ignores deltas whose contentIndex is not an integer in 0..255", () => {
+		const opened = applyStreamEvent(null, start("k", EMPTY_ASSISTANT));
+		for (const contentIndex of [-1, 1.5, 256, 1e9, Number.NaN, Number.POSITIVE_INFINITY]) {
+			for (const event of [
+				{ type: "text_delta", contentIndex, delta: "x" },
+				{ type: "thinking_delta", contentIndex, delta: "x" },
+				{ type: "toolcall_start", contentIndex },
+			] as const) {
+				const next = applyStreamEvent(opened, delta("k", event));
+				expect(next, `${event.type} ${contentIndex}`).toBe(opened);
+			}
+		}
+		const ok = applyStreamEvent(opened, delta("k", { type: "text_delta", contentIndex: 255, delta: "x" }));
+		expect(ok?.blocks.length).toBe(256);
+	});
+});

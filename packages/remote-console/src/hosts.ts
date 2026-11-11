@@ -4,7 +4,7 @@
  * origin, and the bearer token. Tokens live only in this browser and are sent
  * only as the Authorization header to their own host. Appearance preferences
  * (localStorage key "rc.appearance") carry the Phase D panel shape now:
- * preset, accent hue, density, and motion axes, applied to the document root
+ * preset, accent hue, and motion axes, applied to the document root
  * by App.
  */
 /// <reference lib="dom" />
@@ -19,18 +19,17 @@ export interface HostEntry {
 	token: string;
 }
 
-export type RemoteConsolePreset = "glass" | "paper" | "terminal";
+export type RemoteConsolePreset = "studio" | "glass" | "paper" | "terminal";
 
 export type MotionPreference = "auto" | "off";
 
 export interface Appearance {
 	preset: RemoteConsolePreset;
 	accentHue: number;
-	density: number;
 	motion: MotionPreference;
 }
 
-export const DEFAULT_APPEARANCE: Appearance = { preset: "glass", accentHue: 190, density: 1, motion: "auto" };
+export const DEFAULT_APPEARANCE: Appearance = { preset: "studio", accentHue: 190, motion: "auto" };
 
 /** Last seen event older than this marks a connected stream stale. */
 export const STALE_AFTER_MS = 30_000;
@@ -40,6 +39,26 @@ export const STALE_AFTER_MS = 30_000;
 export function normalizeOrigin(raw: string): string {
 	return raw.trim().replace(/\/+$/, "");
 }
+
+const ORIGIN_ERROR = "origin must be an http(s) URL, e.g. http://127.0.0.1:8080";
+
+/** Strict origin: an absolute http(s) URL reduced to `url.origin`, so
+ * `http://x` and `http://x:80` are one host. Throws on anything else. */
+function parseOrigin(raw: string): string {
+	let url: URL;
+	try {
+		url = new URL(raw.trim());
+	} catch {
+		throw new Error(ORIGIN_ERROR);
+	}
+	if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(ORIGIN_ERROR);
+	return url.origin;
+}
+
+/** The /remote-control URL fragment is the server's token: 32 random bytes as
+ * hex (extensions/lib/remote-console/index.ts). Accepting any base64url-safe
+ * string of 32+ characters stays conservative without pinning the encoding. */
+const TOKEN_FORMAT = /^[A-Za-z0-9_-]{32,}$/;
 
 /** Parses raw localStorage JSON into entries. Unparsable or malformed records
  * are dropped (the registry is a trust boundary: values come from storage). */
@@ -55,7 +74,10 @@ export function parseHosts(raw: string | null): HostEntry[] {
 	const hosts: HostEntry[] = [];
 	for (const item of parsed) {
 		const entry = parseHost(item);
-		if (entry !== null) hosts.push(entry);
+		if (entry === null) continue;
+		// Later entries repeating an id or origin are dropped: ids key the store, origins key the connection.
+		if (hosts.some((host) => host.id === entry.id || host.origin === entry.origin)) continue;
+		hosts.push(entry);
 	}
 	return hosts;
 }
@@ -64,7 +86,12 @@ function parseHost(item: unknown): HostEntry | null {
 	if (typeof item !== "object" || item === null) return null;
 	const record = item as Record<string, unknown>;
 	const id = typeof record.id === "string" ? record.id : "";
-	const origin = typeof record.origin === "string" ? normalizeOrigin(record.origin) : "";
+	let origin = "";
+	try {
+		origin = typeof record.origin === "string" ? parseOrigin(record.origin) : "";
+	} catch {
+		return null;
+	}
 	const token = typeof record.token === "string" ? record.token : "";
 	const label =
 		typeof record.label === "string" && record.label.trim() !== "" ? record.label.trim() : hostLabel(origin);
@@ -97,10 +124,10 @@ function writeHosts(hosts: readonly HostEntry[]): void {
 	}
 }
 
-/** Adds a host with a fresh id; the origin must parse as an absolute URL. */
+/** Adds a host with a fresh id; the origin must be an absolute http(s) URL. */
 export function addHost(input: { label: string; origin: string; token: string }): HostEntry {
-	const origin = normalizeOrigin(input.origin);
-	if (origin === "") throw new Error("origin is required");
+	if (input.origin.trim() === "") throw new Error("origin is required");
+	const origin = parseOrigin(input.origin);
 	if (input.token.trim() === "") throw new Error("token is required");
 	const hosts = listHosts();
 	if (hosts.some((host) => host.origin === origin)) throw new Error(`host for ${origin} already exists`);
@@ -119,12 +146,14 @@ export function updateHost(id: string, patch: Partial<Pick<HostEntry, "label" | 
 	const hosts = listHosts();
 	const next = hosts.map((host) => {
 		if (host.id !== id) return host;
-		const origin = patch.origin !== undefined ? normalizeOrigin(patch.origin) : host.origin;
+		const origin = patch.origin !== undefined ? parseOrigin(patch.origin) : host.origin;
+		if (origin !== host.origin && hosts.some((other) => other.origin === origin))
+			throw new Error(`host for ${origin} already exists`);
 		return {
 			...host,
 			label: patch.label !== undefined && patch.label.trim() !== "" ? patch.label.trim() : host.label,
 			origin,
-			token: patch.token !== undefined && patch.token.trim() !== "" ? patch.token : host.token,
+			token: patch.token !== undefined && patch.token.trim() !== "" ? patch.token.trim() : host.token,
 		};
 	});
 	writeHosts(next);
@@ -143,10 +172,11 @@ export function removeHost(id: string): void {
  * unavailable (private mode, full quota) the entry is still returned so the
  * session connects, and the fragment is stripped from the address bar either
  * way - the token must never stay in the URL or history. Returns the adopted
- * entry, or null when the fragment carries no token. */
+ * entry, or null when the fragment is not a server token. */
 export function adoptLocalHost(fragment: string, location: Location, history: History): HostEntry | null {
 	const token = fragment.replace(/^#/, "").trim();
-	if (token === "") return null;
+	// Any other fragment (an anchor, a foreign token) is not ours: leave it in the URL.
+	if (!TOKEN_FORMAT.test(token)) return null;
 	const origin = normalizeOrigin(location.origin);
 	const existing = listHosts().find((host) => host.origin === origin);
 	let entry: HostEntry;
@@ -181,11 +211,11 @@ export function parseAppearance(raw: string | null): Appearance {
 	}
 	if (typeof parsed !== "object" || parsed === null) return DEFAULT_APPEARANCE;
 	const record = parsed as Record<string, unknown>;
-	const preset = record.preset === "paper" || record.preset === "terminal" ? record.preset : "glass";
+	const preset: RemoteConsolePreset =
+		record.preset === "glass" || record.preset === "paper" || record.preset === "terminal" ? record.preset : "studio";
 	const accentHue = numberInRange(record.accentHue, 0, 360, DEFAULT_APPEARANCE.accentHue);
-	const density = numberInRange(record.density, 0.5, 2, DEFAULT_APPEARANCE.density);
 	const motion: MotionPreference = record.motion === "off" ? "off" : "auto";
-	return { preset, accentHue, density, motion };
+	return { preset, accentHue, motion };
 }
 
 function numberInRange(value: unknown, min: number, max: number, fallback: number): number {
@@ -197,12 +227,6 @@ function numberInRange(value: unknown, min: number, max: number, fallback: numbe
 export function clampAccentHue(value: number): number {
 	if (!Number.isFinite(value)) return DEFAULT_APPEARANCE.accentHue;
 	return Math.min(360, Math.max(0, Math.round(value)));
-}
-
-/** Live-edit clamp for the density axis: the 0.05 grid between 0.5 and 2. */
-export function clampDensity(value: number): number {
-	if (!Number.isFinite(value)) return DEFAULT_APPEARANCE.density;
-	return Math.min(2, Math.max(0.5, Math.round(value * 20) / 20));
 }
 
 /** Reads the appearance prefs from localStorage. */
@@ -221,11 +245,12 @@ export function saveAppearance(appearance: Appearance): void {
 }
 
 /** Applies appearance prefs to the document root: the preset switches the
- * token sheet via data-rc-preset; the two axes are root custom properties;
+ * token sheet via data-rc-preset; the hue axis is a root custom property;
  * motion="off" sets data-rc-motion so tokens.css zeroes the duration tokens. */
 export function applyAppearance(root: HTMLElement, appearance: Appearance): void {
 	root.dataset.rcPreset = appearance.preset;
 	root.dataset.rcMotion = appearance.motion;
 	root.style.setProperty("--rc-accent-hue", String(appearance.accentHue));
-	root.style.setProperty("--rc-density", String(appearance.density));
+	// An older build left an inline density; drop it so the token sheet default applies.
+	root.style.removeProperty("--rc-density");
 }
