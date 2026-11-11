@@ -1785,7 +1785,7 @@ export async function enqueueFold(dir: string, label: string, ctx: MemoryDispatc
 	try {
 		return await spawnFold(dir, label, ctx);
 	} catch (error) {
-		emitFoldActivity("failed", error instanceof Error ? error.message : String(error));
+		emitFoldActivity(foldEvents, "failed", error instanceof Error ? error.message : String(error));
 		throw error;
 	}
 }
@@ -1793,8 +1793,13 @@ export async function enqueueFold(dir: string, label: string, ctx: MemoryDispatc
 const MAX_FOLD_DETAIL_CHARS = 200;
 
 /** `bus` is the bus current when the fold was spawned: a worker that outlives a
- * reload or shutdown must not report into a bus installed after it started. */
-function emitFoldActivity(phase: "start" | "end" | "failed", detail?: string, bus = foldEvents): void {
+ * reload or shutdown must not report into a bus installed after it started. It has
+ * no default, since a default would turn a spawn-time `undefined` into the exit-time bus. */
+function emitFoldActivity(
+	bus: ExtensionAPI["events"] | undefined,
+	phase: "start" | "end" | "failed",
+	detail?: string,
+): void {
 	if (bus === undefined || bus !== foldEvents) return;
 	try {
 		bus.emit("hummin:memory_fold", {
@@ -1847,13 +1852,13 @@ async function spawnFold(dir: string, label: string, ctx: MemoryDispatchContext)
 	});
 	child.unref();
 	const bus = foldEvents;
-	emitFoldActivity("start", label, bus);
+	emitFoldActivity(bus, "start", label);
 	child.once("exit", (code) => {
-		if (code === 0) emitFoldActivity("end", undefined, bus);
-		else if (code === null) emitFoldActivity("end", "terminated", bus);
-		else emitFoldActivity("failed", `exit ${code}`, bus);
+		if (code === 0) emitFoldActivity(bus, "end");
+		else if (code === null) emitFoldActivity(bus, "end", "terminated");
+		else emitFoldActivity(bus, "failed", `exit ${code}`);
 	});
-	child.once("error", (error) => emitFoldActivity("failed", error.message, bus));
+	child.once("error", (error) => emitFoldActivity(bus, "failed", error.message));
 	return true;
 }
 
