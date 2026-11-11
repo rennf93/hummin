@@ -141,6 +141,18 @@ These fork-specific variables are read by hummin and its bundled extensions. Whe
 | `HUMMIN_FLEET_PLIST_DIR` | Overrides `fleet.launchd.plistDir` |
 | `HUMMIN_FLEET_AUTOSTART` | `1`/`0` forces fleet autostart on/off |
 
+### Remote console
+
+The `/remote-control` command serves the browser console and control API. Settings keys: `remoteControl.port`, `remoteControl.allowLan`, `remoteControl.hostLabel`, `remoteControl.approvalTools`, and `remoteControl.approvalTimeoutMs` (where a settings key exists, the `HUMMIN_*` variable beats it). Console origins for cross-origin fleet aggregation are stored in `<agentDir>/remote-console/console-origins.json` and are added through the authenticated `POST /settings/console-origins` action, never through these variables.
+
+| Variable | Description |
+|----------|-------------|
+| `HUMMIN_REMOTE` | `off` disables the remote console endpoint entirely; `/remote-control` reports it instead of starting a listener |
+| `HUMMIN_REMOTE_HOST` | Bind address (default `127.0.0.1`). Binding beyond loopback additionally requires `remoteControl.allowLan: true` in settings and `HUMMIN_REMOTE_LAN` unset or not `off`; otherwise the host falls back to `127.0.0.1` |
+| `HUMMIN_REMOTE_LAN` | `off` forces loopback even when `HUMMIN_REMOTE_HOST` and `remoteControl.allowLan` ask for a LAN bind |
+| `HUMMIN_REMOTE_PORT` | Port for the console endpoint; overrides `remoteControl.port` (default `0`, an ephemeral port chosen at start) |
+| `HUMMIN_REMOTE_CONSOLE_DIST` | Directory holding the built console (`dist/` with an `index.html`) to serve at `/`. When unset, the server looks in the workspace `packages/remote-console/dist` and then `<agentDir>/remote-console/dist`; with no build anywhere it serves a built-in fallback page |
+
 ### Extensions
 
 | Variable | Description |

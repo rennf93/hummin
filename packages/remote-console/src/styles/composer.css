@@ -1,0 +1,167 @@
+/* composer: one rounded container holding queue, autosizing input and actions.
+   The footer region (.rc-composer, laid out in layout.css) is only a wrapper so
+   the approval card can sit above the container at the same width. */
+
+.rc-composer-inner {
+	position: relative;
+	z-index: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-2);
+	padding: calc(var(--rc-space-3) + var(--rc-bezel-gap)) calc(var(--rc-space-3) + var(--rc-bezel-gap)) calc(var(--rc-space-2) + var(--rc-bezel-gap))
+		calc(var(--rc-space-4) + var(--rc-bezel-gap));
+	background: var(--rc-raised);
+	border: var(--rc-hairline-width) solid var(--rc-hairline);
+	border-radius: var(--rc-radius-xl);
+	backdrop-filter: var(--rc-blur);
+	box-shadow: inset 0 1px 0 var(--rc-glass-highlight), var(--rc-shadow-island);
+	transition:
+		border-color var(--rc-duration-fast) var(--rc-ease-out),
+		box-shadow var(--rc-duration-fast) var(--rc-ease-out);
+}
+
+/* inner core of the double bezel: no blur of its own, so blur layers never stack */
+.rc-composer-inner::before {
+	content: "";
+	position: absolute;
+	inset: var(--rc-bezel-gap);
+	z-index: -1;
+	border-radius: var(--rc-radius-xl-inner);
+	background: var(--rc-core-tint);
+	border: var(--rc-hairline-width) solid var(--rc-core-border);
+	box-shadow: inset 0 1px 1px var(--rc-core-highlight);
+	pointer-events: none;
+}
+
+.rc-composer-inner:focus-within {
+	border-color: var(--rc-hairline-strong);
+	box-shadow: inset 0 1px 0 var(--rc-glass-highlight), var(--rc-shadow-island), var(--rc-focus-ring);
+}
+
+/* disabled composer: no focus ring, and send drops its accent fill for the neutral disabled look */
+.rc-composer-inner[data-rc-disabled="true"]:focus-within {
+	border-color: var(--rc-hairline);
+	box-shadow: inset 0 1px 0 var(--rc-glass-highlight), var(--rc-shadow-island);
+}
+
+.rc-composer-inner[data-rc-disabled="true"] .rc-composer-send:disabled {
+	background: var(--rc-track);
+	color: var(--rc-fg-faint);
+	opacity: 1;
+}
+
+.rc-queue {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-1);
+}
+
+.rc-queue-item {
+	display: flex;
+	align-items: baseline;
+	gap: var(--rc-space-2);
+	font-size: var(--rc-text-sm);
+	line-height: var(--rc-leading-ui);
+	color: var(--rc-fg-dim);
+}
+
+.rc-queue-deliver {
+	flex: none;
+}
+
+.rc-queue-preview {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.rc-queue-terminal {
+	font-size: var(--rc-text-xs);
+	color: var(--rc-fg-faint);
+}
+
+.rc-composer-input {
+	display: block;
+	width: 100%;
+	max-height: 40vh;
+	resize: none;
+	overflow-y: auto;
+	margin: 0;
+	padding: 0;
+	background: transparent;
+	border: 0;
+	outline: none;
+	color: var(--rc-fg);
+	font: inherit;
+	font-size: var(--rc-text-base);
+	line-height: var(--rc-leading-ui);
+	letter-spacing: var(--rc-tracking-ui);
+}
+
+/* the container's focus ring already shows focus: no second ring inside it */
+.rc-composer-input:focus-visible {
+	box-shadow: none;
+	outline: none;
+}
+
+.rc-composer-input:disabled {
+	color: var(--rc-fg-faint);
+	cursor: not-allowed;
+}
+
+.rc-composer-error {
+	font-size: var(--rc-text-xs);
+	line-height: var(--rc-leading-ui);
+	color: var(--rc-bad);
+}
+
+.rc-composer-input::placeholder {
+	color: var(--rc-fg-faint);
+}
+
+.rc-composer-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--rc-space-2);
+}
+
+/* delivery mode: the sliding pill carries the group's data attribute */
+.rc-deliver {
+	flex: none;
+	display: inline-flex;
+}
+
+/* the track sits on the raised container, so the thumb steps up to pressed */
+.rc-composer-inner .rc-pill-thumb {
+	background: var(--rc-pill-thumb-bg-raised);
+}
+
+.rc-composer-actions {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--rc-space-1);
+}
+
+.rc-composer-send,
+.rc-composer-abort {
+	border-radius: var(--rc-radius-round);
+}
+
+/* the stop button pops in beside send and fades out on idle (usePresence) */
+.rc-composer-abort {
+	animation: rc-pop var(--rc-duration-base) var(--rc-ease-pop) both;
+}
+
+.rc-composer-abort[data-rc-state="closed"] {
+	opacity: 0;
+	transform: scale(0.9);
+	pointer-events: none;
+	transition:
+		opacity var(--rc-duration-exit) var(--rc-ease-in),
+		transform var(--rc-duration-exit) var(--rc-ease-in);
+}

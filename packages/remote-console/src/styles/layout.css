@@ -1,0 +1,93 @@
+/* shell frame and regions: rail left, main column right; header bar, transcript, composer dock */
+
+.rc-shell {
+	display: flex;
+	flex-direction: row;
+	height: 100dvh;
+	min-height: 0;
+}
+
+/* the surface step below the base; one hairline on its edge, and the blur token so a depth scene shows frosted through where a preset sets one */
+.rc-rail {
+	flex: none;
+	width: var(--rc-rail-width);
+	min-height: 0;
+	overflow-y: auto;
+	background: var(--rc-surface);
+	backdrop-filter: var(--rc-blur);
+	border-right: var(--rc-hairline-width) solid var(--rc-hairline);
+}
+
+/* the base ground is painted by the root so the depth scene can show through
+   in the presets that render it; the main column stays transparent */
+.rc-main {
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	height: 100dvh;
+}
+
+.rc-header[data-rc-region] {
+	display: flex;
+	align-items: center;
+	flex: none;
+	height: var(--rc-header-height);
+	padding: 0 var(--rc-space-4);
+	border-bottom: var(--rc-hairline-width) solid var(--rc-hairline);
+}
+
+.rc-transcript[data-rc-region] {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+	padding: 0;
+}
+
+.rc-transcript[data-rc-region] .rc-transcript-list {
+	flex: 1;
+	min-height: 0;
+}
+
+/* the transcript fades out at its bottom edge with a mask, so it works over any
+   background (a gradient to an opaque colour would paint a band and a seam over
+   the depth scene). The fade is one space-4 tall, not space-6: the "jump to
+   latest" pill lives inside this scroller, docked space-4 above its bottom edge,
+   and the fade must end below the pill's bottom so the pill stays fully opaque. */
+.rc-transcript[data-rc-region] .rc-transcript-list {
+	-webkit-mask-image: linear-gradient(to bottom, black calc(100% - var(--rc-space-4)), transparent);
+	mask-image: linear-gradient(to bottom, black calc(100% - var(--rc-space-4)), transparent);
+}
+
+/* composer dock: positions and sizes the composer region; the region's own
+   surface lives in composer.css. Its inline padding is the transcript scroller's
+   and the header's (--rc-space-4) and overflow hidden plus the same stable both-edges scrollbar
+   gutter reserves the scroller's scrollbar width on both sides (zero for overlay
+   scrollbars), so the composer's edges line up with the reading column. */
+.rc-composer-dock {
+	position: relative;
+	flex: none;
+	overflow: hidden;
+	scrollbar-gutter: stable both-edges;
+	padding: var(--rc-space-2) var(--rc-space-4) max(var(--rc-space-4), env(safe-area-inset-bottom));
+}
+
+.rc-composer[data-rc-region] {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-2);
+	width: 100%;
+	max-width: var(--rc-column);
+	margin: 0 auto;
+}
+
+/* host switch crossfade (withViewTransition): token durations only */
+::view-transition-old(root),
+::view-transition-new(root) {
+	animation-duration: var(--rc-duration-fast);
+	animation-timing-function: var(--rc-ease-out);
+}

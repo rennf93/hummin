@@ -589,7 +589,7 @@ if [ -n "$HUMMIN_FOLD_STUB_WORK" ]; then
     printf 'fact (from [[%s]], 2026-09-26)\\n' "$base" >> "entities/project/stub-entity.md"
   done
   git add -A
-  git -c user.email=stub@example.com -c user.name=stub commit -qm "fold: stub"
+  git -c user.email=stub@example.com -c user.name=stub -c core.hooksPath=/dev/null commit -qm "fold: stub"
 fi
 echo "stub fold output"
 `,
