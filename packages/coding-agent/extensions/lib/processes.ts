@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 export interface ProcessJob {
@@ -201,6 +201,22 @@ export function outputTail(output: string, lines = 30): string {
 	return all.slice(Math.max(0, all.length - lines)).join("\n");
 }
 
+/** Last lines of a job's output, preferring the on-disk log (stdout and
+ * stderr, capped at 1MB by ProcessManager) over the in-memory tail, which is
+ * capped at 8000 chars. Bounded to `maxChars` regardless of line count: a
+ * job printing one giant line must not push a megabyte into a tool result. */
+export function jobTail(job: Pick<ProcessJob, "logFile" | "output">, lines = 30, maxChars = 8000): string {
+	let text = job.output;
+	try {
+		text = readFileSync(job.logFile, "utf8");
+	} catch {
+		// Log may not exist yet; fall back to captured output.
+	}
+	const tail = outputTail(text, lines) || "(no output)";
+	if (tail.length <= maxChars) return tail;
+	return `[truncated, showing the last ${maxChars} of ${tail.length} chars; full output: ${job.logFile}]\n${tail.slice(tail.length - maxChars)}`;
+}
+
 export function formatDuration(ms: number): string {
 	const seconds = Math.max(0, Math.round(ms / 1000));
 	if (seconds < 60) return `${seconds}s`;
@@ -375,13 +391,21 @@ export function jobsByKind(kind: string): ProcessJob[] {
 	return jobs;
 }
 
-export function describeJob(job: ProcessJob): string {
+/** First line of a job description: kind, id, label, and live state with
+ * elapsed time. */
+export function describeJobStatus(
+	job: Pick<ProcessJob, "kind" | "id" | "label" | "state" | "exitCode" | "startedAt">,
+): string {
 	const elapsed = formatDuration(Date.now() - job.startedAt);
 	const state =
 		job.state === "running"
 			? `running ${elapsed}`
 			: `${job.state} (exit ${job.exitCode ?? "none"}, ${elapsed})`;
-	const parts = [`${job.kind} ${job.id} · ${job.label} · ${state}`, `log: ${job.logFile}`];
+	return `${job.kind} ${job.id} · ${job.label} · ${state}`;
+}
+
+export function describeJob(job: ProcessJob): string {
+	const parts = [describeJobStatus(job), `log: ${job.logFile}`];
 	if (job.error) parts.push(`error: ${job.error}`);
 	if (job.output) parts.push(job.output);
 	return parts.join("\n");

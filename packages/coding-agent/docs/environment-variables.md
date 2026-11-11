@@ -192,6 +192,7 @@ Connection and calibration live in settings under `decision.url`, `.apiKey`, `.g
 | `HUMMIN_SYS1_TRIAGE` | `off` disables the test-failure triage advisory |
 | `HUMMIN_SYS1_INTAKE` | `off` skips the distill worker's per-lesson intake score (lessons are stored unconditionally) |
 | `HUMMIN_SYS1_ASK` | `off` disables the ask_user recommendation gate (also `decision.askGate: false`) |
+| `HUMMIN_SYS1_ACCEPT` | `off` skips the child result acceptance read (task results are delivered without the `sys1 acceptance` advisory line) |
 
 
 ### Guardrails tool-call budget

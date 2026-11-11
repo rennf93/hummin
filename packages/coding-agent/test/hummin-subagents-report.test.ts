@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
+	acceptanceSuffix,
 	childReportExcerpt,
 	TASK_REPORT_MAX_CHARS,
 	taskResultText,
@@ -114,5 +115,46 @@ describe("taskResultText", () => {
 		const text = taskResultText(job);
 		expect(text).toContain(`task t1 · ${job.label} · failed (exit 1`);
 		expect(text).not.toContain("Child final report");
+	});
+});
+
+describe("acceptanceSuffix", () => {
+	const fakeJob = (state: ProcessJob["state"]): ProcessJob =>
+		({
+			id: "t2",
+			kind: "task",
+			label: '"echo"',
+			logFile: join(newDirectory("hummin-report-"), "missing.log"),
+			startedAt: Date.now(),
+			state,
+			exitCode: state === "completed" ? 0 : 1,
+			output: "",
+		}) as unknown as ProcessJob;
+
+	it("attaches the advisory note for a completed job read", async () => {
+		const suffix = await acceptanceSuffix(fakeJob("completed"), "do a thing", process.cwd(), "report", {
+			read: async () => ({ noul: 0.42 }),
+		});
+		expect(suffix).toBe("\n\n[sys1 acceptance] P(on-task, complete) = 0.42 - inspect before relying on it");
+	});
+
+	it("attaches the plain note at or above the inspect line", async () => {
+		const suffix = await acceptanceSuffix(fakeJob("completed"), "do a thing", process.cwd(), "report", {
+			read: async () => ({ noul: 0.93 }),
+		});
+		expect(suffix).toBe("\n\n[sys1 acceptance] P(on-task, complete) = 0.93");
+	});
+
+	it("appends nothing for failed jobs or failed reads", async () => {
+		expect(
+			await acceptanceSuffix(fakeJob("failed"), "do a thing", process.cwd(), "report", {
+				read: async () => ({ noul: 0.42 }),
+			}),
+		).toBe("");
+		expect(
+			await acceptanceSuffix(fakeJob("completed"), "do a thing", process.cwd(), "report", {
+				read: async () => null,
+			}),
+		).toBe("");
 	});
 });

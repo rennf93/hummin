@@ -17,12 +17,13 @@ import {
 	type BackgroundJobRow,
 	describeAllProcesses,
 	describeJob,
+	describeJobStatus,
 	findProcessJob,
 	jobRows,
+	jobTail,
 	type ProcessJob,
 	formatDuration,
 	migrationChoice,
-	outputTail,
 	ProcessManager,
 	refreshBackgroundStatus,
 	stateGlyph,
@@ -30,6 +31,7 @@ import {
 	dismissProcessJob,
 } from "./lib/processes.ts";
 import { prepareChildDispatch, resolveChildModel, type ThinkingLevel } from "./lib/child-dispatch-review.ts";
+import { ACCEPT_REPORT_MAX_CHARS, acceptanceNote, childAcceptanceCheck } from "./lib/child-acceptance.ts";
 import { humminArgv } from "./lib/hummin-bin.ts";
 import { lessonsForChildBrief } from "./hummin-memory.ts";
 
@@ -247,15 +249,7 @@ function messageText(message: { content: string | Array<{ type: string; text?: s
 }
 
 /** Last 30 lines of a job's output, preferring the on-disk log. */
-function tailText(job: { logFile: string; output: string }): string {
-	let text = job.output;
-	try {
-		text = readFileSync(job.logFile, "utf8");
-	} catch {
-		// Log may not exist yet; fall back to captured output.
-	}
-	return outputTail(text) || "(no output)";
-}
+const tailText = jobTail;
 
 /** Full captured output of a job: the on-disk log (stdout and stderr,
  * capped at 1MB by ProcessManager), falling back to the in-memory tail. */
@@ -271,12 +265,7 @@ function jobOutput(job: ProcessJob): string {
 /** Status header identical to describeJob() minus the captured-output
  * section: task results append the report separately, bounded and labeled. */
 function taskStatusHeader(job: ProcessJob): string {
-	const elapsed = formatDuration(Date.now() - job.startedAt);
-	const state =
-		job.state === "running"
-			? `running ${elapsed}`
-			: `${job.state} (exit ${job.exitCode ?? "none"}, ${elapsed})`;
-	const parts = [`task ${job.id} · ${job.label} · ${state}`, `log: ${job.logFile}`];
+	const parts = [describeJobStatus(job), `log: ${job.logFile}`];
 	if (job.error) parts.push(`error: ${job.error}`);
 	return parts.join("\n");
 }
@@ -288,15 +277,41 @@ function taskStatusHeader(job: ProcessJob): string {
  * describeJob() shape. Never throws: an unreadable log falls back to the
  * in-memory output, then to the bare status header.
  */
-export function taskResultText(job: ProcessJob): string {
+export function taskResultText(job: ProcessJob, reportExcerpt?: string): string {
 	if (job.state === "running") return describeJob(job);
 	const header = taskStatusHeader(job);
 	try {
-		const report = childReportExcerpt(jobOutput(job), job.logFile);
+		const report = reportExcerpt ?? childReportExcerpt(jobOutput(job), job.logFile);
 		return report ? `${header}\n\nChild final report (tail of captured output):\n${report}` : header;
 	} catch {
 		return describeJob(job);
 	}
+}
+
+/**
+ * Advisory acceptance suffix for a finished child's result text: one sys1
+ * read at exit, attached as a note line. Completed jobs only (a failed
+ * child's isError already carries the signal); every no-op outcome appends
+ * nothing. The read is bounded by ACCEPT_READ_TIMEOUT_MS (tighter than the
+ * dispatch timeout: this is an advisory, not a gate). `reportExcerpt` lets a
+ * caller that already read the job log pass it through instead of re-reading;
+ * `opts.read` is the test seam for the engine read. Exported for tests.
+ */
+export async function acceptanceSuffix(
+	job: ProcessJob,
+	what: string,
+	cwd: string,
+	reportExcerpt?: string,
+	opts?: { read?: (state: string, name: string, instructions: string) => Promise<{ noul: number } | null> },
+): Promise<string> {
+	if (job.state !== "completed") return "";
+	const p = await childAcceptanceCheck({
+		what,
+		report: reportExcerpt ?? childReportExcerpt(jobOutput(job), job.logFile, ACCEPT_REPORT_MAX_CHARS),
+		cwd,
+		read: opts?.read,
+	});
+	return p === undefined ? "" : `\n\n${acceptanceNote(p)}`;
 }
 
 /** Live list of background jobs; refreshes on a 2s interval while open. */
@@ -390,6 +405,9 @@ class BackgroundPanelComponent {
 interface TaskMeta {
 	what: string;
 	model: string;
+	/** The child's working directory, for the acceptance read's engine
+	 * resolution. */
+	cwd: string;
 }
 const TASK_META_KEY = Symbol.for("hummin.subagent.tasks");
 const taskMeta = ((globalThis as Record<symbol, unknown>)[TASK_META_KEY] ??= new Map<string, TaskMeta>()) as Map<
@@ -445,12 +463,14 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 		return job?.kind === "task" ? job : undefined;
 	};
 
-	const deliverCompletion = (finished: ProcessJob, meta: TaskMeta): void => {
+	const deliverCompletion = async (finished: ProcessJob, meta: TaskMeta): Promise<void> => {
 		const duration = Date.now() - finished.startedAt;
+		const excerpt = childReportExcerpt(jobOutput(finished), finished.logFile);
+		const suffix = await acceptanceSuffix(finished, meta.what, meta.cwd, excerpt);
 		void pi.sendMessage(
 			{
 				customType: "hummin-task",
-				content: taskResultText(finished),
+				content: taskResultText(finished, excerpt) + suffix,
 				display: true,
 				details: {
 					label: `"${meta.what}"`,
@@ -503,7 +523,7 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 			if (meta) {
 				job.onComplete = (finished: ProcessJob) => {
 					taskMeta.delete(finished.id);
-					deliverCompletion(finished, meta);
+					void deliverCompletion(finished, meta);
 				};
 			}
 		}
@@ -696,28 +716,38 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 					? (finished) => {
 							// Delivery dedupe: the followUp message renders the summary, so a
 							// notify() of the same describeJob() text here would deliver it twice.
-							// Exactly-once holds without a delivery-id: ProcessManager.finish is
-							// once-guarded (settled flag) and this callback fires synchronously
-							// from it, so sendMessage runs at most once per job.
+							// ProcessManager.finish is once-guarded (settled flag), so this
+							// callback fires at most once per job; deliverCompletion's awaited
+							// acceptance read (bounded by ACCEPT_READ_TIMEOUT_MS) happens after
+							// that guarantee. A session switch landing inside that await window
+							// would target the outgoing session's pi and drop the follow-up
+							// delivery; the report stays on disk at the job's log path. Accepted
+							// deliberately: the window is bounded and rare.
 							const meta = taskMeta.get(finished.id);
 							taskMeta.delete(finished.id);
 							if (!meta) return;
-							deliverCompletion(finished, meta);
+							void deliverCompletion(finished, meta);
 						}
 					: undefined,
 			});
 			// Adoption metadata: lets a session that migrates this task rebuild the
-			// completion message. Deleted by the completion hook on delivery.
+			// completion message. Deleted by the completion hook on delivery. Metas
+			// written by a pre-cwd build carry no cwd after adoption; the read then
+			// falls back to the process cwd through resolveDecisionEngine's default
+			// (upgrade window only, graceful).
 			if (params.background) {
-				taskMeta.set(job.id, { what, model: `${model.provider}/${model.id}` });
+				taskMeta.set(job.id, { what, model: `${model.provider}/${model.id}`, cwd });
 			}
 			refreshBackgroundStatus(ctx.ui);
 			// Make the spawn visible to the user immediately, with what it is and where it logs
 			ctx.ui?.notify?.(`Started background ${describeJob(job)}`, "info");
 			if (!params.background) await job.done;
 			refreshBackgroundStatus(ctx.ui);
+			// One log read serves the result text and the acceptance read.
+			const excerpt = childReportExcerpt(jobOutput(job), job.logFile);
+			const resultText = taskResultText(job, excerpt) + (await acceptanceSuffix(job, what, cwd, excerpt));
 			return {
-				content: [{ type: "text", text: taskResultText(job) }],
+				content: [{ type: "text", text: resultText }],
 				details: { taskId: job.id },
 				isError: job.state !== "running" && job.state !== "completed",
 			};

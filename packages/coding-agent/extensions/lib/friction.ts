@@ -240,7 +240,7 @@ export function parseSys1GateLine(line: string): Sys1GateEntryType | undefined {
 export interface Sys1GateEntry {
 	ts?: string;
 	type: Sys1GateEntryType;
-	/** "read" entries only: steer | gate | decide | triage | intake. */
+	/** "read" entries only: steer | gate | decide | triage | intake | ask. */
 	kind?: string;
 	/** Blocks, joined confirmations, and reads carry a 0..1 score. */
 	p?: number;
@@ -302,8 +302,23 @@ export interface Sys1Calibration {
 	nearMisses: number;
 	nearMissMax: number | undefined;
 	/** Suggested decision.gateThreshold setting, or undefined when
-	 * the data does not suggest a change. Never auto-applied. */
+	 * the data does not suggest a change. Only set when the confirmed and
+	 * blocked bands separate (see separation). Never auto-applied. */
 	suggestedThreshold: number | undefined;
+	/** Max confirmed score; undefined when no confirmation carries a score. */
+	confirmedMax: number | undefined;
+	/** Min scored block score; undefined when no block carries a score. */
+	blockMin: number | undefined;
+	/** Whether the confirmed (false positive) and blocked (true positive)
+	 * score bands separate enough for a threshold suggestion to be safe:
+	 * "separated" when the suggestion clears every confirmed score without
+	 * clearing any scored block (also when a binding confirmed score exists
+	 * but no block carries a score: a score-threshold change cannot unblock
+	 * deterministic rule blocks, so the suggestion is provably safe),
+	 * "overlap" when the bands intersect (the 2026-09 gate data shape:
+	 * confirmed-safe scores up to 0.876 inside the blocked band 0.755-0.899),
+	 * "unknown" when there is no binding confirmed score to suggest from. */
+	separation: "separated" | "overlap" | "unknown";
 }
 
 // --- Session-scoped consumer state -------------------------------------------
@@ -430,7 +445,10 @@ export function resetSessionFrictionTally(): SessionFrictionTally {
  * Pure calibration view over sys1-gate entries. The suggestion comes from
  * ground truth: a confirmed block was a false positive at its score, so the
  * lowest confirmed score the current threshold would still block is the
- * binding constraint; suggest just above it (capped at 0.99).
+ * binding constraint; suggest just above it (capped at 0.99), but only when
+ * the confirmed and blocked bands separate (separation field). When they
+ * overlap, the confirm step rather than the score is the gate's control and
+ * no suggestion is made.
  */
 export function summarizeSys1Calibration(
 	entries: readonly Sys1GateEntry[],
@@ -455,6 +473,24 @@ export function summarizeSys1Calibration(
 	}
 	blockScores.sort((a, b) => a - b);
 	const binding = confirmedScores.filter((p) => p >= threshold).sort((a, b) => a - b)[0];
+	const confirmedMax = confirmedScores.length > 0 ? confirmedScores.reduce((a, b) => (a > b ? a : b)) : undefined;
+	const blockMin = blockScores.length > 0 ? blockScores[0] : undefined;
+	// Bimodality gate (decision log #11): a suggestion is only safe when it
+	// sits above every confirmed false positive and at-or-below every scored
+	// block. With no scored blocks at all the candidate is still safe: the
+	// score threshold only gates scored reads, so deterministic rule blocks
+	// (logged without p) cannot be unblocked by raising it.
+	let separation: Sys1Calibration["separation"] = "unknown";
+	let suggestedThreshold: number | undefined;
+	if (binding !== undefined && confirmedMax !== undefined) {
+		const candidate = Math.min(0.99, Math.round((binding + 0.02) * 100) / 100);
+		if (candidate <= confirmedMax || (blockMin !== undefined && candidate > blockMin)) {
+			separation = "overlap";
+		} else {
+			separation = "separated";
+			suggestedThreshold = candidate;
+		}
+	}
 	return {
 		threshold,
 		blocks: blockScores.length,
@@ -470,7 +506,89 @@ export function summarizeSys1Calibration(
 		confirmedScores,
 		nearMisses,
 		nearMissMax,
-		suggestedThreshold:
-			binding === undefined ? undefined : Math.min(0.99, Math.round((binding + 0.02) * 100) / 100),
+		suggestedThreshold,
+		confirmedMax,
+		blockMin,
+		separation,
 	};
+}
+
+/** Canonical order for per-kind sys1 summaries; kinds found in the log but
+ * not listed here follow in first-seen order. */
+export const SYS1_READ_KINDS: readonly string[] = ["steer", "gate", "decide", "triage", "intake", "ask"];
+
+export interface Sys1KindSummary {
+	/** Read kind as logged. */
+	kind: string;
+	reads: number;
+	/** Min/median/max of logged read scores; undefined when none carry p. */
+	readP: { min: number; median: number; max: number } | undefined;
+	/** This kind's decision threshold, when the engine defines one. */
+	threshold: number | undefined;
+	/** Reads scoring in [nearMissFloor, threshold): the signal that the
+	 * threshold may be too high. Zero when the kind has no threshold. */
+	nearMisses: number;
+	nearMissMax: number | undefined;
+}
+
+/**
+ * Per-kind view over sys1-gate read entries: score distribution and
+ * near-miss band relative to each kind's own threshold (near-miss is omitted
+ * for kinds without a threshold, e.g. decide). Only kinds with at least one
+ * read are returned, in SYS1_READ_KINDS order.
+ */
+export function summarizeSys1Kinds(
+	entries: readonly Sys1GateEntry[],
+	opts: { thresholds?: Record<string, number>; nearMissFloor?: number } = {},
+): Sys1KindSummary[] {
+	const floor = opts.nearMissFloor ?? 0.5;
+	const thresholds = opts.thresholds ?? {};
+	const byKind = new Map<string, { reads: number; scores: number[] }>();
+	for (const entry of entries) {
+		if (entry.type !== "read" || entry.kind === undefined) continue;
+		const bucket = byKind.get(entry.kind) ?? { reads: 0, scores: [] };
+		bucket.reads += 1;
+		if (typeof entry.p === "number") bucket.scores.push(entry.p);
+		byKind.set(entry.kind, bucket);
+	}
+	const summaries: Sys1KindSummary[] = [];
+	const kinds = [
+		...SYS1_READ_KINDS.filter((kind) => byKind.has(kind)),
+		...[...byKind.keys()].filter((kind) => !SYS1_READ_KINDS.includes(kind)),
+	];
+	for (const kind of kinds) {
+		const bucket = byKind.get(kind);
+		if (!bucket) continue;
+		const threshold = thresholds[kind];
+		const scores = [...bucket.scores].sort((a, b) => a - b);
+		// Same clamp as the gate calibration: the floor never sits above the
+		// threshold it is measured against.
+		const effectiveFloor = threshold === undefined ? floor : Math.min(floor, threshold);
+		let nearMisses = 0;
+		let nearMissMax: number | undefined;
+		if (threshold !== undefined) {
+			for (const p of bucket.scores) {
+				if (p >= effectiveFloor && p < threshold) {
+					nearMisses += 1;
+					nearMissMax = nearMissMax === undefined || p > nearMissMax ? p : nearMissMax;
+				}
+			}
+		}
+		summaries.push({
+			kind,
+			reads: bucket.reads,
+			readP:
+				scores.length > 0
+					? {
+							min: scores[0],
+							median: scores[Math.floor(scores.length / 2)],
+							max: scores[scores.length - 1],
+						}
+					: undefined,
+			threshold,
+			nearMisses,
+			nearMissMax,
+		});
+	}
+	return summaries;
 }
