@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/remote-console",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "hummin's browser remote console: Vite + React 18 + Tailwind 4 app shell and token system",
 	"private": true,
 	"type": "module",
