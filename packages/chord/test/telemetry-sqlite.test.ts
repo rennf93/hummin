@@ -97,6 +97,9 @@ describe("SQLite telemetry span and propagation conformance", () => {
 describe("SQLite telemetry buffering and aggregation", () => {
 	it("orders spans started in the same millisecond as they started: a trace's first span, siblings (slice 9)", async () => {
 		vi.spyOn(Date, "now").mockReturnValue(20_001);
+		// hummin fork: freeze the monotonic clock too. With only Date.now frozen, a runner slower than
+		// telemetryNow's 10 ms tolerance re-anchors mid-loop and later spans start ~10 ms "earlier".
+		vi.spyOn(performance, "now").mockReturnValue(500);
 		await using f = await fixture();
 		await f.telemetry.startSpan({ name: "root" }, async (span) => {
 			for (let index = 0; index < 11; index++) await span.startSpan({ name: `child ${index}` }, () => {});

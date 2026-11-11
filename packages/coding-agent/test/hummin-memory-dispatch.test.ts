@@ -366,3 +366,41 @@ test("a fold worker reports only to the bus it was spawned under", async () => {
 	expect(first).toEqual([{ phase: "start", detail: "first" }]);
 	expect(second).toEqual([]);
 });
+
+// CI regression: a worker spawned with no bus installed passed `undefined`, which a default
+// parameter turned back into whatever bus was current when the worker exited.
+test("a fold worker spawned with no bus installed never reports into a later bus", async () => {
+	const vault = tempDir("hummin-memory-nobus-vault-");
+	process.env.HUMMIN_MEMORY_DIR = tempDir("hummin-memory-nobus-mem-");
+	process.env.HUMMIN_MEMORY_VAULT_DIR = vault;
+	mkdirSync(join(vault, "inbox"), { recursive: true });
+	writeFileSync(join(vault, "inbox", "lesson-a.md"), "lesson\n");
+	const bin = tempDir("hummin-memory-nobus-bin-");
+	const hummin = join(bin, "hummin");
+	writeFileSync(hummin, "#!/bin/sh\necho spawned\n");
+	chmodSync(hummin, 0o755);
+	process.env.HUMMIN_BIN = hummin;
+	const busPi = (seen: unknown[], shutdown: ((event: unknown, ctx: unknown) => unknown)[] = []) => ({
+		on: (event: string, handler: (event: unknown, ctx: unknown) => unknown) => {
+			if (event === "session_shutdown") shutdown.push(handler);
+		},
+		registerCommand: () => {},
+		registerTool: () => {},
+		events: { emit: (_channel: string, data: unknown) => seen.push(data), on: () => () => {} },
+	});
+	const shutdown: ((event: unknown, ctx: unknown) => unknown)[] = [];
+	humminMemory(busPi([], shutdown) as unknown as Parameters<typeof humminMemory>[0]);
+	await shutdown[0]?.(
+		{ type: "session_shutdown", reason: "quit" },
+		{ sessionManager: { getSessionFile: () => undefined } },
+	);
+	expect(
+		await enqueueFold(vault, "orphan", { ...context("allow"), agentDir: tempDir("hummin-memory-reviews-") }),
+	).toBe(true);
+	const later: unknown[] = [];
+	humminMemory(busPi(later) as unknown as Parameters<typeof humminMemory>[0]);
+	for (let i = 0; i < 100 && existsSync(join(vault, ".fold-job.json")); i++)
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	await new Promise((resolve) => setTimeout(resolve, 200));
+	expect(later).toEqual([]);
+});
