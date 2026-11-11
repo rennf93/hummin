@@ -1792,9 +1792,12 @@ export async function enqueueFold(dir: string, label: string, ctx: MemoryDispatc
 
 const MAX_FOLD_DETAIL_CHARS = 200;
 
-function emitFoldActivity(phase: "start" | "end" | "failed", detail?: string): void {
+/** `bus` is the bus current when the fold was spawned: a worker that outlives a
+ * reload or shutdown must not report into a bus installed after it started. */
+function emitFoldActivity(phase: "start" | "end" | "failed", detail?: string, bus = foldEvents): void {
+	if (bus === undefined || bus !== foldEvents) return;
 	try {
-		foldEvents?.emit("hummin:memory_fold", {
+		bus.emit("hummin:memory_fold", {
 			phase,
 			...(detail ? { detail: detail.slice(0, MAX_FOLD_DETAIL_CHARS) } : {}),
 		});
@@ -1843,13 +1846,14 @@ async function spawnFold(dir: string, label: string, ctx: MemoryDispatchContext)
 		env: { ...process.env, HUMMIN_MEMORY: "0" },
 	});
 	child.unref();
-	emitFoldActivity("start", label);
+	const bus = foldEvents;
+	emitFoldActivity("start", label, bus);
 	child.once("exit", (code) => {
-		if (code === 0) emitFoldActivity("end");
-		else if (code === null) emitFoldActivity("end", "terminated");
-		else emitFoldActivity("failed", `exit ${code}`);
+		if (code === 0) emitFoldActivity("end", undefined, bus);
+		else if (code === null) emitFoldActivity("end", "terminated", bus);
+		else emitFoldActivity("failed", `exit ${code}`, bus);
 	});
-	child.once("error", (error) => emitFoldActivity("failed", error.message));
+	child.once("error", (error) => emitFoldActivity("failed", error.message, bus));
 	return true;
 }
 

@@ -334,3 +334,35 @@ test("fold activity is truthful: held emits nothing, exit 0 ends, a non-zero exi
 	);
 	expect(seen).toEqual([]);
 });
+
+// CI regression: workers spawned by earlier tests exited late and reported "end" into a bus installed after them.
+test("a fold worker reports only to the bus it was spawned under", async () => {
+	const vault = tempDir("hummin-memory-bus-vault-");
+	process.env.HUMMIN_MEMORY_DIR = tempDir("hummin-memory-bus-mem-");
+	process.env.HUMMIN_MEMORY_VAULT_DIR = vault;
+	mkdirSync(join(vault, "inbox"), { recursive: true });
+	writeFileSync(join(vault, "inbox", "lesson-a.md"), "lesson\n");
+	const bin = tempDir("hummin-memory-bus-bin-");
+	const hummin = join(bin, "hummin");
+	writeFileSync(hummin, "#!/bin/sh\necho spawned\n");
+	chmodSync(hummin, 0o755);
+	process.env.HUMMIN_BIN = hummin;
+	const busPi = (seen: unknown[]) => ({
+		on: () => {},
+		registerCommand: () => {},
+		registerTool: () => {},
+		events: { emit: (_channel: string, data: unknown) => seen.push(data), on: () => () => {} },
+	});
+	const first: unknown[] = [];
+	const second: unknown[] = [];
+	humminMemory(busPi(first) as unknown as Parameters<typeof humminMemory>[0]);
+	expect(await enqueueFold(vault, "first", { ...context("allow"), agentDir: tempDir("hummin-memory-reviews-") })).toBe(
+		true,
+	);
+	humminMemory(busPi(second) as unknown as Parameters<typeof humminMemory>[0]);
+	for (let i = 0; i < 100 && existsSync(join(vault, ".fold-job.json")); i++)
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	await new Promise((resolve) => setTimeout(resolve, 200));
+	expect(first).toEqual([{ phase: "start", detail: "first" }]);
+	expect(second).toEqual([]);
+});
