@@ -7,6 +7,7 @@ import humminFriction, {
 	FRICTION_REPORT_DAYS,
 	renderFrictionReport,
 	sessionSectionRows,
+	sys1KindRows,
 } from "../extensions/hummin-friction.ts";
 import {
 	appendFriction,
@@ -24,6 +25,7 @@ import {
 	summarizeFriction,
 	summarizeSys1Calibration,
 	summarizeSys1Gate,
+	summarizeSys1Kinds,
 } from "../extensions/lib/friction.ts";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 
@@ -244,8 +246,8 @@ describe("renderFrictionReport", () => {
 		expect(text).toContain("sys1 gate");
 	});
 
-	it("appends the calibration section with a suggestion when the data warrants it", () => {
-		const calibration = summarizeSys1Calibration([block(0.76), confirmed(0.76), read("gate", 0.71)], {
+	it("appends the calibration section with a suggestion when the bands separate", () => {
+		const calibration = summarizeSys1Calibration([block(0.8), confirmed(0.76), read("gate", 0.71)], {
 			threshold: 0.75,
 		});
 		const text = renderFrictionReport(zeroSummary(), { block: 1, confirmed: 1, read: 1 }, calibration);
@@ -254,10 +256,47 @@ describe("renderFrictionReport", () => {
 		expect(text).toContain("consider settings decision.gateThreshold 0.78");
 	});
 
+	it("renders the bimodality note instead of a suggestion when the bands overlap", () => {
+		const calibration = summarizeSys1Calibration([block(0.76), confirmed(0.76), read("gate", 0.71)], {
+			threshold: 0.75,
+		});
+		const text = renderFrictionReport(zeroSummary(), { block: 1, confirmed: 1, read: 1 }, calibration);
+		expect(text).toContain("sys1 calibration (threshold 0.75)");
+		expect(text).toContain("not enough separation to suggest");
+		expect(text).not.toContain("consider settings");
+	});
+
 	it("omits the calibration section when there is nothing to calibrate", () => {
 		const calibration = summarizeSys1Calibration([read("gate", 0.2)], { threshold: 0.75 });
 		const text = renderFrictionReport(zeroSummary(), { block: 1, confirmed: 0, read: 1 }, calibration);
 		expect(text).not.toContain("sys1 calibration");
+	});
+});
+
+describe("sys1 kind sections", () => {
+	const read = (kind: string, p: number) => ({ type: "read" as const, kind, p });
+	const zeroSummary = () => summarizeFriction([], { nowMs: NOW, days: FRICTION_REPORT_DAYS });
+
+	it("renders one section per non-gate kind with data and skips gate", () => {
+		const kinds = summarizeSys1Kinds([read("gate", 0.62), read("steer", 0.85), read("decide", 0.2)], {
+			thresholds: { steer: 0.8 },
+		});
+		const text = renderFrictionReport(zeroSummary(), { block: 0, confirmed: 0, read: 3 }, undefined, [], kinds);
+		expect(text).toContain("sys1 steer (threshold 0.80)");
+		expect(text).toContain("sys1 decide");
+		expect(text).not.toContain("sys1 gate (threshold");
+		// the gate kind's reads still appear in the all-time gate section
+		expect(text).toContain("sys1 gate (all time)");
+		expect(text).toMatch(/read\s+3/);
+	});
+
+	it("renders the near-miss row for a thresholded kind", () => {
+		const kinds = summarizeSys1Kinds([read("steer", 0.55), read("steer", 0.79), read("steer", 0.85)], {
+			thresholds: { steer: 0.8 },
+		});
+		expect(sys1KindRows(kinds[0])).toContainEqual(["near-miss reads", "2 passed at 0.50-0.80 (max 0.79)"]);
+		const text = renderFrictionReport(zeroSummary(), { block: 0, confirmed: 0, read: 3 }, undefined, [], kinds);
+		expect(text).toContain("near-miss reads");
 	});
 });
 
@@ -311,9 +350,13 @@ describe("summarizeSys1Calibration", () => {
 		expect(calibration.nearMissMax).toBe(0.72);
 		expect(calibration.confirmed).toBe(0);
 		expect(calibration.suggestedThreshold).toBeUndefined();
+		// no scored confirmations: no separation to evaluate
+		expect(calibration.separation).toBe("unknown");
 	});
 
-	it("suggests just above the lowest confirmed score the threshold still blocks", () => {
+	it("suppresses the suggestion when confirmed scores sit inside the blocked band", () => {
+		// The 2026-09 shape: a confirmed false positive inside the blocked
+		// band, so raising the threshold would also clear true positives.
 		const calibration = summarizeSys1Calibration(
 			[block(0.94), block(0.76), confirmed(0.76), confirmed(0.55), confirmed()],
 			{ threshold: 0.75 },
@@ -321,18 +364,112 @@ describe("summarizeSys1Calibration", () => {
 		expect(calibration.blocks).toBe(2);
 		expect(calibration.confirmed).toBe(2);
 		expect(calibration.confirmedScores).toEqual([0.76, 0.55]);
-		// 0.55 already passes at 0.75, so 0.76 is the binding constraint.
+		expect(calibration.confirmedMax).toBe(0.76);
+		expect(calibration.blockMin).toBe(0.76);
+		expect(calibration.suggestedThreshold).toBeUndefined();
+		expect(calibration.separation).toBe("overlap");
+	});
+
+	it("suggests just above the lowest confirmed score when the bands separate", () => {
+		const calibration = summarizeSys1Calibration([block(0.94), block(0.8), confirmed(0.76), confirmed(0.55)], {
+			threshold: 0.75,
+		});
+		// 0.55 already passes at 0.75, so 0.76 is the binding constraint; 0.78
+		// clears every confirmed score and still blocks everything logged.
 		expect(calibration.suggestedThreshold).toBe(0.78);
+		expect(calibration.separation).toBe("separated");
+		expect(calibration.confirmedMax).toBe(0.76);
+		expect(calibration.blockMin).toBe(0.8);
+	});
+
+	it("suggests safely when a binding confirmed score exists but no block carries a score", () => {
+		// Rule blocks log without p: raising the score threshold cannot
+		// unblock them, so the suggestion is provably safe.
+		const calibration = summarizeSys1Calibration([confirmed(0.8), read("gate", 0.4)], { threshold: 0.75 });
+		expect(calibration.suggestedThreshold).toBe(0.82);
+		expect(calibration.separation).toBe("separated");
+		expect(calibration.blockMin).toBeUndefined();
+	});
+
+	it("suppresses the suggestion when the candidate equals the highest confirmed score", () => {
+		// Guards the strict `candidate > confirmedMax` comparison: at 0.78 the
+		// confirmed false positive at 0.78 would keep blocking, so 0.78 is not
+		// a safe suggestion.
+		const calibration = summarizeSys1Calibration([block(0.9), confirmed(0.76), confirmed(0.78), confirmed(0.55)], {
+			threshold: 0.75,
+		});
+		expect(calibration.confirmedMax).toBe(0.78);
+		expect(calibration.suggestedThreshold).toBeUndefined();
+		expect(calibration.separation).toBe("overlap");
+	});
+
+	it("suggests when the candidate equals the lowest scored block score", () => {
+		// The gate blocks at p >= threshold, so a candidate exactly equal to a
+		// block score still blocks that command.
+		const calibration = summarizeSys1Calibration([block(0.78), confirmed(0.76)], { threshold: 0.75 });
+		expect(calibration.suggestedThreshold).toBe(0.78);
+		expect(calibration.separation).toBe("separated");
 	});
 
 	it("clamps the suggestion at 0.99 and yields nothing without data", () => {
-		expect(summarizeSys1Calibration([confirmed(0.985)], { threshold: 0.75 }).suggestedThreshold).toBe(0.99);
+		const clamped = summarizeSys1Calibration([block(0.995), confirmed(0.985)], { threshold: 0.75 });
+		expect(clamped.suggestedThreshold).toBe(0.99);
+		expect(clamped.separation).toBe("separated");
 		const empty = summarizeSys1Calibration([], { threshold: 0.75 });
 		expect(empty.blocks).toBe(0);
 		expect(empty.blockP).toBeUndefined();
 		expect(empty.confirmed).toBe(0);
 		expect(empty.nearMisses).toBe(0);
 		expect(empty.suggestedThreshold).toBeUndefined();
+		expect(empty.separation).toBe("unknown");
+	});
+});
+
+describe("summarizeSys1Kinds", () => {
+	const read = (kind: string, p?: number) =>
+		p === undefined ? { type: "read" as const, kind } : { type: "read" as const, kind, p };
+	const thresholds = { steer: 0.8, triage: 0.45, intake: 0.5, ask: 0.7 };
+
+	it("summarizes per-kind reads with score stats and near-miss bands", () => {
+		const summaries = summarizeSys1Kinds(
+			[
+				read("gate", 0.62),
+				read("steer", 0.1),
+				read("steer", 0.83),
+				read("steer", 0.85),
+				read("triage", 0.3),
+				read("decide", 0.2),
+			],
+			{ thresholds },
+		);
+		expect(summaries.map((summary) => summary.kind)).toEqual(["steer", "gate", "decide", "triage"]);
+		const steer = summaries[0];
+		expect(steer.reads).toBe(3);
+		expect(steer.readP).toEqual({ min: 0.1, median: 0.83, max: 0.85 });
+		expect(steer.threshold).toBe(0.8);
+		// 0.83 and 0.85 are above the threshold; only 0.1 is below the floor
+		expect(steer.nearMisses).toBe(0);
+		expect(summaries[1]?.readP).toEqual({ min: 0.62, median: 0.62, max: 0.62 });
+		expect(summaries[1]?.threshold).toBeUndefined();
+		// decide has no threshold: reads and stats only, no near-miss
+		expect(summaries[2]?.threshold).toBeUndefined();
+		expect(summaries[2]?.nearMisses).toBe(0);
+		expect(summaries[3]?.nearMisses).toBe(0);
+	});
+
+	it("counts near-miss reads inside [floor, threshold) for thresholded kinds", () => {
+		const summaries = summarizeSys1Kinds([read("steer", 0.55), read("steer", 0.79), read("steer", 0.8)], {
+			thresholds,
+		});
+		const steer = summaries[0];
+		expect(steer.nearMisses).toBe(2);
+		expect(steer.nearMissMax).toBe(0.79);
+	});
+
+	it("returns only kinds with reads, canonical order first, unknown kinds after", () => {
+		const summaries = summarizeSys1Kinds([read("custom", 0.4), read("ask", 0.2)], { thresholds });
+		expect(summaries.map((summary) => summary.kind)).toEqual(["ask", "custom"]);
+		expect(summarizeSys1Kinds([], { thresholds })).toEqual([]);
 	});
 });
 

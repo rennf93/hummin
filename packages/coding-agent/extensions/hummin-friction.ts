@@ -19,9 +19,11 @@ import {
 	summarizeFriction,
 	summarizeSys1Calibration,
 	summarizeSys1Gate,
+	summarizeSys1Kinds,
 	type FrictionSummary,
 	type Sys1Calibration,
 	type Sys1GateSummary,
+	type Sys1KindSummary,
 	type SessionSourceCount,
 } from "./lib/friction.ts";
 
@@ -62,6 +64,30 @@ export function gateCalibrationRows(calibration: Sys1Calibration): ReadonlyArray
 			"suggestion",
 			`lowest confirmed P ${pct2(Math.min(...calibration.confirmedScores))} still blocks at ${pct2(calibration.threshold)}; consider settings decision.gateThreshold ${pct2(calibration.suggestedThreshold)}`,
 		]);
+	} else if (calibration.separation === "overlap") {
+		// Bimodality gate: confirmed-safe scores sit inside the blocked band,
+		// so no threshold value separates false from true positives.
+		rows.push(["suggestion", "not enough separation to suggest"]);
+	}
+	return rows;
+}
+
+/** Rows for one per-kind sys1 summary. Pure; exported for tests. */
+export function sys1KindRows(summary: Sys1KindSummary): ReadonlyArray<readonly [string, string]> {
+	const rows: Array<readonly [string, string]> = [];
+	if (summary.readP) {
+		rows.push([
+			"reads",
+			`${summary.reads} (P ${pct2(summary.readP.min)}-${pct2(summary.readP.max)}, median ${pct2(summary.readP.median)})`,
+		]);
+	} else {
+		rows.push(["reads", String(summary.reads)]);
+	}
+	if (summary.threshold !== undefined && summary.nearMisses > 0) {
+		rows.push([
+			"near-miss reads",
+			`${summary.nearMisses} passed at 0.50-${pct2(summary.threshold)}${summary.nearMissMax !== undefined ? ` (max ${pct2(summary.nearMissMax)})` : ""}`,
+		]);
 	}
 	return rows;
 }
@@ -77,15 +103,18 @@ export function sessionSectionRows(counts: readonly SessionSourceCount[]): Reado
 }
 
 /** Plain-text /friction report. Pure; exported for tests. The optional
- * session counts render as the leading "this session" section. */
+ * session counts render as the leading "this session" section; the optional
+ * per-kind sys1 summaries render one calibration section each after the gate
+ * section (the gate kind itself is covered by the existing gate section). */
 export function renderFrictionReport(
 	friction: FrictionSummary,
 	gate: Sys1GateSummary,
 	calibration?: Sys1Calibration,
 	session: readonly SessionSourceCount[] = [],
+	kinds: readonly Sys1KindSummary[] = [],
 ): string {
 	const hasSession = session.length > 0;
-	if (friction.total === 0 && gate.block + gate.confirmed + gate.read === 0 && !hasSession) {
+	if (friction.total === 0 && gate.block + gate.confirmed + gate.read === 0 && !hasSession && kinds.length === 0) {
 		return `No friction recorded in the last ${FRICTION_REPORT_DAYS} days.`;
 	}
 	const sections = [
@@ -102,6 +131,14 @@ export function renderFrictionReport(
 	const calibrationRows = calibration ? gateCalibrationRows(calibration) : [];
 	if (calibrationRows.length > 0) {
 		sections.push("", `sys1 calibration (threshold ${pct2(calibration?.threshold ?? 0.75)})`, formatRows(calibrationRows));
+	}
+	for (const summary of kinds) {
+		if (summary.kind === "gate") continue; // the gate section above covers it
+		const title =
+			summary.threshold !== undefined
+				? `sys1 ${summary.kind} (threshold ${pct2(summary.threshold)})`
+				: `sys1 ${summary.kind}`;
+		sections.push("", title, formatRows(sys1KindRows(summary)));
 	}
 	return sections.join("\n");
 }
@@ -150,11 +187,19 @@ export default function humminFriction(pi: ExtensionAPI): void {
 			const lines = readSys1GateLines();
 			const gate = summarizeSys1Gate(lines);
 			const engine = resolveDecisionEngine();
-			const calibration = summarizeSys1Calibration(
-				lines.map((line) => parseSys1GateEntry(line)).filter((entry): entry is NonNullable<typeof entry> => entry !== undefined),
-				{ threshold: engine.gateThreshold },
-			);
-			ctx.ui.notify(renderFrictionReport(summary, gate, calibration, session), "info");
+			const entries = lines
+				.map((line) => parseSys1GateEntry(line))
+				.filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
+			const calibration = summarizeSys1Calibration(entries, { threshold: engine.gateThreshold });
+			const kinds = summarizeSys1Kinds(entries, {
+				thresholds: {
+					steer: engine.steerThreshold,
+					triage: engine.triageThreshold,
+					intake: engine.intakeThreshold,
+					ask: engine.askThreshold,
+				},
+			});
+			ctx.ui.notify(renderFrictionReport(summary, gate, calibration, session, kinds), "info");
 			const suggested = calibration?.suggestedThreshold;
 			if (suggested === undefined) return;
 			const choice = await ctx.ui.select(

@@ -97,6 +97,23 @@ const monitorNames = ((globalThis as Record<symbol, unknown>)[MONITOR_NAMES_KEY]
 >;
 const MONITOR_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 
+/** Job id bound to a monitor/exec nickname, or undefined. Single authority
+ * for the nickname map: the monitor and exec tools mint names here, and
+ * hummin-shell-jobs resolves and cleans them through these accessors instead
+ * of reaching into the map. */
+export function monitorNameJobId(name: string): string | undefined {
+	return monitorNames.get(name);
+}
+
+/** Drop every nickname bound to the given job (used after stopping it from
+ * outside the monitor/exec tools, e.g. job_stop, mirroring the tools' own
+ * cleanup). */
+export function forgetMonitorNamesForJob(jobId: string): void {
+	for (const [name, id] of monitorNames) {
+		if (id === jobId) monitorNames.delete(name);
+	}
+}
+
 /** Validate an optional user-chosen handle shared by monitor/exec. */
 function validateName(raw: string | undefined, kind: string, names: Map<string, string>): string | undefined {
 	if (raw === undefined || raw === "") return undefined;
