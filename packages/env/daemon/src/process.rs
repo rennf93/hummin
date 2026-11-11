@@ -4,8 +4,8 @@
 
 use crate::errors::Failure;
 use crate::exec::{
-    Control, Ending, Groups, Launch, Message, kill_group, running, spawn, spawn_reader,
-    start_waiter,
+    Control, Ending, Groups, Launch, Message, Throttle, kill_group, receive, running, spawn,
+    spawn_reader, start_waiter,
 };
 use crate::frame::{EVENT, Frame};
 use crate::output::Output;
@@ -108,6 +108,7 @@ pub fn run(
     let pid = child.id();
     groups.lock().unwrap().insert(pid);
     let stop = Arc::new(AtomicBool::new(false));
+    let throttle = Arc::new(Throttle::default());
     // A thread that cannot start (a task limit) fails the request; the started program is killed and reaped. Threads
     // already running see `stop` within 100 ms.
     let abandon = |mut child: Child, error: std::io::Error| {
@@ -132,7 +133,7 @@ pub fn run(
         stdout,
         sender.clone(),
         stop.clone(),
-        Some(output.clone()),
+        Some((output.clone(), throttle.clone())),
     ) {
         return Err(abandon(child, error));
     }
@@ -142,7 +143,7 @@ pub fn run(
         stderr,
         sender.clone(),
         stop.clone(),
-        Some(output.clone()),
+        Some((output.clone(), throttle.clone())),
     ) {
         return Err(abandon(child, error));
     }
@@ -193,6 +194,9 @@ pub fn run(
     let mut ended = [false, false];
     let mut status: Option<Result<ExitStatus, String>> = None;
     let mut idle_until: Option<Instant> = None;
+    let mut seen_releases = 0;
+    // Cancelled or killed: the exit grace is then not renewed for a throttled reader.
+    let mut forced = false;
     let mut aborted = false;
     let mut killed = false;
     let kill = |killed: &mut bool| {
@@ -206,6 +210,7 @@ pub fn run(
         }
     };
     if control.killed.load(Ordering::SeqCst) {
+        forced = true;
         kill(&mut killed);
     }
     loop {
@@ -213,22 +218,22 @@ pub fn run(
             break;
         }
         let wait = match idle_until {
-            Some(idle) => {
-                let now = Instant::now();
-                if now >= idle && output.has_unsent_bulk() {
-                    // Readers wait while output is unsent; their silence is the link's, not the program's.
-                    idle_until = Some(now + EXIT_STDIO_GRACE);
-                    EXIT_STDIO_GRACE
-                } else if now >= idle {
-                    // A descendant may hold the pipes open after the program exited; stop waiting for it.
-                    break;
-                } else {
-                    idle - now
-                }
-            }
+            Some(idle) => idle.saturating_duration_since(Instant::now()),
             None => Duration::from_secs(3600),
         };
-        match receiver.recv_timeout(wait) {
+        // A descendant may hold the pipes open after the program exited; `receive` ends the wait for it.
+        let Some(message) = receive(
+            &receiver,
+            wait,
+            &mut idle_until,
+            &throttle,
+            &mut seen_releases,
+            forced,
+            EXIT_STDIO_GRACE,
+        ) else {
+            break;
+        };
+        match message {
             Ok(Message::Data(stream, bytes)) => {
                 output.bulk(
                     Frame::with_payload(
@@ -256,9 +261,13 @@ pub fn run(
             }
             Ok(Message::Cancel) => {
                 aborted = true;
+                forced = true;
                 kill(&mut killed);
             }
-            Ok(Message::Kill) => kill(&mut killed),
+            Ok(Message::Kill) => {
+                forced = true;
+                kill(&mut killed);
+            }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }

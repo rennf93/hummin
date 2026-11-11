@@ -48,23 +48,19 @@ impl Output {
         self.queued.notify_one();
     }
 
-    /// Wait while more than the bulk limit is unsent, unless `stop` is set.
-    pub fn wait_for_room(&self, stop: &AtomicBool) {
+    /// Wait while more than the bulk limit is unsent, unless `stop` is set. Returns whether it had to wait.
+    pub fn wait_for_room(&self, stop: &AtomicBool) -> bool {
         let mut queues = self.queues.lock().unwrap();
+        let mut waited = false;
         while queues.bulk_bytes > BULK_LIMIT && !queues.closed && !stop.load(Ordering::SeqCst) {
+            waited = true;
             queues = self
                 .drained
                 .wait_timeout(queues, Duration::from_millis(100))
                 .unwrap()
                 .0;
         }
-    }
-
-    /// Whether bulk bytes are still queued. A reader throttled by `wait_for_room` is silent for as long as the link is
-    /// slow, so a program's exit grace must not run out while this holds, or the output left in the pipe is lost.
-    pub fn has_unsent_bulk(&self) -> bool {
-        let queues = self.queues.lock().unwrap();
-        queues.bulk_bytes > 0 && !queues.closed
+        waited
     }
 
     pub fn close(&self) {

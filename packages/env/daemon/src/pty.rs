@@ -5,7 +5,7 @@
 use crate::errors::Failure;
 use crate::exec::{Control, Groups, running};
 #[cfg(unix)]
-use crate::exec::{Message, kill_group, start_waiter};
+use crate::exec::{Message, Throttle, kill_group, receive, start_waiter};
 #[cfg(unix)]
 use crate::frame::{EVENT, Frame};
 use crate::output::Output;
@@ -178,6 +178,7 @@ pub fn run(
     ));
 
     let stop = Arc::new(AtomicBool::new(false));
+    let throttle = Arc::new(Throttle::default());
     // A thread that cannot start (a task limit) fails the terminal; the started program is killed and reaped.
     let abandon = |mut child: std::process::Child, error: std::io::Error| {
         stop.store(true, Ordering::SeqCst);
@@ -192,11 +193,12 @@ pub fn run(
         let sender = sender.clone();
         let stop = stop.clone();
         let output = output.clone();
+        let throttle = throttle.clone();
         thread::Builder::new().spawn(move || {
             unix::read(&master, &stop, |bytes| {
                 let delivered = sender.send(Message::Data(0, bytes.to_vec())).is_ok();
                 // Like a full pipe: a program that writes faster than the link waits.
-                output.wait_for_room(&stop);
+                throttle.wait_for_room(&output, &stop);
                 delivered
             });
             let _ = sender.send(Message::Eof(0));
@@ -228,6 +230,7 @@ pub fn run(
     let mut status = None;
     let mut ended = false;
     let mut idle_until: Option<Instant> = None;
+    let mut seen_releases = 0;
     let mut aborted = false;
     let mut killed = false;
     let kill = |killed: &mut bool| {
@@ -244,22 +247,22 @@ pub fn run(
             break;
         }
         let wait = match idle_until {
-            Some(idle) => {
-                let now = Instant::now();
-                if now >= idle && output.has_unsent_bulk() {
-                    // The reader waits while output is unsent; its silence is the link's, not the program's.
-                    idle_until = Some(now + EXIT_GRACE);
-                    EXIT_GRACE
-                } else if now >= idle {
-                    // A background job may keep the terminal open after the program exited.
-                    break;
-                } else {
-                    idle - now
-                }
-            }
+            Some(idle) => idle.saturating_duration_since(Instant::now()),
             None => Duration::from_secs(3600),
         };
-        match receiver.recv_timeout(wait) {
+        // A background job may keep the terminal open after the program exited; `receive` ends the wait for it.
+        let Some(message) = receive(
+            &receiver,
+            wait,
+            &mut idle_until,
+            &throttle,
+            &mut seen_releases,
+            killed,
+            EXIT_GRACE,
+        ) else {
+            break;
+        };
+        match message {
             Ok(Message::Data(_, bytes)) => {
                 output.bulk(
                     Frame::with_payload(EVENT, id, json!({ "kind": "output" }), bytes),
