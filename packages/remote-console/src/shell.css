@@ -5,12 +5,13 @@
    data-rc attribute to win the tie against index.css's region classes.
 
    Shape lock: controls and chips use --rc-radius-sm, cards use
-   --rc-radius-md, floating islands (header island, appearance panel) use
-   --rc-radius-lg. Blur layers never stack: rail, header island, and composer
-   sit directly on the base; the appearance overlay is the one stronger layer
-   (--rc-blur-overlay) and its children carry no blur of their own. Motion
-   tokens drive every transition and keyframe; the motion axis and
-   prefers-reduced-motion zero them together. */
+   --rc-radius-md, floating islands (header island, composer island,
+   appearance panel) use --rc-radius-lg. Blur layers never stack: rail, header
+   island, and composer island sit directly on the base and blur the depth
+   scene; the appearance overlay is the one stronger layer (--rc-blur-overlay)
+   and its children carry no blur of their own; translucent bezel cores have no
+   backdrop-filter at all. Motion tokens drive every transition and keyframe;
+   the motion axis and prefers-reduced-motion zero them together. */
 
 /* shell frame: rail left, main column right */
 .rc-shell[data-rc-shell] {
@@ -47,6 +48,7 @@
 }
 
 .rc-transcript[data-rc-region] {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	flex: 1;
@@ -79,7 +81,7 @@
 	font-family: var(--rc-font-mono);
 	font-size: 0.72rem;
 	text-transform: uppercase;
-	letter-spacing: 0.08em;
+	letter-spacing: 0.1em;
 	color: var(--rc-fg-faint);
 }
 
@@ -107,17 +109,23 @@
 	color: var(--rc-fg-faint);
 }
 
+/* host rows: small glass cards; a glass-lift hover (micro raise, accent-leaning
+   border) mirrors the transcript tool cards */
 .rc-host-row {
 	display: flex;
 	align-items: stretch;
 	border-radius: var(--rc-radius-sm);
 	border: 1px solid transparent;
-	transition: border-color var(--rc-duration-fast) var(--rc-ease-out-expo), background var(--rc-duration-fast) var(--rc-ease-out-expo);
+	transition:
+		border-color var(--rc-duration-fast) var(--rc-ease-out-expo),
+		background var(--rc-duration-fast) var(--rc-ease-out-expo),
+		transform var(--rc-duration-fast) var(--rc-ease-out-expo);
 }
 
 .rc-host-row:hover {
 	border-color: var(--rc-hairline);
 	background: var(--rc-track);
+	transform: translateY(var(--rc-lift));
 }
 
 .rc-host-row-active {
@@ -126,9 +134,10 @@
 	box-shadow: inset 2px 0 0 var(--rc-primary);
 }
 
-/* per-host state: the glyph carries the color, the sub text names the state,
-   so status is never color alone. Unreachable and unauthorized calm down:
-   dimmed label, the state word in --rc-bad. */
+/* per-host state: the glyph carries the color and glow, the sub text names the
+   state, so status is never color alone. Connected = accent glow pulse on a
+   3s loop; stale and unreachable calm down to a static dim glyph; unauthorized
+   reads warn; connecting/reconnecting keep the accent blink. */
 .rc-host-glyph {
 	flex: none;
 	color: var(--rc-fg-faint);
@@ -136,11 +145,15 @@
 }
 
 .rc-host-row[data-rc-host-status="connected"] .rc-host-glyph {
-	color: var(--rc-good);
+	color: var(--rc-primary);
+	text-shadow: var(--rc-dot-glow);
+	animation: rc-dot-pulse var(--rc-duration-pulse) var(--rc-ease-in-out-soft) infinite;
 }
 
-.rc-host-row[data-rc-host-status="stale"] .rc-host-glyph {
-	color: var(--rc-warn);
+.rc-host-row[data-rc-host-status="stale"] .rc-host-glyph,
+.rc-host-row[data-rc-host-status="unreachable"] .rc-host-glyph,
+.rc-host-row[data-rc-host-status="offline"] .rc-host-glyph {
+	color: var(--rc-fg-faint);
 }
 
 .rc-host-row[data-rc-host-status="connecting"] .rc-host-glyph,
@@ -150,11 +163,7 @@
 }
 
 .rc-host-row[data-rc-host-status="unauthorized"] .rc-host-glyph {
-	color: var(--rc-bad);
-}
-
-.rc-host-row[data-rc-host-status="unreachable"] .rc-host-glyph {
-	color: var(--rc-bad);
+	color: var(--rc-warn);
 }
 
 .rc-host-row[data-rc-host-status="unreachable"] .rc-host-label,
@@ -182,6 +191,17 @@
 	}
 	to {
 		opacity: 0.35;
+	}
+}
+
+/* the connected glow pulse: opacity-only loop so the layer stays composited */
+@keyframes rc-dot-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.7;
 	}
 }
 
@@ -232,6 +252,8 @@
 	color: var(--rc-bad);
 }
 
+/* pressable: every button presses down (scale 0.97) with accent-leaning
+   border transitions on hover; composed per control below */
 .rc-host-remove {
 	flex: none;
 	background: transparent;
@@ -240,11 +262,18 @@
 	cursor: pointer;
 	padding: var(--rc-space-2);
 	font: inherit;
-	transition: color var(--rc-duration-press) var(--rc-ease-out-expo);
+	transition:
+		color var(--rc-duration-press) var(--rc-ease-out-expo),
+		border-color var(--rc-duration-press) var(--rc-ease-out-expo),
+		transform var(--rc-duration-press) var(--rc-ease-out-expo);
 }
 
 .rc-host-remove:hover {
 	color: var(--rc-bad);
+}
+
+.rc-host-remove:active {
+	transform: scale(0.97);
 }
 
 /* add-host form */
@@ -273,15 +302,22 @@
 	font-family: var(--rc-font-mono);
 	font-size: 0.72rem;
 	text-transform: uppercase;
-	letter-spacing: 0.06em;
+	letter-spacing: 0.1em;
 	padding: var(--rc-space-1) var(--rc-space-2);
 	cursor: pointer;
-	transition: color var(--rc-duration-press) var(--rc-ease-out-expo), border-color var(--rc-duration-press) var(--rc-ease-out-expo);
+	transition:
+		color var(--rc-duration-press) var(--rc-ease-out-expo),
+		border-color var(--rc-duration-press) var(--rc-ease-out-expo),
+		transform var(--rc-duration-press) var(--rc-ease-out-expo);
 }
 
 .rc-add-toggle:hover {
 	color: var(--rc-fg);
 	border-color: var(--rc-primary-muted);
+}
+
+.rc-add-toggle:active {
+	transform: scale(0.97);
 }
 
 .rc-add-fields {
@@ -298,6 +334,11 @@
 	font: inherit;
 	font-size: 0.85rem;
 	padding: var(--rc-space-1) var(--rc-space-2);
+	transition: border-color var(--rc-duration-fast) var(--rc-ease-out-expo);
+}
+
+.rc-add-input:hover {
+	border-color: var(--rc-primary-muted);
 }
 
 .rc-add-input::placeholder {
@@ -319,7 +360,9 @@
 	font-size: 0.85rem;
 	padding: var(--rc-space-1) var(--rc-space-3);
 	cursor: pointer;
-	transition: background var(--rc-duration-press) var(--rc-ease-out-expo), transform var(--rc-duration-press) var(--rc-ease-out-expo);
+	transition:
+		background var(--rc-duration-press) var(--rc-ease-out-expo),
+		transform var(--rc-duration-press) var(--rc-ease-out-expo);
 }
 
 .rc-add-submit:hover {
@@ -327,16 +370,18 @@
 }
 
 .rc-add-submit:active {
-	transform: translateY(1px);
+	transform: scale(0.97);
 }
 
 .rc-add-submit:disabled {
 	background: var(--rc-track);
 	color: var(--rc-fg-faint);
 	cursor: default;
+	transform: none;
 }
 
-/* header island: a floating machined card, one blur layer, concentric radius */
+/* header island: a floating machined card, the strong blur layer of the header
+   region, concentric radius, inset top highlight, deep tinted shadow */
 .rc-header-inner {
 	display: flex;
 	flex-wrap: wrap;
@@ -344,15 +389,20 @@
 	gap: var(--rc-space-3);
 	width: 100%;
 	min-width: 0;
-	background: var(--rc-surface);
+	background: linear-gradient(160deg, var(--rc-island), var(--rc-surface));
 	border: 1px solid var(--rc-hairline);
 	border-radius: var(--rc-radius-lg);
 	padding: var(--rc-space-3) var(--rc-space-4);
-	backdrop-filter: var(--rc-blur);
-	box-shadow: var(--rc-shadow-raise), inset 0 1px 0 var(--rc-glass-highlight);
+	backdrop-filter: var(--rc-blur-overlay);
+	box-shadow: inset 0 1px 0 var(--rc-glass-highlight), var(--rc-shadow-island);
 }
 
+/* status chip with its live dot: the dot carries the pulse, the text names the
+   state, so status is never color alone */
 .rc-header-status {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--rc-space-1);
 	font-family: var(--rc-font-mono);
 	font-size: 0.78rem;
 	text-transform: uppercase;
@@ -363,6 +413,30 @@
 	padding: var(--rc-space-1) var(--rc-space-2);
 }
 
+.rc-header-status-dot {
+	flex: none;
+	width: 0.45rem;
+	height: 0.45rem;
+	border-radius: 50%;
+	background: var(--rc-fg-faint);
+}
+
+.rc-header-status-dot[data-rc-status-dot="connected"] {
+	background: var(--rc-primary);
+	box-shadow: var(--rc-dot-glow);
+	animation: rc-dot-pulse var(--rc-duration-pulse) var(--rc-ease-in-out-soft) infinite;
+}
+
+.rc-header-status-dot[data-rc-status-dot="connecting"],
+.rc-header-status-dot[data-rc-status-dot="reconnecting"] {
+	background: var(--rc-primary);
+	animation: rc-rail-pulse var(--rc-duration-slow) var(--rc-ease-in-out-soft) infinite alternate;
+}
+
+.rc-header-status-dot[data-rc-status-dot="unauthorized"] {
+	background: var(--rc-warn);
+}
+
 .rc-header-model,
 .rc-header-thinking {
 	font-family: var(--rc-font-mono);
@@ -371,6 +445,8 @@
 	overflow-wrap: anywhere;
 }
 
+/* context meter: the fill eases to its new width and carries a soft glow at
+   the tip, so usage changes read as motion at the edge */
 .rc-header-ctx {
 	display: inline-flex;
 	align-items: baseline;
@@ -380,24 +456,77 @@
 	color: var(--rc-fg-dim);
 }
 
+.rc-header-ctx-label {
+	font-size: 0.72rem;
+	text-transform: uppercase;
+	letter-spacing: 0.1em;
+	color: var(--rc-fg-faint);
+}
+
 .rc-header-ctx-track {
 	display: inline-block;
 	width: 6rem;
 	height: var(--rc-space-1);
 	background: var(--rc-track);
 	border-radius: var(--rc-radius-sm);
-	overflow: hidden;
 }
 
 .rc-header-ctx-fill {
 	display: block;
+	position: relative;
 	height: 100%;
-	background: var(--rc-primary-muted);
+	border-radius: inherit;
+	background: linear-gradient(90deg, var(--rc-primary-muted), var(--rc-primary));
+	transition: width var(--rc-duration-slow) var(--rc-ease-out-expo);
+}
+
+.rc-header-ctx-fill::after {
+	content: "";
+	position: absolute;
+	right: 0;
+	top: 50%;
+	width: 0.3rem;
+	height: 0.3rem;
+	border-radius: 50%;
+	transform: translate(35%, -50%);
+	background: var(--rc-primary);
+	box-shadow: var(--rc-meter-glow);
 }
 
 .rc-header-ctx-num {
 	font-size: 0.72rem;
 	color: var(--rc-fg-faint);
+	font-variant-numeric: tabular-nums;
+}
+
+/* rolling digits (components/RollingNumber.tsx): one overflow-hidden window per
+   position, a 0-9 column translated to the target digit, 30ms stagger per
+   position; tabular-nums keeps the window width stable while digits roll */
+.rc-roll {
+	display: inline-flex;
+	font-variant-numeric: tabular-nums;
+}
+
+.rc-roll-digit {
+	display: inline-block;
+	overflow: hidden;
+	height: 1em;
+	line-height: 1em;
+}
+
+.rc-roll-column {
+	display: block;
+	transition: transform var(--rc-duration-slow) var(--rc-ease-out-expo);
+}
+
+.rc-roll-cell {
+	display: block;
+	height: 1em;
+	line-height: 1em;
+}
+
+.rc-roll-char {
+	display: inline-block;
 }
 
 .rc-header-spacer {
@@ -406,12 +535,70 @@
 
 .rc-header-presets {
 	display: inline-flex;
-	gap: var(--rc-space-1);
 }
 
-.rc-preset-btn,
-.rc-appear-open,
-.rc-appear-motion-btn {
+/* sliding-pill segmented control: the track is a quiet glass strip, the thumb
+   glides under the active option on the spring token (dashboard
+   SlidingHighlight choreography, ported in components/SlidingPill.tsx) */
+.rc-pill {
+	position: relative;
+	display: inline-grid;
+	grid-auto-flow: column;
+	align-items: stretch;
+	gap: var(--rc-space-1);
+	padding: var(--rc-space-1);
+	background: var(--rc-track);
+	border: 1px solid var(--rc-hairline);
+	border-radius: var(--rc-radius-sm);
+}
+
+.rc-pill-thumb {
+	position: absolute;
+	top: var(--rc-space-1);
+	bottom: var(--rc-space-1);
+	left: 0;
+	border-radius: calc(var(--rc-radius-sm) - 2px);
+	background: var(--rc-primary-faint);
+	border: 1px solid var(--rc-primary-muted);
+	transition:
+		transform var(--rc-duration-base) var(--rc-ease-spring),
+		width var(--rc-duration-base) var(--rc-ease-out-expo);
+	will-change: transform;
+}
+
+.rc-pill-btn {
+	position: relative;
+	z-index: 1;
+	background: transparent;
+	border: none;
+	border-radius: calc(var(--rc-radius-sm) - 2px);
+	color: var(--rc-fg-dim);
+	font-family: var(--rc-font-mono);
+	font-size: 0.72rem;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	padding: var(--rc-space-1) var(--rc-space-2);
+	cursor: pointer;
+	white-space: nowrap;
+	transition:
+		color var(--rc-duration-press) var(--rc-ease-out-expo),
+		transform var(--rc-duration-press) var(--rc-ease-out-expo);
+}
+
+.rc-pill-btn:hover {
+	color: var(--rc-fg);
+}
+
+.rc-pill-btn:active {
+	transform: scale(0.97);
+}
+
+.rc-pill-btn[aria-pressed="true"] {
+	color: var(--rc-primary);
+}
+
+/* the panel opener stays a bordered chip beside the preset pill */
+.rc-appear-open {
 	background: transparent;
 	border: 1px solid var(--rc-hairline);
 	border-radius: var(--rc-radius-sm);
@@ -422,26 +609,26 @@
 	letter-spacing: 0.06em;
 	padding: var(--rc-space-1) var(--rc-space-2);
 	cursor: pointer;
-	transition: color var(--rc-duration-press) var(--rc-ease-out-expo), border-color var(--rc-duration-press) var(--rc-ease-out-expo), background var(--rc-duration-press) var(--rc-ease-out-expo);
+	transition:
+		color var(--rc-duration-press) var(--rc-ease-out-expo),
+		border-color var(--rc-duration-press) var(--rc-ease-out-expo),
+		background var(--rc-duration-press) var(--rc-ease-out-expo),
+		transform var(--rc-duration-press) var(--rc-ease-out-expo);
 }
 
-.rc-preset-btn:hover,
-.rc-appear-open:hover,
-.rc-appear-motion-btn:hover {
+.rc-appear-open:hover {
 	color: var(--rc-fg);
+	border-color: var(--rc-primary-muted);
 }
 
-.rc-preset-btn[aria-pressed="true"],
-.rc-appear-motion-btn[aria-pressed="true"] {
-	color: var(--rc-primary);
-	border-color: var(--rc-primary-muted);
-	background: var(--rc-primary-faint);
+.rc-appear-open:active {
+	transform: scale(0.97);
 }
 
 /* approval card: an attention surface. The warn edge is paired with the
-   "approval" label chip and the glyph, never color alone; the entrance is a
-   short rise on the motion tokens. No blur here: the card lives inside the
-   composer surface, which is already the one blur layer of that region. */
+   "approval" label chip and the glyph, never color alone. Arrival is the
+   dashboard's severity flash (a warn wash decaying to transparent) plus the
+   spring slide-in; both run on the motion tokens. */
 .rc-approval {
 	display: flex;
 	align-items: baseline;
@@ -452,7 +639,9 @@
 	border-radius: var(--rc-radius-md);
 	padding: var(--rc-space-2) var(--rc-space-3);
 	box-shadow: inset 0 1px 0 var(--rc-glass-highlight);
-	animation: rc-approval-in var(--rc-duration-base) var(--rc-ease-out-expo);
+	animation:
+		rc-approval-in var(--rc-duration-base) var(--rc-ease-spring) both,
+		rc-severity-flash var(--rc-duration-flash) var(--rc-ease-out-expo) both;
 }
 
 @keyframes rc-approval-in {
@@ -463,6 +652,15 @@
 	to {
 		opacity: 1;
 		transform: translateY(0);
+	}
+}
+
+@keyframes rc-severity-flash {
+	0% {
+		background-color: var(--rc-flash-warn);
+	}
+	100% {
+		background-color: transparent;
 	}
 }
 
@@ -491,7 +689,7 @@
 	font-family: var(--rc-font-mono);
 	font-size: 0.68rem;
 	text-transform: uppercase;
-	letter-spacing: 0.08em;
+	letter-spacing: 0.1em;
 	background: var(--rc-warn);
 	color: var(--rc-base);
 	border-radius: var(--rc-radius-sm);
@@ -522,6 +720,7 @@
 	font-family: var(--rc-font-mono);
 	font-size: 0.8rem;
 	color: var(--rc-warn);
+	font-variant-numeric: tabular-nums;
 }
 
 .rc-approval-allow,
@@ -533,7 +732,11 @@
 	font-size: 0.85rem;
 	padding: var(--rc-space-1) var(--rc-space-3);
 	cursor: pointer;
-	transition: background var(--rc-duration-press) var(--rc-ease-out-expo), color var(--rc-duration-press) var(--rc-ease-out-expo), transform var(--rc-duration-press) var(--rc-ease-out-expo);
+	transition:
+		background var(--rc-duration-press) var(--rc-ease-out-expo),
+		color var(--rc-duration-press) var(--rc-ease-out-expo),
+		border-color var(--rc-duration-press) var(--rc-ease-out-expo),
+		transform var(--rc-duration-press) var(--rc-ease-out-expo);
 }
 
 .rc-approval-allow {
@@ -547,7 +750,7 @@
 
 .rc-approval-allow:active,
 .rc-approval-deny:active {
-	transform: translateY(1px);
+	transform: scale(0.97);
 }
 
 .rc-approval-deny {
@@ -561,7 +764,7 @@
 	color: var(--rc-base);
 }
 
-/* composer */
+/* composer (island surface lives in index.css; layout here) */
 .rc-composer-inner {
 	display: flex;
 	flex-direction: column;
@@ -629,19 +832,18 @@
 	transition: border-color var(--rc-duration-fast) var(--rc-ease-out-expo);
 }
 
+.rc-composer-input:hover {
+	border-color: var(--rc-primary-muted);
+}
+
 .rc-composer-input::placeholder {
 	color: var(--rc-fg-faint);
 }
 
-.rc-composer-deliver {
-	background: var(--rc-raised);
-	border: 1px solid var(--rc-hairline);
-	border-radius: var(--rc-radius-sm);
-	color: var(--rc-fg);
-	font: inherit;
-	font-size: 0.82rem;
-	padding: var(--rc-space-2);
-	transition: border-color var(--rc-duration-fast) var(--rc-ease-out-expo);
+/* delivery mode: the sliding pill carries the group's data attribute */
+.rc-deliver {
+	flex: none;
+	display: inline-flex;
 }
 
 .rc-composer-send,
@@ -653,7 +855,11 @@
 	font-size: 0.85rem;
 	padding: var(--rc-space-2) var(--rc-space-4);
 	cursor: pointer;
-	transition: background var(--rc-duration-press) var(--rc-ease-out-expo), color var(--rc-duration-press) var(--rc-ease-out-expo), transform var(--rc-duration-press) var(--rc-ease-out-expo);
+	transition:
+		background var(--rc-duration-press) var(--rc-ease-out-expo),
+		color var(--rc-duration-press) var(--rc-ease-out-expo),
+		border-color var(--rc-duration-press) var(--rc-ease-out-expo),
+		transform var(--rc-duration-press) var(--rc-ease-out-expo);
 }
 
 .rc-composer-send {
@@ -667,7 +873,7 @@
 
 .rc-composer-send:active,
 .rc-composer-abort:active {
-	transform: translateY(1px);
+	transform: scale(0.97);
 }
 
 .rc-composer-send:disabled,
@@ -689,8 +895,10 @@
 	color: var(--rc-base);
 }
 
-/* appearance overlay: scrim dims (no blur), the panel is the one stronger
-   blur layer. Overlay z-index is the only elevated layer in the shell. */
+/* appearance overlay: scrim fades (no blur, light dim), the panel is the one
+   stronger blur layer and springs in on the spring token; `backwards` fill
+   keeps the entrance from pinning a backdrop root. Overlay z-index is the only
+   elevated layer in the shell. */
 .rc-appear {
 	position: fixed;
 	inset: 0;
@@ -703,7 +911,7 @@
 	position: absolute;
 	inset: 0;
 	background: var(--rc-scrim);
-	animation: rc-scrim-in var(--rc-duration-base) var(--rc-ease-out-expo);
+	animation: rc-scrim-in var(--rc-duration-fast) var(--rc-ease-in-out-soft) both;
 }
 
 @keyframes rc-scrim-in {
@@ -724,17 +932,20 @@
 	background: var(--rc-surface);
 	border-left: 1px solid var(--rc-hairline);
 	backdrop-filter: var(--rc-blur-overlay);
-	box-shadow: var(--rc-shadow-raise), inset 0 1px 0 var(--rc-glass-highlight);
+	box-shadow: inset 0 1px 0 var(--rc-glass-highlight), var(--rc-shadow-raise);
 	border-radius: 0;
 	overflow-y: auto;
 	padding: var(--rc-space-4);
 	display: flex;
 	flex-direction: column;
 	gap: var(--rc-space-4);
-	animation: rc-panel-in var(--rc-duration-slow) var(--rc-ease-out-expo);
+	animation: rc-panel-in var(--rc-duration-base) var(--rc-ease-spring) backwards;
 }
 
-.rc-appear-panel:focus {
+/* the panel takes programmatic focus for a11y; the global focus ring would
+   frame the whole panel */
+.rc-appear-panel:focus,
+.rc-appear-panel:focus-visible {
 	outline: none;
 }
 
@@ -775,7 +986,7 @@
 	}
 	to {
 		opacity: 1;
-		transform: translateY(0);
+		transform: translateX(0) translateY(0);
 	}
 }
 
@@ -805,12 +1016,19 @@
 	line-height: 1;
 	padding: var(--rc-space-1) var(--rc-space-2);
 	cursor: pointer;
-	transition: color var(--rc-duration-press) var(--rc-ease-out-expo), border-color var(--rc-duration-press) var(--rc-ease-out-expo);
+	transition:
+		color var(--rc-duration-press) var(--rc-ease-out-expo),
+		border-color var(--rc-duration-press) var(--rc-ease-out-expo),
+		transform var(--rc-duration-press) var(--rc-ease-out-expo);
 }
 
 .rc-appear-close:hover {
 	color: var(--rc-fg);
 	border-color: var(--rc-primary-muted);
+}
+
+.rc-appear-close:active {
+	transform: scale(0.97);
 }
 
 /* live preview: a fake transcript row, a status pill, and a primary button,
@@ -840,7 +1058,7 @@
 	font-family: var(--rc-font-mono);
 	font-size: 0.72rem;
 	text-transform: uppercase;
-	letter-spacing: 0.08em;
+	letter-spacing: 0.1em;
 	color: var(--rc-fg-faint);
 }
 
@@ -864,19 +1082,21 @@
 	font-size: 0.72rem;
 	text-transform: uppercase;
 	letter-spacing: 0.06em;
-	color: var(--rc-good);
+	color: var(--rc-primary);
 	background: var(--rc-track);
 	border: 1px solid var(--rc-hairline);
 	border-radius: var(--rc-radius-sm);
 	padding: var(--rc-space-1) var(--rc-space-2);
 }
 
+/* the preview's connected dot: accent with the soft glow halo */
 .rc-appear-pill-dot {
 	align-self: center;
 	width: 0.45rem;
 	height: 0.45rem;
 	border-radius: 50%;
-	background: var(--rc-good);
+	background: var(--rc-primary);
+	box-shadow: var(--rc-dot-glow);
 }
 
 .rc-appear-preview-btn {
@@ -900,7 +1120,7 @@
 	font-family: var(--rc-font-mono);
 	font-size: 0.72rem;
 	text-transform: uppercase;
-	letter-spacing: 0.08em;
+	letter-spacing: 0.1em;
 	color: var(--rc-fg-faint);
 }
 
@@ -915,6 +1135,7 @@
 	font-family: var(--rc-font-mono);
 	font-size: 0.78rem;
 	color: var(--rc-fg-dim);
+	font-variant-numeric: tabular-nums;
 }
 
 /* preset swatches: each card re-resolves the token sheet for its own preset
@@ -936,11 +1157,19 @@
 	padding: var(--rc-space-2);
 	cursor: pointer;
 	font: inherit;
-	transition: border-color var(--rc-duration-fast) var(--rc-ease-out-expo), background var(--rc-duration-fast) var(--rc-ease-out-expo);
+	transition:
+		border-color var(--rc-duration-fast) var(--rc-ease-out-expo),
+		background var(--rc-duration-fast) var(--rc-ease-out-expo),
+		transform var(--rc-duration-fast) var(--rc-ease-out-expo);
 }
 
 .rc-appear-swatch:hover {
 	border-color: var(--rc-primary-muted);
+	transform: translateY(var(--rc-lift));
+}
+
+.rc-appear-swatch:active {
+	transform: none;
 }
 
 .rc-appear-swatch[aria-pressed="true"] {
@@ -992,7 +1221,8 @@
 
 /* sliders: native range with a token-drawn track; the density slider reads
    its filled length from the inline --rc-slider-fill, the hue slider shows
-   the full spectrum token */
+   the full spectrum token. The thumb carries the accent glow ring and grows
+   on hover. */
 .rc-appear-slider {
 	appearance: none;
 	width: 100%;
@@ -1014,7 +1244,12 @@
 	border-radius: 50%;
 	background: var(--rc-fg);
 	border: 2px solid var(--rc-surface-solid);
-	box-shadow: var(--rc-shadow-thumb);
+	box-shadow: var(--rc-shadow-thumb), var(--rc-thumb-glow);
+	transition: transform var(--rc-duration-press) var(--rc-ease-out-expo);
+}
+
+.rc-appear-slider:hover::-webkit-slider-thumb {
+	transform: scale(1.15);
 }
 
 .rc-appear-slider::-moz-range-thumb {
@@ -1023,12 +1258,7 @@
 	border-radius: 50%;
 	background: var(--rc-fg);
 	border: 2px solid var(--rc-surface-solid);
-	box-shadow: var(--rc-shadow-thumb);
-}
-
-.rc-appear-motion {
-	display: inline-flex;
-	gap: var(--rc-space-1);
+	box-shadow: var(--rc-shadow-thumb), var(--rc-thumb-glow);
 }
 
 .rc-appear-hint {
@@ -1107,26 +1337,4 @@
 		height: auto;
 		flex: 1;
 	}
-}
-
-/* keyboard focus, one rule for the shell's own controls */
-.rc-host-select:focus-visible,
-.rc-host-remove:focus-visible,
-.rc-add-input:focus-visible,
-.rc-add-toggle:focus-visible,
-.rc-add-submit:focus-visible,
-.rc-preset-btn:focus-visible,
-.rc-appear-open:focus-visible,
-.rc-appear-close:focus-visible,
-.rc-appear-swatch:focus-visible,
-.rc-appear-slider:focus-visible,
-.rc-appear-motion-btn:focus-visible,
-.rc-approval-allow:focus-visible,
-.rc-approval-deny:focus-visible,
-.rc-composer-input:focus-visible,
-.rc-composer-deliver:focus-visible,
-.rc-composer-send:focus-visible,
-.rc-composer-abort:focus-visible {
-	outline: 1px solid var(--rc-primary);
-	outline-offset: 1px;
 }

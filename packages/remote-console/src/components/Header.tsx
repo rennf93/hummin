@@ -1,12 +1,15 @@
 /**
  * components/Header: the active host's status island. Run status (idle,
  * working, waiting with its terminal detail), model and thinking level,
- * context usage percent, the preset quick-switch that drives the appearance
- * store, and the button that opens the full appearance panel.
+ * context usage percent on a rolling-digit readout with a glowing meter, the
+ * preset quick-switch as a sliding-pill segmented control that drives the
+ * appearance store, and the button that opens the full appearance panel.
  */
 /// <reference lib="dom" />
 import type { HostState } from "../store.ts";
 import type { RemoteConsolePreset } from "../hosts.ts";
+import { RollingNumber } from "./RollingNumber.tsx";
+import { SlidingPill, type PillButtonProps } from "./SlidingPill.tsx";
 
 const PRESETS: readonly RemoteConsolePreset[] = ["glass", "paper", "terminal"];
 
@@ -18,6 +21,11 @@ export function headerStatus(state: HostState | undefined): string {
 		return `${state.status.kind}${detail}`;
 	}
 	return state.connection;
+}
+
+/** Test hook attributes for the preset pill's option buttons. */
+function presetProps(preset: RemoteConsolePreset): PillButtonProps {
+	return { "data-rc-preset-btn": preset };
 }
 
 export function Header({
@@ -32,6 +40,7 @@ export function Header({
 	onOpenAppearance(): void;
 }) {
 	const status = headerStatus(state);
+	const connection = state?.connection ?? "none";
 	const model = state?.status?.model ?? null;
 	const thinking = state?.status?.thinkingLevel;
 	const usage = state?.status?.contextUsage ?? null;
@@ -39,6 +48,7 @@ export function Header({
 	return (
 		<div className="rc-header-inner" data-rc-header="true">
 			<span className="rc-header-status" data-rc-status={state?.status?.kind ?? "none"}>
+				<span className="rc-header-status-dot" data-rc-status-dot={connection} aria-hidden="true" />
 				{status}
 			</span>
 			{model !== null && (
@@ -57,23 +67,20 @@ export function Header({
 					<span className="rc-header-ctx-track" aria-hidden="true">
 						<span className="rc-header-ctx-fill" style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
 					</span>
-					<span className="rc-header-ctx-num">{Math.round(percent)}%</span>
+					<span className="rc-header-ctx-num">
+						<RollingNumber value={Math.round(percent)} />
+						%
+					</span>
 				</span>
 			)}
 			<span className="rc-header-spacer" />
 			<span className="rc-header-presets" data-rc-presets="true">
-				{PRESETS.map((candidate) => (
-					<button
-						key={candidate}
-						type="button"
-						className="rc-preset-btn"
-						data-rc-preset-btn={candidate}
-						aria-pressed={candidate === preset}
-						onClick={() => onPreset(candidate)}
-					>
-						{candidate}
-					</button>
-				))}
+				<SlidingPill
+					options={PRESETS.map((candidate) => ({ value: candidate, label: candidate, props: presetProps(candidate) }))}
+					active={preset}
+					onChange={onPreset}
+					ariaLabel="preset"
+				/>
 			</span>
 			<button
 				type="button"

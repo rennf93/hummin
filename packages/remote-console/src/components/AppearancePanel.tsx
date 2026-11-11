@@ -12,9 +12,15 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import type { Appearance, MotionPreference, RemoteConsolePreset } from "../hosts.ts";
 import { clampAccentHue, clampDensity } from "../hosts.ts";
+import { SlidingPill, type PillButtonProps } from "./SlidingPill.tsx";
 
 const PRESETS: readonly RemoteConsolePreset[] = ["glass", "paper", "terminal"];
 const MOTIONS: readonly MotionPreference[] = ["auto", "off"];
+
+/** Test hook attributes for the motion pill's option buttons. */
+function motionProps(motion: MotionPreference): PillButtonProps {
+	return { "data-rc-appear-motion": motion };
+}
 
 /** The first and last tab stops for the focus trap. Decorative controls
  * (tabindex -1) and disabled controls are not stops. */
@@ -53,9 +59,9 @@ export function AppearancePanel({
 			const panel = panelRef.current;
 			if (panel === null) return;
 			const stops = focusableIn(panel);
-			if (stops.length === 0) return;
 			const first = stops[0];
 			const last = stops[stops.length - 1];
+			if (first === undefined || last === undefined) return;
 			const active = document.activeElement;
 			if (event.shiftKey && (active === first || active === panel)) {
 				event.preventDefault();
@@ -154,15 +160,20 @@ export function AppearancePanel({
 						min={0}
 						max={360}
 						step={1}
-						value={appearance.accentHue}
-						aria-valuetext={`${appearance.accentHue} degrees`}
-						onChange={(event) => onChange({ accentHue: clampAccentHue(Number(event.currentTarget.value)) })}
-					/>
-				</div>
+					value={appearance.accentHue}
+					aria-valuetext={`${appearance.accentHue} degrees`}
+					onChange={(event) => {
+						// An empty value must not become hue 0 (Number("") is 0): NaN
+						// falls through clampAccentHue to the default instead.
+						const raw = event.currentTarget.value;
+						onChange({ accentHue: clampAccentHue(raw === "" ? Number.NaN : Number(raw)) });
+					}}
+				/>
+			</div>
 
-				<div className="rc-appear-group">
-					<div className="rc-appear-label-row">
-						<label className="rc-appear-label" htmlFor="rc-appear-density">density</label>
+			<div className="rc-appear-group">
+				<div className="rc-appear-label-row">
+					<label className="rc-appear-label" htmlFor="rc-appear-density">density</label>
 						<span className="rc-appear-value" data-rc-appear-density-value={String(appearance.density)}>
 							{appearance.density.toFixed(2)}
 						</span>
@@ -185,19 +196,13 @@ export function AppearancePanel({
 
 				<div className="rc-appear-group">
 					<div className="rc-appear-label" id="rc-appear-motion-label">motion</div>
-					<div className="rc-appear-motion" role="group" aria-labelledby="rc-appear-motion-label">
-						{MOTIONS.map((candidate) => (
-							<button
-								key={candidate}
-								type="button"
-								className="rc-appear-motion-btn"
-								data-rc-appear-motion={candidate}
-								aria-pressed={candidate === appearance.motion}
-								onClick={() => onChange({ motion: candidate })}
-							>
-								{candidate}
-							</button>
-						))}
+					<div className="rc-appear-motion">
+						<SlidingPill
+							options={MOTIONS.map((candidate) => ({ value: candidate, label: candidate, props: motionProps(candidate) }))}
+							active={appearance.motion}
+							onChange={(motion) => onChange({ motion })}
+							ariaLabel="motion"
+						/>
 					</div>
 					<p className="rc-appear-hint">auto follows the system reduced-motion setting; off forces every animation to zero.</p>
 				</div>

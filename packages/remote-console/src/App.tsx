@@ -24,6 +24,7 @@ import {
 import { ApprovalCard } from "./components/ApprovalCard.tsx";
 import { AppearancePanel } from "./components/AppearancePanel.tsx";
 import { Composer } from "./components/Composer.tsx";
+import { DepthScene } from "./components/DepthScene.tsx";
 import { Header } from "./components/Header.tsx";
 import { HostRail, type AddHostInput } from "./components/HostRail.tsx";
 import type { Appearance, HostEntry } from "./hosts.ts";
@@ -188,6 +189,7 @@ export function App() {
 
 	return (
 			<div className="rc-shell" data-rc-shell="rail">
+				<DepthScene />
 				<nav className="rc-rail" aria-label="hosts">
 					<HostRail
 						hosts={hosts}

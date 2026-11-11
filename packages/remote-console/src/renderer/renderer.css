@@ -26,11 +26,54 @@
 	contain-intrinsic-size: auto 120px;
 }
 
-.rc-msg {
+/* arrival: only entries that appear after the transcript is watching animate
+   (TranscriptList stamps data-rc-arrived on ids first seen after its initial
+   snapshot); replayed and snapshot entries stay static */
+.rc-entry[data-rc-arrived="true"] {
+	animation: rc-msg-in var(--rc-duration-arrive) var(--rc-ease-out-expo) both;
+}
+
+@keyframes rc-msg-in {
+	from {
+		opacity: 0;
+		transform: translateY(var(--rc-space-1));
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+/* message cards: the two-layer bezel from the dashboard glass system - the
+   card is the one blurred surface (gradient tint, top highlight, card shadow);
+   the ::after core is the translucent inner layer with NO backdrop-filter, so
+   blur never stacks. z-index 0 keeps the negative-z core inside the card's own
+   stacking context even when the preset turns blur off (paper, terminal). */
+.rc-msg-user,
+.rc-msg-custom,
+.rc-msg-system {
+	position: relative;
+	z-index: 0;
 	padding: var(--rc-space-3) var(--rc-space-4);
 	border-radius: var(--rc-radius-md);
-	background: var(--rc-surface);
+	background: linear-gradient(160deg, var(--rc-raised), var(--rc-surface));
 	border: 1px solid var(--rc-hairline);
+	backdrop-filter: var(--rc-blur);
+	box-shadow: inset 0 1px 0 var(--rc-glass-highlight), var(--rc-shadow-card);
+}
+
+.rc-msg-user::after,
+.rc-msg-custom::after,
+.rc-msg-system::after {
+	content: "";
+	position: absolute;
+	z-index: -1;
+	inset: var(--rc-space-1);
+	border-radius: var(--rc-radius-md-inner);
+	background: var(--rc-core-tint);
+	border: 1px solid var(--rc-core-border);
+	box-shadow: inset 0 1px 1px var(--rc-core-highlight);
+	pointer-events: none;
 }
 
 .rc-msg-user {
@@ -40,8 +83,6 @@
 .rc-msg-system,
 .rc-msg-custom {
 	color: var(--rc-fg-dim);
-	background: transparent;
-	border-color: var(--rc-track);
 }
 
 .rc-msg-assistant {
@@ -54,28 +95,37 @@
 	font-family: var(--rc-font-mono);
 	font-size: 0.72rem;
 	text-transform: uppercase;
-	letter-spacing: 0.08em;
+	letter-spacing: 0.1em;
 	color: var(--rc-fg-faint);
 	margin-bottom: var(--rc-space-1);
 }
 
-.rc-streaming::after {
+/* streaming caret: an accent block blinking at the end of the live slot's
+   current text - inside the last markdown line while text streams, on the
+   trailing non-markdown block (tool card, thinking) otherwise, and on the
+   empty blocks shell before the first token lands */
+.rc-streaming .rc-md > :last-child::after,
+.rc-streaming .rc-md:empty::after,
+.rc-streaming .rc-msg-blocks > :not(.rc-md):last-child::after,
+.rc-streaming .rc-msg-blocks:empty::after {
 	content: "";
 	display: inline-block;
-	width: 0.6em;
-	height: 1em;
-	margin-left: 0.25em;
+	width: 0.55em;
+	height: 1.05em;
+	margin-left: 2px;
 	vertical-align: text-bottom;
-	background: var(--rc-primary-muted);
-	animation: rc-caret var(--rc-duration-base) var(--rc-ease-in-out-soft) infinite alternate;
+	background: var(--rc-primary);
+	animation: rc-caret-blink var(--rc-duration-blink) steps(1) infinite;
 }
 
-@keyframes rc-caret {
-	from {
+@keyframes rc-caret-blink {
+	0%,
+	55% {
 		opacity: 1;
 	}
-	to {
-		opacity: 0.2;
+	56%,
+	100% {
+		opacity: 0;
 	}
 }
 
@@ -95,11 +145,17 @@
 	font-size: 0.78rem;
 	padding: var(--rc-space-1) var(--rc-space-2);
 	cursor: pointer;
-	transition: color var(--rc-duration-fast) var(--rc-ease-out-expo);
+	transition:
+		color var(--rc-duration-fast) var(--rc-ease-out-expo),
+		transform var(--rc-duration-press) var(--rc-ease-out-expo);
 }
 
 .rc-thinking-toggle:hover {
 	color: var(--rc-fg-dim);
+}
+
+.rc-thinking-toggle:active {
+	transform: scale(0.97);
 }
 
 .rc-md-thinking {
@@ -128,6 +184,42 @@
 	color: var(--rc-fg);
 }
 
+/* connecting / empty transcript state: three quiet bars that shimmer. The bars
+   are static background layers on the empty list; the sweep is a transform-only
+   gradient pass over the region, gated to the empty state with :has(). */
+.rc-transcript-list:empty::before {
+	content: "";
+	display: block;
+	margin: var(--rc-space-5) auto 0;
+	width: 100%;
+	max-width: 40rem;
+	height: 8em;
+	background-image:
+		linear-gradient(var(--rc-track), var(--rc-track)),
+		linear-gradient(var(--rc-track), var(--rc-track)),
+		linear-gradient(var(--rc-track), var(--rc-track));
+	background-repeat: no-repeat;
+	background-size: 62% 1.1em, 78% 1.1em, 44% 1.1em;
+	background-position: 0 0, 0 2.6em, 0 5.2em;
+	border-radius: var(--rc-radius-sm);
+}
+
+.rc-transcript[data-rc-region]:has(.rc-transcript-list:empty)::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	background: linear-gradient(100deg, transparent 32%, var(--rc-shimmer) 50%, transparent 68%);
+	transform: translateX(-100%);
+	animation: rc-skeleton-sweep var(--rc-duration-shimmer) var(--rc-ease-in-out-soft) infinite;
+}
+
+@keyframes rc-skeleton-sweep {
+	to {
+		transform: translateX(100%);
+	}
+}
+
 /* jump to latest */
 .rc-jump {
 	position: sticky;
@@ -139,7 +231,18 @@
 	border-radius: var(--rc-radius-sm);
 	padding: var(--rc-space-1) var(--rc-space-3);
 	cursor: pointer;
-	box-shadow: 0 0 0 1px var(--rc-glass-highlight);
+	box-shadow: 0 0 0 1px var(--rc-glass-highlight), var(--rc-shadow-thumb);
+	transition:
+		border-color var(--rc-duration-press) var(--rc-ease-out-expo),
+		transform var(--rc-duration-press) var(--rc-ease-out-expo);
+}
+
+.rc-jump:hover {
+	border-color: var(--rc-primary-muted);
+}
+
+.rc-jump:active {
+	transform: scale(0.97);
 }
 
 /* markdown body */
@@ -297,7 +400,7 @@
 	font-family: var(--rc-font-mono);
 	font-size: 0.72rem;
 	text-transform: uppercase;
-	letter-spacing: 0.08em;
+	letter-spacing: 0.1em;
 	color: var(--rc-fg-faint);
 }
 
@@ -329,13 +432,22 @@
 	margin-top: var(--rc-space-1);
 }
 
-/* tool cards */
+/* tool cards: glass-lift hover (micro raise, accent-leaning border), like the
+   rail's host rows */
 .rc-tool {
 	background: var(--rc-raised);
 	border: 1px solid var(--rc-hairline);
 	border-radius: var(--rc-radius-md);
 	margin: var(--rc-space-2) 0;
 	overflow: hidden;
+	transition:
+		border-color var(--rc-duration-fast) var(--rc-ease-out-expo),
+		transform var(--rc-duration-fast) var(--rc-ease-out-expo);
+}
+
+.rc-tool:hover {
+	border-color: var(--rc-primary-muted);
+	transform: translateY(var(--rc-lift));
 }
 
 .rc-tool-error,
@@ -359,6 +471,11 @@
 	padding: var(--rc-space-2) var(--rc-space-3);
 	cursor: pointer;
 	text-align: left;
+	transition: transform var(--rc-duration-press) var(--rc-ease-out-expo);
+}
+
+.rc-tool-row:active {
+	transform: scale(0.97);
 }
 
 .rc-tool-glyph {
@@ -416,6 +533,7 @@
 	font-family: var(--rc-font-mono);
 	font-size: 0.72rem;
 	color: var(--rc-fg-faint);
+	font-variant-numeric: tabular-nums;
 }
 
 .rc-tool-error-inline {
@@ -441,7 +559,7 @@
 	font-family: var(--rc-font-mono);
 	font-size: 0.7rem;
 	text-transform: uppercase;
-	letter-spacing: 0.08em;
+	letter-spacing: 0.1em;
 	color: var(--rc-fg-faint);
 	margin-bottom: var(--rc-space-1);
 }

@@ -19,6 +19,33 @@ import { isNearBottom } from "./follow-bottom.ts";
 import type { LiveSlot, LiveSlotBlock } from "./stream-slot.ts";
 import "../renderer.css";
 
+/**
+ * Arrival tracking for the entrance animation (renderer.css reads
+ * data-rc-arrived). Entries present at the first snapshot - or in a wholesale
+ * snapshot replacement such as a host switch or replay reset - render static;
+ * ids first seen after that baseline are stamped data-rc-arrived and animate.
+ * Render-phase memoization against the entries reference keeps the result
+ * stable across re-renders of the same list.
+ */
+function useArrivals(entries: readonly WireTranscriptEntry[]): ReadonlySet<string> {
+	const seenRef = useRef<ReadonlySet<string> | null>(null);
+	const lastRef = useRef<{ entries: readonly WireTranscriptEntry[]; arrived: ReadonlySet<string> } | null>(null);
+	if (lastRef.current !== null && lastRef.current.entries === entries) return lastRef.current.arrived;
+	const seen = seenRef.current;
+	const ids = entries.map((entry) => entry.entryId);
+	let arrived: ReadonlySet<string>;
+	if (seen === null || (ids.length > 0 && ids.every((id) => !seen.has(id)))) {
+		seenRef.current = new Set(ids);
+		arrived = new Set();
+	} else {
+		const fresh = ids.filter((id) => !seen.has(id));
+		seenRef.current = new Set([...seen, ...fresh]);
+		arrived = new Set(fresh);
+	}
+	lastRef.current = { entries, arrived };
+	return arrived;
+}
+
 export function TranscriptList({
 	entries,
 	slot,
@@ -29,6 +56,7 @@ export function TranscriptList({
 	toolUpdates?: ReadonlyMap<string, ToolLiveState>;
 }) {
 	const results = useMemo(() => collectToolResults(entries), [entries]);
+	const arrivals = useArrivals(entries);
 	const entryIds = useMemo(() => new Set(entries.map((entry) => entry.entryId)), [entries]);
 	const scrollerRef = useRef<HTMLDivElement | null>(null);
 	const [nearBottom, setNearBottom] = useState(true);
@@ -53,7 +81,7 @@ export function TranscriptList({
 	return (
 		<div className="rc-transcript-list" data-rc-scroller="true" ref={scrollerRef}>
 			{entries.map((entry) => (
-				<EntryRow key={entry.entryId} entry={entry} results={results} toolUpdates={toolUpdates} />
+				<EntryRow key={entry.entryId} entry={entry} arrived={arrivals.has(entry.entryId)} results={results} toolUpdates={toolUpdates} />
 			))}
 			{slotVisible && <SlotRow key={slot.entryId ?? slot.slotKey} slot={slot} results={results} toolUpdates={toolUpdates} />}
 			{!nearBottom && (
@@ -75,20 +103,27 @@ export function TranscriptList({
 
 function EntryRow({
 	entry,
+	arrived,
 	results,
 	toolUpdates,
 }: {
 	entry: WireTranscriptEntry;
+	arrived: boolean;
 	results: ReadonlyMap<string, ToolResultView>;
 	toolUpdates?: ReadonlyMap<string, ToolLiveState>;
 }) {
 	const message = entry.message;
 	if (message.role === "toolResult") {
-		return <ToolResultRow entryId={entry.entryId} message={message} />;
+		return <ToolResultRow entryId={entry.entryId} message={message} arrived={arrived} />;
 	}
 	const className = `rc-entry rc-msg rc-msg-${message.role}`;
 	return (
-		<article className={className} data-entry-id={entry.entryId} data-rc-role={message.role}>
+		<article
+			className={className}
+			data-entry-id={entry.entryId}
+			data-rc-role={message.role}
+			data-rc-arrived={arrived ? "true" : undefined}
+		>
 			<RoleTag role={message.role} />
 			<BlocksView
 				blocks={message.blocks}
@@ -187,7 +222,7 @@ function ThinkingBlock({ text }: { text: string }) {
 	);
 }
 
-function ToolResultRow({ entryId, message }: { entryId: string; message: WireAgentMessage }) {
+function ToolResultRow({ entryId, message, arrived }: { entryId: string; message: WireAgentMessage; arrived: boolean }) {
 	const text = blocksText(message);
 	const isError = message.isError === true;
 	const duration = message.durationMs !== undefined ? formatDuration(message.durationMs) : "";
@@ -197,6 +232,7 @@ function ToolResultRow({ entryId, message }: { entryId: string; message: WireAge
 			data-entry-id={entryId}
 			data-rc-role="toolResult"
 			data-rc-result-state={isError ? "error" : "done"}
+			data-rc-arrived={arrived ? "true" : undefined}
 		>
 			<span className="rc-tool-glyph" aria-hidden="true">
 				{isError ? "✗" : "✓"}

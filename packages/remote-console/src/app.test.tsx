@@ -13,8 +13,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { act } from "react";
-import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { act, type ReactElement } from "react";
+import { beforeEach, afterEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { App } from "./App.tsx";
 import {
 	connectSse,
@@ -28,13 +28,17 @@ import {
 	type SseFrame,
 } from "./connection.ts";
 import { ApprovalCard, countdownSeconds } from "./components/ApprovalCard.tsx";
+import { Composer } from "./components/Composer.tsx";
 import { HostRail, railStatus } from "./components/HostRail.tsx";
+import { RollingNumber } from "./components/RollingNumber.tsx";
+import { SlidingPill } from "./components/SlidingPill.tsx";
 import type {
 	AnyRemoteEvent,
 	RemoteEventPayloadMap,
 	RemoteEventType,
 	SnapshotPayload,
 	WireApproval,
+	WireTranscriptEntry,
 } from "./harness/replay-log.ts";
 import {
 	addHost,
@@ -52,6 +56,7 @@ import {
 	type Appearance,
 } from "./hosts.ts";
 import { mount, type Mounted } from "./renderer/test/mount.tsx";
+import { TranscriptList } from "./renderer/transcript/TranscriptList.tsx";
 import { initialHostState, reduceHosts, type HostStore } from "./store.ts";
 
 const HARNESS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "harness");
@@ -590,6 +595,14 @@ describe("hosts: registry and appearance", () => {
 		expect(clampDensity(1.234)).toBe(1.25);
 		expect(clampDensity(Number.NaN)).toBe(1);
 	});
+
+	it("never turns an empty slider value into hue 0", () => {
+		// Number("") is 0: the panel guards the raw string before clamping, so a
+		// stray empty change event falls to the default instead of painting the
+		// whole scene red (observed live).
+		const empty = "";
+		expect(clampAccentHue(empty === "" ? Number.NaN : Number(empty))).toBe(190);
+	});
 });
 
 describe("hosts: fragment adoption", () => {
@@ -1122,6 +1135,148 @@ describe("app: shell integration", () => {
 		} finally {
 			setItem.mockRestore();
 			window.location.hash = "";
+		}
+	});
+});
+
+describe("components: sliding pill", () => {
+	/** happy-dom has no layout, so the pill's measured geometry is simulated by
+	 * stubbing the offset getters the component reads (options sit on a 64px
+	 * grid, each 60px wide). */
+	function stubPillLayout(): Array<MockInstance> {
+		const left = vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (this: HTMLElement) {
+			if (!this.classList.contains("rc-pill-btn") || this.parentElement === null) return 0;
+			const options = Array.from(this.parentElement.children).filter(
+				(node): node is HTMLElement => node instanceof HTMLElement && node.classList.contains("rc-pill-btn"),
+			);
+			return options.indexOf(this) * 64;
+		});
+		const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+			return this.classList.contains("rc-pill-btn") ? 60 : 0;
+		});
+		return [left, width];
+	}
+
+	it("measures the active option and moves the thumb geometry on click", async () => {
+		const spies = stubPillLayout();
+		const picked: string[] = [];
+		const pill = (active: "a" | "b" | "c"): ReactElement => (
+			<SlidingPill
+				options={[
+					{ value: "a", label: "A" },
+					{ value: "b", label: "B" },
+					{ value: "c", label: "C", props: { "data-rc-pill-opt": "c" } },
+				]}
+				active={active}
+				onChange={(value) => picked.push(value)}
+				ariaLabel="pick"
+			/>
+		);
+		const mounted = await mount(pill("a"));
+		try {
+			await flush();
+			const buttons = Array.from(document.querySelectorAll<HTMLElement>(".rc-pill-btn"));
+			expect(buttons).toHaveLength(3);
+			// aria-pressed carries the selection, never color alone.
+			expect(buttons[0]?.getAttribute("aria-pressed")).toBe("true");
+			expect(buttons[1]?.getAttribute("aria-pressed")).toBe("false");
+			// Option props (test hooks) pass through to the rendered button.
+			expect(buttons[2]?.getAttribute("data-rc-pill-opt")).toBe("c");
+			// Initial measurement: the thumb sits under option A.
+			const thumb = document.querySelector<HTMLElement>(".rc-pill-thumb");
+			expect(thumb?.style.transform).toBe("translateX(0px)");
+			expect(thumb?.style.width).toBe("60px");
+			// Clicking C reports the pick; the controlled active follows, the
+			// pressed states flip, and the thumb glides to C's slot.
+			await click(buttons[2] ?? null);
+			expect(picked).toEqual(["c"]);
+			await mounted.render(pill("c"));
+			expect(buttons[0]?.getAttribute("aria-pressed")).toBe("false");
+			expect(buttons[2]?.getAttribute("aria-pressed")).toBe("true");
+			expect(thumb?.style.transform).toBe("translateX(128px)");
+		} finally {
+			for (const spy of spies) spy.mockRestore();
+			await mounted.unmount();
+		}
+	});
+
+	it("carries the delivery mode as a labelled segmented control with aria-pressed semantics", async () => {
+		const sent: Array<[string, string]> = [];
+		const mounted = await mount(
+			<Composer
+				queue={null}
+				disabled={false}
+				onSend={(text, deliverAs) => sent.push([text, deliverAs])}
+				onAbort={() => undefined}
+			/>,
+		);
+		try {
+			await flush();
+			const group = document.querySelector("[data-rc-deliver-as]");
+			expect(group?.getAttribute("data-rc-deliver-as")).toBe("followUp");
+			const followUp = document.querySelector('[data-rc-deliver-mode="followUp"]');
+			const steer = document.querySelector('[data-rc-deliver-mode="steer"]');
+			expect(followUp?.getAttribute("aria-pressed")).toBe("true");
+			expect(steer?.getAttribute("aria-pressed")).toBe("false");
+			// Switching modes updates the group's value and the pressed states.
+			await click(steer);
+			expect(document.querySelector("[data-rc-deliver-as]")?.getAttribute("data-rc-deliver-as")).toBe("steer");
+			expect(steer?.getAttribute("aria-pressed")).toBe("true");
+			expect(followUp?.getAttribute("aria-pressed")).toBe("false");
+			// The prompt posts with the active mode.
+			await act(async () => {
+				setNativeValue(document.querySelector<HTMLTextAreaElement>("[data-rc-composer-input]") as HTMLTextAreaElement, "go");
+			});
+			await click(document.querySelector("[data-rc-send]"));
+			expect(sent).toEqual([["go", "steer"]]);
+		} finally {
+			await mounted.unmount();
+		}
+	});
+});
+
+describe("components: rolling number", () => {
+	it("renders one rolling column per digit and translates to the target value", async () => {
+		const mounted = await mount(<RollingNumber value={42} />);
+		try {
+			const roll = document.querySelector(".rc-roll");
+			// The digits are decorative: the caller carries the accessible label.
+			expect(roll?.getAttribute("aria-hidden")).toBe("true");
+			const columns = document.querySelectorAll<HTMLElement>(".rc-roll-column");
+			expect(columns).toHaveLength(2);
+			expect(columns[0]?.style.transform).toBe("translateY(-4em)");
+			expect(columns[1]?.style.transform).toBe("translateY(-2em)");
+			// A value change moves the affected column without remounting it.
+			await mounted.render(<RollingNumber value={47} />);
+			expect(columns[0]?.style.transform).toBe("translateY(-4em)");
+			expect(columns[1]?.style.transform).toBe("translateY(-7em)");
+		} finally {
+			await mounted.unmount();
+		}
+	});
+});
+
+describe("renderer: transcript arrivals", () => {
+	function entry(id: string): WireTranscriptEntry {
+		return { entryId: id, message: { role: "user", blocks: [{ type: "text", text: `msg ${id}` }] } };
+	}
+
+	it("stamps data-rc-arrived only on entries that land after the first snapshot", async () => {
+		const mounted = await mount(<TranscriptList entries={[entry("a"), entry("b")]} />);
+		try {
+			await flush();
+			// Baseline snapshot: nothing animates.
+			expect(document.querySelectorAll('[data-rc-arrived="true"]')).toHaveLength(0);
+			// A later arrival animates; the baseline stays static.
+			await mounted.render(<TranscriptList entries={[entry("a"), entry("b"), entry("c")]} />);
+			expect(document.querySelector('[data-entry-id="c"]')?.getAttribute("data-rc-arrived")).toBe("true");
+			expect(document.querySelector('[data-entry-id="a"]')?.getAttribute("data-rc-arrived")).toBeNull();
+			// A wholesale replacement (host switch, replay reset) re-baselines:
+			// none of the new population animates.
+			await mounted.render(<TranscriptList entries={[entry("x"), entry("y")]} />);
+			expect(document.querySelectorAll('[data-rc-arrived="true"]')).toHaveLength(0);
+		} finally {
+			await mounted.unmount();
 		}
 	});
 });

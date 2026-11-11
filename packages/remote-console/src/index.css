@@ -1,7 +1,12 @@
-/* hummin remote console app stylesheet: tailwind, the token sheet, the theme bridge that
-   exposes --rc-* tokens to tailwind utilities, and the shell region styles. */
+/* hummin remote console app stylesheet: the Geist Mono identity, tailwind, the
+   token sheet, the theme bridge that exposes --rc-* tokens to tailwind
+   utilities, the depth scene (orb mesh + film grain), global selection /
+   scrollbar / focus treatment, and the shell region styles. */
 
 @import "tailwindcss";
+@import "@fontsource/geist-mono/400.css";
+@import "@fontsource/geist-mono/500.css";
+@import "@fontsource/geist-mono/600.css";
 @import "./tokens.css";
 
 /* The token contract is runtime-switchable (presets and appearance axes re-resolve the
@@ -33,19 +38,132 @@
 
 html {
 	color-scheme: dark;
+	/* the base color lives on the canvas so the fixed depth scene (z -1) paints
+	   above it and every glass surface can blur the scene */
+	background: var(--rc-base);
 }
 
 body {
 	margin: 0;
-	background: var(--rc-base);
 	color: var(--rc-fg);
 	font-family: var(--rc-font-ui);
 }
 
+/* ---- depth scene ----
+   Layer 0 of the glass system: three accent-tinted orbs on a slow transform
+   drift plus a film-grain tile, fixed behind the app (z -1, pointer-events
+   none). Colors and opacity are preset tokens; the orbs drift on transform
+   only so the layer stays on the compositor. */
+.rc-scene {
+	position: fixed;
+	inset: 0;
+	z-index: -1;
+	overflow: hidden;
+	pointer-events: none;
+}
+
+.rc-orb {
+	position: absolute;
+	will-change: transform;
+}
+
+.rc-orb-a {
+	top: -16rem;
+	left: -14rem;
+	width: 40rem;
+	height: 40rem;
+	background: var(--rc-orb-a);
+	animation: rc-drift-a var(--rc-duration-drift) var(--rc-ease-in-out-soft) infinite alternate;
+}
+
+.rc-orb-b {
+	bottom: -20rem;
+	right: -16rem;
+	width: 45rem;
+	height: 45rem;
+	background: var(--rc-orb-b);
+	animation: rc-drift-b var(--rc-duration-drift) var(--rc-ease-in-out-soft) infinite alternate;
+}
+
+.rc-orb-c {
+	top: 38%;
+	left: 46%;
+	width: 32rem;
+	height: 32rem;
+	background: var(--rc-orb-c);
+	animation: rc-drift-c var(--rc-duration-drift) var(--rc-ease-in-out-soft) infinite alternate reverse;
+}
+
+@keyframes rc-drift-a {
+	from {
+		transform: translate3d(0, 0, 0) scale(1);
+	}
+	to {
+		transform: translate3d(4rem, 3rem, 0) scale(1.06);
+	}
+}
+
+@keyframes rc-drift-b {
+	from {
+		transform: translate3d(0, 0, 0) scale(1);
+	}
+	to {
+		transform: translate3d(-5rem, -4rem, 0) scale(1.04);
+	}
+}
+
+@keyframes rc-drift-c {
+	from {
+		transform: translate3d(0, 0, 0) scale(1);
+	}
+	to {
+		transform: translate3d(3rem, -3rem, 0) scale(0.96);
+	}
+}
+
+.rc-grain {
+	position: absolute;
+	inset: 0;
+	opacity: var(--rc-grain-opacity);
+	background-image: var(--rc-grain-image);
+}
+
+/* tinted text selection and thin accent scrollbars, console-wide */
+::selection {
+	background: var(--rc-selection);
+}
+
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--rc-scrollbar) transparent;
+}
+
+*::-webkit-scrollbar {
+	width: 0.4rem;
+	height: 0.4rem;
+}
+
+*::-webkit-scrollbar-thumb {
+	background: var(--rc-scrollbar);
+	border-radius: var(--rc-radius-round);
+}
+
+*::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+/* keyboard focus: one accent ring for everything (the appearance panel's
+   programmatic focus opts out in shell.css) */
+:focus-visible {
+	outline: 2px solid var(--rc-primary);
+	outline-offset: 2px;
+}
+
 /* app shell: three regions, tokens only. The header region is a transparent
    stage: the island inside it (shell.css) carries the floating surface. The
-   composer is the pinned bottom surface; focusing any of its controls lights
-   its top hairline. */
+   composer region is the stage for the composer island: the island surface
+   lives on the region itself so the approval card sits inside it. Focusing
+   any of its controls lights its border. */
 .rc-shell {
 	display: flex;
 	flex-direction: column;
@@ -64,14 +182,19 @@ body {
 	padding: var(--rc-space-4);
 }
 
+/* composer island: a floating machined card, the strong blur layer of its
+   region, concentric radius, inset top highlight and deep tinted shadow */
 .rc-composer {
-	background: var(--rc-surface);
-	border-top: 1px solid var(--rc-hairline);
-	padding: var(--rc-space-3) var(--rc-space-4) var(--rc-space-4);
-	backdrop-filter: var(--rc-blur);
+	background: linear-gradient(160deg, var(--rc-island), var(--rc-surface));
+	border: 1px solid var(--rc-hairline);
+	border-radius: var(--rc-radius-lg);
+	margin: 0 var(--rc-space-4) var(--rc-space-4);
+	padding: var(--rc-space-3) var(--rc-space-4);
+	backdrop-filter: var(--rc-blur-overlay);
+	box-shadow: inset 0 1px 0 var(--rc-glass-highlight), var(--rc-shadow-island);
 	transition: border-color var(--rc-duration-fast) var(--rc-ease-out-expo);
 }
 
 .rc-composer:focus-within {
-	border-top-color: var(--rc-primary-muted);
+	border-color: var(--rc-primary-muted);
 }

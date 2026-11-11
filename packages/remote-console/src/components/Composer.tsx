@@ -1,16 +1,24 @@
 /**
  * components/Composer: prompt input and run control for the active host.
- * Textarea (12000 chars, the server's cap), steer vs followUp delivery
- * selector (followUp default), send and abort actions, and the console-tracked
- * queue (what this console sent while the agent was busy) with the honest
- * terminal count the extension cannot read.
+ * Textarea (12000 chars, the server's cap), steer vs followUp delivery as a
+ * sliding-pill segmented control (followUp default), send and abort actions,
+ * and the console-tracked queue (what this console sent while the agent was
+ * busy) with the honest terminal count the extension cannot read.
  */
 /// <reference lib="dom" />
 import { useState } from "react";
 import type { WireQueue } from "../harness/replay-log.ts";
+import { SlidingPill, type PillButtonProps } from "./SlidingPill.tsx";
 
 /** The server rejects prompts above 12000 characters (PROMPT_MAX_CHARS). */
 const PROMPT_MAX_CHARS = 12_000;
+
+const DELIVERY_MODES = ["followUp", "steer"] as const;
+
+/** Test hook attributes for the delivery pill's option buttons. */
+function deliveryProps(mode: (typeof DELIVERY_MODES)[number]): PillButtonProps {
+	return { "data-rc-deliver-mode": mode };
+}
 
 export function Composer({
 	queue,
@@ -64,16 +72,18 @@ export function Composer({
 						}
 					}}
 				/>
-				<select
-					className="rc-composer-deliver"
-					data-rc-deliver-as={deliverAs}
-					aria-label="delivery mode"
-					value={deliverAs}
-					onChange={(event) => setDeliverAs(event.target.value === "steer" ? "steer" : "followUp")}
-				>
-					<option value="followUp">follow-up</option>
-					<option value="steer">steer</option>
-				</select>
+				<span className="rc-deliver" data-rc-deliver-as={deliverAs}>
+					<SlidingPill
+						options={DELIVERY_MODES.map((mode) => ({
+							value: mode,
+							label: mode === "steer" ? "steer" : "follow-up",
+							props: deliveryProps(mode),
+						}))}
+						active={deliverAs}
+						onChange={setDeliverAs}
+						ariaLabel="delivery mode"
+					/>
+				</span>
 				<button type="button" className="rc-composer-send" data-rc-send="true" disabled={!ready} onClick={send}>
 					send
 				</button>

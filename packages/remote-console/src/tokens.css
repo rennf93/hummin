@@ -62,6 +62,8 @@ html {
 	--rc-radius-sm: 6px;
 	--rc-radius-md: 12px;
 	--rc-radius-lg: 20px;
+	/* full round (pill shapes: scrollbar thumbs); preset-agnostic */
+	--rc-radius-round: 999px;
 
 	/* spacing scale, multiplied by the density axis (1 = comfortable, 0.85 = compact) */
 	--rc-space-1: calc(4px * var(--rc-density));
@@ -78,6 +80,44 @@ html {
 	--rc-blur-overlay: blur(26px) saturate(170%);
 	--rc-glass-highlight: rgb(210 240 255 / 0.06);
 
+	/* depth scene: the mesh behind the glass. Orbs derive from --rc-accent-hue so
+	   the hue knob re-themes the whole scene; grain is an SVG turbulence tile at
+	   --rc-grain-opacity. The scene lives under the base (z -1) and every glass
+	   surface blurs it through its own backdrop-filter. */
+	--rc-orb-a: radial-gradient(circle, hsl(var(--rc-accent-hue) 78% 55% / 0.12) 0%, transparent 60%);
+	--rc-orb-b: radial-gradient(circle, hsl(var(--rc-accent-hue) 80% 42% / 0.2) 0%, transparent 58%);
+	--rc-orb-c: radial-gradient(circle, hsl(var(--rc-accent-hue) 78% 60% / 0.045) 0%, transparent 60%);
+	--rc-grain-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+	--rc-grain-opacity: 0.02;
+
+	/* floating islands (header, composer): a deeper, more opaque surface than
+	   --rc-surface because their blur is the strong layer */
+	--rc-island: rgb(8 14 18 / 0.88);
+	--rc-shadow-island: 0 20px 50px -24px rgb(2 8 12 / 0.95);
+	/* bezel transcript cards: softer drop shadow than islands */
+	--rc-shadow-card: 0 14px 34px -24px rgb(2 8 12 / 0.85), 0 2px 6px -2px rgb(2 8 12 / 0.45);
+	/* the translucent inner core of a two-layer bezel card (no blur of its own) */
+	--rc-core-tint: linear-gradient(180deg, rgb(126 200 216 / 0.05), rgb(126 200 216 / 0.015));
+	--rc-core-border: rgb(126 200 216 / 0.14);
+	--rc-core-highlight: rgb(210 240 255 / 0.045);
+	/* concentric inner radii: one bezel gap step inside the outer radius, clamped
+	   for the sharp presets where the subtraction would go negative */
+	--rc-radius-md-inner: max(0px, calc(var(--rc-radius-md) - 5px));
+	--rc-radius-lg-inner: max(0px, calc(var(--rc-radius-lg) - 5px));
+
+	/* glows: status-dot halo, context-meter fill tip, slider thumb ring, the
+	   skeleton shimmer band, text selection, scrollbar, and the micro lift of a
+	   glass-lift hover. All derive from the accent axis. */
+	--rc-dot-glow: 0 0 0.5rem hsl(var(--rc-accent-hue) 78% 60% / 0.55);
+	--rc-meter-glow: 0 0 0.55rem hsl(var(--rc-accent-hue) 78% 60% / 0.5), 0 0 0.15rem hsl(var(--rc-accent-hue) 78% 60% / 0.8);
+	--rc-thumb-glow: 0 0 0 1px hsl(var(--rc-accent-hue) 78% 60% / 0.5), 0 0 0.6rem hsl(var(--rc-accent-hue) 78% 60% / 0.45);
+	--rc-shimmer: hsl(var(--rc-accent-hue) 78% 60% / 0.07);
+	--rc-selection: hsl(var(--rc-accent-hue) 78% 60% / 0.38);
+	--rc-scrollbar: hsl(var(--rc-accent-hue) 78% 60% / 0.32);
+	--rc-lift: -1px;
+	/* the severity-flash arrival tint on approval cards */
+	--rc-flash-warn: hsl(45 88% 56% / 0.16);
+
 	/* depth: overlay scrim and the raised-surface shadow, tinted to the preset's
 	   base hue (never pure black). Floating chrome (header island, appearance
 	   panel) reads --rc-shadow-raise; the overlay scrim sits under the panel. */
@@ -91,18 +131,38 @@ html {
 	/* opaque equivalents, used by the reduced-transparency and no-backdrop-filter fallbacks below */
 	--rc-surface-solid: #0a1114;
 	--rc-raised-solid: #0d161a;
+	--rc-island-solid: #0a1013;
 
 	/* motion */
 	--rc-duration-press: 120ms;
 	--rc-duration-fast: 180ms;
 	--rc-duration-base: 320ms;
 	--rc-duration-slow: 600ms;
+	/* transcript arrival entrance (dashboard msg-in) */
+	--rc-duration-arrive: 200ms;
+	/* approval severity flash decay */
+	--rc-duration-flash: 1600ms;
+	/* ambient loop cadences: caret blink, skeleton shimmer, status glow pulse,
+	   orb mesh drift */
+	--rc-duration-blink: 900ms;
+	--rc-duration-shimmer: 1400ms;
+	--rc-duration-pulse: 3s;
+	--rc-duration-drift: 72s;
 	--rc-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 	--rc-ease-in-out-soft: cubic-bezier(0.4, 0, 0.2, 1);
+	/* spring overshoot for the sliding pill and overlay choreography */
+	--rc-ease-spring: linear(
+		0, 0.0088 1.38%, 0.0343 2.79%, 0.0748 4.28%, 0.1286 5.92%, 0.1946 7.78%,
+		0.2711 9.86%, 0.3564 12.2%, 0.4484 14.82%, 0.5448 17.75%, 0.6435 21.02%,
+		0.7425 24.68%, 0.8398 28.78%, 0.9337 33.37%, 1.0213 38.5%, 1.0993 44.19%,
+		1.1647 50.4%, 1.2151 57.13%, 1.2481 64.35%, 1.2614 71.99%, 1.2529 80.01%,
+		1.2296 87.32%, 1.1990 93.79%, 1.1703 99.31%, 1.1622 103.54%, 1.1611
+	);
 
-	/* fonts */
-	--rc-font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
-	--rc-font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+	/* fonts: Geist Mono is the console identity (weights 400/500/600 imported in
+	   index.css); the fallback stack keeps the console usable before fonts load */
+	--rc-font-ui: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+	--rc-font-mono: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 }
 
 /* paper: opaque warm light, same token names, no translucency and no blur; the accent axis
@@ -128,10 +188,29 @@ html {
 	--rc-blur: none;
 	--rc-blur-overlay: none;
 	--rc-glass-highlight: transparent;
+	/* paper keeps the depth scene as a very faint wash: grain reads warm on light ground */
+	--rc-orb-a: radial-gradient(circle, hsl(var(--rc-accent-hue) 55% 45% / 0.05) 0%, transparent 60%);
+	--rc-orb-b: radial-gradient(circle, hsl(var(--rc-accent-hue) 55% 35% / 0.06) 0%, transparent 58%);
+	--rc-orb-c: radial-gradient(circle, hsl(var(--rc-accent-hue) 55% 45% / 0.025) 0%, transparent 60%);
+	--rc-grain-opacity: 0.03;
+	--rc-island: #fffdf8;
+	--rc-shadow-island: 0 20px 44px -26px rgb(43 36 26 / 0.3), 0 2px 8px -4px rgb(43 36 26 / 0.14);
+	--rc-shadow-card: 0 12px 28px -22px rgb(43 36 26 / 0.22), 0 2px 5px -2px rgb(43 36 26 / 0.1);
+	--rc-core-tint: linear-gradient(180deg, rgb(70 55 35 / 0.04), rgb(70 55 35 / 0.015));
+	--rc-core-border: rgb(70 55 35 / 0.12);
+	--rc-core-highlight: rgb(255 255 255 / 0.6);
+	--rc-dot-glow: 0 0 0.5rem hsl(var(--rc-accent-hue) 55% 38% / 0.35);
+	--rc-meter-glow: 0 0 0.55rem hsl(var(--rc-accent-hue) 55% 38% / 0.4), 0 0 0.15rem hsl(var(--rc-accent-hue) 55% 38% / 0.7);
+	--rc-thumb-glow: 0 0 0 1px hsl(var(--rc-accent-hue) 55% 38% / 0.4), 0 0 0.6rem hsl(var(--rc-accent-hue) 55% 38% / 0.3);
+	--rc-shimmer: rgb(70 55 35 / 0.06);
+	--rc-selection: hsl(var(--rc-accent-hue) 55% 38% / 0.25);
+	--rc-scrollbar: rgb(70 55 35 / 0.3);
+	--rc-flash-warn: hsl(38 85% 40% / 0.14);
 	--rc-scrim: rgb(43 36 26 / 0.38);
 	--rc-shadow-raise: 0 18px 40px -26px rgb(43 36 26 / 0.28), 0 2px 6px -2px rgb(43 36 26 / 0.16);
 	--rc-surface-solid: #fbf8f1;
 	--rc-raised-solid: #ffffff;
+	--rc-island-solid: #fffdf8;
 }
 
 /* terminal: monospace-first near-black with sharp radii. */
@@ -159,10 +238,29 @@ html {
 	--rc-blur: none;
 	--rc-blur-overlay: none;
 	--rc-glass-highlight: transparent;
+	/* terminal: the scene is nearly none - a whisper of accent and grain */
+	--rc-orb-a: radial-gradient(circle, hsl(var(--rc-accent-hue) 70% 55% / 0.04) 0%, transparent 60%);
+	--rc-orb-b: radial-gradient(circle, hsl(var(--rc-accent-hue) 70% 45% / 0.05) 0%, transparent 58%);
+	--rc-orb-c: radial-gradient(circle, hsl(var(--rc-accent-hue) 70% 55% / 0.015) 0%, transparent 60%);
+	--rc-grain-opacity: 0.012;
+	--rc-island: rgb(10 10 10 / 0.92);
+	--rc-shadow-island: 0 16px 40px -26px rgb(0 0 0 / 0.95);
+	--rc-shadow-card: 0 10px 24px -20px rgb(0 0 0 / 0.8);
+	--rc-core-tint: linear-gradient(180deg, rgb(255 255 255 / 0.03), transparent);
+	--rc-core-border: rgb(255 255 255 / 0.1);
+	--rc-core-highlight: rgb(255 255 255 / 0.04);
+	--rc-dot-glow: 0 0 0.5rem hsl(var(--rc-accent-hue) 70% 58% / 0.45);
+	--rc-meter-glow: 0 0 0.55rem hsl(var(--rc-accent-hue) 70% 58% / 0.4), 0 0 0.15rem hsl(var(--rc-accent-hue) 70% 58% / 0.7);
+	--rc-thumb-glow: 0 0 0 1px hsl(var(--rc-accent-hue) 70% 58% / 0.45), 0 0 0.6rem hsl(var(--rc-accent-hue) 70% 58% / 0.35);
+	--rc-shimmer: rgb(255 255 255 / 0.05);
+	--rc-selection: hsl(var(--rc-accent-hue) 70% 58% / 0.32);
+	--rc-scrollbar: hsl(var(--rc-accent-hue) 70% 58% / 0.3);
+	--rc-flash-warn: hsl(55 90% 58% / 0.12);
 	--rc-scrim: rgb(0 0 0 / 0.7);
 	--rc-shadow-raise: 0 14px 32px -24px rgb(0 0 0 / 0.95);
 	--rc-surface-solid: #0b0b0b;
 	--rc-raised-solid: #121212;
+	--rc-island-solid: #0a0a0a;
 	--rc-font-ui: var(--rc-font-mono);
 }
 
@@ -174,6 +272,12 @@ html {
 	--rc-duration-fast: 0ms;
 	--rc-duration-base: 0ms;
 	--rc-duration-slow: 0ms;
+	--rc-duration-arrive: 0ms;
+	--rc-duration-flash: 0ms;
+	--rc-duration-blink: 0ms;
+	--rc-duration-shimmer: 0ms;
+	--rc-duration-pulse: 0ms;
+	--rc-duration-drift: 0ms;
 }
 
 [data-rc-motion="off"],
@@ -193,6 +297,12 @@ html {
 		--rc-duration-fast: 0ms;
 		--rc-duration-base: 0ms;
 		--rc-duration-slow: 0ms;
+		--rc-duration-arrive: 0ms;
+		--rc-duration-flash: 0ms;
+		--rc-duration-blink: 0ms;
+		--rc-duration-shimmer: 0ms;
+		--rc-duration-pulse: 0ms;
+		--rc-duration-drift: 0ms;
 	}
 	*,
 	*::before,
@@ -211,6 +321,7 @@ html {
 	:root {
 		--rc-surface: var(--rc-surface-solid);
 		--rc-raised: var(--rc-raised-solid);
+		--rc-island: var(--rc-island-solid);
 		--rc-blur: none;
 		--rc-blur-overlay: none;
 		--rc-glass-highlight: transparent;
@@ -220,6 +331,7 @@ html {
 	:root {
 		--rc-surface: var(--rc-surface-solid);
 		--rc-raised: var(--rc-raised-solid);
+		--rc-island: var(--rc-island-solid);
 		--rc-blur: none;
 		--rc-blur-overlay: none;
 		--rc-glass-highlight: transparent;
