@@ -73,11 +73,15 @@ function sseText(events: readonly AnyRemoteEvent[]): string {
 	return events.map((event) => `id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
 }
 
+/** Pull-based like a real fetch body. Node 22 drains a stream with every chunk
+ * queued up front in quadratic time (244k chunks: 29s against 96ms pulled). */
 function streamOf(chunks: readonly Uint8Array[]): ReadableStream<Uint8Array> {
+	let next = 0;
 	return new ReadableStream<Uint8Array>({
-		start(controller) {
-			for (const chunk of chunks) controller.enqueue(chunk);
-			controller.close();
+		pull(controller) {
+			const chunk = chunks[next++];
+			if (chunk === undefined) controller.close();
+			else controller.enqueue(chunk);
 		},
 	});
 }
