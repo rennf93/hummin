@@ -333,7 +333,8 @@ describe("ownership", () => {
 		expect((await harness.waitForTask(leaf, context)).state.outcome.status).toBe("completed");
 		expect((await harness.waitForTask(top, context)).state.outcome.status).toBe("completed");
 		await harness.close(context);
-	}, 60_000);
+		// hummin fork: raised from 60 s, this deep-chain test ran 80-87 s on fork macOS CI after upstream 473515f9c.
+	}, 180_000);
 
 	it("holds an owner for work a commit creates below ended tasks loaded from storage", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "pi-durable-ownership-"));

@@ -484,7 +484,8 @@ describe("scheduler retention", () => {
 		await harness.waitForIdle(context);
 		expect(sizes(harness)).toEqual(baseline);
 		await harness.close(context);
-	}, 60_000);
+		// hummin fork: raised from 60 s, this deep-chain test ran 80-87 s on fork macOS CI after upstream 473515f9c.
+	}, 180_000);
 
 	it("keeps no more after all work ended than a fresh reopen", async () => {
 		const path = await sqlitePath();
