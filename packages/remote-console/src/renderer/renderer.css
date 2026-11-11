@@ -1,0 +1,350 @@
+/* hummin remote console transcript: one reading column of prose, soft user bubbles,
+   quiet notices. Every color, radius, spacing, motion and font value reads an --rc-*
+   token. The only raw lengths are the content-visibility size estimate, a layout hint
+   for the per-entry virtualization, not styled output. Markdown lives in
+   markdown/markdown.css, tool rows in tool/tool.css.
+
+   Virtualization note: happy-dom does not implement content-visibility or layout, so tests
+   observe every row in the DOM; the real render-skipping behavior is verified under
+   Playwright. */
+
+/* the scroller is full width so its scrollbar sits at the pane edge; the reading
+   column is the inner wrapper the ResizeObserver watches */
+.rc-transcript-list {
+	position: relative;
+	overflow-y: auto;
+	/* reserve the gutter on both edges so the reading column is centred with or without a scrollbar */
+	scrollbar-gutter: stable both-edges;
+	padding: var(--rc-space-5) var(--rc-space-4) var(--rc-space-6);
+	/* keyboard focus scrolled flush to an edge keeps its full ring visible */
+	scroll-padding-block: var(--rc-space-3);
+}
+
+.rc-transcript-content {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-5);
+	width: min(100%, var(--rc-column));
+	margin-inline: auto;
+}
+
+.rc-entry {
+	content-visibility: auto;
+	contain-intrinsic-size: auto 120px;
+}
+
+/* consecutive tool-only messages read as one tight run */
+.rc-msg-tools + .rc-msg-tools,
+.rc-msg-tools + .rc-toolresult,
+.rc-toolresult + .rc-msg-tools,
+.rc-toolresult + .rc-toolresult {
+	margin-top: calc(var(--rc-space-1) - var(--rc-space-5));
+}
+
+/* a live slot that has nothing to paint yet must not add a gap */
+.rc-msg:has(> .rc-msg-blocks:empty) {
+	display: none;
+}
+
+.rc-msg-blocks {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-3);
+}
+
+/* user: soft right-aligned bubble, no role tag, no border */
+.rc-msg-user {
+	display: flex;
+	justify-content: flex-end;
+}
+
+.rc-msg-user .rc-msg-blocks {
+	max-width: 85%;
+	padding: var(--rc-space-2) var(--rc-space-4);
+	background: var(--rc-bubble-bg);
+	color: var(--rc-bubble-fg);
+	border: var(--rc-hairline-width) solid var(--rc-bubble-border);
+	border-radius: var(--rc-radius-lg);
+}
+
+/* per-message footer: output tokens, duration, rate */
+.rc-msg-meta {
+	margin-top: var(--rc-space-1);
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-xs);
+	font-variant-numeric: tabular-nums;
+	color: var(--rc-fg-faint);
+}
+
+/* streaming caret: a block at the end of the live text; studio sets the opacity token to 0 */
+.rc-streaming .rc-msg-blocks > .rc-md:last-child > .rc-md-p:last-child::after {
+	content: "";
+	display: inline-block;
+	/* scaled by the token so a hidden caret (studio, opacity 0) takes no space and cannot wrap */
+	width: calc(0.55em * var(--rc-caret-opacity));
+	height: 1.05em;
+	margin-left: calc(0.15em * var(--rc-caret-opacity));
+	vertical-align: text-bottom;
+	background: var(--rc-primary);
+	opacity: var(--rc-caret-opacity);
+	animation: rc-caret-blink var(--rc-duration-blink) steps(1) infinite;
+}
+
+@keyframes rc-caret-blink {
+	50% {
+		visibility: hidden;
+	}
+}
+
+/* system and custom: a quiet one-line notice */
+.rc-notice {
+	color: var(--rc-fg-faint);
+	font-size: var(--rc-text-sm);
+	line-height: var(--rc-leading-ui);
+}
+
+.rc-notice-row {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--rc-space-2);
+	max-width: 100%;
+	color: inherit;
+	font: inherit;
+}
+
+.rc-notice-toggle {
+	background: transparent;
+	border: none;
+	border-radius: var(--rc-radius-sm);
+	padding: var(--rc-space-1) var(--rc-space-2);
+	margin-left: calc(-1 * var(--rc-space-2));
+	cursor: pointer;
+	text-align: left;
+	transition:
+		background var(--rc-duration-fast) var(--rc-ease-out),
+		color var(--rc-duration-fast) var(--rc-ease-out),
+		box-shadow var(--rc-duration-fast) var(--rc-ease-out);
+}
+
+.rc-notice-toggle:hover {
+	background: var(--rc-hover);
+	color: var(--rc-fg-dim);
+}
+
+.rc-notice-toggle:active {
+	background: var(--rc-pressed);
+}
+
+.rc-notice-toggle:focus-visible {
+	outline: 1px solid var(--rc-primary);
+	outline-offset: 2px;
+	box-shadow: var(--rc-focus-ring);
+}
+
+.rc-notice-toggle[aria-expanded="true"] .rc-chevron {
+	transform: rotate(90deg);
+}
+
+/* wraps up to three lines; Notice measures the clamp and adds a toggle when it cuts text */
+.rc-notice-text {
+	min-width: 0;
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+	line-clamp: 3;
+	overflow: hidden;
+	overflow-wrap: anywhere;
+}
+
+.rc-notice-body {
+	margin-top: var(--rc-space-2);
+	color: var(--rc-fg-dim);
+}
+
+.rc-elided {
+	color: var(--rc-fg-faint);
+	font-size: var(--rc-text-sm);
+}
+
+/* thinking: a quiet toggle row over a dim, hairline-ruled body */
+.rc-thinking-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--rc-space-1);
+	background: transparent;
+	border: none;
+	border-radius: var(--rc-radius-sm);
+	color: var(--rc-fg-faint);
+	font: inherit;
+	font-size: var(--rc-text-sm);
+	line-height: var(--rc-leading-ui);
+	padding: var(--rc-space-1) var(--rc-space-2);
+	margin-left: calc(-1 * var(--rc-space-2));
+	cursor: pointer;
+	transition:
+		background var(--rc-duration-fast) var(--rc-ease-out),
+		color var(--rc-duration-fast) var(--rc-ease-out),
+		box-shadow var(--rc-duration-fast) var(--rc-ease-out);
+}
+
+.rc-thinking-toggle:hover {
+	background: var(--rc-hover);
+	color: var(--rc-fg-dim);
+}
+
+.rc-thinking-toggle:active {
+	background: var(--rc-pressed);
+}
+
+.rc-thinking-toggle:focus-visible {
+	outline: 1px solid var(--rc-primary);
+	outline-offset: 2px;
+	box-shadow: var(--rc-focus-ring);
+}
+
+[data-rc-thinking="open"] .rc-chevron {
+	transform: rotate(90deg);
+}
+
+.rc-md-thinking {
+	margin: var(--rc-space-1) 0 var(--rc-space-2);
+	padding-left: var(--rc-space-4);
+	border-left: 2px solid var(--rc-hairline-strong);
+	color: var(--rc-fg-dim);
+}
+
+/* working indicator: the line between sending and the first streamed content */
+.rc-working {
+	display: flex;
+	align-items: center;
+	gap: var(--rc-space-2);
+	color: var(--rc-fg-dim);
+	font-size: var(--rc-text-sm);
+	line-height: var(--rc-leading-ui);
+}
+
+/* connecting / empty transcript: three quiet bars, each swept by a transform-only
+   highlight on the shimmer token */
+.rc-skeleton {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-3);
+	padding-top: var(--rc-space-5);
+}
+
+.rc-empty-state {
+	margin: 0;
+	padding-top: var(--rc-space-6);
+	text-align: center;
+	font-size: var(--rc-text-sm);
+	line-height: var(--rc-leading-ui);
+	color: var(--rc-fg-faint);
+}
+
+.rc-skeleton-line {
+	position: relative;
+	display: block;
+	height: 1em;
+	background: var(--rc-track);
+	border-radius: var(--rc-radius-sm);
+	overflow: hidden;
+	opacity: 0.6;
+}
+
+.rc-skeleton-line:nth-child(1) {
+	width: 62%;
+}
+
+.rc-skeleton-line:nth-child(2) {
+	width: 90%;
+}
+
+.rc-skeleton-line:nth-child(3) {
+	width: 44%;
+}
+
+.rc-skeleton-line::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background: linear-gradient(100deg, transparent 32%, var(--rc-shimmer) 50%, transparent 68%);
+	transform: translateX(-100%);
+	animation: rc-skeleton-sweep var(--rc-duration-shimmer) var(--rc-ease-in-out-soft) infinite;
+}
+
+@keyframes rc-skeleton-sweep {
+	to {
+		transform: translateX(100%);
+	}
+}
+
+/* jump to latest: a round pill docked above the bottom edge of the scroller; the dock
+   has no height so it never adds scrollable space */
+.rc-jump-dock {
+	position: sticky;
+	bottom: var(--rc-space-4);
+	display: flex;
+	align-items: flex-end;
+	justify-content: center;
+	height: 0;
+	z-index: 1;
+	pointer-events: none;
+}
+
+.rc-jump {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--rc-space-1);
+	background: var(--rc-raised);
+	color: var(--rc-fg);
+	border: var(--rc-hairline-width) solid var(--rc-hairline);
+	border-radius: var(--rc-radius-round);
+	box-shadow: var(--rc-shadow-pop);
+	font: inherit;
+	font-size: var(--rc-text-sm);
+	height: var(--rc-control-sm);
+	line-height: var(--rc-leading-ui);
+	padding: 0 var(--rc-space-3) 0 var(--rc-space-2);
+	cursor: pointer;
+	pointer-events: auto;
+	transition:
+		background var(--rc-duration-fast) var(--rc-ease-out),
+		box-shadow var(--rc-duration-fast) var(--rc-ease-out),
+		opacity var(--rc-duration-exit) var(--rc-ease-in),
+		transform var(--rc-duration-exit) var(--rc-ease-in);
+}
+
+.rc-jump:hover {
+	background: var(--rc-overlay);
+}
+
+/* the pill floats over text, so --rc-pressed (translucent) is layered over the opaque fill, not swapped in */
+.rc-jump:active {
+	background-image: linear-gradient(var(--rc-pressed), var(--rc-pressed));
+}
+
+.rc-jump:focus-visible {
+	outline: 1px solid var(--rc-primary);
+	outline-offset: 2px;
+	box-shadow: var(--rc-shadow-pop), var(--rc-focus-ring);
+}
+
+/* exit: the pop-in animation would otherwise pin opacity, so drop it and fade */
+.rc-jump[data-state="closed"] {
+	animation: none;
+	opacity: 0;
+	transform: scale(0.96);
+	pointer-events: none;
+}
+
+/* repeat count of collapsed identical notices, and a failing exit code word */
+.rc-notice-repeat {
+	flex: none;
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-xs);
+	font-variant-numeric: tabular-nums;
+}
+
+.rc-notice-bad {
+	color: var(--rc-bad);
+}

@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- The remote console: `/remote-control` starts an extension HTTP server for the live session with an SSE event stream (per-host monotonic seqs, `Last-Event-ID` cursor replay from a bounded buffer, a fresh snapshot for unusable cursors, queue-pressure disconnects that never drop events), token-in-fragment auth with timing-safe bearer checks, opt-in tool approval holds (`remoteControl.approvalTools`; fail-open on expiry; concurrent holds served as arrays), LAN bind gates (`HUMMIN_REMOTE_HOST` plus `remoteControl.allowLan` and `HUMMIN_REMOTE_LAN`), and the rewritten `/remote-control` command (status line, usage notify, console-tracked queue). Environment variables are documented in `docs/environment-variables.md` (Remote console section).
+- The `@earendil-works/remote-console` workspace package: the browser console with token theming and three presets (glass, paper, terminal), a streaming renderer with a safe markdown pipeline, fleet host aggregation over one SSE stream per registered host (cross-origin console origins registered through `POST /settings/console-origins`), and an appearance panel (preset, accent, density, motion).
+
+### Changed
+
+- `extensions/lib/remote.ts` and `extensions/lib/remote-page.ts` are superseded by `extensions/lib/remote-console/` and removed; the old bridge's security perimeter (fragment-only token, timing-safe compare, host/origin checks, hardened headers, POST idempotency, connection caps) is carried forward.
+
 ### Fixed
 
 - Fixed pi exiting with an uncaught `AbortError` when a `read` tool call is cancelled while the file is being opened ([#11956](https://github.com/earendil-works/pi/issues/11956))

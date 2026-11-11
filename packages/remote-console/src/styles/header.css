@@ -1,0 +1,224 @@
+/* header bar: session title, status, metadata, context meter, rolling digits, controls */
+
+.rc-header-inner {
+	display: flex;
+	align-items: center;
+	gap: var(--rc-space-3);
+	width: 100%;
+	min-width: 0;
+	/* the container the header's metadata drops against (styles/responsive.css) */
+	container-type: inline-size;
+	container-name: rc-header;
+}
+
+/* the title shrinks before anything but never below 4rem */
+.rc-header-title {
+	flex: 0 1 auto;
+	min-width: 4rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: var(--rc-text-sm);
+	font-weight: var(--rc-weight-medium);
+	color: var(--rc-fg);
+}
+
+/* the dot carries colour and motion, the word names the state: never colour alone */
+.rc-header-status {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	flex: 0 1 auto;
+	gap: var(--rc-space-2);
+	/* dot + gap + the word's 4rem floor: the status never shrinks past this */
+	min-width: calc(var(--rc-dot-size) + var(--rc-space-2) + 4rem);
+	font-size: var(--rc-text-sm);
+	color: var(--rc-fg-dim);
+}
+
+.rc-header-status-dot {
+	display: inline-flex;
+	flex: none;
+}
+
+/* sentence case without touching the text content */
+.rc-header-status-word {
+	display: inline-block;
+	min-width: 4rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.rc-header-status-word::first-letter {
+	text-transform: uppercase;
+}
+
+.rc-header-spacer {
+	flex: 1;
+}
+
+/* the icon buttons never shrink or clip */
+.rc-header-inner > .rc-btn {
+	flex: none;
+}
+
+.rc-header-model,
+.rc-header-thinking {
+	flex: none;
+	font-size: var(--rc-text-xs);
+	white-space: nowrap;
+}
+
+.rc-header-model {
+	min-width: 0;
+	max-width: 14rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-family: var(--rc-font-mono);
+	color: var(--rc-fg-dim);
+}
+
+.rc-header-thinking {
+	color: var(--rc-fg-faint);
+}
+
+/* context meter: the fill grows from the left on scaleX */
+.rc-header-ctx {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+	gap: var(--rc-space-2);
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-xs);
+	color: var(--rc-fg-dim);
+}
+
+.rc-header-ctx-track {
+	display: block;
+	width: 4rem;
+	height: 3px;
+	overflow: hidden;
+	background: var(--rc-track);
+	border-radius: var(--rc-radius-round);
+}
+
+.rc-header-ctx-fill {
+	display: block;
+	width: 100%;
+	height: 100%;
+	border-radius: inherit;
+	background: var(--rc-primary);
+	transform-origin: left center;
+	transition: transform var(--rc-duration-slow) var(--rc-ease-out);
+}
+
+.rc-header-ctx-num {
+	display: inline-flex;
+	align-items: baseline;
+	font-variant-numeric: tabular-nums;
+}
+
+/* last run values while the stream is down: remembered, not live */
+.rc-header-ctx[data-rc-stale="true"],
+.rc-header-cost[data-rc-stale="true"] {
+	opacity: 0.55;
+}
+
+/* rolling digits (components/RollingNumber.tsx): one clipped window per
+   position, a 0-9 column translated to the target digit, --rc-stagger per
+   position (zero when motion is off); tabular-nums keeps the window width
+   stable while digits roll. Baseline: an inline-block with overflow other than
+   visible takes its bottom margin edge as its baseline, which sat the digits
+   about a descender (0.2em) above the neighbouring text. The
+   window is an inline-flex clipped with overflow: clip (not a scroll container,
+   so the baseline is the first cell's text baseline) and the row aligns on
+   baselines, so digits and the "%" or "tok/s" beside them share one baseline. */
+.rc-roll {
+	display: inline-flex;
+	align-items: baseline;
+	font-variant-numeric: tabular-nums;
+}
+
+.rc-roll-digit {
+	display: inline-flex;
+	align-items: flex-start;
+	overflow: clip;
+	height: 1em;
+	line-height: 1em;
+}
+
+.rc-roll-column {
+	display: block;
+	transition: transform var(--rc-duration-slow) var(--rc-ease-out);
+	transition-delay: calc(var(--rc-stagger) * var(--roll-index, 0));
+}
+
+.rc-roll-cell {
+	display: block;
+	height: 1em;
+	line-height: 1em;
+}
+
+.rc-roll-char {
+	display: inline-block;
+}
+
+.rc-header-presets {
+	display: inline-flex;
+	flex: none;
+}
+
+/* live speed, cost, todos: quiet mono metadata, dim until it matters */
+.rc-header-tps[data-rc-tps-stale="true"] {
+	color: var(--rc-fg-faint);
+}
+
+.rc-header-tps,
+.rc-header-cost,
+.rc-header-todos {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+	gap: var(--rc-space-1);
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-xs);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	color: var(--rc-fg-dim);
+}
+
+/* the visual half of a metric (the sr-only sentence carries the value for screen readers) */
+.rc-header-metric-visual {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--rc-space-1);
+}
+
+.rc-header-tps .rc-header-metric-visual {
+	align-items: baseline;
+}
+
+.rc-header-todos .rc-icon {
+	width: var(--rc-icon-sm);
+	height: var(--rc-icon-sm);
+}
+
+.rc-header-auto {
+	color: var(--rc-fg-faint);
+}
+
+/* failed background activity: the icon and the words carry it, colour backs them */
+.rc-header-status-failed {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--rc-space-1);
+	color: var(--rc-bad);
+}
+
+.rc-header-status-failed .rc-icon {
+	width: var(--rc-icon-sm);
+	height: var(--rc-icon-sm);
+}

@@ -5,6 +5,10 @@ repo_name: rennf93/hummin
 repo_url: https://github.com/rennf93/hummin
 edit_uri: edit/main/docs/
 
+# Internal working documents never ship to the site (mkdocs builds every .md
+# under docs/ even when absent from nav).
+exclude_docs: internal/
+
 theme:
   name: material
   palette:

@@ -46,7 +46,7 @@ interface HumminModelMetadata {
 	humminOffline?: boolean;
 }
 
-interface InstanceConfig {
+export interface InstanceConfig {
 	id: string;
 	baseUrl: string;
 	host: string;
@@ -79,7 +79,12 @@ function discoveryApiKey(): string {
 }
 
 function instanceConfigs(): InstanceConfig[] {
-	const settings = SettingsManager.create(process.cwd());
+	return instanceConfigsFrom(SettingsManager.create(process.cwd()));
+}
+
+/** The server list hummin-local registers, from any settings view (the remote
+ * console passes an in-memory one so listing never touches disk or locks). */
+export function instanceConfigsFrom(settings: SettingsManager): InstanceConfig[] {
 	const fleet = typeof settings.getFleetServers === "function" ? settings.getFleetServers() : [];
 	const env = process.env.HUMMIN_INSTANCES?.trim() ?? process.env.HUMMIN_COLIBRI_INSTANCES?.trim();
 	if (env) {

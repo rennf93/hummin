@@ -1,0 +1,76 @@
+/* sliding-pill segmented control: a borderless track with a raised thumb that
+   glides under the active option on the spring token */
+.rc-pill {
+	position: relative;
+	display: inline-grid;
+	grid-auto-flow: column;
+	align-items: stretch;
+	gap: 2px;
+	padding: 2px;
+	min-height: var(--rc-control-sm);
+	background: var(--rc-track);
+	border-radius: var(--rc-radius-sm);
+}
+
+.rc-pill-thumb {
+	position: absolute;
+	top: 2px;
+	bottom: 2px;
+	left: 0;
+	box-sizing: border-box;
+	border-radius: var(--rc-radius-sm-inner);
+	background: var(--rc-pill-thumb-bg);
+	border: 1px solid var(--rc-pill-thumb-border);
+	box-shadow: var(--rc-shadow-thumb);
+	/* shortcut: width animates (layout) because a scaleX thumb would distort its border and radius; upgrade if the pill gains many options */
+	transition:
+		transform var(--rc-duration-base) var(--rc-ease-pill),
+		width var(--rc-duration-base) var(--rc-ease-spring);
+	will-change: transform;
+}
+
+.rc-pill-btn {
+	position: relative;
+	z-index: 1;
+	background: transparent;
+	border: none;
+	border-radius: var(--rc-radius-sm-inner);
+	min-block-size: 1.5rem;
+	color: var(--rc-fg-dim);
+	font: inherit;
+	font-size: var(--rc-text-xs);
+	font-weight: var(--rc-weight-medium);
+	line-height: var(--rc-leading-ui);
+	text-transform: var(--rc-label-transform);
+	letter-spacing: var(--rc-label-tracking);
+	padding: 0.1875rem 0.625rem;
+	cursor: pointer;
+	white-space: nowrap;
+	transition:
+		color var(--rc-duration-fast) var(--rc-ease-out),
+		box-shadow var(--rc-duration-fast) var(--rc-ease-out),
+		transform var(--rc-duration-press) var(--rc-ease-out);
+}
+
+.rc-pill-btn:hover {
+	color: var(--rc-fg);
+}
+
+.rc-pill-btn:active {
+	transform: scale(0.98);
+}
+
+.rc-pill-btn:focus-visible {
+	outline: 1px solid var(--rc-primary);
+	outline-offset: 2px;
+	box-shadow: var(--rc-focus-ring);
+}
+
+.rc-pill-btn[aria-pressed="true"] {
+	color: var(--rc-pill-thumb-fg);
+}
+
+.rc-pill-btn:disabled {
+	opacity: 0.45;
+	pointer-events: none;
+}

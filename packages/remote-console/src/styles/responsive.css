@@ -1,0 +1,189 @@
+/* narrow layouts; must load last (equal-specificity rules fall back to source order) */
+
+/* under 900px the rail becomes a horizontal strip of host chips above the main
+   column and the add form opens below the strip. The chips scroll sideways with
+   an edge fade as the cue; each chip is a complete unit (dot, label, status
+   word, session) and the hints that used to sit inside the chip render once, on
+   their own full-width line below the strip, for the active host only. */
+@media (width < 900px) {
+	.rc-shell {
+		flex-direction: column;
+	}
+
+	.rc-rail {
+		width: 100%;
+		max-height: 50dvh;
+		overflow-x: hidden;
+		border-right: none;
+		border-bottom: var(--rc-hairline-width) solid var(--rc-hairline);
+	}
+
+	/* no horizontal padding here: the list pads itself so the edge fade lines up with the chips */
+	.rc-rail-inner {
+		flex-flow: row wrap;
+		align-items: center;
+		gap: var(--rc-space-2);
+		padding: var(--rc-space-2) 0;
+	}
+
+	.rc-rail-head {
+		order: 2;
+		padding: 0 var(--rc-space-3) 0 0;
+	}
+
+	.rc-rail-head .rc-label {
+		display: none;
+	}
+
+	.rc-onboard {
+		order: 0;
+		flex-basis: 100%;
+	}
+
+	/* the fade is as wide as the list's inline padding, so the first and last chip
+	   at the scroll ends sit fully opaque and only chips cut mid-scroll fade */
+	.rc-host-list {
+		order: 1;
+		flex: 1;
+		flex-direction: row;
+		min-width: 0;
+		overflow-x: auto;
+		scrollbar-width: none;
+		padding: var(--rc-space-1) var(--rc-space-3);
+		-webkit-mask-image: linear-gradient(to right, transparent, black var(--rc-space-3), black calc(100% - var(--rc-space-3)), transparent);
+		mask-image: linear-gradient(to right, transparent, black var(--rc-space-3), black calc(100% - var(--rc-space-3)), transparent);
+	}
+
+	.rc-host-list::-webkit-scrollbar {
+		display: none;
+	}
+
+	.rc-strip-hints {
+		order: 3;
+		display: flex;
+		flex-direction: column;
+		flex-basis: 100%;
+		gap: var(--rc-space-1);
+		padding: 0 var(--rc-space-3);
+	}
+
+	.rc-strip-hints .rc-host-hint {
+		margin-left: 0;
+	}
+
+	.rc-add-host {
+		order: 4;
+		flex-basis: 100%;
+	}
+
+	.rc-rail-indicator {
+		display: none;
+	}
+
+	.rc-host-row {
+		flex: none;
+		align-items: center;
+	}
+
+	.rc-host-row[data-rc-active="true"] {
+		background: var(--rc-pressed);
+	}
+
+	.rc-host-select {
+		flex-direction: row;
+		align-items: center;
+		flex: none;
+		padding: var(--rc-space-1) var(--rc-space-3);
+	}
+
+	.rc-host-model,
+	.rc-host-row .rc-host-hint {
+		display: none;
+	}
+
+	/* status word stays on the chip line; the session name clips after it */
+	.rc-host-sub {
+		max-width: 9rem;
+		margin-left: var(--rc-space-2);
+	}
+
+	.rc-host-remove {
+		margin: 0 var(--rc-space-1) 0 0;
+	}
+
+	.rc-main {
+		height: auto;
+		flex: 1;
+	}
+
+	.rc-fleet {
+		display: none;
+	}
+}
+
+/* The header's items drop by the header's own width (container rc-header, set on
+   .rc-header-inner in header.css), not the viewport: the rail takes 16rem at desktop
+   widths, so the same viewport gives the header very different room. Drop order as it
+   narrows: thinking level, preset switch, model, cost, todo chip, context track (the
+   percent stays), then tok/s. The title (min 4rem) and the status word (min 4rem, or
+   hidden but still read aloud) are the only shrinkable items; the buttons never clip. */
+@container rc-header (width < 77rem) {
+	.rc-header-thinking {
+		display: none;
+	}
+}
+
+@container rc-header (width < 70rem) {
+	.rc-header-presets {
+		display: none;
+	}
+}
+
+@container rc-header (width < 54rem) {
+	.rc-header-model {
+		display: none;
+	}
+}
+
+@container rc-header (width < 39rem) {
+	.rc-header-cost {
+		display: none;
+	}
+}
+
+@container rc-header (width < 36rem) {
+	.rc-header-todos {
+		display: none;
+	}
+}
+
+@container rc-header (width < 33rem) {
+	.rc-header-ctx-track {
+		display: none;
+	}
+}
+
+@container rc-header (width < 28rem) {
+	.rc-header-tps {
+		display: none;
+	}
+}
+
+/* no room for the word: keep the dot, keep the word for screen readers. Threshold: title
+   floor 4rem + status (dot 0.5 + gap 0.5 + word floor 4) + context percent ~3.6 + two
+   icon buttons 2 x 2.125 + five 0.75rem gaps = about 20.6rem, rounded up to 21rem. */
+@container rc-header (width < 21rem) {
+	.rc-header-status {
+		min-width: 0;
+	}
+
+	.rc-header-status-word {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		min-width: 0;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+}

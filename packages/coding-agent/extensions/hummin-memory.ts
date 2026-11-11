@@ -1194,6 +1194,7 @@ function dashboardText(dashboard: MemoryDashboard): string {
 	return `memory: ${dashboard.enabled ? "on" : "off"} (${dashboard.mode})\nvault: ${dashboard.vault}\nentities: ${entityCount} (${byType})\ninbox: ${dashboard.inbox} | processed: ${dashboard.processed}${recent}`;
 }
 
+let foldEvents: ExtensionAPI["events"] | undefined; // shared bus for the remote console's fold activity
 let cachedSettings: SettingsManager | undefined; // set by the extension's default export (real runs only; tests leave it undefined)
 
 /** The model the user is running (updated on model_select). Memory fold and
@@ -1555,6 +1556,7 @@ function registerVaultSearchTool(pi: ExtensionAPI): void {
 export default function humminMemory(pi: ExtensionAPI): void {
 	const settings = SettingsManager.create(process.cwd());
 	cachedSettings = settings;
+	foldEvents = pi.events;
 	pi.registerCommand("memory", {
 		description: "Show memory and vault status",
 		category: "Memory/Vault",
@@ -1741,7 +1743,10 @@ export default function humminMemory(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (event, ctx) => {
-		if (event.reason === "reload") return;
+		if (event.reason === "reload") {
+			foldEvents = undefined;
+			return;
+		}
 		try {
 			const cwd = ctx.cwd;
 			const sessionFile = ctx.sessionManager.getSessionFile();
@@ -1754,6 +1759,8 @@ export default function humminMemory(pi: ExtensionAPI): void {
 			await enqueueDistill(sessionFile, cwd, settings.getMemoryMode() === "vault", ctx);
 		} catch {
 			// fail-open: memory must never block shutdown
+		} finally {
+			foldEvents = undefined;
 		}
 	});
 }
@@ -1775,6 +1782,31 @@ export default function humminMemory(pi: ExtensionAPI): void {
  * handler distills again, recursing without bound.
  */
 export async function enqueueFold(dir: string, label: string, ctx: MemoryDispatchContext): Promise<boolean> {
+	try {
+		return await spawnFold(dir, label, ctx);
+	} catch (error) {
+		emitFoldActivity("failed", error instanceof Error ? error.message : String(error));
+		throw error;
+	}
+}
+
+const MAX_FOLD_DETAIL_CHARS = 200;
+
+/** `bus` is the bus current when the fold was spawned: a worker that outlives a
+ * reload or shutdown must not report into a bus installed after it started. */
+function emitFoldActivity(phase: "start" | "end" | "failed", detail?: string, bus = foldEvents): void {
+	if (bus === undefined || bus !== foldEvents) return;
+	try {
+		bus.emit("hummin:memory_fold", {
+			phase,
+			...(detail ? { detail: detail.slice(0, MAX_FOLD_DETAIL_CHARS) } : {}),
+		});
+	} catch {
+		// Activity reporting never affects the fold.
+	}
+}
+
+async function spawnFold(dir: string, label: string, ctx: MemoryDispatchContext): Promise<boolean> {
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	const jobPath = join(dir, ".fold-job.json");
 	const requested = memoryModel();
@@ -1814,6 +1846,14 @@ export async function enqueueFold(dir: string, label: string, ctx: MemoryDispatc
 		env: { ...process.env, HUMMIN_MEMORY: "0" },
 	});
 	child.unref();
+	const bus = foldEvents;
+	emitFoldActivity("start", label, bus);
+	child.once("exit", (code) => {
+		if (code === 0) emitFoldActivity("end", undefined, bus);
+		else if (code === null) emitFoldActivity("end", "terminated", bus);
+		else emitFoldActivity("failed", `exit ${code}`, bus);
+	});
+	child.once("error", (error) => emitFoldActivity("failed", error.message, bus));
 	return true;
 }
 
