@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Anthropic message threads are now on by default for any provider whose baseUrl is on api.anthropic.com, not only the `anthropic` provider ([#11987](https://github.com/earendil-works/pi/issues/11987))
+
 ### Fixed
 
 - Fixed Anthropic OAuth requests reporting an outdated Claude Code version.

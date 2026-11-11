@@ -4,7 +4,7 @@
 use crate::decode::StreamDecoder;
 use crate::errors::Failure;
 use crate::frame::{EVENT, Frame};
-use crate::output::Output;
+use crate::output::{Gate, Output};
 use crate::sys;
 use crate::window::{Pending, Window};
 use serde_json::{Map, Value, json};
@@ -14,7 +14,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -297,78 +297,22 @@ pub fn running<T>(
         .ok_or_else(|| Failure::new("EBADF", format!("no running {what} with this id")))
 }
 
-/// Tells one request's loop whether its readers are held back by an unsent backlog. Such a reader is silent because
-/// of the link, not the program, so the exit grace must not run out on it (the pipe may still hold output).
-#[derive(Default)]
-pub struct Throttle {
-    waiting: AtomicUsize,
-    /// Counts the waits that ended, so a reader that was just released, and has not sent yet, still counts.
-    releases: AtomicUsize,
-}
-
-impl Throttle {
-    /// `Output::wait_for_room`, visible to the request's loop.
-    pub fn wait_for_room(&self, output: &Output, stop: &AtomicBool) {
-        self.waiting.fetch_add(1, Ordering::SeqCst);
-        if output.wait_for_room(stop) {
-            self.releases.fetch_add(1, Ordering::SeqCst);
-        }
-        self.waiting.fetch_sub(1, Ordering::SeqCst);
-    }
-
-    /// Whether a reader waits now or stopped waiting since the previous call, which `seen` remembers.
-    fn active(&self, seen: &mut usize) -> bool {
-        let releases = self.releases.load(Ordering::SeqCst);
-        let released = releases != *seen;
-        *seen = releases;
-        released || self.waiting.load(Ordering::SeqCst) > 0
-    }
-}
-
-/// The next message for a loop that stops waiting once `idle_until` has passed without any. Messages already queued
-/// are always taken first; an expired grace is renewed while a reader is throttled, unless `forced` (killed, aborted
-/// or timed out). `None` means the grace is over. `wait` bounds the wait before the grace expires.
-pub fn receive(
-    receiver: &Receiver<Message>,
-    wait: Duration,
-    idle_until: &mut Option<Instant>,
-    throttle: &Throttle,
-    seen: &mut usize,
-    forced: bool,
-    grace: Duration,
-) -> Option<Result<Message, RecvTimeoutError>> {
-    let now = Instant::now();
-    if idle_until.is_none_or(|idle| now < idle) {
-        return Some(receiver.recv_timeout(wait));
-    }
-    match receiver.try_recv() {
-        Ok(message) => return Some(Ok(message)),
-        Err(TryRecvError::Disconnected) => return Some(Err(RecvTimeoutError::Disconnected)),
-        Err(TryRecvError::Empty) => {}
-    }
-    if forced || !throttle.active(seen) {
-        return None;
-    }
-    *idle_until = Some(now + grace);
-    Some(receiver.recv_timeout(grace))
-}
-
-/// Read one pipe on its own thread until it ends or `stop` is set. With a gate, reading waits while too much output
-/// is unsent.
+/// Read one pipe on its own thread until it ends or `stop` is set. With `gate`, reading waits while too much output is
+/// unsent.
 pub fn spawn_reader(
     stream: usize,
     pipe: impl sys::Pipe + Send + 'static,
     sender: Sender<Message>,
     stop: Arc<AtomicBool>,
-    gate: Option<(Arc<Output>, Arc<Throttle>)>,
+    gate: Option<Gate>,
 ) -> std::io::Result<JoinHandle<()>> {
     thread::Builder::new().spawn(move || {
         sys::read_pipe(pipe, &stop, |bytes| {
-            let delivered = sender.send(Message::Data(stream, bytes.to_vec())).is_ok();
-            if let Some((output, throttle)) = &gate {
-                throttle.wait_for_room(output, &stop);
+            let deliver = || sender.send(Message::Data(stream, bytes.to_vec())).is_ok();
+            match &gate {
+                Some(gate) => gate.pass(&stop, deliver),
+                None => deliver(),
             }
-            delivered
         });
         let _ = sender.send(Message::Eof(stream));
     })
@@ -447,9 +391,8 @@ pub fn run(
     let deadline = request.timeout.map(|timeout| Instant::now() + timeout);
     let stop = Arc::new(AtomicBool::new(false));
     // Without a window, output is not coalesced; reading then waits for the link.
-    let throttle = Arc::new(Throttle::default());
     let gate = if request.window.is_none() {
-        Some((output.clone(), throttle.clone()))
+        Some(Gate::new(output))
     } else {
         None
     };
@@ -469,7 +412,7 @@ pub fn run(
         return Err(abandon(child, error));
     }
     let stderr = child.stderr.take().unwrap();
-    if let Err(error) = spawn_reader(1, stderr, sender.clone(), stop.clone(), gate) {
+    if let Err(error) = spawn_reader(1, stderr, sender.clone(), stop.clone(), gate.clone()) {
         return Err(abandon(child, error));
     }
     if let Err((child, error)) = start_waiter(child, None, sender.clone()) {
@@ -511,7 +454,6 @@ pub fn run(
     let mut ended = [false, false];
     let mut status: Option<Result<ExitStatus, String>> = None;
     let mut idle_until: Option<Instant> = None;
-    let mut seen_releases = 0;
     let mut timed_out = false;
     let mut aborted = false;
     let mut killed = false;
@@ -534,6 +476,15 @@ pub fn run(
         if status.is_some() && ended[0] && ended[1] {
             break;
         }
+        if idle_until.is_some_and(|idle| now >= idle) {
+            // Silence while the link holds a reader up is not the end of the output: the pipe may hold more.
+            if gate.as_ref().is_some_and(Gate::held) {
+                idle_until = Some(now + EXIT_STDIO_GRACE);
+            } else {
+                // A descendant may hold the pipes open after the process exited; stop waiting for it.
+                break;
+            }
+        }
         if let Some(pending) = &mut pending
             && !pending.is_empty()
             && now >= pending.next_send()
@@ -555,19 +506,7 @@ pub fn run(
                 pending.next_send().saturating_duration_since(now)
             });
         }
-        // A descendant may hold the pipes open after the process exited; `receive` ends the wait for it.
-        let Some(message) = receive(
-            &receiver,
-            wait,
-            &mut idle_until,
-            &throttle,
-            &mut seen_releases,
-            killed,
-            EXIT_STDIO_GRACE,
-        ) else {
-            break;
-        };
-        match message {
+        match receiver.recv_timeout(wait) {
             Ok(Message::Data(stream, bytes)) => {
                 emit(&mut pending, stream, decoders[stream].decode(&bytes, false));
                 if let Some(spill) = &mut spill {
@@ -641,69 +580,4 @@ pub fn run(
         result["spillPath"] = json!(path);
     }
     Ok(result)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const GRACE: Duration = Duration::from_millis(10);
-
-    /// An expired grace and an empty channel: `Some` renews the grace, `None` ends the wait.
-    fn expired(throttle: &Throttle, seen: &mut usize, forced: bool) -> bool {
-        let (_sender, receiver) = mpsc::channel();
-        let mut idle_until = Some(Instant::now());
-        receive(
-            &receiver,
-            GRACE,
-            &mut idle_until,
-            throttle,
-            seen,
-            forced,
-            GRACE,
-        )
-        .is_some()
-    }
-
-    #[test]
-    fn grace_ends_when_no_reader_is_throttled() {
-        assert!(!expired(&Throttle::default(), &mut 0, false));
-    }
-
-    #[test]
-    fn grace_renews_while_a_reader_waits_or_was_just_released() {
-        let throttle = Throttle::default();
-        throttle.waiting.store(1, Ordering::SeqCst);
-        assert!(expired(&throttle, &mut 0, false));
-        throttle.waiting.store(0, Ordering::SeqCst);
-        throttle.releases.store(1, Ordering::SeqCst);
-        let mut seen = 0;
-        assert!(expired(&throttle, &mut seen, false));
-        // The release was seen once; without a new one the grace ends.
-        assert!(!expired(&throttle, &mut seen, false));
-    }
-
-    #[test]
-    fn grace_never_renews_after_a_kill() {
-        let throttle = Throttle::default();
-        throttle.waiting.store(1, Ordering::SeqCst);
-        assert!(!expired(&throttle, &mut 0, true));
-    }
-
-    #[test]
-    fn queued_messages_are_taken_before_the_grace_ends() {
-        let (sender, receiver) = mpsc::channel();
-        sender.send(Message::Data(0, vec![1])).unwrap();
-        let mut idle_until = Some(Instant::now());
-        let message = receive(
-            &receiver,
-            GRACE,
-            &mut idle_until,
-            &Throttle::default(),
-            &mut 0,
-            true,
-            GRACE,
-        );
-        assert!(matches!(message, Some(Ok(Message::Data(0, _)))));
-    }
 }

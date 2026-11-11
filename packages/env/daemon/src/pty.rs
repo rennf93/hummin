@@ -5,9 +5,11 @@
 use crate::errors::Failure;
 use crate::exec::{Control, Groups, running};
 #[cfg(unix)]
-use crate::exec::{Message, Throttle, kill_group, receive, start_waiter};
+use crate::exec::{Message, kill_group, start_waiter};
 #[cfg(unix)]
 use crate::frame::{EVENT, Frame};
+#[cfg(unix)]
+use crate::output::Gate;
 use crate::output::Output;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -178,7 +180,6 @@ pub fn run(
     ));
 
     let stop = Arc::new(AtomicBool::new(false));
-    let throttle = Arc::new(Throttle::default());
     // A thread that cannot start (a task limit) fails the terminal; the started program is killed and reaped.
     let abandon = |mut child: std::process::Child, error: std::io::Error| {
         stop.store(true, Ordering::SeqCst);
@@ -188,18 +189,18 @@ pub fn run(
         groups.lock().unwrap().remove(&pid);
         Failure::new("spawn_error", error.to_string())
     };
+    // Like a full pipe: a program that writes faster than the link waits.
+    let gate = Gate::new(output);
     let started = {
         let master = master.clone();
         let sender = sender.clone();
         let stop = stop.clone();
-        let output = output.clone();
-        let throttle = throttle.clone();
+        let gate = gate.clone();
         thread::Builder::new().spawn(move || {
             unix::read(&master, &stop, |bytes| {
-                let delivered = sender.send(Message::Data(0, bytes.to_vec())).is_ok();
-                // Like a full pipe: a program that writes faster than the link waits.
-                throttle.wait_for_room(&output, &stop);
-                delivered
+                gate.pass(&stop, || {
+                    sender.send(Message::Data(0, bytes.to_vec())).is_ok()
+                })
             });
             let _ = sender.send(Message::Eof(0));
         })
@@ -230,7 +231,6 @@ pub fn run(
     let mut status = None;
     let mut ended = false;
     let mut idle_until: Option<Instant> = None;
-    let mut seen_releases = 0;
     let mut aborted = false;
     let mut killed = false;
     let kill = |killed: &mut bool| {
@@ -247,22 +247,22 @@ pub fn run(
             break;
         }
         let wait = match idle_until {
-            Some(idle) => idle.saturating_duration_since(Instant::now()),
+            Some(idle) => {
+                let now = Instant::now();
+                if now < idle {
+                    idle - now
+                } else if gate.held() {
+                    // Silence while the link holds the reader up is not the end of the output.
+                    idle_until = Some(now + EXIT_GRACE);
+                    EXIT_GRACE
+                } else {
+                    // A background job may keep the terminal open after the program exited.
+                    break;
+                }
+            }
             None => Duration::from_secs(3600),
         };
-        // A background job may keep the terminal open after the program exited; `receive` ends the wait for it.
-        let Some(message) = receive(
-            &receiver,
-            wait,
-            &mut idle_until,
-            &throttle,
-            &mut seen_releases,
-            killed,
-            EXIT_GRACE,
-        ) else {
-            break;
-        };
-        match message {
+        match receiver.recv_timeout(wait) {
             Ok(Message::Data(_, bytes)) => {
                 output.bulk(
                     Frame::with_payload(EVENT, id, json!({ "kind": "output" }), bytes),
