@@ -477,8 +477,13 @@ pub fn run(
             break;
         }
         if idle_until.is_some_and(|idle| now >= idle) {
-            // A descendant may hold the pipes open after the process exited; stop waiting for it.
-            break;
+            if output.has_unsent_bulk() {
+                // Readers wait while output is unsent; their silence is the link's, not the process's.
+                idle_until = Some(now + EXIT_STDIO_GRACE);
+            } else {
+                // A descendant may hold the pipes open after the process exited; stop waiting for it.
+                break;
+            }
         }
         if let Some(pending) = &mut pending
             && !pending.is_empty()

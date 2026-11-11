@@ -246,11 +246,16 @@ pub fn run(
         let wait = match idle_until {
             Some(idle) => {
                 let now = Instant::now();
-                if now >= idle {
+                if now >= idle && output.has_unsent_bulk() {
+                    // The reader waits while output is unsent; its silence is the link's, not the program's.
+                    idle_until = Some(now + EXIT_GRACE);
+                    EXIT_GRACE
+                } else if now >= idle {
                     // A background job may keep the terminal open after the program exited.
                     break;
+                } else {
+                    idle - now
                 }
-                idle - now
             }
             None => Duration::from_secs(3600),
         };

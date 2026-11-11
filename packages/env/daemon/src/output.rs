@@ -60,6 +60,13 @@ impl Output {
         }
     }
 
+    /// Whether bulk bytes are still queued. A reader throttled by `wait_for_room` is silent for as long as the link is
+    /// slow, so a program's exit grace must not run out while this holds, or the output left in the pipe is lost.
+    pub fn has_unsent_bulk(&self) -> bool {
+        let queues = self.queues.lock().unwrap();
+        queues.bulk_bytes > 0 && !queues.closed
+    }
+
     pub fn close(&self) {
         let mut queues = self.queues.lock().unwrap();
         queues.closed = true;

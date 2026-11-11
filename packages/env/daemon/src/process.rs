@@ -215,11 +215,16 @@ pub fn run(
         let wait = match idle_until {
             Some(idle) => {
                 let now = Instant::now();
-                if now >= idle {
+                if now >= idle && output.has_unsent_bulk() {
+                    // Readers wait while output is unsent; their silence is the link's, not the program's.
+                    idle_until = Some(now + EXIT_STDIO_GRACE);
+                    EXIT_STDIO_GRACE
+                } else if now >= idle {
                     // A descendant may hold the pipes open after the program exited; stop waiting for it.
                     break;
+                } else {
+                    idle - now
                 }
-                idle - now
             }
             None => Duration::from_secs(3600),
         };
