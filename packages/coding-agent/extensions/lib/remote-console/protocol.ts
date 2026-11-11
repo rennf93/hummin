@@ -1,0 +1,349 @@
+/**
+ * lib/remote-console/protocol: the wire contract (v1) between the hummin
+ * extension's control server and the browser console. The extension side is
+ * the source of truth for these types; the console package mirrors them and
+ * a conformance test pins the mirror (client and server share fixtures, not
+ * code, because the extension must resolve without a workspace import when
+ * synced to ~/.hummin/agent/extensions).
+ *
+ * Transport: one SSE stream per host connection carries RemoteEvents with
+ * per-host monotonic `seq`. The server keeps a bounded replay buffer and
+ * resumes from the SSE Last-Event-ID header. A cursor the buffer cannot
+ * answer - older than its start, or above its head after a server restart
+ * reset the seqs - replays a fresh `snapshot` instead, so the client never
+ * errors on an unusable cursor. Actions (prompt, abort, approval, settings)
+ * are POSTs and stay out of this module. Queue pressure never drops events:
+ * the server disconnects the slowest consumers instead, and losslessness
+ * comes from the replay log - a disconnected client reconnects with
+ * Last-Event-ID and replays everything it missed (up to the buffer bound,
+ * which a snapshot rebuild covers beyond).
+ */
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+
+export const PROTOCOL_VERSION = 1;
+
+/** Host identity, carried by every snapshot so a fleet-wide console can
+ * label streams. `origin` is the base URL the stream was fetched from. */
+export interface HostIdentity {
+	origin: string;
+	label: string;
+}
+
+export interface WireTextBlock {
+	type: "text";
+	text: string;
+}
+
+export interface WireThinkingBlock {
+	type: "thinking";
+	text: string;
+}
+
+export interface WireToolCallBlock {
+	type: "toolCall";
+	id: string;
+	name: string;
+	arguments: Record<string, unknown>;
+	argumentsError?: string;
+}
+
+/** Images are never sent over the wire; the block is elided with a notice. */
+export interface WireImageElidedBlock {
+	type: "imageElided";
+}
+
+export type WireContentBlock = WireTextBlock | WireThinkingBlock | WireToolCallBlock | WireImageElidedBlock;
+
+/** A message as the console renders it. Mirrors AgentMessage's visible
+ * fields (packages/agent/src/types.ts) without provider internals. */
+export interface WireAgentMessage {
+	role: "user" | "assistant" | "toolResult" | "system" | "custom";
+	toolCallId?: string;
+	toolName?: string;
+	isError?: boolean;
+	durationMs?: number;
+	stopReason?: string;
+	usage?: { input: number; output: number; total: number };
+	/** Extension message type for role "custom" (e.g. "hummin-memory-recall",
+	 * "hummin-monitor", "hummin-task"); the console renders known types as
+	 * typed notices. */
+	customType?: string;
+	/** Bounded, JSON-safe details of a custom message (scalars and short arrays only). */
+	details?: Record<string, unknown>;
+	blocks: WireContentBlock[];
+}
+
+/** One transcript entry with its stable session-entry id: the renderer's
+ * identity for incremental updates and virtualization keys. */
+export interface WireTranscriptEntry {
+	entryId: string;
+	timestamp?: string;
+	message: WireAgentMessage;
+}
+
+export interface WireModelRef {
+	provider: string;
+	modelId: string;
+}
+
+export type RunStatusKind = "idle" | "working" | "waiting";
+
+export interface WireStatus {
+	kind: RunStatusKind;
+	/** Human detail, e.g. "Waiting in terminal: confirm dialog title". */
+	detail?: string;
+	model: WireModelRef | null;
+	thinkingLevel?: string;
+	contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
+	stats?: WireStats;
+	workspace?: WireWorkspace;
+	/** Auto-compaction is enabled for this session. */
+	autoCompact?: boolean;
+	/** hummin version string. */
+	version?: string;
+}
+
+/** Session totals as the terminal footer shows them. Every field is optional:
+ * a value the extension cannot read is omitted, never guessed. */
+export interface WireStats {
+	/** Summed over every entry of the session file, all branches, like the terminal
+	 * footer (assistant, tool, usage and compaction usage). */
+	tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+	/** Latest assistant message: cacheRead / (input + cacheRead + cacheWrite), 0-100. */
+	cacheHitPercent?: number | null;
+	costUsd?: number;
+	/** Output tokens per second while a message streams; null when nothing streams. */
+	tokensPerSecond?: number | null;
+	/** Lines added and removed by edit and write tool results, all branches. */
+	diff?: { added: number; removed: number };
+	/** Latest todo list on the current branch: completed items over all items. */
+	todos?: { done: number; total: number };
+}
+
+export interface WireWorkspace {
+	cwd: string;
+	/** Repository directory name, when cwd is inside a git work tree. */
+	repo?: string;
+	branch?: string;
+}
+
+/** One configured local model server (hummin fleet). Read-only on the wire:
+ * the console never starts, stops or reconfigures a server. */
+export interface WireFleetServer {
+	/** Fleet provider id: `<engine>-<host>-<port>`. */
+	id: string;
+	engine: string;
+	host: string;
+	port: number;
+	/** The server's record in the fleet health file, written at discovery: "fresh"
+	 * (seen within hummin's freshness window), "stale" (older), "none" (no record).
+	 * This is when the server was last seen, not a live health probe. */
+	discovery: "fresh" | "stale" | "none";
+	models: string[];
+	/** True when the session's current model is served by this server. */
+	active: boolean;
+}
+
+/** A transient background activity the transcript does not carry. */
+export interface WireActivity {
+	kind: "compaction" | "memory_fold";
+	phase: "start" | "end" | "failed";
+	detail?: string;
+}
+
+/** A tool call held open by the remote approval surface. */
+export interface WireApproval {
+	id: string;
+	toolName: string;
+	argsPreview: string;
+	/** Epoch ms when the hold expires and the call proceeds (fail-open by
+	 * design: approvals are a convenience surface, not a security boundary). */
+	deadlineMs: number;
+	createdAt: string;
+}
+
+export interface WireQueueItem {
+	id: string;
+	preview: string;
+	deliverAs: "steer" | "followUp";
+}
+
+/** Console-tracked queued messages plus the honest terminal count (the
+ * extension cannot read terminal-typed queue contents). */
+export interface WireQueue {
+	items: WireQueueItem[];
+	terminalQueued: number;
+}
+
+export interface SnapshotPayload {
+	host: HostIdentity;
+	protocolVersion: number;
+	sessionId: string;
+	sessionName: string;
+	status: WireStatus;
+	/** Branch tail in transcript order, oldest first. */
+	messages: WireTranscriptEntry[];
+	/** Every pending hold, oldest first. */
+	holds: WireApproval[];
+	queue: WireQueue;
+	/** Configured fleet servers; omitted when no fleet is configured. */
+	fleet?: WireFleetServer[];
+	/** The background activity in progress (or the last failure) at snapshot
+	 * time, so a console that connects mid-activity still shows it. */
+	activity?: WireActivity;
+}
+
+export interface MessageStartPayload {
+	slotKey: string;
+	message: WireAgentMessage;
+}
+
+export type StreamDeltaEvent =
+	| { type: "text_delta"; contentIndex: number; delta: string }
+	| { type: "thinking_delta"; contentIndex: number; delta: string }
+	| { type: "toolcall_start"; contentIndex: number }
+	| { type: "toolcall_delta"; contentIndex: number; delta: string }
+	| { type: "toolcall_end"; contentIndex: number };
+
+export interface MessageDeltaPayload {
+	slotKey: string;
+	event: StreamDeltaEvent;
+}
+
+export interface MessageEndPayload {
+	slotKey: string;
+	entryId: string;
+	message: WireAgentMessage;
+}
+
+export interface ToolUpdatePayload {
+	toolCallId: string;
+	phase: "start" | "update" | "end";
+	toolName: string;
+	args?: Record<string, unknown>;
+	partialResult?: string;
+	isError?: boolean;
+	durationMs?: number;
+}
+
+export interface StatusPayload {
+	status: WireStatus;
+}
+
+export interface ApprovalPayload {
+	/** The full pending list at publish time, oldest first: concurrent holds
+	 * stay visible and the client can replace its slice wholesale. */
+	holds: WireApproval[];
+}
+
+export interface ApprovalDonePayload {
+	id: string;
+	resolution: "allowed" | "denied" | "expired" | "terminal";
+}
+
+export interface QueuePayload {
+	queue: WireQueue;
+}
+
+export interface FleetPayload {
+	/** The full server list at publish time; the client replaces its slice. */
+	servers: WireFleetServer[];
+}
+
+export interface ActivityPayload {
+	activity: WireActivity;
+}
+
+export interface SessionPayload {
+	sessionId: string;
+	sessionName: string;
+}
+
+export type RemoteEventType =
+	| "snapshot"
+	| "message_start"
+	| "message_delta"
+	| "message_end"
+	| "tool_update"
+	| "status"
+	| "approval"
+	| "approval_done"
+	| "queue"
+	| "session"
+	| "fleet"
+	| "activity"
+	| "ping";
+
+export type RemoteEventPayloadMap = {
+	snapshot: SnapshotPayload;
+	message_start: MessageStartPayload;
+	message_delta: MessageDeltaPayload;
+	message_end: MessageEndPayload;
+	tool_update: ToolUpdatePayload;
+	status: StatusPayload;
+	approval: ApprovalPayload;
+	approval_done: ApprovalDonePayload;
+	queue: QueuePayload;
+	session: SessionPayload;
+	fleet: FleetPayload;
+	activity: ActivityPayload;
+	ping: Record<string, never>;
+};
+
+export interface RemoteEvent<K extends RemoteEventType = RemoteEventType> {
+	v: number;
+	seq: number;
+	ts: string;
+	type: K;
+	payload: RemoteEventPayloadMap[K];
+}
+
+/** Convert a session entry message to its wire form; images are elided, not
+ * transported. Extension-side helper shared by the snapshot builder. */
+export function toWireMessage(message: AgentMessage): WireAgentMessage {
+	const blocks: WireContentBlock[] = [];
+	if ("content" in message) {
+		if (typeof message.content === "string") {
+			blocks.push({ type: "text", text: message.content });
+		} else {
+			for (const block of message.content) {
+				if (block.type === "text") blocks.push({ type: "text", text: block.text ?? "" });
+				else if (block.type === "thinking") blocks.push({ type: "thinking", text: block.thinking ?? "" });
+				else if (block.type === "toolCall")
+					blocks.push({
+						type: "toolCall",
+						id: block.id,
+						name: block.name,
+						arguments: (block.arguments ?? {}) as Record<string, unknown>,
+						...(block.argumentsError ? { argumentsError: block.argumentsError } : {}),
+					});
+				else if (block.type === "image") blocks.push({ type: "imageElided" });
+			}
+		}
+	}
+	const usage = (message as { usage?: { input?: number; output?: number; total?: number } }).usage;
+	const wire: WireAgentMessage = {
+		// Custom message types (bashExecution, branchSummary, compactionSummary,
+		// extension-registered ones) carry their type as the role. The wire union
+		// names the roles the console renders; unknown custom roles flow through
+		// as their string so no transcript entry is dropped.
+		role: message.role as WireAgentMessage["role"],
+		blocks,
+	};
+	const m = message as {
+		toolCallId?: string;
+		toolName?: string;
+		isError?: boolean;
+		durationMs?: number;
+		stopReason?: string;
+	};
+	if (m.toolCallId !== undefined) wire.toolCallId = m.toolCallId;
+	if (m.toolName !== undefined) wire.toolName = m.toolName;
+	if (m.isError !== undefined) wire.isError = m.isError;
+	if (m.durationMs !== undefined) wire.durationMs = m.durationMs;
+	if (m.stopReason !== undefined) wire.stopReason = m.stopReason;
+	if (usage && typeof usage.input === "number" && typeof usage.output === "number") {
+		wire.usage = { input: usage.input, output: usage.output, total: usage.total ?? usage.input + usage.output };
+	}
+	return wire;
+}

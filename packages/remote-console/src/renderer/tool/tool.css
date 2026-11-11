@@ -1,0 +1,277 @@
+/* tool rows: one quiet line per call, no border or fill at rest; the expanded body
+   is a sunken well. Only transform, opacity and grid rows animate, all on tokens. */
+
+.rc-tool-group {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-1);
+}
+
+.rc-tool {
+	border-radius: var(--rc-radius-sm);
+}
+
+.rc-tool-row {
+	display: flex;
+	align-items: center;
+	gap: var(--rc-space-2);
+	width: 100%;
+	background: transparent;
+	border: none;
+	border-radius: var(--rc-radius-sm);
+	color: var(--rc-fg);
+	font: inherit;
+	font-size: var(--rc-text-sm);
+	line-height: var(--rc-leading-ui);
+	padding: var(--rc-space-1) var(--rc-space-2);
+	cursor: pointer;
+	text-align: left;
+	transition:
+		background var(--rc-duration-fast) var(--rc-ease-out),
+		box-shadow var(--rc-duration-fast) var(--rc-ease-out);
+}
+
+button.rc-tool-row:hover {
+	background: var(--rc-hover);
+}
+
+button.rc-tool-row:active {
+	background: var(--rc-pressed);
+}
+
+button.rc-tool-row:focus-visible {
+	outline: 1px solid var(--rc-primary);
+	outline-offset: 2px;
+	box-shadow: var(--rc-focus-ring);
+}
+
+/* orphan result rows share the look but are not interactive */
+.rc-tool-row-static {
+	cursor: default;
+}
+
+.rc-tool-glyph {
+	display: inline-flex;
+	flex: none;
+	color: var(--rc-fg-faint);
+}
+
+.rc-tool-is-running .rc-tool-glyph {
+	color: var(--rc-primary);
+}
+
+.rc-tool-is-error .rc-tool-glyph,
+.rc-toolresult-error .rc-tool-glyph {
+	color: var(--rc-bad);
+}
+
+/* the state word is for assistive tech only; the icon carries it visually */
+.rc-tool-state {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+.rc-tool-name {
+	flex: none;
+	font-weight: var(--rc-weight-medium);
+	color: var(--rc-fg-dim);
+}
+
+.rc-tool-preview {
+	flex: 1;
+	min-width: 0;
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-xs);
+	color: var(--rc-fg-dim);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.rc-tool-duration {
+	flex: none;
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-xs);
+	color: var(--rc-fg-faint);
+	font-variant-numeric: tabular-nums;
+}
+
+.rc-chevron {
+	flex: none;
+	color: var(--rc-fg-faint);
+	transition: transform var(--rc-duration-base) var(--rc-ease-spring);
+}
+
+.rc-tool-row[aria-expanded="true"] .rc-chevron {
+	transform: rotate(90deg);
+}
+
+/* expansion: the sunken well */
+.rc-tool-body {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-3);
+	/* aligns with the row's text: row padding + icon + row gap */
+	margin: var(--rc-space-1) 0 var(--rc-space-2) calc(var(--rc-space-2) + var(--rc-icon) + var(--rc-space-2));
+	padding: var(--rc-space-3);
+	background: var(--rc-code-bg);
+	border: var(--rc-hairline-width) solid var(--rc-hairline);
+	border-radius: var(--rc-radius-md);
+	font-size: var(--rc-text-sm);
+}
+
+.rc-tool-section {
+	margin: 0;
+}
+
+.rc-tool-section-label {
+	margin-bottom: var(--rc-space-1);
+}
+
+.rc-tool-command,
+.rc-tool-args,
+.rc-tool-result,
+.rc-tool-diff {
+	margin: 0;
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-xs);
+	line-height: var(--rc-leading-ui);
+	color: var(--rc-fg);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.rc-tool-args,
+.rc-tool-result {
+	max-height: 20rem;
+	overflow-y: auto;
+}
+
+.rc-tool-args {
+	color: var(--rc-fg-dim);
+}
+
+.rc-tool-edits {
+	display: flex;
+	flex-direction: column;
+	margin-top: var(--rc-space-1);
+	border-radius: var(--rc-radius-sm);
+	overflow: hidden;
+}
+
+.rc-tool-diff {
+	padding: var(--rc-space-1) var(--rc-space-2);
+}
+
+.rc-tool-diff-del {
+	color: var(--rc-bad);
+	background: var(--rc-bad-faint);
+}
+
+.rc-tool-diff-add {
+	color: var(--rc-good);
+	background: var(--rc-good-faint);
+}
+
+.rc-tool-result-error {
+	color: var(--rc-bad);
+}
+
+.rc-tool-error {
+	color: var(--rc-bad);
+	font-size: var(--rc-text-xs);
+	overflow-wrap: anywhere;
+}
+
+.rc-tool-error-inline {
+	margin: 0 0 var(--rc-space-1) calc(var(--rc-space-2) + var(--rc-icon) + var(--rc-space-2));
+}
+
+.rc-tool-error-label {
+	font-weight: var(--rc-weight-medium);
+}
+
+.rc-tool-path {
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-xs);
+	color: var(--rc-fg);
+	overflow-wrap: anywhere;
+}
+
+.rc-tool-choices {
+	margin: var(--rc-space-1) 0 0;
+	padding-left: var(--rc-space-5);
+	list-style: disc;
+	color: var(--rc-fg-dim);
+}
+
+.rc-tool-choices li {
+	margin: var(--rc-space-1) 0;
+}
+
+/* hummin tools: todo checklist and compact meta line */
+.rc-tool-empty {
+	color: var(--rc-fg-faint);
+	font-size: var(--rc-text-sm);
+}
+
+.rc-todo-list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--rc-space-1);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.rc-todo {
+	display: flex;
+	align-items: baseline;
+	gap: var(--rc-space-2);
+	font-size: var(--rc-text-sm);
+	line-height: var(--rc-leading-ui);
+	color: var(--rc-fg);
+}
+
+.rc-todo-icon {
+	flex: none;
+	align-self: center;
+	color: var(--rc-fg-faint);
+}
+
+.rc-todo-text {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.rc-todo-state {
+	flex: none;
+	font-size: var(--rc-text-xs);
+	color: var(--rc-primary);
+}
+
+.rc-todo[data-rc-todo-status="completed"] .rc-todo-text {
+	color: var(--rc-fg-faint);
+	text-decoration: line-through;
+}
+
+.rc-todo[data-rc-todo-status="in_progress"] .rc-todo-icon {
+	color: var(--rc-primary);
+}
+
+.rc-tool-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--rc-space-1) var(--rc-space-3);
+	margin-top: var(--rc-space-2);
+	font-size: var(--rc-text-xs);
+	color: var(--rc-fg-dim);
+}
+
+.rc-tool-meta:first-child {
+	margin-top: 0;
+}

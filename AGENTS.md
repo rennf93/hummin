@@ -8,12 +8,17 @@
 **PRE-EXISTING ERRORS ARE STILL EXISTING ERRORS. I DON'T CARE IF THEY ARE PRE-EXISTING, THEY SHOULDN'T EXIST**
 **HELPING MY PROMPTS**:
 ```text
-I want the deepest version of the tasks, not bigger ones but rather:
+I want the deepest version of the tasks:
 
 1. Say what a top professional in this field would do that I'm not asking for.
 2. Name the rawest material they would start from instead of what's being digested for me.
 3. Name the specific methods and tools they would use/implement.
-4. Say what, other than you or me, would show the result is right. Then rewrite my prompts to ask for exactly that.
+4. Say what, other than you or me, would show the result is right.
+5. Audit the premises: list the rot-prone assumptions the task rests on and verify each with a command before relying on it (file existence, merge state via gh, tool and service health). Every "X is missing" claim carries the search that proved it.
+6. Design the orchestration: the rewritten prompt carries its own execution graph - phases with gates and a signer per gate, which steps delegate to children and at which tier (fast by default, premium only on my explicit request), the concurrency cap, and each child's file ownership. Contracts (interfaces, schemas, briefs) are written by you; children implement against them.
+7. Be proactive with evidence: discoveries that contradict the plan, are out of scope but high-value, or are time-sensitive get flagged as they are found. Enumerate every user decision up front with recommended defaults so approvals batch. Interrupt me only for destructive actions, direction changes, or user-held resources; everything else is noted and continues.
+8. Close the loop: record corrections to prior beliefs and durable facts, report failures with exit evidence, and leave no silent workarounds.
+Then rewrite my prompt to ask for exactly that, and follow that rewritten prompt upon my approval of it.
 ```
 
 ## Conversational Style

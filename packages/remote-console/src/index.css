@@ -1,0 +1,171 @@
+/* hummin remote console app stylesheet: tailwind, the Geist fonts, the token
+   sheet, the shared primitives, the theme bridge that exposes --rc-* tokens to
+   tailwind utilities, global type and body defaults, the depth scene (orb mesh
+   + film grain, shown only by presets that set --rc-scene-display), and global
+   selection / scrollbar / focus treatment. Shell regions live in shell.css. */
+
+@import "tailwindcss";
+@import "@fontsource/geist-sans/400.css";
+@import "@fontsource/geist-sans/500.css";
+@import "@fontsource/geist-sans/600.css";
+@import "@fontsource/geist-mono/400.css";
+@import "@fontsource/geist-mono/500.css";
+@import "@fontsource/geist-mono/600.css";
+@import "./tokens.css";
+@import "./ui/ui.css";
+
+/* The token contract is runtime-switchable (presets and appearance axes re-resolve the
+   --rc-* vars per element), so `inline` keeps the var() references instead of copying values. */
+@theme inline {
+	--color-rc-base: var(--rc-base);
+	--color-rc-surface: var(--rc-surface);
+	--color-rc-raised: var(--rc-raised);
+	--color-rc-hairline: var(--rc-hairline);
+	--color-rc-track: var(--rc-track);
+	--color-rc-fg: var(--rc-fg);
+	--color-rc-fg-dim: var(--rc-fg-dim);
+	--color-rc-fg-faint: var(--rc-fg-faint);
+	--color-rc-fg-accent-soft: var(--rc-fg-accent-soft);
+	--color-rc-primary: var(--rc-primary);
+	--color-rc-primary-hover: var(--rc-primary-hover);
+	--color-rc-primary-pressed: var(--rc-primary-pressed);
+	--color-rc-primary-muted: var(--rc-primary-muted);
+	--color-rc-primary-faint: var(--rc-primary-faint);
+	--color-rc-good: var(--rc-good);
+	--color-rc-warn: var(--rc-warn);
+	--color-rc-bad: var(--rc-bad);
+	--font-rc-ui: var(--rc-font-ui);
+	--font-rc-mono: var(--rc-font-mono);
+	--radius-rc-sm: var(--rc-radius-sm);
+	--radius-rc-md: var(--rc-radius-md);
+	--radius-rc-lg: var(--rc-radius-lg);
+}
+
+html {
+	/* the base color lives on the canvas so the fixed depth scene (z -1) paints
+	   above it and every glass surface can blur the scene */
+	background: var(--rc-base);
+}
+
+body {
+	margin: 0;
+	color: var(--rc-fg);
+	font-family: var(--rc-font-ui);
+	font-size: var(--rc-text-base);
+	line-height: var(--rc-leading-ui);
+	letter-spacing: var(--rc-tracking-ui);
+	font-feature-settings: "cv11";
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+/* ---- depth scene ----
+   Layer 0 of the glass system: three accent-tinted orbs on a slow transform
+   drift plus a film-grain tile, fixed behind the app (z -1, pointer-events
+   none). Colors, opacity and visibility are preset tokens; the orbs drift on
+   transform only so the layer stays on the compositor. */
+.rc-scene {
+	display: var(--rc-scene-display);
+	position: fixed;
+	inset: 0;
+	z-index: -1;
+	overflow: hidden;
+	pointer-events: none;
+}
+
+.rc-orb {
+	position: absolute;
+	will-change: transform;
+}
+
+.rc-orb-a {
+	top: -16rem;
+	left: -14rem;
+	width: 40rem;
+	height: 40rem;
+	background: var(--rc-orb-a);
+	animation: rc-drift-a var(--rc-duration-drift) var(--rc-ease-in-out-soft) infinite alternate;
+}
+
+.rc-orb-b {
+	bottom: -20rem;
+	right: -16rem;
+	width: 45rem;
+	height: 45rem;
+	background: var(--rc-orb-b);
+	animation: rc-drift-b var(--rc-duration-drift) var(--rc-ease-in-out-soft) infinite alternate;
+}
+
+.rc-orb-c {
+	top: 38%;
+	left: 46%;
+	width: 32rem;
+	height: 32rem;
+	background: var(--rc-orb-c);
+	animation: rc-drift-c var(--rc-duration-drift) var(--rc-ease-in-out-soft) infinite alternate reverse;
+}
+
+@keyframes rc-drift-a {
+	from {
+		transform: translate3d(0, 0, 0) scale(1);
+	}
+	to {
+		transform: translate3d(4rem, 3rem, 0) scale(1.06);
+	}
+}
+
+@keyframes rc-drift-b {
+	from {
+		transform: translate3d(0, 0, 0) scale(1);
+	}
+	to {
+		transform: translate3d(-5rem, -4rem, 0) scale(1.04);
+	}
+}
+
+@keyframes rc-drift-c {
+	from {
+		transform: translate3d(0, 0, 0) scale(1);
+	}
+	to {
+		transform: translate3d(3rem, -3rem, 0) scale(0.96);
+	}
+}
+
+.rc-grain {
+	position: absolute;
+	inset: 0;
+	opacity: var(--rc-grain-opacity);
+	background-image: var(--rc-grain-image);
+}
+
+/* tinted text selection and thin accent scrollbars, console-wide */
+::selection {
+	background: var(--rc-selection);
+}
+
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--rc-scrollbar) transparent;
+}
+
+*::-webkit-scrollbar {
+	width: 0.4rem;
+	height: 0.4rem;
+}
+
+*::-webkit-scrollbar-thumb {
+	background: var(--rc-scrollbar);
+	border-radius: var(--rc-radius-round);
+}
+
+*::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+/* keyboard focus: a 1px accent outline plus the soft ring, no layout shift */
+:focus-visible {
+	outline: 1px solid var(--rc-primary);
+	outline-offset: 2px;
+	box-shadow: var(--rc-focus-ring);
+}
