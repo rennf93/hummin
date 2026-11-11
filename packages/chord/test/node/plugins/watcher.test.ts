@@ -153,6 +153,8 @@ describe("the watcher and single-file plugins (slice 12 §4)", () => {
 	it("dirties a single-file plugin for a change of its file; a file appearing or disappearing at a root's top sets set", async () => {
 		const { root, watcher } = await watched();
 		await writeFiles(root, { "hello.server.ts": "" });
+		// hummin fork: on macOS the real event of this write can land after the snapshot below and keep `set`.
+		await settleFileEvents();
 		watcher.mark(join(root, "hello.server.ts"));
 		expect(watcher.value).toMatchObject({ set: true, dirty: [] });
 		const seen = watcher.discoverySnapshot();
