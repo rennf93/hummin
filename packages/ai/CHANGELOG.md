@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Anthropic OAuth requests reporting an outdated Claude Code version.
+
 ## [1.10.2] - 2026-11-10
 
 ## [1.10.1] - 2026-11-10
