@@ -8,5 +8,8 @@ export default defineConfig({
 	base: "./",
 	build: {
 		outDir: "dist",
+		// Fonts stay files: the console server's CSP is `font-src 'self'`, which blocks the
+		// data: URIs vite would inline small font subsets as.
+		assetsInlineLimit: (filePath) => (/\.woff2?$/.test(filePath) ? false : undefined),
 	},
 });

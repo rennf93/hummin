@@ -7,19 +7,27 @@
  * it in the same tick. Escape, the close button, and the scrim all close;
  * focus is trapped inside while open and restored to the opener on close. The
  * sheet and scrim stay mounted through their exit animation (usePresence).
+ * The notify toggle (system notification for a waiting approval) shows only
+ * where the Notification API exists in a secure context; turning it on asks
+ * for permission and a denial leaves it off with a hint.
  */
 /// <reference lib="dom" />
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { loadNotify, saveNotify } from "../attention.ts";
 import type { Appearance, MotionPreference, RemoteConsolePreset } from "../hosts.ts";
 import { clampAccentHue } from "../hosts.ts";
 import { Button, IconButton } from "../ui/Button.tsx";
 import { Icon } from "../ui/Icon.tsx";
 import { StatusDot } from "../ui/StatusDot.tsx";
 import { usePresence } from "../ui/usePresence.ts";
-import { SlidingPill, type PillButtonProps } from "./SlidingPill.tsx";
+import { type PillButtonProps, SlidingPill } from "./SlidingPill.tsx";
 
 const PRESETS: readonly RemoteConsolePreset[] = ["studio", "glass", "paper", "terminal"];
 const MOTIONS: readonly MotionPreference[] = ["auto", "off"];
+const NOTIFY_OPTIONS = ["on", "off"] as const;
+type NotifyChoice = (typeof NOTIFY_OPTIONS)[number];
+
+const notifySupported = (): boolean => window.isSecureContext && "Notification" in window;
 
 /** Test hook attributes for the motion pill's option buttons. */
 function motionProps(motion: MotionPreference): PillButtonProps {
@@ -61,6 +69,23 @@ function AppearanceSheet({
 	onClose(): void;
 }) {
 	const panelRef = useRef<HTMLDivElement | null>(null);
+	const [notify, setNotify] = useState<boolean>(
+		() => notifySupported() && loadNotify() && Notification.permission === "granted",
+	);
+	const [blocked, setBlocked] = useState(() => notifySupported() && Notification.permission === "denied");
+
+	const chooseNotify = async (choice: NotifyChoice): Promise<void> => {
+		if (choice === "off") {
+			setNotify(false);
+			saveNotify(false);
+			return;
+		}
+		const permission = await Notification.requestPermission();
+		const granted = permission === "granted";
+		setBlocked(permission === "denied");
+		setNotify(granted);
+		saveNotify(granted);
+	};
 
 	// Focus lifecycle: take focus on open, hand it back to the opener on close.
 	useEffect(() => {
@@ -121,15 +146,15 @@ function AppearanceSheet({
 			>
 				<div className="rc-appear-head">
 					<h2 className="rc-appear-title">Appearance</h2>
-					<IconButton
-						icon="x"
-						label="close appearance panel"
-						data-rc-appear-close="true"
-						onClick={onClose}
-					/>
+					<IconButton icon="x" label="close appearance panel" data-rc-appear-close="true" onClick={onClose} />
 				</div>
-
-				<div className="rc-appear-preview" data-rc-appear-preview="true" role="group" aria-label="appearance preview">
+				{/* biome-ignore lint/a11y/useSemanticElements: preview is a styled div; a fieldset adds default border and padding */}
+				<div
+					className="rc-appear-preview"
+					data-rc-appear-preview="true"
+					role="group"
+					aria-label="appearance preview"
+				>
 					<div className="rc-appear-preview-msg">hello agent</div>
 					<div className="rc-appear-preview-row">
 						<span className="rc-appear-pill" data-rc-appear-pill="connected">
@@ -141,9 +166,11 @@ function AppearanceSheet({
 						</Button>
 					</div>
 				</div>
-
 				<div className="rc-appear-group" data-rc-appear-presets="true">
-					<div className="rc-label" id="rc-appear-preset-label">preset</div>
+					<div className="rc-label" id="rc-appear-preset-label">
+						preset
+					</div>
+					{/* biome-ignore lint/a11y/useSemanticElements: swatch row is a styled flex div; a fieldset would change layout */}
 					<div className="rc-appear-swatches" role="group" aria-labelledby="rc-appear-preset-label">
 						{PRESETS.map((candidate) => (
 							<button
@@ -168,10 +195,11 @@ function AppearanceSheet({
 						))}
 					</div>
 				</div>
-
 				<div className="rc-appear-group">
 					<div className="rc-appear-label-row">
-						<label className="rc-label" htmlFor="rc-appear-hue">accent hue</label>
+						<label className="rc-label" htmlFor="rc-appear-hue">
+							accent hue
+						</label>
 						<span className="rc-appear-value" data-rc-appear-hue-value={String(appearance.accentHue)}>
 							{appearance.accentHue}
 						</span>
@@ -184,29 +212,60 @@ function AppearanceSheet({
 						min={0}
 						max={360}
 						step={1}
-					value={appearance.accentHue}
-					aria-valuetext={`${appearance.accentHue} degrees`}
-					onChange={(event) => {
-						// An empty value must not become hue 0 (Number("") is 0): NaN
-						// falls through clampAccentHue to the default instead.
-						const raw = event.currentTarget.value;
-						onChange({ accentHue: clampAccentHue(raw === "" ? Number.NaN : Number(raw)) });
-					}}
-				/>
-			</div>
-
-			<div className="rc-appear-group">
-					<div className="rc-label" id="rc-appear-motion-label">motion</div>
+						value={appearance.accentHue}
+						aria-valuetext={`${appearance.accentHue} degrees`}
+						onChange={(event) => {
+							// An empty value must not become hue 0 (Number("") is 0): NaN
+							// falls through clampAccentHue to the default instead.
+							const raw = event.currentTarget.value;
+							onChange({ accentHue: clampAccentHue(raw === "" ? Number.NaN : Number(raw)) });
+						}}
+					/>
+				</div>
+				<div className="rc-appear-group">
+					<div className="rc-label" id="rc-appear-motion-label">
+						motion
+					</div>
 					<div className="rc-appear-motion">
 						<SlidingPill
-							options={MOTIONS.map((candidate) => ({ value: candidate, label: candidate, props: motionProps(candidate) }))}
+							options={MOTIONS.map((candidate) => ({
+								value: candidate,
+								label: candidate,
+								props: motionProps(candidate),
+							}))}
 							active={appearance.motion}
 							onChange={(motion) => onChange({ motion })}
 							ariaLabel="motion"
 						/>
 					</div>
-					<p className="rc-appear-hint">auto follows the system reduced-motion setting; off forces every animation to zero.</p>
+					<p className="rc-appear-hint">
+						auto follows the system reduced-motion setting; off forces every animation to zero.
+					</p>
 				</div>
+				{notifySupported() && (
+					<div className="rc-appear-group" data-rc-appear-notify="true">
+						<div className="rc-label" id="rc-appear-notify-label">
+							Notify me when an approval is waiting
+						</div>
+						<div className="rc-appear-motion">
+							<SlidingPill
+								options={NOTIFY_OPTIONS.map((candidate) => ({
+									value: candidate,
+									label: candidate,
+									props: { "data-rc-appear-notify": candidate },
+								}))}
+								active={notify ? "on" : "off"}
+								onChange={(choice) => void chooseNotify(choice)}
+								ariaLabel="notify me when an approval is waiting"
+							/>
+						</div>
+						{blocked && (
+							<p className="rc-appear-hint" data-rc-appear-notify-blocked="true">
+								Blocked in browser settings
+							</p>
+						)}
+					</div>
+				)}
 			</div>
 		</div>
 	);

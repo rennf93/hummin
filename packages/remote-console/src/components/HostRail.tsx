@@ -1,7 +1,9 @@
 /**
  * components/HostRail: the fleet column. One row per registered host: a status
- * dot, the label, a second line naming the state word and session, and the
- * model id. Clicking a row selects the active host; one absolutely positioned
+ * dot and the session name (the host label when there is none), a second line
+ * with the host label and the copyable session id (or, when not connected, the
+ * state word in its status tone), and the model id. "connected" is never shown,
+ * only read aloud. Clicking a row selects the active host; one absolutely positioned
  * indicator slides under the active row (measured like SlidingPill, re-measured
  * on resize and when rows change size). An unauthorized row carries the
  * token-rotation recovery hint, and a failed console-origin registration shows
@@ -9,23 +11,32 @@
  * leave the chips and render once, full width, below the strip for the active
  * host only). The add-host form lives in a
  * Disclosure opened by the plus button in the rail header (open by default only
- * while no hosts exist, when the onboarding text leads). Remove drops the entry
- * (its token stays local to this browser either way). Under the rows, the
+ * while no hosts exist, when the onboarding text leads). The remove X opens an inline "Remove <label>?"
+ * confirm in the row (Escape or Cancel closes it and refocuses the X); confirming
+ * drops the entry (its token stays local to this browser either way). Under the rows, the
  * active host's model-server fleet lists as read-only rows (a live dot on the serving server, first
  * model, host:port and engine, an "in use" label on the serving server); the
  * console never controls servers.
  */
 /// <reference lib="dom" />
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import type { WireFleetServer } from "../harness/replay-log.ts";
 import type { HostEntry } from "../hosts.ts";
 import { STALE_AFTER_MS } from "../hosts.ts";
-import type { WireFleetServer } from "../harness/replay-log.ts";
 import type { HostState } from "../store.ts";
 import { Button, IconButton } from "../ui/Button.tsx";
 import { Disclosure } from "../ui/Disclosure.tsx";
+import { SessionId } from "../ui/SessionId.tsx";
 import { StatusDot } from "../ui/StatusDot.tsx";
 
-export type RailStatus = "connected" | "connecting" | "reconnecting" | "unreachable" | "unauthorized" | "stale" | "offline";
+export type RailStatus =
+	| "connected"
+	| "connecting"
+	| "reconnecting"
+	| "unreachable"
+	| "unauthorized"
+	| "stale"
+	| "offline";
 
 /** Derives the row status state from the host's store slice. */
 export function railStatus(state: HostState | undefined, now: number): RailStatus {
@@ -88,12 +99,29 @@ function useNowInterval(enabled: boolean): number {
 
 /** Joins sub-line parts with a "·" whose spacing is margin, so truncation never leaves a stray space before the ellipsis. */
 function joinWithSeparator(parts: readonly string[]): ReactNode[] {
-	return parts.flatMap((part, index) => (index === 0 ? [part] : [<span key={`sep-${index}`} className="rc-sep" aria-hidden="true">·</span>, part]));
+	return parts.flatMap((part, index) =>
+		index === 0
+			? [part]
+			: [
+					// biome-ignore lint/suspicious/noArrayIndexKey: separators are positional between sub-line parts
+					<span key={`sep-${index}`} className="rc-sep" aria-hidden="true">
+						·
+					</span>,
+					part,
+				],
+	);
 }
 
 /** Hint line for a host row: the token-rotation recovery step and a failed origin registration. */
-function hostHints(status: RailStatus, originWarning: string | undefined): { auth: boolean; origin: string | undefined } {
-	return { auth: status === "unauthorized", origin: originWarning === undefined ? undefined : `origins not registered - cross-origin may fail (${originWarning})` };
+function hostHints(
+	status: RailStatus,
+	originWarning: string | undefined,
+): { auth: boolean; origin: string | undefined } {
+	return {
+		auth: status === "unauthorized",
+		origin:
+			originWarning === undefined ? undefined : `origins not registered - cross-origin may fail (${originWarning})`,
+	};
 }
 
 interface IndicatorGeometry {
@@ -133,8 +161,15 @@ export function HostRail({
 	const measure = useCallback(() => {
 		const active = listRef.current?.querySelector<HTMLElement>('[data-rc-active="true"]') ?? null;
 		const next = active === null ? null : { top: active.offsetTop, height: active.offsetHeight };
-		setIndicator((current) => (current === null || next === null ? next : current.top === next.top && current.height === next.height ? current : next));
+		setIndicator((current) =>
+			current === null || next === null
+				? next
+				: current.top === next.top && current.height === next.height
+					? current
+					: next,
+		);
 	}, []);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: activeId and hosts are re-measure triggers; measure reads the DOM
 	useLayoutEffect(measure, [measure, activeId, hosts]);
 	// Rows change height when hints or the model line appear; the viewport
 	// breakpoint swaps the rail between column and strip.
@@ -167,7 +202,9 @@ export function HostRail({
 			{empty && (
 				<div className="rc-onboard" data-rc-empty="true">
 					<div className="rc-onboard-title">Add your first host</div>
-					<p className="rc-onboard-hint">Paste the console origin and bearer token of a running session to bring it into the rail.</p>
+					<p className="rc-onboard-hint">
+						Paste the console origin and bearer token of a running session to bring it into the rail.
+					</p>
 				</div>
 			)}
 			<div className="rc-host-list" ref={listRef}>
@@ -235,7 +272,11 @@ function FleetSection({ servers }: { servers: readonly WireFleetServer[] | undef
 					<span className="rc-fleet-line">
 						<StatusDot tone={server.active ? "live" : "idle"} />
 						<span className="rc-fleet-name">{server.models[0] ?? server.id}</span>
-						{server.active && <span className="rc-fleet-inuse" data-rc-fleet-active="true">in use</span>}
+						{server.active && (
+							<span className="rc-fleet-inuse" data-rc-fleet-active="true">
+								in use
+							</span>
+						)}
 					</span>
 					<span className="rc-fleet-sub">
 						{joinWithSeparator([
@@ -269,41 +310,136 @@ function HostRow({
 	onRemove(hostId: string): void;
 }) {
 	const status = railStatus(state, now);
-	const session = state?.sessionName ?? null;
+	const sessionName = state?.sessionName ?? null;
+	const sessionId = state?.sessionId ?? null;
 	const model = state?.status?.model ?? null;
 	const working = state?.status?.kind === "working";
 	const hints = hostHints(status, originWarning);
+	const [confirming, setConfirming] = useState(false);
+	const rowRef = useRef<HTMLDivElement>(null);
+	const focusAfterCancel = useRef(false);
+	// Opening the confirm lands focus on the safe choice; closing it returns focus to the X that opened it.
+	useEffect(() => {
+		if (confirming) rowRef.current?.querySelector<HTMLElement>("[data-rc-remove-cancel]")?.focus();
+		else if (focusAfterCancel.current) {
+			focusAfterCancel.current = false;
+			rowRef.current?.querySelector<HTMLElement>("[data-rc-remove]")?.focus();
+		}
+	}, [confirming]);
+	const cancel = () => {
+		focusAfterCancel.current = true;
+		setConfirming(false);
+	};
 	return (
-		<div className="rc-host-row" data-rc-host-row={host.id} data-rc-host-status={status} data-rc-active={active ? "true" : undefined}>
-			<button type="button" className="rc-host-select" title={status} aria-current={active ? "true" : undefined} onClick={() => onSelect(host.id)}>
-				<span className="rc-host-line">
-					<StatusDot {...statusDotProps(status, working)} />
-					<span className="rc-host-label">{host.label}</span>
-				</span>
-				<span className="rc-host-sub" data-rc-host-sub={status}>
-					{joinWithSeparator(session === null ? [status] : [status, session])}
-				</span>
-				{model !== null && <span className="rc-host-model">{model.provider}/{model.modelId}</span>}
-				{hints.auth && (
-					<span className="rc-host-hint rc-host-hint-bad" data-rc-auth-hint="true">
-						{AUTH_HINT}
+		<div
+			className="rc-host-row"
+			ref={rowRef}
+			data-rc-host-row={host.id}
+			data-rc-host-status={status}
+			data-rc-active={active ? "true" : undefined}
+		>
+			{confirming ? (
+				// biome-ignore lint/a11y/useSemanticElements: confirm row is a styled flex div; a fieldset would change layout
+				<div
+					className="rc-host-confirm"
+					role="group"
+					aria-label={`Remove ${host.label}?`}
+					data-rc-remove-confirm={host.id}
+					onKeyDown={(event) => {
+						if (event.key !== "Escape") return;
+						event.stopPropagation();
+						cancel();
+					}}
+				>
+					<span className="rc-host-confirm-text">Remove {host.label}?</span>
+					<span className="rc-host-confirm-actions">
+						<Button
+							variant="danger"
+							size="sm"
+							data-rc-remove-confirm-yes={host.id}
+							onClick={() => onRemove(host.id)}
+						>
+							Remove
+						</Button>
+						<Button size="sm" data-rc-remove-cancel={host.id} onClick={cancel}>
+							Cancel
+						</Button>
 					</span>
-				)}
-				{hints.origin !== undefined && (
-					<span className="rc-host-hint" data-rc-origin-warn="true">
-						{hints.origin}
-					</span>
-				)}
-			</button>
-			<IconButton
-				icon="x"
-				size="sm"
-				className="rc-host-remove"
-				data-rc-remove={host.id}
-				label={`remove ${host.label}`}
-				onClick={() => onRemove(host.id)}
-			/>
+				</div>
+			) : (
+				<>
+					<div className="rc-host-main">
+						<button
+							type="button"
+							className="rc-host-select"
+							title={status}
+							aria-current={active ? "true" : undefined}
+							onClick={() => onSelect(host.id)}
+						>
+							<StatusDot {...statusDotProps(status, working)} />
+							<span className="rc-host-label">{sessionName ?? host.label}</span>
+							{status === "connected" && <span className="rc-sr-only">connected</span>}
+						</button>
+						<HostSub status={status} hostLabel={sessionName === null ? null : host.label} sessionId={sessionId} />
+						{model !== null && (
+							<span className="rc-host-model">
+								{model.provider}/{model.modelId}
+							</span>
+						)}
+						{hints.auth && (
+							<span className="rc-host-hint rc-host-hint-bad" data-rc-auth-hint="true">
+								{AUTH_HINT}
+							</span>
+						)}
+						{hints.origin !== undefined && (
+							<span className="rc-host-hint" data-rc-origin-warn="true">
+								{hints.origin}
+							</span>
+						)}
+					</div>
+					<IconButton
+						icon="x"
+						size="sm"
+						className="rc-host-remove"
+						data-rc-remove={host.id}
+						label={`remove ${host.label}`}
+						onClick={() => setConfirming(true)}
+					/>
+				</>
+			)}
 		</div>
+	);
+}
+
+/** Row line 2: the host label and copyable session id while connected, else the state word in its status tone ("connected" stays silent). */
+function HostSub({
+	status,
+	hostLabel,
+	sessionId,
+}: {
+	status: RailStatus;
+	hostLabel: string | null;
+	sessionId: string | null;
+}) {
+	if (status !== "connected") {
+		return (
+			<span className="rc-host-sub rc-host-state" data-rc-host-sub={status}>
+				{status}
+			</span>
+		);
+	}
+	const id = sessionId === null || sessionId === "" ? null : sessionId;
+	if (hostLabel === null && id === null) return null;
+	return (
+		<span className="rc-host-sub" data-rc-host-sub="connected">
+			{hostLabel !== null && <span className="rc-host-sub-label">{hostLabel}</span>}
+			{hostLabel !== null && id !== null && (
+				<span className="rc-sep" aria-hidden="true">
+					·
+				</span>
+			)}
+			{id !== null && <SessionId id={id} />}
+		</span>
 	);
 }
 
@@ -396,7 +532,11 @@ function AddHostForm({ onAdd, open, fieldsId }: { onAdd(input: AddHostInput): vo
 						value={token}
 						onChange={edit(setToken)}
 					/>
-					{error !== null && <div className="rc-add-error" role="alert">{error}</div>}
+					{error !== null && (
+						<div className="rc-add-error" role="alert">
+							{error}
+						</div>
+					)}
 					<Button type="submit" variant="primary" data-rc-add-submit="true" disabled={!ready}>
 						add
 					</Button>

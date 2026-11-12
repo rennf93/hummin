@@ -18,6 +18,7 @@ export function RollingNumber({ value }: { value: number | null }) {
 		<span className="rc-roll" aria-hidden="true">
 			{text.split("").map((char, index) =>
 				/\d/.test(char) ? (
+					// biome-ignore lint/suspicious/noArrayIndexKey: digit positions are positional by design (see header)
 					<span key={index} className="rc-roll-digit">
 						<span
 							className="rc-roll-column"
@@ -31,6 +32,7 @@ export function RollingNumber({ value }: { value: number | null }) {
 						</span>
 					</span>
 				) : (
+					// biome-ignore lint/suspicious/noArrayIndexKey: digit positions are positional by design (see header)
 					<span key={index} className="rc-roll-char">
 						{char}
 					</span>

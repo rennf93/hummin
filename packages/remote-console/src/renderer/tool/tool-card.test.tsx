@@ -3,11 +3,11 @@
 import { act } from "react";
 import { describe, expect, it } from "vitest";
 import type { WireToolCallBlock } from "../../harness/replay-log.ts";
-import { TranscriptList } from "../transcript/TranscriptList.tsx";
-import { applyToolUpdate, argsPreview, specializeTool, toolVerb, type ToolLiveState } from "./tool-view.ts";
-import { ToolCard } from "./ToolCard.tsx";
 import { loadCorpusEvents, snapshotEntries } from "../test/corpus.ts";
 import { mount } from "../test/mount.tsx";
+import { TranscriptList } from "../transcript/TranscriptList.tsx";
+import { ToolCard } from "./ToolCard.tsx";
+import { applyToolUpdate, argsPreview, specializeTool, type ToolLiveState, toolVerb } from "./tool-view.ts";
 
 /** First toolCall block of a single-entry corpus snapshot, or fails loudly. */
 function firstToolCall(file: string): WireToolCallBlock {
@@ -33,7 +33,9 @@ describe("ToolCard", () => {
 		const mounted = await mount(<ToolCard call={call} />);
 		try {
 			expect(mounted.container.querySelector("[data-rc-tool-state]")).not.toBeNull();
-			expect(mounted.container.querySelector("[data-rc-tool-state]")?.getAttribute("data-rc-tool-state")).toBe("error");
+			expect(mounted.container.querySelector("[data-rc-tool-state]")?.getAttribute("data-rc-tool-state")).toBe(
+				"error",
+			);
 			const text = mounted.container.textContent ?? "";
 			expect(text).toContain("invalid arguments");
 			expect(text).toContain('missing required field "command"');
@@ -94,7 +96,12 @@ describe("ToolCard", () => {
 			name: "task",
 			arguments: { cwd: "/repo", prompt: "run the suite", timeout_sec: 600 },
 		};
-		const unknown: WireToolCallBlock = { type: "toolCall", id: "call-mystery", name: "mystery", arguments: { query: "chord slices" } };
+		const unknown: WireToolCallBlock = {
+			type: "toolCall",
+			id: "call-mystery",
+			name: "mystery",
+			arguments: { query: "chord slices" },
+		};
 		const mounted = await mount(
 			<div>
 				<ToolCard call={bash} />
@@ -155,20 +162,35 @@ describe("ToolCard", () => {
 	});
 
 	it("follows live tool_update phases: start, update, end", async () => {
-		const call: WireToolCallBlock = { type: "toolCall", id: "call-live", name: "bash", arguments: { command: "sleep 1" } };
+		const call: WireToolCallBlock = {
+			type: "toolCall",
+			id: "call-live",
+			name: "bash",
+			arguments: { command: "sleep 1" },
+		};
 		const mounted = await mount(<ToolCard call={call} live={{ phase: "start" }} />);
 		try {
-			expect(mounted.container.querySelector("[data-rc-tool-state]")?.getAttribute("data-rc-tool-state")).toBe("running");
-			await mounted.render(<ToolCard call={call} live={{ phase: "update", partialResult: "partial output so far" }} />);
-			expect(mounted.container.querySelector("[data-rc-tool-state]")?.getAttribute("data-rc-tool-state")).toBe("running");
+			expect(mounted.container.querySelector("[data-rc-tool-state]")?.getAttribute("data-rc-tool-state")).toBe(
+				"running",
+			);
+			await mounted.render(
+				<ToolCard call={call} live={{ phase: "update", partialResult: "partial output so far" }} />,
+			);
+			expect(mounted.container.querySelector("[data-rc-tool-state]")?.getAttribute("data-rc-tool-state")).toBe(
+				"running",
+			);
 			await expand(mounted);
-			expect((mounted.container.textContent ?? "")).toContain("partial output so far");
+			expect(mounted.container.textContent ?? "").toContain("partial output so far");
 			await mounted.render(<ToolCard call={call} live={{ phase: "end", isError: false, durationMs: 1500 }} />);
-			expect(mounted.container.querySelector("[data-rc-tool-state]")?.getAttribute("data-rc-tool-state")).toBe("completed");
-			expect((mounted.container.textContent ?? "")).toContain("1.5s");
+			expect(mounted.container.querySelector("[data-rc-tool-state]")?.getAttribute("data-rc-tool-state")).toBe(
+				"completed",
+			);
+			expect(mounted.container.textContent ?? "").toContain("1.5s");
 			await mounted.render(<ToolCard call={call} live={{ phase: "end", isError: true, durationMs: 2200 }} />);
-			expect(mounted.container.querySelector("[data-rc-tool-state]")?.getAttribute("data-rc-tool-state")).toBe("error");
-			expect((mounted.container.textContent ?? "")).toContain("2.2s");
+			expect(mounted.container.querySelector("[data-rc-tool-state]")?.getAttribute("data-rc-tool-state")).toBe(
+				"error",
+			);
+			expect(mounted.container.textContent ?? "").toContain("2.2s");
 		} finally {
 			await mounted.unmount();
 		}
@@ -228,7 +250,12 @@ describe("ToolCard", () => {
 	it("folds tool_update events into the live phase map, copy-on-write", () => {
 		const empty: ReadonlyMap<string, ToolLiveState> = new Map();
 		const started = applyToolUpdate(empty, { toolCallId: "t1", phase: "start", toolName: "bash" });
-		const updated = applyToolUpdate(started, { toolCallId: "t1", phase: "update", toolName: "bash", partialResult: "..." });
+		const updated = applyToolUpdate(started, {
+			toolCallId: "t1",
+			phase: "update",
+			toolName: "bash",
+			partialResult: "...",
+		});
 		const ended = applyToolUpdate(updated, { toolCallId: "t1", phase: "end", toolName: "bash", durationMs: 900 });
 		expect(started.get("t1")).toEqual({ phase: "start" });
 		expect(updated.get("t1")).toEqual({ phase: "update", partialResult: "..." });
@@ -249,7 +276,10 @@ function callOf(name: string, args: Record<string, unknown>): WireToolCallBlock 
 	return { type: "toolCall", id: `call-${name}`, name, arguments: args };
 }
 
-async function mountExpanded(call: WireToolCallBlock, result: { isError: boolean; text: string } = { isError: false, text: "ok" }) {
+async function mountExpanded(
+	call: WireToolCallBlock,
+	result: { isError: boolean; text: string } = { isError: false, text: "ok" },
+) {
 	const mounted = await mount(<ToolCard call={call} result={result} />);
 	await expand(mounted);
 	return mounted;
@@ -297,7 +327,11 @@ describe("hummin tool specializations", () => {
 		try {
 			expect(mounted.container.querySelector(".rc-tool-name")?.textContent).toBe("Updated todos");
 			const rows = Array.from(mounted.container.querySelectorAll(".rc-todo"));
-			expect(rows.map((row) => row.getAttribute("data-rc-todo-status"))).toEqual(["completed", "in_progress", "pending"]);
+			expect(rows.map((row) => row.getAttribute("data-rc-todo-status"))).toEqual([
+				"completed",
+				"in_progress",
+				"pending",
+			]);
 			expect(rows[0]?.querySelector(".rc-todo-text")?.textContent).toBe("write tests");
 			// the in-progress marker is a word as well as an icon
 			expect(rows[1]?.querySelector(".rc-todo-state")?.textContent).toBe("in progress");
@@ -333,7 +367,13 @@ describe("hummin tool specializations", () => {
 		expect(argsPreview("monitor", { action: "start", command: "npm test", id: "m1" })).toBe("npm test");
 		expect(argsPreview("monitor", { action: "stop", id: "m1" })).toBe("m1");
 		const mounted = await mountExpanded(
-			callOf("monitor", { action: "start", command: "tail -f log", match: "ERROR", interval_sec: 30, timeout_sec: 600 }),
+			callOf("monitor", {
+				action: "start",
+				command: "tail -f log",
+				match: "ERROR",
+				interval_sec: 30,
+				timeout_sec: 600,
+			}),
 		);
 		try {
 			expect(mounted.container.querySelector(".rc-tool-name")?.textContent).toBe("Started monitor");
@@ -374,7 +414,9 @@ describe("hummin tool specializations", () => {
 		try {
 			expect(mounted.container.querySelector(".rc-tool-name")?.textContent).toBe("Started task");
 			expect(mounted.container.textContent).toContain("run the suite");
-			const meta = Array.from(mounted.container.querySelectorAll(".rc-tool-meta-item")).map((item) => item.textContent);
+			const meta = Array.from(mounted.container.querySelectorAll(".rc-tool-meta-item")).map(
+				(item) => item.textContent,
+			);
 			expect(meta).toEqual(["persona reviewer", "model glm-fast", "thinking low", "background yes", "timeout 1.5m"]);
 		} finally {
 			await mounted.unmount();
@@ -395,7 +437,9 @@ describe("hummin tool specializations", () => {
 			["task_status", "Checked task"],
 			["task_cancel", "Cancelled task"],
 		] as const) {
-			const mounted = await mount(<ToolCard call={callOf(name, { task_id: "t-42" })} result={{ isError: false, text: "ok" }} />);
+			const mounted = await mount(
+				<ToolCard call={callOf(name, { task_id: "t-42" })} result={{ isError: false, text: "ok" }} />,
+			);
 			try {
 				expect(mounted.container.querySelector(".rc-tool-name")?.textContent).toBe(verb);
 				expect(mounted.container.querySelector(".rc-tool-preview")?.textContent).toBe("t-42");

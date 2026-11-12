@@ -353,6 +353,11 @@ describe("boot, page, and auth", () => {
 		expect(await page.text()).toContain("assets/app.js");
 		expect(page.headers.get("content-security-policy")).toContain("script-src 'self'");
 		expect(page.headers.get("content-security-policy")).toContain("font-src 'self'");
+		expect(page.headers.get("content-security-policy")).toContain("manifest-src 'self'");
+		writeFileSync(join(dist, "manifest.webmanifest"), "{}");
+		expect((await fetch(`${new URL(handle.url).origin}/manifest.webmanifest`)).headers.get("content-type")).toBe(
+			"application/manifest+json",
+		);
 		writeFileSync(join(dist, "assets", "geist.woff"), "woff-bytes");
 		writeFileSync(join(dist, "assets", "geist.woff2"), "woff2-bytes");
 		expect((await fetch(`${new URL(handle.url).origin}/assets/geist.woff`)).headers.get("content-type")).toBe(
@@ -840,6 +845,65 @@ describe("config resolution", () => {
 		);
 		expect(invalid.port).toBe(0);
 		expect(invalid.approvalTools).toEqual(["bash"]);
+	});
+
+	test("publicUrl and allowedHosts resolve env over settings and join the public hostname", () => {
+		const fromSettings = resolveRemoteConsoleConfig(
+			{
+				remoteControl: {
+					publicUrl: "https://Mac.tail1234.ts.net/ignored/path",
+					allowedHosts: ["Hummin.Example.com", 7, " "],
+				},
+			},
+			{},
+			"m",
+		);
+		expect(fromSettings.publicUrl).toBe("https://mac.tail1234.ts.net");
+		expect(fromSettings.allowedHosts).toEqual(["hummin.example.com", "mac.tail1234.ts.net"]);
+		const fromEnv = resolveRemoteConsoleConfig(
+			{ remoteControl: { publicUrl: "https://settings.example", allowedHosts: "a.example" } },
+			{
+				HUMMIN_REMOTE_PUBLIC_URL: "https://env.example:8443",
+				HUMMIN_REMOTE_ALLOWED_HOSTS: "b.example, bad host, b.example",
+			},
+			"m",
+		);
+		expect(fromEnv.publicUrl).toBe("https://env.example:8443");
+		expect(fromEnv.allowedHosts).toEqual(["b.example", "env.example"]);
+		const rejected = resolveRemoteConsoleConfig({ remoteControl: { publicUrl: "ftp://x.example" } }, {}, "m");
+		expect(rejected.publicUrl).toBeUndefined();
+		expect(rejected.allowedHosts).toEqual([]);
+	});
+
+	test("a proxy hostname passes the Host and Origin checks; others stay refused", async () => {
+		const { handle } = await startTestConsole({}, { remoteControl: { publicUrl: "https://mac.tail1234.ts.net" } });
+		const base = new URL(handle.url).origin;
+		expect(handle.publicUrl).toBe(`https://mac.tail1234.ts.net/#${tokenOf(handle)}`);
+		// Host preserved by the proxy: past the host gate, stopped by the token gate
+		expect((await rawGet(`${base}/events`, { host: "mac.tail1234.ts.net" })).status).toBe(401);
+		// Host rewritten to the loopback upstream, browser origin still public
+		expect(
+			(await postAction(handle, "/prompt", { id: "p1", text: "hi" }, { origin: "https://mac.tail1234.ts.net" }))
+				.status,
+		).toBe(202);
+		expect((await rawGet(`${base}/events`, { host: "attacker.example" })).status).toBe(403);
+		expect(
+			(await postAction(handle, "/prompt", { id: "p2", text: "hi" }, { origin: "https://attacker.example" })).status,
+		).toBe(403);
+		const prompt = (id: string, origin: string) => postAction(handle, "/prompt", { id, text: "hi" }, { origin });
+		expect((await prompt("p3", "https://mac.tail1234.ts.net:9999")).status).toBe(403);
+		expect((await prompt("p4", "http://mac.tail1234.ts.net")).status).toBe(202);
+		const explicit = await startTestConsole({}, { remoteControl: { publicUrl: "https://env.example:8443" } });
+		expect(
+			(
+				await postAction(
+					explicit.handle,
+					"/prompt",
+					{ id: "p5", text: "hi" },
+					{ origin: "https://env.example:8443" },
+				)
+			).status,
+		).toBe(202);
 	});
 });
 

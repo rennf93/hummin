@@ -10,9 +10,11 @@
 		flex-direction: column;
 	}
 
+	/* the strip is the topmost chrome here: it takes the top safe-area inset */
 	.rc-rail {
 		width: 100%;
 		max-height: 50dvh;
+		padding-top: env(safe-area-inset-top);
 		overflow-x: hidden;
 		border-right: none;
 		border-bottom: var(--rc-hairline-width) solid var(--rc-hairline);
@@ -23,12 +25,12 @@
 		flex-flow: row wrap;
 		align-items: center;
 		gap: var(--rc-space-2);
-		padding: var(--rc-space-2) 0;
+		padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
 	}
 
 	.rc-rail-head {
 		order: 2;
-		padding: 0 var(--rc-space-3) 0 0;
+		padding: 0 var(--rc-space-2) 0 0;
 	}
 
 	.rc-rail-head .rc-label {
@@ -49,7 +51,7 @@
 		min-width: 0;
 		overflow-x: auto;
 		scrollbar-width: none;
-		padding: var(--rc-space-1) var(--rc-space-3);
+		padding: var(--rc-space-2) var(--rc-space-3);
 		-webkit-mask-image: linear-gradient(to right, transparent, black var(--rc-space-3), black calc(100% - var(--rc-space-3)), transparent);
 		mask-image: linear-gradient(to right, transparent, black var(--rc-space-3), black calc(100% - var(--rc-space-3)), transparent);
 	}
@@ -80,6 +82,8 @@
 		display: none;
 	}
 
+	/* a chip is one line: dot + session name, plus the state word only when not connected.
+	   The id, host label, model and hints leave the chip (the header carries the id). */
 	.rc-host-row {
 		flex: none;
 		align-items: center;
@@ -89,26 +93,44 @@
 		background: var(--rc-pressed);
 	}
 
-	.rc-host-select {
+	.rc-host-main {
 		flex-direction: row;
 		align-items: center;
-		flex: none;
-		padding: var(--rc-space-1) var(--rc-space-3);
+		gap: var(--rc-space-2);
+		padding: var(--rc-space-2) 0 var(--rc-space-2) var(--rc-space-3);
+	}
+
+	.rc-host-select {
+		min-width: 0;
+		max-width: 11rem;
 	}
 
 	.rc-host-model,
-	.rc-host-row .rc-host-hint {
+	.rc-host-row .rc-host-hint,
+	.rc-host-sub[data-rc-host-sub="connected"] {
 		display: none;
 	}
 
-	/* status word stays on the chip line; the session name clips after it */
 	.rc-host-sub {
-		max-width: 9rem;
-		margin-left: var(--rc-space-2);
+		flex: none;
+		margin-left: 0;
 	}
 
 	.rc-host-remove {
 		margin: 0 var(--rc-space-1) 0 0;
+	}
+
+	.rc-host-confirm {
+		flex-wrap: nowrap;
+		white-space: nowrap;
+		gap: var(--rc-space-3);
+		padding: var(--rc-space-1) var(--rc-space-1) var(--rc-space-1) var(--rc-space-3);
+	}
+
+	/* header: below the strip, no safe-area top (the strip took it) */
+	.rc-header[data-rc-region] {
+		height: var(--rc-control-touch);
+		padding-top: 0;
 	}
 
 	.rc-main {
@@ -125,8 +147,8 @@
    .rc-header-inner in header.css), not the viewport: the rail takes 16rem at desktop
    widths, so the same viewport gives the header very different room. Drop order as it
    narrows: thinking level, preset switch, model, cost, todo chip, context track (the
-   percent stays), then tok/s. The title (min 4rem) and the status word (min 4rem, or
-   hidden but still read aloud) are the only shrinkable items; the buttons never clip. */
+   percent stays), then tok/s. The session name is the only shrinkable item; the status and
+   the buttons never clip. */
 @container rc-header (width < 77rem) {
 	.rc-header-thinking {
 		display: none;
@@ -169,21 +191,22 @@
 	}
 }
 
-/* no room for the word: keep the dot, keep the word for screen readers. Threshold: title
-   floor 4rem + status (dot 0.5 + gap 0.5 + word floor 4) + context percent ~3.6 + two
-   icon buttons 2 x 2.125 + five 0.75rem gaps = about 20.6rem, rounded up to 21rem. */
-@container rc-header (width < 21rem) {
-	.rc-header-status {
-		min-width: 0;
+/* Status has priority over everything but the controls: below 30rem it switches to its
+   short label (the detail alone), and the context percent drops at 25rem so the session
+   name keeps room beside the status. The status itself never hides or ellipsizes; the
+   session name is the one item that shrinks. */
+@container rc-header (width < 30rem) {
+	.rc-status-full {
+		display: none;
 	}
 
-	.rc-header-status-word {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		min-width: 0;
-		overflow: hidden;
-		clip-path: inset(50%);
-		white-space: nowrap;
+	.rc-status-short {
+		display: inline;
+	}
+}
+
+@container rc-header (width < 25rem) {
+	.rc-header-ctx {
+		display: none;
 	}
 }

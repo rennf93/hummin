@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- Remote console behind an HTTPS proxy: `HUMMIN_REMOTE_PUBLIC_URL` / `remoteControl.publicUrl` makes `/remote-control` print the console URL on the proxy origin (for example `https://<machine>.<tailnet>.ts.net` from Tailscale Serve), and `HUMMIN_REMOTE_ALLOWED_HOSTS` / `remoteControl.allowedHosts` lists extra proxy hostnames the Host and Origin checks accept. The server stays on loopback and the bearer token still gates every request. See [Remote console](docs/environment-variables.md#remote-console).
+- Remote console attention signals: the tab title carries the session name and a pending-approval count, the favicon shows a dot while an approval waits or a run is working, and an opt-in system notification fires for a new approval while the tab is hidden (HTTPS or localhost only).
+- Remote console install to a phone home screen: web app manifest, icons, and a `theme-color` that follows the active preset. The console server's CSP gains `manifest-src 'self'` and serves `.webmanifest`.
+
+### Changed
+
+- Remote console UX pass: the session name and a short copyable session id lead the header, rail rows and phone chips, and "connected" is no longer printed next to the green dot (screen readers still hear it). Removing a host asks for confirmation. Busy states on send, stop, approve and deny. Touch targets are at least 44 px on touch screens, hover styles apply only to hover-capable pointers, the composer stays above the on-screen keyboard and respects safe areas, and the phone header is shorter and never truncates the run status. The approval card leaves with an exit animation and lays its buttons out full width on phones. The design contract and motion spec live in `packages/remote-console/DESIGN.md`.
+
+### Fixed
+
+- Remote console rendered package specs such as `chord@1.7.0` as `mailto:` links.
+- Remote console transcript forced a synchronous layout read on every streaming update while pinned to the bottom.
+- Remote console logged 24 Content-Security-Policy errors per load: the build inlined small Geist font subsets as `data:` URIs, which `font-src 'self'` blocks. Fonts now always ship as files.
+- Remote console approval card no longer shifts the composer when it appears or resolves (it floats above the composer and reserves matching space at the end of the transcript).
+
 ## [1.11.0] - 2026-11-11
 
 ### New Features

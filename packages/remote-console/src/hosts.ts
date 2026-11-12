@@ -246,11 +246,16 @@ export function saveAppearance(appearance: Appearance): void {
 
 /** Applies appearance prefs to the document root: the preset switches the
  * token sheet via data-rc-preset; the hue axis is a root custom property;
- * motion="off" sets data-rc-motion so tokens.css zeroes the duration tokens. */
+ * motion="off" sets data-rc-motion so tokens.css zeroes the duration tokens.
+ * The theme-color meta follows the preset's base so the phone's browser
+ * chrome and an installed console match the page. */
 export function applyAppearance(root: HTMLElement, appearance: Appearance): void {
 	root.dataset.rcPreset = appearance.preset;
 	root.dataset.rcMotion = appearance.motion;
 	root.style.setProperty("--rc-accent-hue", String(appearance.accentHue));
 	// An older build left an inline density; drop it so the token sheet default applies.
 	root.style.removeProperty("--rc-density");
+	const themeColor = root.ownerDocument.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+	const base = getComputedStyle(root).getPropertyValue("--rc-base").trim();
+	if (themeColor !== null && base !== "") themeColor.content = base;
 }

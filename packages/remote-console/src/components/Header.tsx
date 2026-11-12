@@ -16,16 +16,18 @@
  * container queries (styles/responsive.css), not viewport media queries.
  */
 /// <reference lib="dom" />
-import type { HostState } from "../store.ts";
-import type { RemoteConsolePreset } from "../hosts.ts";
+
 import type { WireActivity } from "../harness/replay-log.ts";
+import type { RemoteConsolePreset } from "../hosts.ts";
+import type { HostState } from "../store.ts";
 import { IconButton } from "../ui/Button.tsx";
 import { Icon } from "../ui/Icon.tsx";
+import { SessionId } from "../ui/SessionId.tsx";
 import { Shimmer } from "../ui/Shimmer.tsx";
 import { StatusDot } from "../ui/StatusDot.tsx";
 import { type RailStatus, statusDotProps } from "./HostRail.tsx";
 import { RollingNumber } from "./RollingNumber.tsx";
-import { SlidingPill, type PillButtonProps } from "./SlidingPill.tsx";
+import { type PillButtonProps, SlidingPill } from "./SlidingPill.tsx";
 import { formatCost, hasSessionStats, StatsPopover } from "./StatsPopover.tsx";
 
 const PRESETS: readonly RemoteConsolePreset[] = ["studio", "glass", "paper", "terminal"];
@@ -40,11 +42,33 @@ export function headerStatus(state: HostState | undefined): string {
 	return state.connection;
 }
 
-const ACTIVITY_LABEL: Record<WireActivity["kind"], string> = { compaction: "Compacting", memory_fold: "Folding memory" };
-const ACTIVITY_FAILED_LABEL: Record<WireActivity["kind"], string> = { compaction: "Compaction failed", memory_fold: "Memory fold failed" };
+/** Compact status for narrow headers: the detail alone ("Waiting: approval" becomes "approval"), else the full text. */
+export function headerStatusShort(state: HostState | undefined): string {
+	if (state?.connection === "connected" && state.status?.detail !== undefined) return state.status.detail;
+	return headerStatus(state);
+}
+
+const ACTIVITY_LABEL: Record<WireActivity["kind"], string> = {
+	compaction: "Compacting",
+	memory_fold: "Folding memory",
+};
+const ACTIVITY_FAILED_LABEL: Record<WireActivity["kind"], string> = {
+	compaction: "Compaction failed",
+	memory_fold: "Memory fold failed",
+};
 
 /** The status word: a running or failed background activity outranks the run status. */
-function StatusWord({ activity, working, status }: { activity: WireActivity | null; working: boolean; status: string }) {
+function StatusWord({
+	activity,
+	working,
+	status,
+	short,
+}: {
+	activity: WireActivity | null;
+	working: boolean;
+	status: string;
+	short: string;
+}) {
 	if (activity?.phase === "start") return <Shimmer>{ACTIVITY_LABEL[activity.kind]}</Shimmer>;
 	if (activity?.phase === "failed") {
 		return (
@@ -54,7 +78,15 @@ function StatusWord({ activity, working, status }: { activity: WireActivity | nu
 			</span>
 		);
 	}
-	return working ? <Shimmer>{status}</Shimmer> : <>{status}</>;
+	const word = (text: string) => (working ? <Shimmer>{text}</Shimmer> : text);
+	if (short === status) return word(status);
+	// Both texts render; the header container query (responsive.css) shows one, so the status never ellipsizes.
+	return (
+		<>
+			<span className="rc-status-full">{word(status)}</span>
+			<span className="rc-status-short">{word(short)}</span>
+		</>
+	);
 }
 
 /** Test hook attributes for the preset pill's option buttons. */
@@ -81,6 +113,7 @@ export function Header({
 	appearanceOpen?: boolean;
 }) {
 	const status = headerStatus(state);
+	const shortStatus = headerStatusShort(state);
 	const connection = state?.connection ?? "none";
 	const live = state?.connection === "connected";
 	const working = live && state?.status?.kind === "working";
@@ -102,7 +135,10 @@ export function Header({
 	const title = state === undefined ? "No host selected" : (state.sessionName ?? state.label);
 	return (
 		<div className="rc-header-inner" data-rc-header="true">
-			<span className="rc-header-title">{title}</span>
+			<span className="rc-header-identity">
+				<span className="rc-header-title">{title}</span>
+				{state?.sessionId ? <SessionId id={state.sessionId} /> : null}
+			</span>
 			<span className="rc-header-status" data-rc-status={state?.status?.kind ?? "none"}>
 				<span className="rc-header-status-dot" data-rc-status-dot={connection} aria-hidden="true">
 					<StatusDot {...statusDotProps(headerDotStatus(state), working)} />
@@ -112,7 +148,11 @@ export function Header({
 					data-rc-activity={activity?.kind}
 					data-rc-activity-phase={activity === null ? undefined : activity.phase}
 				>
-					<StatusWord activity={activity} working={working} status={status} />
+					{status === "connected" ? (
+						<span className="rc-sr-only">connected</span>
+					) : (
+						<StatusWord activity={activity} working={working} status={status} short={shortStatus} />
+					)}
 				</span>
 			</span>
 			<span className="rc-header-spacer" />
@@ -132,7 +172,10 @@ export function Header({
 				<span className="rc-header-ctx" data-rc-ctx={String(percent)} data-rc-stale={staleMetrics}>
 					<span className="rc-sr-only">{`context usage ${Math.round(percent)} percent${autoCompact ? ", auto-compact on" : ""}`}</span>
 					<span className="rc-header-ctx-track" aria-hidden="true">
-						<span className="rc-header-ctx-fill" style={{ transform: `scaleX(${Math.min(100, Math.max(0, percent)) / 100})` }} />
+						<span
+							className="rc-header-ctx-fill"
+							style={{ transform: `scaleX(${Math.min(100, Math.max(0, percent)) / 100})` }}
+						/>
 					</span>
 					<span className="rc-header-ctx-num" aria-hidden="true">
 						<RollingNumber value={Math.round(percent)} />%
@@ -173,13 +216,23 @@ export function Header({
 			)}
 			<span className="rc-header-presets" data-rc-presets="true">
 				<SlidingPill
-					options={PRESETS.map((candidate) => ({ value: candidate, label: candidate, props: presetProps(candidate) }))}
+					options={PRESETS.map((candidate) => ({
+						value: candidate,
+						label: candidate,
+						props: presetProps(candidate),
+					}))}
 					active={preset}
 					onChange={onPreset}
 					ariaLabel="preset"
 				/>
 			</span>
-			{runStatus !== null && hasSessionStats(runStatus) && <StatsPopover status={runStatus} lastTokensPerSecond={state?.lastTokensPerSecond ?? null} appearanceOpen={appearanceOpen} />}
+			{runStatus !== null && hasSessionStats(runStatus) && (
+				<StatsPopover
+					status={runStatus}
+					lastTokensPerSecond={state?.lastTokensPerSecond ?? null}
+					appearanceOpen={appearanceOpen}
+				/>
+			)}
 			<IconButton
 				icon="sliders"
 				label="appearance"
