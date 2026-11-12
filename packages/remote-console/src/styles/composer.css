@@ -5,6 +5,8 @@
 .rc-composer-inner {
 	position: relative;
 	z-index: 0;
+	/* the stop control shows its label by the composer's own width, not the viewport's */
+	container: rc-composer / inline-size;
 	display: flex;
 	flex-direction: column;
 	gap: var(--rc-space-2);
@@ -164,4 +166,35 @@
 	transition:
 		opacity var(--rc-duration-exit) var(--rc-ease-in),
 		transform var(--rc-duration-exit) var(--rc-ease-in);
+}
+
+/* stop: a danger control. Icon-only by default, icon plus "Stop" once the composer is wide enough. */
+.rc-composer-abort {
+	width: var(--rc-control-md);
+	padding: 0;
+	background: var(--rc-bad-faint);
+	box-shadow: inset 0 0 0 var(--rc-hairline-width) var(--rc-bad);
+}
+
+.rc-composer-abort-label {
+	display: none;
+}
+
+@container rc-composer (min-width: 32.5rem) {
+	.rc-composer-abort {
+		width: auto;
+		padding: 0 var(--rc-space-3);
+	}
+
+	.rc-composer-abort-label {
+		display: inline;
+	}
+}
+
+@media (pointer: coarse) {
+	.rc-composer-abort,
+	.rc-composer-send {
+		min-width: var(--rc-control-touch);
+		min-height: var(--rc-control-touch);
+	}
 }

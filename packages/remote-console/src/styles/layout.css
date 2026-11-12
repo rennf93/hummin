@@ -33,8 +33,9 @@
 	display: flex;
 	align-items: center;
 	flex: none;
-	height: var(--rc-header-height);
-	padding: 0 var(--rc-space-4);
+	/* at 900px and wider the header is the topmost chrome: the top inset is added to its height, not only its padding */
+	height: calc(var(--rc-header-height) + env(safe-area-inset-top));
+	padding: env(safe-area-inset-top) max(var(--rc-space-4), env(safe-area-inset-right)) 0 max(var(--rc-space-4), env(safe-area-inset-left));
 	border-bottom: var(--rc-hairline-width) solid var(--rc-hairline);
 }
 
@@ -73,7 +74,28 @@
 	flex: none;
 	overflow: hidden;
 	scrollbar-gutter: stable both-edges;
-	padding: var(--rc-space-2) var(--rc-space-4) max(var(--rc-space-4), env(safe-area-inset-bottom));
+	padding: var(--rc-space-2) var(--rc-space-4) max(var(--rc-space-4), env(safe-area-inset-bottom), var(--rc-keyboard-inset, 0px));
+}
+
+/* approval layer: floats over the transcript bottom, just above the dock, in the
+   dock's reading column (same inline padding, both-edges scrollbar gutter and max
+   width), so the card never changes the dock's size. Its height is empty-free: the
+   list's own gap applies only while a card is present. */
+.rc-approval-layer {
+	position: absolute;
+	inset: auto 0 0;
+	z-index: 2;
+	overflow: hidden;
+	scrollbar-gutter: stable both-edges;
+	padding: 0 var(--rc-space-4);
+	pointer-events: none;
+}
+
+.rc-approval-column {
+	width: 100%;
+	max-width: var(--rc-column);
+	margin: 0 auto;
+	pointer-events: auto;
 }
 
 .rc-composer[data-rc-region] {

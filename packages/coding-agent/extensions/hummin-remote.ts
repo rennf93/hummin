@@ -58,7 +58,7 @@ export default function humminRemote(pi: ExtensionAPI): void {
 				return;
 			}
 			if (handle) {
-				ctx.ui.notify(`Remote console already running: ${handle.url}`, "info");
+				ctx.ui.notify(`Remote console already running: ${handle.publicUrl ?? handle.url}`, "info");
 				return;
 			}
 			starting = true;
@@ -85,9 +85,11 @@ export default function humminRemote(pi: ExtensionAPI): void {
 			}
 			ctx.ui.setStatus("remote-control", "remote console on");
 			ctx.ui.notify(
-				config.lan
-					? `Remote console: ${handle.url}\nBound beyond loopback (${config.host}): anyone on this network holding the token can control this session. /remote-control stop disconnects clients.`
-					: `Remote console: ${handle.url}\nLoopback only. For another device, forward port ${handle.port} over SSH and open this URL there. /remote-control stop disconnects clients.`,
+				handle.publicUrl !== undefined
+					? `Remote console: ${handle.publicUrl}\nServed through the proxy at ${new URL(handle.publicUrl).host}; local: ${handle.url}. /remote-control stop disconnects clients.`
+					: config.lan
+						? `Remote console: ${handle.url}\nBound beyond loopback (${config.host}): anyone on this network holding the token can control this session. /remote-control stop disconnects clients.`
+						: `Remote console: ${handle.url}\nLoopback only. For another device, forward port ${handle.port} over SSH and open this URL there. /remote-control stop disconnects clients.`,
 				"info",
 			);
 		},

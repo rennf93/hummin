@@ -10,7 +10,7 @@ import { useMemo } from "react";
 import { capForDisplay, RENDER_CAP_CHARS } from "../display-caps.ts";
 import { TruncationNotice } from "../TruncationNotice.tsx";
 import { CodeBlock } from "./CodeBlock.tsx";
-import { parseMarkdown, type MdBlock, type MdSpan } from "./parse.ts";
+import { type MdBlock, type MdSpan, parseMarkdown } from "./parse.ts";
 import "./markdown.css";
 
 export function Markdown({ text, className }: { text: string; className?: string }) {
@@ -20,6 +20,7 @@ export function Markdown({ text, className }: { text: string; className?: string
 		<div className={className === undefined ? "rc-md" : `rc-md ${className}`}>
 			{capped.truncated && <TruncationNotice shown={capped.shown.length} total={capped.total} />}
 			{blocks.map((block, index) => (
+				// biome-ignore lint/suspicious/noArrayIndexKey: parsed blocks have no ids; the list is positional and replaced wholesale
 				<BlockView key={index} block={block} />
 			))}
 		</div>
@@ -40,12 +41,14 @@ function BlockView({ block }: { block: MdBlock }) {
 			return (
 				<blockquote className="rc-md-quote">
 					{block.blocks.map((inner, index) => (
+						// biome-ignore lint/suspicious/noArrayIndexKey: parsed blocks have no ids; positional
 						<BlockView key={index} block={inner} />
 					))}
 				</blockquote>
 			);
 		case "list": {
 			const items = block.items.map((item, index) => (
+				// biome-ignore lint/suspicious/noArrayIndexKey: parsed list items have no ids; positional
 				<li key={index} className={item.task === null ? undefined : "rc-md-task-item"}>
 					{item.task !== null && (
 						<span
@@ -60,6 +63,7 @@ function BlockView({ block }: { block: MdBlock }) {
 						innerIndex === 0 && inner.kind === "paragraph" ? (
 							spans(inner.spans, index)
 						) : (
+							// biome-ignore lint/suspicious/noArrayIndexKey: parsed blocks have no ids; positional
 							<BlockView key={innerIndex} block={inner} />
 						),
 					)}
@@ -81,6 +85,7 @@ function BlockView({ block }: { block: MdBlock }) {
 							<thead>
 								<tr>
 									{block.head.map((cell, index) => (
+										// biome-ignore lint/suspicious/noArrayIndexKey: table header cells are positional
 										<th key={index} style={cellAlign(block.align[index])}>
 											{spans(cell, index)}
 										</th>
@@ -90,8 +95,10 @@ function BlockView({ block }: { block: MdBlock }) {
 						)}
 						<tbody>
 							{block.rows.map((row, rowIndex) => (
+								// biome-ignore lint/suspicious/noArrayIndexKey: table rows are positional and never reorder
 								<tr key={rowIndex}>
 									{row.map((cell, cellIndex) => (
+										// biome-ignore lint/suspicious/noArrayIndexKey: table cells are positional
 										<td key={cellIndex} style={cellAlign(block.align[cellIndex])}>
 											{spans(cell, cellIndex)}
 										</td>
@@ -115,6 +122,7 @@ function cellAlign(
 
 function spans(spread: readonly MdSpan[], keyBase: number | string) {
 	return spread.map((span, index) => (
+		// biome-ignore lint/suspicious/noArrayIndexKey: inline spans have no ids; positional
 		<SpanView key={`${keyBase}-${index}`} span={span} depthKey={`${keyBase}-${index}`} />
 	));
 }

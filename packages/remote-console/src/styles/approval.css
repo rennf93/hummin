@@ -9,8 +9,9 @@
 	gap: var(--rc-space-2);
 }
 
-.rc-approval-list:empty {
-	margin-bottom: calc(-1 * var(--rc-space-2));
+/* the gap above the dock exists only while a card is present */
+.rc-approval-list:not(:empty) {
+	padding-bottom: var(--rc-space-2);
 }
 
 .rc-approval {
@@ -21,7 +22,8 @@
 	flex-wrap: wrap;
 	gap: var(--rc-space-2) var(--rc-space-3);
 	overflow: hidden;
-	background: var(--rc-raised);
+	/* floats over transcript text: opaque, not the translucent glass raised */
+	background: var(--rc-raised-solid);
 	border: var(--rc-hairline-width) solid var(--rc-hairline);
 	border-radius: var(--rc-radius-xl);
 	padding: calc(var(--rc-space-3) + var(--rc-bezel-gap)) calc(var(--rc-space-4) + var(--rc-bezel-gap));
@@ -46,7 +48,20 @@
 @keyframes rc-approval-in {
 	from {
 		opacity: 0;
-		transform: translateY(var(--rc-space-3));
+		transform: translateY(var(--rc-space-2));
+	}
+}
+
+/* exit: usePresence holds the node for --rc-duration-exit after the hold leaves */
+.rc-approval[data-state="closed"] {
+	animation: rc-approval-out var(--rc-duration-exit) var(--rc-ease-in) both;
+	pointer-events: none;
+}
+
+@keyframes rc-approval-out {
+	to {
+		opacity: 0;
+		transform: translateY(var(--rc-space-1));
 	}
 }
 
@@ -149,8 +164,10 @@
 	cursor: pointer;
 }
 
-.rc-approval-more:hover {
-	color: var(--rc-fg);
+@media (hover: hover) {
+	.rc-approval-more:hover {
+		color: var(--rc-fg);
+	}
 }
 
 .rc-approval-error {
@@ -178,4 +195,17 @@
 	flex: none;
 	display: inline-flex;
 	gap: var(--rc-space-1);
+}
+
+/* phones and touch: the actions are a full-width row at the bottom of the card, Deny left, Approve right */
+@media (width < 900px), (pointer: coarse) {
+	.rc-approval-actions {
+		flex: 1 0 100%;
+		gap: var(--rc-space-2);
+	}
+
+	.rc-approval-actions .rc-btn {
+		flex: 1;
+		min-height: var(--rc-control-touch);
+	}
 }

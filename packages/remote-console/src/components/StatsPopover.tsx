@@ -11,14 +11,26 @@
  * (compact counts, cost).
  */
 /// <reference lib="dom" />
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import {
+	type KeyboardEvent as ReactKeyboardEvent,
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 import { createPortal } from "react-dom";
 import type { WireStats, WireStatus } from "../harness/replay-log.ts";
 import { IconButton } from "../ui/Button.tsx";
 import { Icon } from "../ui/Icon.tsx";
 import { usePresence } from "../ui/usePresence.ts";
 
-const COMPACT_UNITS = [[1e9, "B"], [1e6, "M"], [1e3, "k"]] as const;
+const COMPACT_UNITS = [
+	[1e9, "B"],
+	[1e6, "M"],
+	[1e3, "k"],
+] as const;
 
 function scaleCompact(scaled: number): string {
 	return (scaled >= 100 ? scaled.toFixed(0) : scaled.toFixed(1)).replace(/\.0$/, "");
@@ -53,7 +65,12 @@ export function formatCost(usd: number): string {
 
 /** True when the host published any of the hummin-specific fields the popover shows. */
 export function hasSessionStats(status: WireStatus): boolean {
-	return status.stats !== undefined || status.workspace !== undefined || status.autoCompact !== undefined || status.version !== undefined;
+	return (
+		status.stats !== undefined ||
+		status.workspace !== undefined ||
+		status.autoCompact !== undefined ||
+		status.version !== undefined
+	);
 }
 
 interface StatsRow {
@@ -114,7 +131,9 @@ function statsRows(status: WireStatus, lastTokensPerSecond: number | null): Stat
 					<span className="rc-mono">
 						{status.model.provider}/{status.model.modelId}
 					</span>
-					{status.thinkingLevel !== undefined && <span className="rc-stats-dim"> thinking {status.thinkingLevel}</span>}
+					{status.thinkingLevel !== undefined && (
+						<span className="rc-stats-dim"> thinking {status.thinkingLevel}</span>
+					)}
 				</>
 			),
 		});
@@ -124,7 +143,11 @@ function statsRows(status: WireStatus, lastTokensPerSecond: number | null): Stat
 		rows.push({ key: "tokens", label: "Tokens", value: <span className="rc-mono">{tokenParts.join(" / ")}</span> });
 	}
 	if (typeof stats?.cacheHitPercent === "number") {
-		rows.push({ key: "cache-hit", label: "Cache hit", value: <span className="rc-mono">{stats.cacheHitPercent.toFixed(1)}%</span> });
+		rows.push({
+			key: "cache-hit",
+			label: "Cache hit",
+			value: <span className="rc-mono">{stats.cacheHitPercent.toFixed(1)}%</span>,
+		});
 	}
 	if (stats?.costUsd !== undefined) {
 		rows.push({ key: "cost", label: "Cost", value: <span className="rc-mono">{formatCost(stats.costUsd)}</span> });
@@ -132,7 +155,11 @@ function statsRows(status: WireStatus, lastTokensPerSecond: number | null): Stat
 	if (stats !== undefined && stats.tokensPerSecond !== undefined) {
 		const live = stats.tokensPerSecond;
 		const speed =
-			live !== null ? `${Math.round(live)} tok/s` : lastTokensPerSecond !== null ? `last ${Math.round(lastTokensPerSecond)} tok/s` : "-";
+			live !== null
+				? `${Math.round(live)} tok/s`
+				: lastTokensPerSecond !== null
+					? `last ${Math.round(lastTokensPerSecond)} tok/s`
+					: "-";
 		rows.push({ key: "speed", label: "Speed", value: <span className="rc-mono">{speed}</span> });
 	}
 	const percent = status.contextUsage?.percent ?? null;
@@ -143,7 +170,9 @@ function statsRows(status: WireStatus, lastTokensPerSecond: number | null): Stat
 			value: (
 				<>
 					<span className="rc-mono">{Math.round(percent)}%</span>
-					{status.autoCompact !== undefined && <span className="rc-stats-dim"> auto-compact {status.autoCompact ? "on" : "off"}</span>}
+					{status.autoCompact !== undefined && (
+						<span className="rc-stats-dim"> auto-compact {status.autoCompact ? "on" : "off"}</span>
+					)}
 				</>
 			),
 		});
@@ -154,13 +183,22 @@ function statsRows(status: WireStatus, lastTokensPerSecond: number | null): Stat
 			label: "Changes",
 			value: (
 				<span className="rc-mono">
-					<span className="rc-stats-added">+{stats.diff.added}</span> <span className="rc-stats-removed">-{stats.diff.removed}</span>
+					<span className="rc-stats-added">+{stats.diff.added}</span>{" "}
+					<span className="rc-stats-removed">-{stats.diff.removed}</span>
 				</span>
 			),
 		});
 	}
 	if (stats?.todos !== undefined && stats.todos.total > 0) {
-		rows.push({ key: "todos", label: "Todos", value: <span className="rc-mono">{stats.todos.done}/{stats.todos.total}</span> });
+		rows.push({
+			key: "todos",
+			label: "Todos",
+			value: (
+				<span className="rc-mono">
+					{stats.todos.done}/{stats.todos.total}
+				</span>
+			),
+		});
 	}
 	if (status.version !== undefined) {
 		rows.push({ key: "version", label: "Version", value: <span className="rc-mono">{status.version}</span> });
@@ -176,10 +214,15 @@ interface Placement {
 const VIEWPORT_MARGIN = 8;
 /** Matches the 26rem cap in stats.css at the default root font size; used only until the popover can be measured. */
 const FALLBACK_WIDTH = 416;
-const TABBABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const TABBABLE =
+	'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /** Right-aligns the popover under its anchor, then clamps it inside the viewport. */
-export function clampedPlacement(anchor: { right: number; bottom: number }, popoverWidth: number, viewportWidth: number): Placement {
+export function clampedPlacement(
+	anchor: { right: number; bottom: number },
+	popoverWidth: number,
+	viewportWidth: number,
+): Placement {
 	const width = popoverWidth > 0 ? popoverWidth : Math.min(FALLBACK_WIDTH, viewportWidth - 2 * VIEWPORT_MARGIN);
 	const maxLeft = Math.max(VIEWPORT_MARGIN, viewportWidth - width - VIEWPORT_MARGIN);
 	return { top: anchor.bottom + 6, left: Math.min(maxLeft, Math.max(VIEWPORT_MARGIN, anchor.right - width)) };
@@ -205,7 +248,9 @@ export function StatsPopover({
 		const rect = anchorRef.current?.getBoundingClientRect();
 		if (rect === undefined) return;
 		const next = clampedPlacement(rect, dialogRef.current?.offsetWidth ?? 0, window.innerWidth);
-		setPlacement((current) => (current !== null && current.top === next.top && current.left === next.left ? current : next));
+		setPlacement((current) =>
+			current !== null && current.top === next.top && current.left === next.left ? current : next,
+		);
 	}, []);
 
 	useLayoutEffect(() => {
@@ -221,7 +266,8 @@ export function StatsPopover({
 		if (!open) return;
 		dialogRef.current?.focus();
 		const inside = (target: EventTarget | null) =>
-			target instanceof Node && (dialogRef.current?.contains(target) === true || anchorRef.current?.contains(target) === true);
+			target instanceof Node &&
+			(dialogRef.current?.contains(target) === true || anchorRef.current?.contains(target) === true);
 		const onKey = (event: KeyboardEvent) => {
 			if (event.key !== "Escape") return;
 			setOpen(false);

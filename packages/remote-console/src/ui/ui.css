@@ -69,6 +69,7 @@
 
 /* buttons */
 .rc-btn {
+	position: relative;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -101,8 +102,10 @@
 .rc-iconbtn.rc-btn-sm {
 	width: var(--rc-control-sm);
 }
-.rc-btn:hover {
-	background: var(--rc-hover);
+@media (hover: hover) {
+	.rc-btn:hover {
+		background: var(--rc-hover);
+	}
 }
 .rc-btn:active {
 	background: var(--rc-pressed);
@@ -120,8 +123,10 @@
 .rc-btn-ghost {
 	color: var(--rc-fg-dim);
 }
-.rc-btn-ghost:hover {
-	color: var(--rc-fg);
+@media (hover: hover) {
+	.rc-btn-ghost:hover {
+		color: var(--rc-fg);
+	}
 }
 .rc-btn-secondary {
 	box-shadow: inset 0 0 0 var(--rc-hairline-width) var(--rc-hairline-strong);
@@ -135,8 +140,10 @@
 	background: var(--rc-primary);
 	color: var(--rc-on-primary);
 }
-.rc-btn-primary:hover {
-	background: var(--rc-primary-hover);
+@media (hover: hover) {
+	.rc-btn-primary:hover {
+		background: var(--rc-primary-hover);
+	}
 }
 .rc-btn-primary:active {
 	background: var(--rc-primary-pressed);
@@ -144,12 +151,51 @@
 .rc-btn-danger {
 	color: var(--rc-bad);
 }
-.rc-btn-danger:hover {
-	background: var(--rc-bad-faint);
+@media (hover: hover) {
+	.rc-btn-danger:hover {
+		background: var(--rc-bad-faint);
+	}
 }
 .rc-btn-danger:active {
 	background-color: var(--rc-bad-faint);
 	background-image: linear-gradient(var(--rc-pressed), var(--rc-pressed));
+}
+
+/* busy: the spinner replaces the icon; without an icon it overlays the hidden label so size holds */
+.rc-btn-label {
+	display: contents;
+}
+.rc-btn-label[data-hidden="true"] {
+	visibility: hidden;
+}
+.rc-btn-overlay {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-items: center;
+}
+
+/* session id: short mono id that copies on click */
+.rc-session-id {
+	position: relative;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--rc-fg-faint);
+	font-family: var(--rc-font-mono);
+	font-size: var(--rc-text-xs);
+	line-height: var(--rc-leading-ui);
+	cursor: pointer;
+}
+
+/* touch: grow the hit area to the minimum target without changing the visual size */
+@media (pointer: coarse) {
+	.rc-btn::before,
+	.rc-session-id::before {
+		content: "";
+		position: absolute;
+		inset: min(0px, calc((100% - var(--rc-control-touch)) / 2));
+	}
 }
 
 /* disclosure: grid rows 0fr <-> 1fr, content fades */

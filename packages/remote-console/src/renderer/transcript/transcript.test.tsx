@@ -12,11 +12,11 @@ import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { AnyRemoteEvent, WireToolCallBlock, WireTranscriptEntry } from "../../harness/replay-log.ts";
 import { ReplayServer } from "../../harness/replay-server.ts";
-import { isNearBottom, FOLLOW_THRESHOLD_PX } from "./follow-bottom.ts";
-import { applyStreamEvent, type LiveSlot } from "./stream-slot.ts";
-import { TranscriptList } from "./TranscriptList.tsx";
 import { expectKind, loadFixtureEvents, snapshotEntries } from "../test/corpus.ts";
 import { mount } from "../test/mount.tsx";
+import { FOLLOW_THRESHOLD_PX, isNearBottom } from "./follow-bottom.ts";
+import { applyStreamEvent, type LiveSlot } from "./stream-slot.ts";
+import { TranscriptList } from "./TranscriptList.tsx";
 
 /** toolResult entries whose call block is rendered in the same entries (hidden by the list). */
 function matchedToolResults(entries: readonly WireTranscriptEntry[]): WireTranscriptEntry[] {
@@ -39,7 +39,12 @@ function expectedRows(entries: readonly WireTranscriptEntry[]): WireTranscriptEn
 		const textOnly = message.blocks.every((block) => block.type === "text");
 		const key =
 			(message.role === "system" || message.role === "custom") && textOnly
-				? JSON.stringify([message.role, message.customType, message.details, message.blocks.map((block) => block.type === "text" ? block.text : "")])
+				? JSON.stringify([
+						message.role,
+						message.customType,
+						message.details,
+						message.blocks.map((block) => (block.type === "text" ? block.text : "")),
+					])
 				: undefined;
 		if (key === undefined || key !== previousKey) rows.push(entry);
 		previousKey = key;
@@ -48,39 +53,45 @@ function expectedRows(entries: readonly WireTranscriptEntry[]): WireTranscriptEn
 }
 
 describe("TranscriptList", () => {
-	it("renders the 2419-entry fixture: matched toolResults hidden, everything else present", { timeout: 120000 }, async () => {
-		const entries: WireTranscriptEntry[] = snapshotEntries(loadFixtureEvents("hummin-longest.events.json"));
-		expect(entries.length).toBe(2419);
-		const matched = matchedToolResults(entries);
-		expect(matched.length).toBeGreaterThan(0);
-		const orphans = 1161 - matched.length;
-		const expected = expectedRows(entries);
-		const expectedRole = (role: string) => expected.filter((entry) => entry.message.role === role).length;
-		const mounted = await mount(<TranscriptList entries={entries} />);
-		try {
-			const rows = Array.from(mounted.container.querySelectorAll("[data-entry-id]"));
-			expect(rows.length).toBe(expected.length);
-			const ids = new Set(rows.map((row) => row.getAttribute("data-entry-id")));
-			expect(ids.size).toBe(expected.length);
-			expect(rows.map((row) => row.getAttribute("data-entry-id"))).toEqual(expected.map((entry) => entry.entryId));
-			for (const entry of matched) expect(ids.has(entry.entryId)).toBe(false);
-			// roles render distinctly
-			const roles = new Map<string, number>();
-			for (const row of rows) {
-				const role = row.getAttribute("data-rc-role") ?? "toolResult";
-				roles.set(role, (roles.get(role) ?? 0) + 1);
+	it(
+		"renders the 2419-entry fixture: matched toolResults hidden, everything else present",
+		{ timeout: 120000 },
+		async () => {
+			const entries: WireTranscriptEntry[] = snapshotEntries(loadFixtureEvents("hummin-longest.events.json"));
+			expect(entries.length).toBe(2419);
+			const matched = matchedToolResults(entries);
+			expect(matched.length).toBeGreaterThan(0);
+			const orphans = 1161 - matched.length;
+			const expected = expectedRows(entries);
+			const expectedRole = (role: string) => expected.filter((entry) => entry.message.role === role).length;
+			const mounted = await mount(<TranscriptList entries={entries} />);
+			try {
+				const rows = Array.from(mounted.container.querySelectorAll("[data-entry-id]"));
+				expect(rows.length).toBe(expected.length);
+				const ids = new Set(rows.map((row) => row.getAttribute("data-entry-id")));
+				expect(ids.size).toBe(expected.length);
+				expect(rows.map((row) => row.getAttribute("data-entry-id"))).toEqual(
+					expected.map((entry) => entry.entryId),
+				);
+				for (const entry of matched) expect(ids.has(entry.entryId)).toBe(false);
+				// roles render distinctly
+				const roles = new Map<string, number>();
+				for (const row of rows) {
+					const role = row.getAttribute("data-rc-role") ?? "toolResult";
+					roles.set(role, (roles.get(role) ?? 0) + 1);
+				}
+				expect(roles.get("toolResult") ?? 0).toBe(orphans);
+				expect(roles.get("assistant")).toBe(1193);
+				expect(roles.get("system") ?? 0).toBe(expectedRole("system"));
+				expect(roles.get("user")).toBe(17);
+				expect(roles.get("custom") ?? 0).toBe(expectedRole("custom"));
+				// every toolCall block renders one tool row
+				expect(mounted.container.querySelectorAll("[data-rc-tool-state]").length).toBeGreaterThan(1000);
+			} finally {
+				await mounted.unmount();
 			}
-			expect(roles.get("toolResult") ?? 0).toBe(orphans);
-			expect(roles.get("assistant")).toBe(1193);
-			expect(roles.get("system") ?? 0).toBe(expectedRole("system"));
-			expect(roles.get("user")).toBe(17);
-			expect(roles.get("custom") ?? 0).toBe(expectedRole("custom"));
-			// every toolCall block renders one tool row
-			expect(mounted.container.querySelectorAll("[data-rc-tool-state]").length).toBeGreaterThan(1000);
-		} finally {
-			await mounted.unmount();
-		}
-	});
+		},
+	);
 
 	it("reassembles the streamed message at the component level: joined deltas equal the final text", async () => {
 		const fixture = loadFixtureEvents("hummin-longest.events.json");
@@ -94,9 +105,7 @@ describe("TranscriptList", () => {
 		}
 		expect(slot?.frozen).toBe(true);
 		expect(slot?.entryId).toBe("fx-5");
-		const joined = slot?.blocks
-			.map((b) => (b.type === "text" ? b.text : ""))
-			.join("");
+		const joined = slot?.blocks.map((b) => (b.type === "text" ? b.text : "")).join("");
 		expect(joined).toBe("Hi. Ready for a task in this repo or something else?");
 		// Component level: the slot renders the streamed message as a bound, frozen entry.
 		const mounted = await mount(<TranscriptList entries={[]} slot={slot} />);
@@ -123,7 +132,9 @@ describe("TranscriptList", () => {
 		document.documentElement.setAttribute("data-rc-motion", "off");
 		const streaming = await mount(<TranscriptList entries={[]} slot={slot} />);
 		try {
-			expect(streaming.container.querySelector("[data-rc-streaming]")?.getAttribute("data-rc-streaming")).toBe("true");
+			expect(streaming.container.querySelector("[data-rc-streaming]")?.getAttribute("data-rc-streaming")).toBe(
+				"true",
+			);
 			expect(streaming.container.textContent).toContain("Hi. Ready for a task in this repo or som");
 		} finally {
 			document.documentElement.removeAttribute("data-rc-motion");
@@ -178,7 +189,10 @@ describe("live slot handover", () => {
 			{ type: "thinking", text: "private reasoning" },
 			{ type: "text", text: "answer" },
 		];
-		const earlier: WireTranscriptEntry = { entryId: "e0", message: { role: "user", blocks: [{ type: "text", text: "hi" }] } };
+		const earlier: WireTranscriptEntry = {
+			entryId: "e0",
+			message: { role: "user", blocks: [{ type: "text", text: "hi" }] },
+		};
 		const landedEntry: WireTranscriptEntry = { entryId: "e1", message: { role: "assistant", blocks } };
 		const live: LiveSlot = { slotKey: "s1", entryId: null, frozen: false, role: "assistant", blocks };
 		const mounted = await mount(<TranscriptList entries={[earlier]} slot={live} />);
@@ -219,9 +233,14 @@ describe("follow-bottom", () => {
 			// happy-dom has no layout: pin the metrics the scroll handler reads.
 			Object.defineProperty(element, "scrollHeight", { value: 5000, configurable: true });
 			Object.defineProperty(element, "clientHeight", { value: 1000, configurable: true });
+			element.scrollTop = 2000;
+			await act(async () => {
+				element.dispatchEvent(new Event("scroll", { bubbles: true }));
+			});
 			element.scrollTop = 0;
 			// state updates from the scroll handler need act, as with any user event
 			await act(async () => {
+				element.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
 				element.dispatchEvent(new Event("scroll", { bubbles: true }));
 			});
 			const jump = mounted.container.querySelector("[data-rc-jump]");
@@ -235,6 +254,142 @@ describe("follow-bottom", () => {
 			});
 			expect(mounted.container.querySelector("[data-rc-jump]")).toBeNull();
 		} finally {
+			await mounted.unmount();
+		}
+	});
+});
+
+describe("follow stickiness", () => {
+	const user = (id: string): WireTranscriptEntry => ({
+		entryId: id,
+		message: { role: "user", blocks: [{ type: "text", text: id }] },
+	});
+	let height = 5000;
+	const setup = () => {
+		height = 5000;
+		Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get: () => height });
+		Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 1000 });
+	};
+	const teardown = () => {
+		Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
+		Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+	};
+
+	it("keeps following when content grows after a pin and the scroll event has an unchanged scrollTop", async () => {
+		setup();
+		const mounted = await mount(<TranscriptList entries={[user("a")]} />);
+		try {
+			const element = mounted.container.querySelector<HTMLElement>("[data-rc-scroller]");
+			if (element === null) throw new Error("scroller not found");
+			expect(element.scrollTop).toBe(5000);
+			height = 5300; // content-visibility rows grew after the pin
+			await act(async () => {
+				element.dispatchEvent(new Event("scroll"));
+			});
+			expect(mounted.container.querySelector("[data-rc-jump]")).toBeNull();
+			element.scrollTop = 5100; // increased scrollTop, still far from the new bottom
+			height = 9000;
+			await act(async () => {
+				element.dispatchEvent(new Event("scroll"));
+			});
+			expect(mounted.container.querySelector("[data-rc-jump]")).toBeNull();
+		} finally {
+			teardown();
+			await mounted.unmount();
+		}
+	});
+
+	it("shows the jump pill when scrollTop decreases far from the bottom", async () => {
+		setup();
+		const mounted = await mount(<TranscriptList entries={[user("a")]} />);
+		try {
+			const element = mounted.container.querySelector<HTMLElement>("[data-rc-scroller]");
+			if (element === null) throw new Error("scroller not found");
+			element.scrollTop = 3000;
+			await act(async () => {
+				element.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
+				element.dispatchEvent(new Event("scroll"));
+			});
+			expect(mounted.container.querySelector("[data-rc-jump]")).not.toBeNull();
+		} finally {
+			teardown();
+			await mounted.unmount();
+		}
+	});
+
+	it("keeps intent through a long gesture whose scroll events arrive past the input window", async () => {
+		setup();
+		vi.useFakeTimers({ toFake: ["performance"] });
+		const mounted = await mount(<TranscriptList entries={[user("a")]} />);
+		try {
+			const element = mounted.container.querySelector<HTMLElement>("[data-rc-scroller]");
+			if (element === null) throw new Error("scroller not found");
+			await act(async () => {
+				element.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
+			});
+			// momentum: 15 events 100ms apart, starting inside the near-bottom zone and drifting away
+			for (let i = 1; i <= 15; i++) {
+				vi.advanceTimersByTime(100);
+				element.scrollTop = 4950 - i * 60;
+				await act(async () => {
+					element.dispatchEvent(new Event("scroll"));
+				});
+			}
+			height = 9000; // content resize: a following list would pin down
+			await act(async () => {
+				element.scrollTop = 4000;
+				element.dispatchEvent(new Event("scroll"));
+			});
+			expect(mounted.container.querySelector("[data-rc-jump]")).not.toBeNull();
+		} finally {
+			vi.useRealTimers();
+			teardown();
+			await mounted.unmount();
+		}
+	});
+
+	it("ignores a scrollTop and scrollHeight drop with no user input", async () => {
+		setup();
+		const mounted = await mount(<TranscriptList entries={[user("a")]} />);
+		try {
+			const element = mounted.container.querySelector<HTMLElement>("[data-rc-scroller]");
+			if (element === null) throw new Error("scroller not found");
+			height = 4716; // rows left the viewport and shrank
+			element.scrollTop = 4716;
+			await act(async () => {
+				element.dispatchEvent(new Event("scroll"));
+			});
+			element.scrollTop = 3000;
+			await act(async () => {
+				element.dispatchEvent(new Event("scroll"));
+			});
+			expect(mounted.container.querySelector("[data-rc-jump]")).toBeNull();
+		} finally {
+			teardown();
+			await mounted.unmount();
+		}
+	});
+
+	it("re-pins and hides the pill when the jump pill is used", async () => {
+		setup();
+		const mounted = await mount(<TranscriptList entries={[user("a")]} />);
+		try {
+			const element = mounted.container.querySelector<HTMLElement>("[data-rc-scroller]");
+			if (element === null) throw new Error("scroller not found");
+			element.scrollTop = 3000;
+			await act(async () => {
+				element.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
+				element.dispatchEvent(new Event("scroll"));
+			});
+			const pill = mounted.container.querySelector<HTMLElement>("[data-rc-jump]");
+			if (pill === null) throw new Error("pill not shown");
+			await act(async () => {
+				pill.click();
+			});
+			expect(element.scrollTop).toBe(5000);
+			expect(mounted.container.querySelector("[data-rc-jump]")).toBeNull();
+		} finally {
+			teardown();
 			await mounted.unmount();
 		}
 	});
@@ -258,6 +413,7 @@ describe("pinning", () => {
 			expect(element.scrollTop).toBe(5000);
 			element.scrollTop = 0;
 			await act(async () => {
+				element.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
 				element.dispatchEvent(new Event("scroll"));
 			});
 			await mounted.render(<TranscriptList entries={[...first, user("c")]} />);
@@ -311,7 +467,11 @@ describe("roles", () => {
 });
 
 describe("typed notices", () => {
-	const custom = (customType: string | undefined, text: string, details?: Record<string, unknown>): WireTranscriptEntry => ({
+	const custom = (
+		customType: string | undefined,
+		text: string,
+		details?: Record<string, unknown>,
+	): WireTranscriptEntry => ({
 		entryId: `n-${customType ?? "plain"}-${text}`,
 		message: {
 			role: "custom",
@@ -368,7 +528,9 @@ describe("typed notices", () => {
 			custom("hummin-task", "tests failed", { label: "suite", state: "failed", durationMs: 2500, exitCode: 2 }),
 		);
 		try {
-			expect(failed.notice.querySelector(".rc-notice-text")?.textContent).toBe("Task suite failed 2.5s exit 2 tests failed");
+			expect(failed.notice.querySelector(".rc-notice-text")?.textContent).toBe(
+				"Task suite failed 2.5s exit 2 tests failed",
+			);
 			expect(failed.notice.querySelector(".rc-notice-bad")?.textContent?.trim()).toBe("exit 2");
 		} finally {
 			await failed.mounted.unmount();
@@ -408,7 +570,12 @@ describe("typed notices", () => {
 	});
 
 	it("a live custom message (start + end, no blocks) renders its typed notice without a reload", async () => {
-		const message = { role: "custom" as const, customType: "hummin-memory-recall", details: { lessonCount: 3 }, blocks: [] };
+		const message = {
+			role: "custom" as const,
+			customType: "hummin-memory-recall",
+			details: { lessonCount: 3 },
+			blocks: [],
+		};
 		let slot: LiveSlot | null = applyStreamEvent(null, {
 			v: 1,
 			seq: 1,
@@ -432,7 +599,9 @@ describe("typed notices", () => {
 			// Once the entry lands, the same row stays (landed through SlotRow) and keeps the notice.
 			await mounted.render(<TranscriptList entries={[{ entryId: "e1", message }]} slot={slot} />);
 			expect(mounted.container.querySelectorAll(".rc-notice")).toHaveLength(1);
-			expect(mounted.container.querySelector(".rc-notice")?.getAttribute("data-rc-custom-type")).toBe("hummin-memory-recall");
+			expect(mounted.container.querySelector(".rc-notice")?.getAttribute("data-rc-custom-type")).toBe(
+				"hummin-memory-recall",
+			);
 		} finally {
 			await mounted.unmount();
 		}
@@ -475,7 +644,14 @@ describe("repeated notices", () => {
 	});
 
 	it("a different text in between breaks the run; single rows carry no count", async () => {
-		const entries = [monitor(0), monitor(1), monitor(2, "Monitor build: exited 0"), monitor(3), monitor(4), monitor(5)];
+		const entries = [
+			monitor(0),
+			monitor(1),
+			monitor(2, "Monitor build: exited 0"),
+			monitor(3),
+			monitor(4),
+			monitor(5),
+		];
 		const mounted = await mount(<TranscriptList entries={entries} />);
 		try {
 			const rows = Array.from(mounted.container.querySelectorAll("[data-entry-id]"));
@@ -494,8 +670,18 @@ describe("repeated notices", () => {
 		});
 		const entries: WireTranscriptEntry[] = [
 			monitor(0),
-			{ entryId: "x-1", message: { role: "custom", customType: "hummin-exec", blocks: [{ type: "text", text: "Monitor build: still running" }] } },
-			{ entryId: "x-2", message: { role: "system", blocks: [{ type: "text", text: "Monitor build: still running" }] } },
+			{
+				entryId: "x-1",
+				message: {
+					role: "custom",
+					customType: "hummin-exec",
+					blocks: [{ type: "text", text: "Monitor build: still running" }],
+				},
+			},
+			{
+				entryId: "x-2",
+				message: { role: "system", blocks: [{ type: "text", text: "Monitor build: still running" }] },
+			},
 			assistant(1),
 			assistant(2),
 		];
@@ -605,7 +791,9 @@ describe("working indicator and live slot", () => {
 			expect(mounted.container.querySelector("[data-rc-working]")).not.toBeNull();
 			// first token lands: the line leaves
 			document.documentElement.setAttribute("data-rc-motion", "off");
-			await mounted.render(<TranscriptList entries={[]} slot={liveSlot([{ type: "text", text: "Hello" }])} working />);
+			await mounted.render(
+				<TranscriptList entries={[]} slot={liveSlot([{ type: "text", text: "Hello" }])} working />,
+			);
 			expect(mounted.container.querySelector("[data-rc-working]")).toBeNull();
 			await mounted.render(<TranscriptList entries={[]} slot={null} working={false} />);
 			expect(mounted.container.querySelector("[data-rc-working]")).toBeNull();
@@ -638,15 +826,20 @@ describe("working indicator and live slot", () => {
 		["connecting", false],
 		["reconnecting", false],
 		["connected", false],
-	] as const)("keeps the skeleton while %s with no snapshot (snapshotReceived=%s)", async (connection, snapshotReceived) => {
-		const mounted = await mount(<TranscriptList entries={[]} connection={connection} snapshotReceived={snapshotReceived} />);
-		try {
-			expect(mounted.container.querySelectorAll(".rc-skeleton-line").length).toBe(3);
-			expect(mounted.container.querySelector("[data-rc-empty-state]")).toBeNull();
-		} finally {
-			await mounted.unmount();
-		}
-	});
+	] as const)(
+		"keeps the skeleton while %s with no snapshot (snapshotReceived=%s)",
+		async (connection, snapshotReceived) => {
+			const mounted = await mount(
+				<TranscriptList entries={[]} connection={connection} snapshotReceived={snapshotReceived} />,
+			);
+			try {
+				expect(mounted.container.querySelectorAll(".rc-skeleton-line").length).toBe(3);
+				expect(mounted.container.querySelector("[data-rc-empty-state]")).toBeNull();
+			} finally {
+				await mounted.unmount();
+			}
+		},
+	);
 
 	it.each([
 		["unauthorized", "Not authorized. Reopen the /remote-control URL to reconnect."],
@@ -706,11 +899,17 @@ describe("fixture shape", () => {
 });
 
 describe("per-message footer", () => {
-	const assistant = (extra: { usage?: { input: number; output: number; total: number }; durationMs?: number }): WireTranscriptEntry => ({
+	const assistant = (extra: {
+		usage?: { input: number; output: number; total: number };
+		durationMs?: number;
+	}): WireTranscriptEntry => ({
 		entryId: "m1",
 		message: { role: "assistant", blocks: [{ type: "text", text: "hello" }], ...extra },
 	});
-	const footer = async (entries: WireTranscriptEntry[], slot?: LiveSlot | null): Promise<string | null | undefined> => {
+	const footer = async (
+		entries: WireTranscriptEntry[],
+		slot?: LiveSlot | null,
+	): Promise<string | null | undefined> => {
 		const mounted = await mount(<TranscriptList entries={entries} slot={slot} />);
 		try {
 			return mounted.container.querySelector("[data-rc-msg-meta]")?.textContent;
@@ -732,7 +931,13 @@ describe("per-message footer", () => {
 	it("shows none while streaming and once after the slot lands", async () => {
 		const usage = { input: 1, output: 10, total: 11 };
 		const live: LiveSlot = {
-			slotKey: "s1", entryId: null, frozen: false, role: "assistant", blocks: [{ type: "text", text: "hi" }], usage, durationMs: 1000,
+			slotKey: "s1",
+			entryId: null,
+			frozen: false,
+			role: "assistant",
+			blocks: [{ type: "text", text: "hi" }],
+			usage,
+			durationMs: 1000,
 		};
 		document.documentElement.setAttribute("data-rc-motion", "off");
 		const mounted = await mount(<TranscriptList entries={[]} slot={live} />);
@@ -758,7 +963,9 @@ describe("transcript hardening", () => {
 
 	it("keys rows by position when an older server sends empty ids, without key collisions", async () => {
 		const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
-		const mounted = await mount(<TranscriptList entries={[user("", "first"), user("", "second"), user("", "third")]} />);
+		const mounted = await mount(
+			<TranscriptList entries={[user("", "first"), user("", "second"), user("", "third")]} />,
+		);
 		try {
 			const rows = Array.from(mounted.container.querySelectorAll("article"));
 			expect(rows.map((row) => row.textContent)).toEqual(["first", "second", "third"]);
@@ -781,15 +988,26 @@ describe("transcript hardening", () => {
 		try {
 			await snapshot.render(<TranscriptList entries={[user("a", "x"), user("b", "y"), user("c", "z")]} />);
 			expect(snapshot.container.querySelectorAll("[data-rc-arrived]").length).toBe(0);
-			await snapshot.render(<TranscriptList entries={[user("a", "x"), user("b", "y"), user("c", "z"), user("d", "w")]} />);
+			expect(snapshot.container.querySelectorAll(".rc-enter").length).toBe(0);
+			await snapshot.render(
+				<TranscriptList entries={[user("a", "x"), user("b", "y"), user("c", "z"), user("d", "w")]} />,
+			);
 			expect(snapshot.container.querySelector("[data-entry-id='d']")?.getAttribute("data-rc-arrived")).toBe("true");
+			expect(snapshot.container.querySelector("[data-entry-id='d']")?.classList.contains("rc-enter")).toBe(true);
+			expect(snapshot.container.querySelector("[data-entry-id='a']")?.classList.contains("rc-enter")).toBe(false);
 		} finally {
 			await snapshot.unmount();
 		}
 	});
 
 	it("marks the content wrapper as a polite log and the streaming row busy", async () => {
-		const live: LiveSlot = { slotKey: "s", entryId: null, frozen: false, role: "assistant", blocks: [{ type: "text", text: "partial" }] };
+		const live: LiveSlot = {
+			slotKey: "s",
+			entryId: null,
+			frozen: false,
+			role: "assistant",
+			blocks: [{ type: "text", text: "partial" }],
+		};
 		const mounted = await mount(<TranscriptList entries={[]} slot={live} />);
 		try {
 			const log = mounted.container.querySelector(".rc-transcript-content");
@@ -870,6 +1088,35 @@ describe("transcript hardening", () => {
 				expect(mounted.container.querySelector(`[id="${id}"]`)).not.toBeNull();
 			}
 		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("tabbing into the log from above lands on the newest focusable row", async () => {
+		const call = (id: string): WireTranscriptEntry => ({
+			entryId: id,
+			message: { role: "assistant", blocks: [{ type: "toolCall", id, name: "bash", arguments: { command: id } }] },
+		});
+		const mounted = await mount(<TranscriptList entries={[call("old"), call("mid"), call("new")]} />);
+		const before = document.createElement("button");
+		mounted.container.before(before);
+		try {
+			const rows = Array.from(mounted.container.querySelectorAll<HTMLElement>("button.rc-tool-row"));
+			expect(rows.length).toBe(3);
+			before.focus();
+			await act(async () => {
+				rows[0]?.focus();
+				rows[0]?.dispatchEvent(new FocusEvent("focusin", { bubbles: true, relatedTarget: before }));
+			});
+			expect(document.activeElement).toBe(rows[2]);
+			// moving within the log is left alone
+			await act(async () => {
+				rows[1]?.focus();
+				rows[1]?.dispatchEvent(new FocusEvent("focusin", { bubbles: true, relatedTarget: rows[2] ?? null }));
+			});
+			expect(document.activeElement).toBe(rows[1]);
+		} finally {
+			before.remove();
 			await mounted.unmount();
 		}
 	});

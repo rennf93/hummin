@@ -23,13 +23,13 @@ import {
 	formatDuration,
 	prettyArgs,
 	specializeTool,
-	toolVerb,
-	type ToolLiveState,
-	type ToolResultView,
 	type TodoItem,
+	type ToolLiveState,
 	type ToolMetaItem,
+	type ToolResultView,
 	type ToolSpecialization,
 	type ToolStateKind,
+	toolVerb,
 } from "./tool-view.ts";
 import "./tool.css";
 
@@ -153,7 +153,9 @@ function ToolBody({
 					<pre className={state === "error" ? "rc-tool-result rc-tool-result-error" : "rc-tool-result"}>
 						{outcomeCapped.shown}
 					</pre>
-					{outcomeCapped.truncated && <TruncationNotice shown={outcomeCapped.shown.length} total={outcomeCapped.total} />}
+					{outcomeCapped.truncated && (
+						<TruncationNotice shown={outcomeCapped.shown.length} total={outcomeCapped.total} />
+					)}
 				</section>
 			)}
 		</div>
@@ -200,6 +202,7 @@ function SpecView({ spec }: { spec: ToolSpecialization }) {
 					<div className="rc-label rc-tool-section-label">path</div>
 					<div className="rc-tool-path">{spec.path}</div>
 					{spec.edits.map((edit, index) => (
+						// biome-ignore lint/suspicious/noArrayIndexKey: edit hunks have no ids and may repeat; positional
 						<div key={index} className="rc-tool-edits">
 							<CappedBlock className="rc-tool-diff rc-tool-diff-del" text={diffPrefix("-", edit.oldText)} />
 							<CappedBlock className="rc-tool-diff rc-tool-diff-add" text={diffPrefix("+", edit.newText)} />
@@ -254,6 +257,7 @@ function SpecView({ spec }: { spec: ToolSpecialization }) {
 					<CappedBlock className="rc-tool-path" text={spec.question} />
 					<ul className="rc-tool-choices">
 						{spec.choices.map((choice, index) => (
+							// biome-ignore lint/suspicious/noArrayIndexKey: choices may repeat; positional list that never reorders
 							<li key={index}>{choice}</li>
 						))}
 					</ul>
@@ -275,6 +279,7 @@ function TodoList({ todos }: { todos: readonly TodoItem[] }) {
 	return (
 		<ul className="rc-todo-list">
 			{todos.map((todo, index) => (
+				// biome-ignore lint/suspicious/noArrayIndexKey: todo text may repeat; positional list that never reorders
 				<li key={index} className="rc-todo" data-rc-todo-status={todo.status}>
 					<Icon name={TODO_ICON[todo.status]} className="rc-todo-icon" />
 					<span className="rc-todo-text">{todo.text}</span>

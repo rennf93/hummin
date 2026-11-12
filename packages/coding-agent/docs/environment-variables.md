@@ -143,15 +143,28 @@ These fork-specific variables are read by hummin and its bundled extensions. Whe
 
 ### Remote console
 
-The `/remote-control` command serves the browser console and control API. Settings keys: `remoteControl.port`, `remoteControl.allowLan`, `remoteControl.hostLabel`, `remoteControl.approvalTools`, and `remoteControl.approvalTimeoutMs` (where a settings key exists, the `HUMMIN_*` variable beats it). Console origins for cross-origin fleet aggregation are stored in `<agentDir>/remote-console/console-origins.json` and are added through the authenticated `POST /settings/console-origins` action, never through these variables.
+The `/remote-control` command serves the browser console and control API. Settings keys: `remoteControl.port`, `remoteControl.allowLan`, `remoteControl.hostLabel`, `remoteControl.approvalTools`, `remoteControl.approvalTimeoutMs`, `remoteControl.publicUrl`, and `remoteControl.allowedHosts` (where a settings key exists, the `HUMMIN_*` variable beats it). Console origins for cross-origin fleet aggregation are stored in `<agentDir>/remote-console/console-origins.json` and are added through the authenticated `POST /settings/console-origins` action, never through these variables.
 
 | Variable | Description |
 |----------|-------------|
 | `HUMMIN_REMOTE` | `off` disables the remote console endpoint entirely; `/remote-control` reports it instead of starting a listener |
 | `HUMMIN_REMOTE_HOST` | Bind address (default `127.0.0.1`). Binding beyond loopback additionally requires `remoteControl.allowLan: true` in settings and `HUMMIN_REMOTE_LAN` unset or not `off`; otherwise the host falls back to `127.0.0.1` |
 | `HUMMIN_REMOTE_LAN` | `off` forces loopback even when `HUMMIN_REMOTE_HOST` and `remoteControl.allowLan` ask for a LAN bind |
-| `HUMMIN_REMOTE_PORT` | Port for the console endpoint; overrides `remoteControl.port` (default `0`, an ephemeral port chosen at start) |
-| `HUMMIN_REMOTE_CONSOLE_DIST` | Directory holding the built console (`dist/` with an `index.html`) to serve at `/`. When unset, the server looks in the workspace `packages/remote-console/dist` and then `<agentDir>/remote-console/dist`; with no build anywhere it serves a built-in fallback page |
+| `HUMMIN_REMOTE_PORT` | Port for the console endpoint; overrides `remoteControl.port` (default `0`, an ephemeral port chosen at start). A fronting proxy needs a fixed port |
+| `HUMMIN_REMOTE_PUBLIC_URL` | Origin of an HTTPS proxy in front of the console, for example `https://mac.tail1234.ts.net` from Tailscale Serve; overrides `remoteControl.publicUrl`. `/remote-control` prints the console URL on it, and its hostname is accepted in the Host and Origin checks. Anything but an absolute `http(s)` URL is ignored |
+| `HUMMIN_REMOTE_ALLOWED_HOSTS` | Comma-separated extra hostnames the proxy reaches the console by (bare names, no port); overrides `remoteControl.allowedHosts` (array or comma list). They pass the Host check; as a browser Origin they pass only on the scheme's default port (the exact `HUMMIN_REMOTE_PUBLIC_URL` origin may carry a port). The bearer token still gates every request |
+| `HUMMIN_REMOTE_CONSOLE_DIST` | Directory holding the built console (`dist/` with an `index.html`) to serve at `/`. When unset, the server looks in the workspace `packages/remote-console/dist`, then the copy shipped in the package at `extensions/lib/remote-console/dist`, then `<agentDir>/remote-console/dist`; with no build anywhere it serves a built-in fallback page |
+
+#### HTTPS on your tailnet with Tailscale Serve
+
+The console server stays on loopback; Tailscale terminates TLS with a valid certificate and only devices on your tailnet can reach it (Serve, not Funnel). HTTPS also lets the phone use system notifications and install the console to the home screen.
+
+1. Pick a fixed port: `HUMMIN_REMOTE_PORT=7777` (or `remoteControl.port`).
+2. Publish it on the tailnet: `tailscale serve --bg --https=443 http://127.0.0.1:7777`.
+3. Tell hummin its public origin: `HUMMIN_REMOTE_PUBLIC_URL=https://<machine>.<tailnet>.ts.net` (the name `tailscale serve status` prints).
+4. Run `/remote-control` and open the printed `https://` URL on the phone.
+
+The token still rotates on every start, so after restarting hummin, run `/remote-control` again and reopen its URL. A custom domain works the same way behind any TLS proxy (for example Caddy): set the domain as `HUMMIN_REMOTE_PUBLIC_URL`.
 
 ### Extensions
 

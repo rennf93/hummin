@@ -8,9 +8,13 @@ hummin's browser remote console: a Vite + React 18 + Tailwind 4 workspace packag
 - `npm run build` - production build to `dist/` with a relative base
 - `npm run test` - vitest with the happy-dom environment
 
-`dist/` is built, committed, and served by the coding-agent extension's console server at `/`. The server resolves the build through three paths, first containing an `index.html` wins: the `HUMMIN_REMOTE_CONSOLE_DIST` env override, the workspace build at `packages/remote-console/dist` (source runs), and the seeded copy at `<agentDir>/remote-console/dist` (installed binaries). The seed step itself, copying a fresh `dist/` into the agent dir when release engineering packages the binary, is documented here and deliberately not implemented yet; until it runs, installed binaries serve the built-in fallback page. The relative base keeps the bundle loadable from any host path.
+`dist/` is built, committed, and served by the coding-agent extension's console server at `/`. The server resolves the build through four paths, first containing an `index.html` wins: the `HUMMIN_REMOTE_CONSOLE_DIST` env override, the workspace build at `packages/remote-console/dist` (source runs), the copy the coding-agent package ships at `extensions/lib/remote-console/dist` (its `copy-assets` step copies this `dist/` there, so npm installs serve the real console), and `<agentDir>/remote-console/dist`. The relative base keeps the bundle loadable from any host path.
 
-The console server's Content-Security-Policy includes `font-src 'self'` and serves `.woff` files; the bundled Geist fonts depend on both.
+The console server's Content-Security-Policy includes `font-src 'self'` and `manifest-src 'self'` and serves `.woff` and `.webmanifest` files; the bundled Geist fonts and the install manifest depend on them. `public/` (manifest and icons) is copied to the root of `dist/` by vite.
+
+## HTTPS, custom domains and the phone
+
+The server binds loopback by default. To reach it from a phone over HTTPS, put a TLS proxy in front and tell hummin its public origin with `HUMMIN_REMOTE_PUBLIC_URL`; the recommended proxy is Tailscale Serve (recipe in the coding-agent's `docs/environment-variables.md`, Remote console section). HTTPS is what lets the phone install the console to its home screen and receive approval notifications; over plain http both are unavailable.
 
 ## Reconnecting after a restart
 
@@ -34,19 +38,23 @@ The panel (`src/components/AppearancePanel.tsx`) is a slide-over overlay (bottom
 
 ## Shell
 
-- Host rail: one row per host with a status dot and state word (never color alone), a sliding active-row indicator, session name, and model; the no-hosts state is an onboarding card with the add form inline. The add-host form sits behind the plus button. Under 900px the rail collapses to a horizontal chip strip.
+- Host rail: one row per host led by the session name (the host label when the session has none) and its status dot, then the host label with the short copyable session id, then the model. The state word appears only when the host is not connected (connecting, reconnecting, unreachable, unauthorized, offline, stale); "connected" is screen-reader text only. A sliding active-row indicator follows the selection. Removing a host asks for confirmation inline. The no-hosts state is an onboarding card with the add form inline; the add-host form sits behind the plus button. Under 900px the rail collapses to a compact horizontal chip strip (dot and session name).
 - Host registration: host origins must be absolute http or https URLs and are stored as `url.origin`. A URL fragment is adopted as the token only when it looks like one (32 or more URL-safe characters).
-- Header: session name, run status (connection state while the stream is down), model, thinking level, context meter, the preset quick-switch, and the appearance button. Header items drop out by container width rather than viewport breakpoints (see Narrow widths). Header metrics carry screen-reader text.
+- Header: session name with its short copyable session id, run status (connection state while the stream is down), model, thinking level, context meter, the preset quick-switch, and the appearance button. Header items drop out by container width rather than viewport breakpoints (see Narrow widths); the run status switches to a short label at narrow widths and never truncates. Header metrics carry screen-reader text.
+- Attention: the tab title is `<session name> - hummin`, prefixed with `(N) Approval - ` while approvals wait; the favicon carries a dot while an approval waits or a run is working. The appearance panel offers an opt-in system notification for new approvals while the tab is hidden (HTTPS or localhost only; stored in localStorage key `rc.notify`).
+- Install: a web app manifest and icons let a phone add the console to its home screen; `theme-color` follows the active preset.
 - Transcript: centered reading column. User messages are bubbles, assistant text is plain prose, and system or custom entries are one-line notices. Each completed assistant message ends with a footer line: output tokens, duration, and tokens per second when both are known. Tool calls are one-line rows that expand; a tool result with a matching tool call is shown inside that row rather than as its own row. Streamed text is paced for a steady flow, and the view pins to the bottom on load and while following, with jump-to-latest when it is not.
 - Transcript window: on connect the snapshot carries the last 200 message and custom-message entries. The transcript fades out under the composer with a mask instead of an opaque gradient.
-- Composer: pinned bottom surface with a focus-within ring; the textarea autosizes. Enter sends, Shift+Enter inserts a newline, and Cmd/Ctrl+Enter also sends. The stop (abort) button is shown only while connected and not known to be idle. The composer is disabled unless the active host is connected, and the reason is shown as its placeholder. Drafts and the delivery mode are kept per host. Queue list, delivery mode, and send remain in the composer.
-- Approvals: a new approval is announced through an assertive live region. The countdown uses the host clock offset. Long arguments expand with "Show all".
+- Composer: pinned bottom surface with a focus-within ring; the textarea autosizes. Enter sends, Shift+Enter inserts a newline, and Cmd/Ctrl+Enter also sends. The Stop button (danger, labelled "Stop" when the composer is at least 520 px wide, icon-only below) is shown only while connected and not known to be idle. On phones the composer stays above the on-screen keyboard (`--rc-keyboard-inset` from `visualViewport`) and clears the safe area. The composer is disabled unless the active host is connected, and the reason is shown as its placeholder. Drafts and the delivery mode are kept per host. Queue list, delivery mode, and send remain in the composer.
+- Approvals: a new approval is announced through an assertive live region. The card reads "`<tool>` wants to run" under the approval chip, the countdown uses the host clock offset, and long arguments expand with "Show all". The card floats above the composer (it never resizes the composer area) and the transcript keeps room for it at its end; a resolved or expired card plays a short exit. On phones and touch screens Deny and Approve span the card width at touch size.
 - Styles: the shell stylesheet is split per surface under `src/styles/` (layout, rail, header, pill, approval, composer, appearance, responsive). `src/shell.css` imports them in that order, and `responsive.css` must stay last.
 - Shared primitives live in `src/ui/` (Icon, Button, IconButton, Disclosure, StatusDot, Shimmer, `usePresence`, `useSmoothText`, and the motion helpers). See `DESIGN.md` for the API.
 
 ## Accessibility
 
-- The transcript is a `role="log"` region and the streaming row is `aria-busy`.
+- The transcript is a `role="log"` region and the streaming row is `aria-busy`. Tabbing into it from above lands on the newest focusable row.
+- On touch screens every control has a hit area of at least 44 px (`--rc-control-touch`); hover styles apply only to pointers that can hover.
+- Posting controls (send, stop, approve, deny) show a busy state and keep focus while their request is in flight.
 - Links are underlined at rest.
 - Form controls and checkboxes use `--rc-control-edge`, at least 3:1 against their surroundings.
 - Faint text is at least 4.5:1 in every preset.
@@ -67,10 +75,8 @@ The panel (`src/components/AppearancePanel.tsx`) is a slide-over overlay (bottom
 
 ## Known limits
 
-- Tabbing into the transcript focuses its first focusable row, which is at the top of the list.
-- The paper accent fails contrast for yellow-green hues; the hue is user-chosen.
-- The segmented thumb still transitions `width` (a documented exception in `DESIGN.md`).
 - The workspace branch refreshes only when the agent settles.
+- In browsers without CSS trigonometric functions, the paper accent keeps a fixed 33% lightness, which falls below 4.5:1 for yellow-to-cyan hues; current Chrome, Safari and Firefox apply the hue-dependent clamp.
 
 ## Demo mode
 

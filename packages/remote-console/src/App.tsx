@@ -15,6 +15,13 @@
 /// <reference types="vite/client" />
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { useAttention } from "./attention.ts";
+import { AppearancePanel } from "./components/AppearancePanel.tsx";
+import { ApprovalCard } from "./components/ApprovalCard.tsx";
+import { Composer } from "./components/Composer.tsx";
+import { DepthScene } from "./components/DepthScene.tsx";
+import { Header } from "./components/Header.tsx";
+import { type AddHostInput, HostRail } from "./components/HostRail.tsx";
 import {
 	type ActionResult,
 	type ConnectionState,
@@ -26,12 +33,6 @@ import {
 	postPrompt,
 } from "./connection.ts";
 import { DEMO_HOSTS, type DemoSession, demoFixtureName, startDemo } from "./demo.ts";
-import { ApprovalCard } from "./components/ApprovalCard.tsx";
-import { AppearancePanel } from "./components/AppearancePanel.tsx";
-import { Composer } from "./components/Composer.tsx";
-import { DepthScene } from "./components/DepthScene.tsx";
-import { Header } from "./components/Header.tsx";
-import { HostRail, type AddHostInput } from "./components/HostRail.tsx";
 import type { Appearance, HostEntry } from "./hosts.ts";
 import {
 	addHost,
@@ -56,7 +57,10 @@ interface ConnectionSpec {
 
 function specsEqual(a: readonly ConnectionSpec[], b: readonly ConnectionSpec[]): boolean {
 	if (a.length !== b.length) return false;
-	return a.every((spec, index) => spec.hostId === b[index]?.hostId && spec.origin === b[index]?.origin && spec.token === b[index]?.token);
+	return a.every(
+		(spec, index) =>
+			spec.hostId === b[index]?.hostId && spec.origin === b[index]?.origin && spec.token === b[index]?.token,
+	);
 }
 
 /** Demo sessions never fail: their actions resolve as accepted. */
@@ -87,6 +91,8 @@ const DEMO_FIXTURE = import.meta.env.DEV ? demoFixtureName(window.location.searc
 
 export function App() {
 	const demoRef = useRef<DemoSession | null>(null);
+	const transcriptRef = useRef<HTMLElement>(null);
+	const approvalLayerRef = useRef<HTMLDivElement>(null);
 	const [hosts, setHosts] = useState<readonly HostEntry[]>(() => {
 		if (DEMO_FIXTURE !== null) return DEMO_HOSTS;
 		// One-click enrollment: a /remote-control URL carries the current bearer
@@ -111,11 +117,13 @@ export function App() {
 	// Registry changes fold into the store's identity slices.
 	useEffect(() => {
 		for (const host of hosts) dispatch({ type: "ensure", hostId: host.id, label: host.label, origin: host.origin });
-	}, [hosts, dispatch]);
+	}, [hosts]);
 
 	// Selection follows the registry: the first host unless the user picked one.
 	useEffect(() => {
-		setActiveId((current) => (current !== null && hosts.some((host) => host.id === current) ? current : (hosts[0]?.id ?? null)));
+		setActiveId((current) =>
+			current !== null && hosts.some((host) => host.id === current) ? current : (hosts[0]?.id ?? null),
+		);
 	}, [hosts]);
 
 	// Connection specs track identity only: label edits must not reconnect.
@@ -157,13 +165,26 @@ export function App() {
 		return () => {
 			for (const connection of connections) connection.close();
 		};
-	}, [specs, dispatch]);
+	}, [specs]);
 
 	// Appearance applies to the document root and persists per browser install.
 	useEffect(() => {
 		applyAppearance(document.documentElement, appearance);
 		saveAppearance(appearance);
 	}, [appearance]);
+
+	// The approval layer floats over the transcript bottom; its height reserves matching end space
+	// in the transcript (--rc-approval-space), so the card never resizes the dock.
+	useEffect(() => {
+		const layer = approvalLayerRef.current;
+		const region = transcriptRef.current;
+		if (layer === null || region === null || typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(() =>
+			region.style.setProperty("--rc-approval-space", `${layer.getBoundingClientRect().height}px`),
+		);
+		observer.observe(layer);
+		return () => observer.disconnect();
+	}, []);
 
 	const activeState = activeId !== null ? store[activeId] : undefined;
 	const activeHost = hosts.find((host) => host.id === activeId);
@@ -172,57 +193,64 @@ export function App() {
 	// Status null while connected counts as possibly running, so stop stays reachable after connect.
 	const canStop = connected && activeState?.status?.kind !== "idle";
 	const working = connected && activeState?.status?.kind === "working";
+	useAttention({
+		sessionName: activeState?.sessionName ?? null,
+		hostLabel: activeHost?.label ?? null,
+		holds: activeState?.holds ?? [],
+		working,
+		ready: activeState?.status != null,
+		scope: `${activeId}/${activeState?.sessionId}`,
+	});
 
 	// flushSync: the view transition snapshots the new DOM as soon as the callback returns.
-	const selectHost = useCallback((hostId: string) => withViewTransition(() => flushSync(() => setActiveId(hostId))), [setActiveId]);
-
-	const handleAdd = useCallback(
-		(input: AddHostInput) => {
-			const entry = addHost(input);
-			setHosts(listHosts());
-			if (entry.origin === window.location.origin) return;
-			// Fleet enrollment: the host must allow this console page's origin in
-			// its CORS registry or every cross-origin request fails CSP. Best
-			// effort: failure is a rail hint, never a broken add.
-			void postConsoleOrigin({ origin: entry.origin, token: entry.token, consoleOrigin: window.location.origin }).then(
-				(result) => {
-					if (result.ok) return;
-					setOriginWarnings((current) => ({
-						...current,
-						[entry.id]: result.status === 0 ? "network error" : `status ${result.status}`,
-					}));
-				},
-			);
-		},
-		[setHosts],
+	const selectHost = useCallback(
+		(hostId: string) => withViewTransition(() => flushSync(() => setActiveId(hostId))),
+		[],
 	);
 
-	const handleRemove = useCallback(
-		(hostId: string) => {
-			removeHost(hostId);
-			setOriginWarnings((current) => {
-				if (!(hostId in current)) return current;
-				const next = { ...current };
-				delete next[hostId];
-				return next;
-			});
-			dispatch({ type: "forget", hostId });
-			setHosts(listHosts());
-		},
-		[setHosts, dispatch],
-	);
+	const handleAdd = useCallback((input: AddHostInput) => {
+		const entry = addHost(input);
+		setHosts(listHosts());
+		if (entry.origin === window.location.origin) return;
+		// Fleet enrollment: the host must allow this console page's origin in
+		// its CORS registry or every cross-origin request fails CSP. Best
+		// effort: failure is a rail hint, never a broken add.
+		void postConsoleOrigin({
+			origin: entry.origin,
+			token: entry.token,
+			consoleOrigin: window.location.origin,
+		}).then((result) => {
+			if (result.ok) return;
+			setOriginWarnings((current) => ({
+				...current,
+				[entry.id]: result.status === 0 ? "network error" : `status ${result.status}`,
+			}));
+		});
+	}, []);
+
+	const handleRemove = useCallback((hostId: string) => {
+		removeHost(hostId);
+		setOriginWarnings((current) => {
+			if (!(hostId in current)) return current;
+			const next = { ...current };
+			delete next[hostId];
+			return next;
+		});
+		dispatch({ type: "forget", hostId });
+		setHosts(listHosts());
+	}, []);
 
 	const handlePreset = useCallback((preset: Appearance["preset"]) => {
 		setAppearance((current) => ({ ...current, preset }));
-	}, [setAppearance]);
+	}, []);
 
 	// Panel edits apply through the same appearance effect as the quick-switch.
 	const handleAppearance = useCallback((patch: Partial<Appearance>) => {
 		setAppearance((current) => ({ ...current, ...patch }));
-	}, [setAppearance]);
+	}, []);
 
-	const openAppearance = useCallback(() => setPanelOpen(true), [setPanelOpen]);
-	const closeAppearance = useCallback(() => setPanelOpen(false), [setPanelOpen]);
+	const openAppearance = useCallback(() => setPanelOpen(true), []);
+	const closeAppearance = useCallback(() => setPanelOpen(false), []);
 
 	const sendPrompt = useCallback(
 		async (text: string, deliverAs: "steer" | "followUp"): Promise<ActionResult> => {
@@ -231,7 +259,13 @@ export function App() {
 				demoRef.current.prompt(text, deliverAs);
 				return DEMO_OK;
 			}
-			return postPrompt({ origin: activeHost.origin, token: activeHost.token, id: crypto.randomUUID(), text, deliverAs });
+			return postPrompt({
+				origin: activeHost.origin,
+				token: activeHost.token,
+				id: crypto.randomUUID(),
+				text,
+				deliverAs,
+			});
 		},
 		[activeHost],
 	);
@@ -273,14 +307,36 @@ export function App() {
 			</nav>
 			<div className="rc-main">
 				<header className="rc-header" data-rc-region="header">
-					<Header state={activeState} preset={appearance.preset} onPreset={handlePreset} onOpenAppearance={openAppearance} appearanceOpen={panelOpen} />
+					<Header
+						state={activeState}
+						preset={appearance.preset}
+						onPreset={handlePreset}
+						onOpenAppearance={openAppearance}
+						appearanceOpen={panelOpen}
+					/>
 				</header>
-				<main className="rc-transcript" data-rc-region="transcript">
-					<TranscriptList key={activeId ?? "none"} entries={activeState?.entries ?? []} slot={activeState?.slot ?? null} toolUpdates={activeState?.toolUpdates} working={working} connection={activeState?.connection} snapshotReceived={activeState?.status != null} />
+				<main ref={transcriptRef} className="rc-transcript" data-rc-region="transcript">
+					<TranscriptList
+						key={activeId ?? "none"}
+						entries={activeState?.entries ?? []}
+						slot={activeState?.slot ?? null}
+						toolUpdates={activeState?.toolUpdates}
+						working={working}
+						connection={activeState?.connection}
+						snapshotReceived={activeState?.status != null}
+					/>
+					<div ref={approvalLayerRef} className="rc-approval-layer">
+						<div className="rc-approval-column">
+							<ApprovalCard
+								holds={activeState?.holds ?? []}
+								clockOffsetMs={activeState?.clockOffsetMs ?? 0}
+								onResolve={resolveApproval}
+							/>
+						</div>
+					</div>
 				</main>
 				<div className="rc-composer-dock">
 					<footer className="rc-composer" data-rc-region="composer">
-						<ApprovalCard holds={activeState?.holds ?? []} clockOffsetMs={activeState?.clockOffsetMs ?? 0} onResolve={resolveApproval} />
 						<Composer
 							hostId={activeId ?? "none"}
 							queue={activeState?.queue ?? null}
@@ -293,7 +349,12 @@ export function App() {
 					</footer>
 				</div>
 			</div>
-			<AppearancePanel open={panelOpen} appearance={appearance} onChange={handleAppearance} onClose={closeAppearance} />
+			<AppearancePanel
+				open={panelOpen}
+				appearance={appearance}
+				onChange={handleAppearance}
+				onClose={closeAppearance}
+			/>
 		</div>
 	);
 }

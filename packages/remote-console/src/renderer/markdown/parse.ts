@@ -391,7 +391,8 @@ const INLINE_SOURCE = [
 	"(<(?:https?|mailto):[^\\s<>]+>)",
 	"(\\bhttps?://[^\\s<>\"'`]+)",
 	"(\\bwww\\.[^\\s<>\"'`]+)",
-	"([\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+)",
+	// Domain must end in an alphabetic TLD, so package specs like name@1.7.0 stay text.
+	"([\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)*\\.[A-Za-z]{2,}(?![\\w-]))",
 ].join("|");
 
 /** Parses prose into inline spans. The regex is per-call because nested emphasis recurses

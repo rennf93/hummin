@@ -2,8 +2,8 @@
 // gets just the live states of its own call ids, referentially stable otherwise.
 import { describe, expect, it, vi } from "vitest";
 import type { WireTranscriptEntry } from "../../harness/replay-log.ts";
-import type { ToolLiveState } from "../tool/tool-view.ts";
 import { mount } from "../test/mount.tsx";
+import type { ToolLiveState } from "../tool/tool-view.ts";
 import { TranscriptList } from "./TranscriptList.tsx";
 
 const renders = vi.hoisted(() => new Map<string, number>());
@@ -31,13 +31,33 @@ describe("tool update rendering", () => {
 		const entries = [toolEntry("a"), toolEntry("b")];
 		const runningA: ToolLiveState = { phase: "start" };
 		const runningB: ToolLiveState = { phase: "start" };
-		const mounted = await mount(<TranscriptList entries={entries} toolUpdates={new Map([["a", runningA], ["b", runningB]])} />);
+		const mounted = await mount(
+			<TranscriptList
+				entries={entries}
+				toolUpdates={
+					new Map([
+						["a", runningA],
+						["b", runningB],
+					])
+				}
+			/>,
+		);
 		try {
 			const before = { a: renders.get("a") ?? 0, b: renders.get("b") ?? 0 };
 			expect(before.a).toBeGreaterThan(0);
 			// a new map, as the store makes on every tool_update; only "a" gets a new state object
 			const updatedA: ToolLiveState = { phase: "update", partialResult: "out" };
-			await mounted.render(<TranscriptList entries={entries} toolUpdates={new Map([["a", updatedA], ["b", runningB]])} />);
+			await mounted.render(
+				<TranscriptList
+					entries={entries}
+					toolUpdates={
+						new Map([
+							["a", updatedA],
+							["b", runningB],
+						])
+					}
+				/>,
+			);
 			expect(renders.get("a")).toBeGreaterThan(before.a);
 			expect(renders.get("b")).toBe(before.b);
 			expect(mounted.container.querySelectorAll("[data-rc-tool-state='running']").length).toBe(2);

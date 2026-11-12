@@ -52,8 +52,18 @@
 		transform var(--rc-duration-press) var(--rc-ease-out);
 }
 
-.rc-pill-btn:hover {
-	color: var(--rc-fg);
+@media (pointer: coarse) {
+	.rc-pill-btn::before {
+		content: "";
+		position: absolute;
+		inset: min(0px, calc((100% - var(--rc-control-touch)) / 2));
+	}
+}
+
+@media (hover: hover) {
+	.rc-pill-btn:hover {
+		color: var(--rc-fg);
+	}
 }
 
 .rc-pill-btn:active {

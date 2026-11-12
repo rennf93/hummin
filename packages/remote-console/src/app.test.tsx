@@ -14,24 +14,24 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { act, type ReactElement } from "react";
-import { beforeEach, afterEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { App } from "./App.tsx";
-import {
-	connectSse,
-	consumeStream,
-	parseProtocolEvent,
-	postApproval,
-	postConsoleOrigin,
-	SseFrameParser,
-	type ConnectionState,
-	type SseConnection,
-	type SseFrame,
-} from "./connection.ts";
 import { ApprovalCard, countdownSeconds } from "./components/ApprovalCard.tsx";
 import { Composer } from "./components/Composer.tsx";
 import { HostRail, railStatus } from "./components/HostRail.tsx";
 import { RollingNumber } from "./components/RollingNumber.tsx";
 import { SlidingPill } from "./components/SlidingPill.tsx";
+import {
+	type ConnectionState,
+	connectSse,
+	consumeStream,
+	parseProtocolEvent,
+	postApproval,
+	postConsoleOrigin,
+	type SseConnection,
+	type SseFrame,
+	SseFrameParser,
+} from "./connection.ts";
 import type {
 	AnyRemoteEvent,
 	RemoteEventPayloadMap,
@@ -42,6 +42,7 @@ import type {
 	WireTranscriptEntry,
 } from "./harness/replay-log.ts";
 import {
+	type Appearance,
 	addHost,
 	adoptLocalHost,
 	applyAppearance,
@@ -53,11 +54,10 @@ import {
 	removeHost,
 	saveAppearance,
 	updateHost,
-	type Appearance,
 } from "./hosts.ts";
-import { mount, type Mounted } from "./renderer/test/mount.tsx";
+import { type Mounted, mount } from "./renderer/test/mount.tsx";
 import { TranscriptList } from "./renderer/transcript/TranscriptList.tsx";
-import { initialHostState, reduceHosts, type HostStore } from "./store.ts";
+import { type HostStore, initialHostState, reduceHosts } from "./store.ts";
 
 const HARNESS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "harness");
 const FIXTURES_DIR = join(HARNESS_DIR, "fixtures");
@@ -156,7 +156,8 @@ async function flush(): Promise<void> {
 }
 
 function setNativeValue(element: HTMLTextAreaElement | HTMLInputElement, value: string): void {
-	const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+	const prototype =
+		element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
 	const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
 	setter?.call(element, value);
 	element.dispatchEvent(new Event("input", { bubbles: true }));
@@ -187,7 +188,7 @@ describe("connection: SSE frame parser", () => {
 	it("buffers a frame split across chunks", () => {
 		const parser = new SseFrameParser();
 		expect(parser.push("id: 4\nevent: mess")).toEqual([]);
-		expect(parser.push("age_delta\ndata: {\"x\":")).toEqual([]);
+		expect(parser.push('age_delta\ndata: {"x":')).toEqual([]);
 		expect(parser.push("true}\n")).toEqual([]);
 		expect(parser.push("\n")).toEqual([{ id: "4", event: "message_delta", data: '{"x":true}' }]);
 	});
@@ -219,7 +220,9 @@ describe("connection: SSE frame parser", () => {
 	});
 
 	it("consumes a real fixture split into 7-byte chunks end to end", async () => {
-		const fixture = JSON.parse(readFileSync(join(FIXTURES_DIR, "hummin-mid.events.json"), "utf8")) as AnyRemoteEvent[];
+		const fixture = JSON.parse(
+			readFileSync(join(FIXTURES_DIR, "hummin-mid.events.json"), "utf8"),
+		) as AnyRemoteEvent[];
 		const bytes = new TextEncoder().encode(sseText(fixture));
 		const chunks: Uint8Array[] = [];
 		for (let offset = 0; offset < bytes.length; offset += 7) chunks.push(bytes.subarray(offset, offset + 7));
@@ -235,11 +238,19 @@ describe("connection: SSE frame parser", () => {
 	it("drops malformed protocol payloads at the trust boundary", () => {
 		expect(parseProtocolEvent({ data: "not json" })).toBeNull();
 		expect(parseProtocolEvent({ data: "[]" })).toBeNull();
-		expect(parseProtocolEvent({ data: JSON.stringify({ v: 2, seq: 0, ts: TS, type: "ping", payload: {} }) })).toBeNull();
-		expect(parseProtocolEvent({ data: JSON.stringify({ v: 1, seq: 0.5, ts: TS, type: "ping", payload: {} }) })).toBeNull();
-		expect(parseProtocolEvent({ data: JSON.stringify({ v: 1, seq: 0, ts: TS, type: "other", payload: {} }) })).toBeNull();
+		expect(
+			parseProtocolEvent({ data: JSON.stringify({ v: 2, seq: 0, ts: TS, type: "ping", payload: {} }) }),
+		).toBeNull();
+		expect(
+			parseProtocolEvent({ data: JSON.stringify({ v: 1, seq: 0.5, ts: TS, type: "ping", payload: {} }) }),
+		).toBeNull();
+		expect(
+			parseProtocolEvent({ data: JSON.stringify({ v: 1, seq: 0, ts: TS, type: "other", payload: {} }) }),
+		).toBeNull();
 		expect(parseProtocolEvent({ data: JSON.stringify({ v: 1, seq: 0, ts: TS, type: "ping" }) })).toBeNull();
-		expect(parseProtocolEvent({ data: JSON.stringify({ v: 1, seq: 7, ts: TS, type: "ping", payload: {} }) })).not.toBeNull();
+		expect(
+			parseProtocolEvent({ data: JSON.stringify({ v: 1, seq: 7, ts: TS, type: "ping", payload: {} }) }),
+		).not.toBeNull();
 	});
 });
 
@@ -248,7 +259,10 @@ describe("connection: reconnect state machine", () => {
 		vi.useRealTimers();
 	});
 
-	function open(options: Partial<Parameters<typeof connectSse>[0]>): { connection: SseConnection; states: ConnectionState[] } {
+	function open(options: Partial<Parameters<typeof connectSse>[0]>): {
+		connection: SseConnection;
+		states: ConnectionState[];
+	} {
 		const states: ConnectionState[] = [];
 		const connection = connectSse({
 			origin: "http://127.0.0.1:9",
@@ -266,9 +280,18 @@ describe("connection: reconnect state machine", () => {
 		const records: RecordedFetch[] = [];
 		const fetchImpl = (url: string | URL, init?: RequestInit): Promise<Response> => {
 			records.push({ url: url.toString(), init });
-			return Promise.resolve(fakeResponse({ ok: true, status: 200, body: liveStreamOf([new TextEncoder().encode("id: 3\ndata: {}\n\n")]) }));
+			return Promise.resolve(
+				fakeResponse({
+					ok: true,
+					status: 200,
+					body: liveStreamOf([new TextEncoder().encode("id: 3\ndata: {}\n\n")]),
+				}),
+			);
 		};
-		const { connection, states } = open({ fetchImpl: fetchImpl as unknown as typeof fetch, onFrame: (frame) => frames.push(frame) });
+		const { connection, states } = open({
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+			onFrame: (frame) => frames.push(frame),
+		});
 		expect(states[0]).toBe("connecting");
 		await vi.advanceTimersByTimeAsync(0);
 		expect(states).toEqual(["connecting", "connected"]);
@@ -354,7 +377,13 @@ describe("connection: reconnect state machine", () => {
 	it("posts actions with the bearer header and reports non-ok results", async () => {
 		const posts: RecordedFetch[] = [];
 		const fetchImpl = consoleFetch([], posts);
-		const result = await postApproval({ origin: "http://127.0.0.1:9/", token: "secret", id: "a1", allow: true, fetchImpl });
+		const result = await postApproval({
+			origin: "http://127.0.0.1:9/",
+			token: "secret",
+			id: "a1",
+			allow: true,
+			fetchImpl,
+		});
 		expect(result).toEqual({ ok: true, status: 202 });
 		const posted = postBodies(posts)[0];
 		expect(posted?.url).toBe("http://127.0.0.1:9/approval");
@@ -365,11 +394,19 @@ describe("connection: reconnect state machine", () => {
 	it("registers a console origin on a host with a fresh id", async () => {
 		const posts: RecordedFetch[] = [];
 		const fetchImpl = consoleFetch([], posts);
-		const result = await postConsoleOrigin({ origin: "http://127.0.0.1:9", token: "host-token", consoleOrigin: "https://console.example:5173", fetchImpl });
+		const result = await postConsoleOrigin({
+			origin: "http://127.0.0.1:9",
+			token: "host-token",
+			consoleOrigin: "https://console.example:5173",
+			fetchImpl,
+		});
 		expect(result).toEqual({ ok: true, status: 202 });
 		const posted = postBodies(posts)[0];
 		expect(posted?.url).toBe("http://127.0.0.1:9/settings/console-origins");
-		expect(posted?.body).toEqual({ id: expect.stringMatching(/^[0-9a-f-]{36}$/), origin: "https://console.example:5173" });
+		expect(posted?.body).toEqual({
+			id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+			origin: "https://console.example:5173",
+		});
 		expect(posted?.headers).toMatchObject({ authorization: "Bearer host-token" });
 	});
 });
@@ -380,7 +417,12 @@ describe("store: per-host reducer", () => {
 		protocolVersion: 1,
 		sessionId: "s1",
 		sessionName: "session one",
-		status: { kind: "idle", model: { provider: "acme", modelId: "big-1" }, thinkingLevel: "high", contextUsage: { tokens: 100, contextWindow: 200, percent: 50 } },
+		status: {
+			kind: "idle",
+			model: { provider: "acme", modelId: "big-1" },
+			thinkingLevel: "high",
+			contextUsage: { tokens: 100, contextWindow: 200, percent: 50 },
+		},
 		messages: [{ entryId: "e0", message: { role: "user", blocks: [{ type: "text", text: "hello doc" }] } }],
 		holds: [],
 		queue: { items: [{ id: "q1", preview: "queued text", deliverAs: "steer" }], terminalQueued: 2 },
@@ -395,7 +437,11 @@ describe("store: per-host reducer", () => {
 	}
 
 	it("keeps the last tok/s across a null status and clears it on a new session", () => {
-		const withRate = (rate: number | null): WireStatus => ({ kind: "idle", model: null, stats: { tokensPerSecond: rate } });
+		const withRate = (rate: number | null): WireStatus => ({
+			kind: "idle",
+			model: null,
+			stats: { tokensPerSecond: rate },
+		});
 		let store = dispatch(ensured(), makeEvent("snapshot", 1, SNAPSHOT));
 		store = dispatch(store, makeEvent("status", 2, { status: withRate(42.5) }));
 		expect(store.h1?.lastTokensPerSecond).toBe(42.5);
@@ -418,9 +464,17 @@ describe("store: per-host reducer", () => {
 	});
 
 	it("ensure refreshes the identity and unknown-host events are dropped", () => {
-		const renamed = reduceHosts(ensured(), { type: "ensure", hostId: "h1", label: "renamed", origin: "http://127.0.0.1:9" });
+		const renamed = reduceHosts(ensured(), {
+			type: "ensure",
+			hostId: "h1",
+			label: "renamed",
+			origin: "http://127.0.0.1:9",
+		});
 		expect(renamed.h1?.label).toBe("renamed");
-		const dropped = reduceHosts({}, { type: "event", hostId: "ghost", event: makeEvent("ping", 0, {}), receivedAt: 1 });
+		const dropped = reduceHosts(
+			{},
+			{ type: "event", hostId: "ghost", event: makeEvent("ping", 0, {}), receivedAt: 1 },
+		);
 		expect(dropped.ghost).toBeUndefined();
 	});
 
@@ -440,14 +494,36 @@ describe("store: per-host reducer", () => {
 	});
 
 	it("message_start, deltas, and message_end fold the slot into an entry", () => {
-		let store = dispatch(ensured(), makeEvent("message_start", 1, { slotKey: "k1", message: { role: "assistant", blocks: [{ type: "text", text: "" }] } }));
+		let store = dispatch(
+			ensured(),
+			makeEvent("message_start", 1, {
+				slotKey: "k1",
+				message: { role: "assistant", blocks: [{ type: "text", text: "" }] },
+			}),
+		);
 		let state = store.h1;
 		expect(state?.slot?.frozen).toBe(false);
-		store = dispatch(store, makeEvent("message_delta", 2, { slotKey: "k1", event: { type: "text_delta", contentIndex: 0, delta: "hi " } }));
-		store = dispatch(store, makeEvent("message_delta", 3, { slotKey: "k1", event: { type: "text_delta", contentIndex: 0, delta: "there" } }));
+		store = dispatch(
+			store,
+			makeEvent("message_delta", 2, { slotKey: "k1", event: { type: "text_delta", contentIndex: 0, delta: "hi " } }),
+		);
+		store = dispatch(
+			store,
+			makeEvent("message_delta", 3, {
+				slotKey: "k1",
+				event: { type: "text_delta", contentIndex: 0, delta: "there" },
+			}),
+		);
 		state = store.h1;
 		expect(state?.slot?.blocks[0]).toEqual({ type: "text", text: "hi there" });
-		store = dispatch(store, makeEvent("message_end", 4, { slotKey: "k1", entryId: "e1", message: { role: "assistant", blocks: [{ type: "text", text: "hi there" }] } }));
+		store = dispatch(
+			store,
+			makeEvent("message_end", 4, {
+				slotKey: "k1",
+				entryId: "e1",
+				message: { role: "assistant", blocks: [{ type: "text", text: "hi there" }] },
+			}),
+		);
 		state = store.h1;
 		expect(state?.slot).toBeNull();
 		expect(state?.entries.map((entry) => entry.entryId)).toEqual(["e1"]);
@@ -457,7 +533,13 @@ describe("store: per-host reducer", () => {
 	});
 
 	it("a delta without a start opens an implicit slot (replay tolerance)", () => {
-		const store = dispatch(ensured(), makeEvent("message_delta", 1, { slotKey: "k2", event: { type: "text_delta", contentIndex: 0, delta: "implicit" } }));
+		const store = dispatch(
+			ensured(),
+			makeEvent("message_delta", 1, {
+				slotKey: "k2",
+				event: { type: "text_delta", contentIndex: 0, delta: "implicit" },
+			}),
+		);
 		const state = store.h1;
 		expect(state?.slot?.slotKey).toBe("k2");
 		expect(state?.slot?.role).toBe("assistant");
@@ -465,7 +547,14 @@ describe("store: per-host reducer", () => {
 	});
 
 	it("message_end without a slot still lands the entry", () => {
-		const store = dispatch(ensured(), makeEvent("message_end", 1, { slotKey: "k3", entryId: "e9", message: { role: "assistant", blocks: [{ type: "text", text: "done" }] } }));
+		const store = dispatch(
+			ensured(),
+			makeEvent("message_end", 1, {
+				slotKey: "k3",
+				entryId: "e9",
+				message: { role: "assistant", blocks: [{ type: "text", text: "done" }] },
+			}),
+		);
 		const state = store.h1;
 		expect(state?.entries).toHaveLength(1);
 		expect(state?.entries[0]?.entryId).toBe("e9");
@@ -473,9 +562,26 @@ describe("store: per-host reducer", () => {
 	});
 
 	it("a duplicate message_end is deduped by entryId", () => {
-		let store = dispatch(ensured(), makeEvent("message_start", 1, { slotKey: "k1", message: { role: "assistant", blocks: [] } }));
-		store = dispatch(store, makeEvent("message_end", 2, { slotKey: "k1", entryId: "e1", message: { role: "assistant", blocks: [{ type: "text", text: "once" }] } }));
-		store = dispatch(store, makeEvent("message_end", 3, { slotKey: "k1", entryId: "e1", message: { role: "assistant", blocks: [{ type: "text", text: "twice" }] } }));
+		let store = dispatch(
+			ensured(),
+			makeEvent("message_start", 1, { slotKey: "k1", message: { role: "assistant", blocks: [] } }),
+		);
+		store = dispatch(
+			store,
+			makeEvent("message_end", 2, {
+				slotKey: "k1",
+				entryId: "e1",
+				message: { role: "assistant", blocks: [{ type: "text", text: "once" }] },
+			}),
+		);
+		store = dispatch(
+			store,
+			makeEvent("message_end", 3, {
+				slotKey: "k1",
+				entryId: "e1",
+				message: { role: "assistant", blocks: [{ type: "text", text: "twice" }] },
+			}),
+		);
 		const state = store.h1;
 		expect(state?.entries).toHaveLength(1);
 		expect(state?.entries[0]?.message.blocks).toEqual([{ type: "text", text: "once" }]);
@@ -483,8 +589,22 @@ describe("store: per-host reducer", () => {
 	});
 
 	it("an empty entryId never dedupes: every such end appends its entry", () => {
-		let store = dispatch(ensured(), makeEvent("message_end", 1, { slotKey: "k1", entryId: "", message: { role: "assistant", blocks: [{ type: "text", text: "first" }] } }));
-		store = dispatch(store, makeEvent("message_end", 2, { slotKey: "k2", entryId: "", message: { role: "assistant", blocks: [{ type: "text", text: "second" }] } }));
+		let store = dispatch(
+			ensured(),
+			makeEvent("message_end", 1, {
+				slotKey: "k1",
+				entryId: "",
+				message: { role: "assistant", blocks: [{ type: "text", text: "first" }] },
+			}),
+		);
+		store = dispatch(
+			store,
+			makeEvent("message_end", 2, {
+				slotKey: "k2",
+				entryId: "",
+				message: { role: "assistant", blocks: [{ type: "text", text: "second" }] },
+			}),
+		);
 		const state = store.h1;
 		expect(state?.entries.map((entry) => entry.entryId)).toEqual(["", ""]);
 		expect(state?.entries[0]?.message.blocks).toEqual([{ type: "text", text: "first" }]);
@@ -494,8 +614,20 @@ describe("store: per-host reducer", () => {
 	it("tool_update patches the live map by toolCallId; unknown ids change no transcript", () => {
 		let store = dispatch(ensured(), makeEvent("snapshot", 0, SNAPSHOT));
 		store = dispatch(store, makeEvent("tool_update", 1, { toolCallId: "t1", phase: "start", toolName: "bash" }));
-		store = dispatch(store, makeEvent("tool_update", 2, { toolCallId: "t1", phase: "update", toolName: "bash", partialResult: "working" }));
-		store = dispatch(store, makeEvent("tool_update", 3, { toolCallId: "t1", phase: "end", toolName: "bash", isError: true, durationMs: 1500 }));
+		store = dispatch(
+			store,
+			makeEvent("tool_update", 2, { toolCallId: "t1", phase: "update", toolName: "bash", partialResult: "working" }),
+		);
+		store = dispatch(
+			store,
+			makeEvent("tool_update", 3, {
+				toolCallId: "t1",
+				phase: "end",
+				toolName: "bash",
+				isError: true,
+				durationMs: 1500,
+			}),
+		);
 		let state = store.h1;
 		// Each tool_update replaces the live phase for its toolCallId; the card
 		// renders the newest one.
@@ -509,7 +641,16 @@ describe("store: per-host reducer", () => {
 
 	it("status, queue, session, and holds events replace their slices", () => {
 		let store = dispatch(ensured(), makeEvent("snapshot", 0, SNAPSHOT));
-		store = dispatch(store, makeEvent("status", 1, { status: { kind: "working", model: { provider: "acme", modelId: "big-1" }, contextUsage: { tokens: null, contextWindow: 200, percent: 12 } } }));
+		store = dispatch(
+			store,
+			makeEvent("status", 1, {
+				status: {
+					kind: "working",
+					model: { provider: "acme", modelId: "big-1" },
+					contextUsage: { tokens: null, contextWindow: 200, percent: 12 },
+				},
+			}),
+		);
 		expect(store.h1?.status?.kind).toBe("working");
 		expect(store.h1?.status?.thinkingLevel).toBeUndefined();
 		store = dispatch(store, makeEvent("queue", 2, { queue: { items: [], terminalQueued: 1 } }));
@@ -517,7 +658,13 @@ describe("store: per-host reducer", () => {
 		store = dispatch(store, makeEvent("session", 3, { sessionId: "s2", sessionName: "renamed" }));
 		expect(store.h1?.sessionId).toBe("s2");
 		expect(store.h1?.sessionName).toBe("renamed");
-		const first: WireApproval = { id: "a1", toolName: "edit", argsPreview: "/tmp/x", deadlineMs: 9999, createdAt: TS };
+		const first: WireApproval = {
+			id: "a1",
+			toolName: "edit",
+			argsPreview: "/tmp/x",
+			deadlineMs: 9999,
+			createdAt: TS,
+		};
 		const second: WireApproval = { id: "a2", toolName: "bash", argsPreview: "ls", deadlineMs: 10_000, createdAt: TS };
 		store = dispatch(store, makeEvent("approval", 4, { holds: [first, second] }));
 		expect(store.h1?.holds).toEqual([first, second]);
@@ -580,17 +727,36 @@ describe("hosts: registry and appearance", () => {
 		expect(parseHosts(null)).toEqual([]);
 		expect(parseHosts("not json")).toEqual([]);
 		expect(parseHosts("{}")).toEqual([]);
-		expect(parseHosts(JSON.stringify([{ id: "x", origin: "", token: "t" }, { id: "y", origin: "http://a:1", token: "t" }]))).toHaveLength(1);
+		expect(
+			parseHosts(
+				JSON.stringify([
+					{ id: "x", origin: "", token: "t" },
+					{ id: "y", origin: "http://a:1", token: "t" },
+				]),
+			),
+		).toHaveLength(1);
 	});
 
 	it("appearance parses, persists, and applies to the document root", () => {
 		expect(parseAppearance(null)).toEqual({ preset: "studio", accentHue: 190, motion: "auto" });
 		expect(parseAppearance("garbage")).toEqual({ preset: "studio", accentHue: 190, motion: "auto" });
-		expect(parseAppearance(JSON.stringify({ preset: "terminal", accentHue: 400, density: 9 }))).toEqual({ preset: "terminal", accentHue: 190, motion: "auto" });
+		expect(parseAppearance(JSON.stringify({ preset: "terminal", accentHue: 400, density: 9 }))).toEqual({
+			preset: "terminal",
+			accentHue: 190,
+			motion: "auto",
+		});
 		// Records saved before the motion axis existed parse as "auto"; an unknown
 		// motion value falls back the same way.
-		expect(parseAppearance(JSON.stringify({ preset: "paper", accentHue: 200, density: 1.5 }))).toEqual({ preset: "paper", accentHue: 200, motion: "auto" });
-		expect(parseAppearance(JSON.stringify({ motion: "off" }))).toEqual({ preset: "studio", accentHue: 190, motion: "off" });
+		expect(parseAppearance(JSON.stringify({ preset: "paper", accentHue: 200, density: 1.5 }))).toEqual({
+			preset: "paper",
+			accentHue: 200,
+			motion: "auto",
+		});
+		expect(parseAppearance(JSON.stringify({ motion: "off" }))).toEqual({
+			preset: "studio",
+			accentHue: 190,
+			motion: "off",
+		});
 		expect(parseAppearance(JSON.stringify({ motion: "sometimes" }))).toMatchObject({ motion: "auto" });
 		// Stored presets from before studio existed keep working; unknown ones fall back to studio.
 		expect(parseAppearance(JSON.stringify({ preset: "glass" })).preset).toBe("glass");
@@ -630,14 +796,13 @@ describe("hosts: fragment adoption", () => {
 		localStorage.clear();
 	});
 
-	const fakeLocation = (origin: string, pathname = "/") =>
-		({ origin, pathname, search: "" }) as unknown as Location;
+	const fakeLocation = (origin: string, pathname = "/") => ({ origin, pathname, search: "" }) as unknown as Location;
 	const fakeHistory = () => ({ replaceState: vi.fn() }) as unknown as History;
 
 	it("enrolls the local host from a /remote-control fragment and strips the token from the URL", () => {
 		const location = fakeLocation("http://127.0.0.1:59711");
 		const history = fakeHistory();
-		const entry = adoptLocalHost("#"+TOKEN_A, location, history);
+		const entry = adoptLocalHost(`#${TOKEN_A}`, location, history);
 		expect(entry).toMatchObject({ origin: "http://127.0.0.1:59711", token: TOKEN_A });
 		// the registry stores the token (browser-side by design); the URL must not
 		expect(history.replaceState).toHaveBeenCalledWith(null, "", location.pathname + location.search);
@@ -646,8 +811,8 @@ describe("hosts: fragment adoption", () => {
 	it("rotates the token for an existing origin entry instead of duplicating it", () => {
 		const location = fakeLocation("http://127.0.0.1:59711");
 		const history = fakeHistory();
-		const first = adoptLocalHost("#"+TOKEN_A, location, history);
-		const second = adoptLocalHost("#"+TOKEN_B, location, history);
+		const first = adoptLocalHost(`#${TOKEN_A}`, location, history);
+		const second = adoptLocalHost(`#${TOKEN_B}`, location, history);
 		expect(second?.id).toBe(first?.id);
 		expect(second?.token).toBe(TOKEN_B);
 		expect(listHosts()).toHaveLength(1);
@@ -668,7 +833,7 @@ describe("hosts: fragment adoption", () => {
 		try {
 			const location = fakeLocation("http://127.0.0.1:59711");
 			const history = fakeHistory();
-			const entry = adoptLocalHost("#"+TOKEN_A, location, history);
+			const entry = adoptLocalHost(`#${TOKEN_A}`, location, history);
 			expect(entry).toMatchObject({ origin: "http://127.0.0.1:59711", token: TOKEN_A });
 			// The fragment is stripped regardless of the storage failure.
 			expect(history.replaceState).toHaveBeenCalledWith(null, "", location.pathname + location.search);
@@ -698,7 +863,13 @@ describe("components: rail status and approval countdown", () => {
 	});
 
 	it("counts down to the approval deadline without going negative", () => {
-		const approval: WireApproval = { id: "a1", toolName: "bash", argsPreview: "ls", deadlineMs: 100_000, createdAt: TS };
+		const approval: WireApproval = {
+			id: "a1",
+			toolName: "bash",
+			argsPreview: "ls",
+			deadlineMs: 100_000,
+			createdAt: TS,
+		};
 		expect(countdownSeconds(approval, 90_000)).toBe(10);
 		expect(countdownSeconds(approval, 100_001)).toBe(0);
 	});
@@ -710,10 +881,13 @@ describe("components: rail status and approval countdown", () => {
 		];
 		const resolved: Array<[string, boolean]> = [];
 		const mounted = await mount(
-			<ApprovalCard holds={holds} onResolve={(id, allow) => {
+			<ApprovalCard
+				holds={holds}
+				onResolve={(id, allow) => {
 					resolved.push([id, allow]);
 					return Promise.resolve({ ok: true, status: 202 });
-				}} />,
+				}}
+			/>,
 		);
 		try {
 			await flush();
@@ -738,7 +912,10 @@ describe("components: rail status and approval countdown", () => {
 
 	it("shows the token-rotation recovery hint on an unauthorized row", async () => {
 		const hosts = [{ id: "h1", label: "main", origin: "http://127.0.0.1:9", token: "secret" }];
-		const state = { ...initialHostState("main", "http://127.0.0.1:9"), connection: "unauthorized" as ConnectionState };
+		const state = {
+			...initialHostState("main", "http://127.0.0.1:9"),
+			connection: "unauthorized" as ConnectionState,
+		};
 		const mounted = await mount(
 			<HostRail
 				hosts={hosts}
@@ -753,7 +930,9 @@ describe("components: rail status and approval countdown", () => {
 		try {
 			await flush();
 			const hint = document.querySelector("[data-rc-auth-hint]");
-			expect(hint?.textContent).toContain("token rotated - run /remote-control and reopen its URL, or remove and re-add this host");
+			expect(hint?.textContent).toContain(
+				"token rotated - run /remote-control and reopen its URL, or remove and re-add this host",
+			);
 		} finally {
 			await mounted.unmount();
 		}
@@ -846,9 +1025,9 @@ describe("app: appearance panel", () => {
 	it("traps Tab inside the panel, skipping decorative stops", async () => {
 		const mounted = await openPanel();
 		try {
-			const stops = Array.from(document.querySelectorAll<HTMLElement>("[data-rc-appear-panel] button, [data-rc-appear-panel] input")).filter(
-				(node) => !node.hasAttribute("disabled") && node.getAttribute("tabindex") !== "-1",
-			);
+			const stops = Array.from(
+				document.querySelectorAll<HTMLElement>("[data-rc-appear-panel] button, [data-rc-appear-panel] input"),
+			).filter((node) => !node.hasAttribute("disabled") && node.getAttribute("tabindex") !== "-1");
 			expect(stops.length).toBeGreaterThan(1);
 			const last = stops[stops.length - 1];
 			await act(async () => {
@@ -883,10 +1062,16 @@ describe("app: appearance panel", () => {
 			await click(document.querySelector('[data-rc-appear-motion="off"]'));
 			expect(document.documentElement.dataset.rcMotion).toBe("off");
 			// Everything persisted in the same tick.
-			const saved = JSON.parse(localStorage.getItem("rc.appearance") ?? "{}") as { preset?: string; accentHue?: number; motion?: string };
+			const saved = JSON.parse(localStorage.getItem("rc.appearance") ?? "{}") as {
+				preset?: string;
+				accentHue?: number;
+				motion?: string;
+			};
 			expect(saved).toEqual({ preset: "paper", accentHue: 250, motion: "off" });
 			// The panel's readouts track the applied values.
-			expect(document.querySelector("[data-rc-appear-hue-value]")?.getAttribute("data-rc-appear-hue-value")).toBe("250");
+			expect(document.querySelector("[data-rc-appear-hue-value]")?.getAttribute("data-rc-appear-hue-value")).toBe(
+				"250",
+			);
 		} finally {
 			await mounted.unmount();
 		}
@@ -939,32 +1124,58 @@ describe("app: shell integration", () => {
 			protocolVersion: 1,
 			sessionId: "s1",
 			sessionName: "session one",
-			status: { kind: "working", model: { provider: "acme", modelId: "big-1" }, thinkingLevel: "high", contextUsage: { tokens: 84, contextWindow: 200, percent: 42 } },
+			status: {
+				kind: "working",
+				model: { provider: "acme", modelId: "big-1" },
+				thinkingLevel: "high",
+				contextUsage: { tokens: 84, contextWindow: 200, percent: 42 },
+			},
 			messages: [{ entryId: "e0", message: { role: "user", blocks: [{ type: "text", text: "hello doc" }] } }],
 			holds: [],
 			queue: { items: [{ id: "q1", preview: "queued text", deliverAs: "steer" }], terminalQueued: 2 },
 		};
-		const approvalEvent = makeEvent("approval", 1, { holds: [{ id: "a1", toolName: "bash", argsPreview: "rm -rf /tmp/scratch", deadlineMs: Date.now() + 120_000, createdAt: TS }] });
-		const queueEvent = makeEvent("queue", 2, { queue: { items: [{ id: "q2", preview: "later please", deliverAs: "followUp" }], terminalQueued: 0 } });
+		const approvalEvent = makeEvent("approval", 1, {
+			holds: [
+				{
+					id: "a1",
+					toolName: "bash",
+					argsPreview: "rm -rf /tmp/scratch",
+					deadlineMs: Date.now() + 120_000,
+					createdAt: TS,
+				},
+			],
+		});
+		const queueEvent = makeEvent("queue", 2, {
+			queue: { items: [{ id: "q2", preview: "later please", deliverAs: "followUp" }], terminalQueued: 0 },
+		});
 		const events: AnyRemoteEvent[] = [makeEvent("snapshot", 0, snapshot), approvalEvent, queueEvent];
 		const posts: RecordedFetch[] = [];
 		vi.stubGlobal("fetch", consoleFetch(events, posts));
 		const mounted = await mount(<App />);
 		try {
 			await flush();
-			expect(document.querySelector('[data-rc-host-row="h1"]')?.getAttribute("data-rc-host-status")).toBe("connected");
+			expect(document.querySelector('[data-rc-host-row="h1"]')?.getAttribute("data-rc-host-status")).toBe(
+				"connected",
+			);
 			expect(document.querySelector('[data-entry-id="e0"]')).not.toBeNull();
 			expect(document.querySelector("[data-rc-model]")?.textContent).toBe("acme/big-1");
 			expect(document.querySelector("[data-rc-thinking]")?.textContent).toContain("high");
 			expect(document.querySelector("[data-rc-ctx]")?.getAttribute("data-rc-ctx")).toBe("42");
 			// The queue event (seq 2) replaced the snapshot's queue slice.
-			expect(document.querySelector('[data-rc-queue-item="q2"] [data-rc-queue-deliver]')?.getAttribute("data-rc-queue-deliver")).toBe("followUp");
+			expect(
+				document
+					.querySelector('[data-rc-queue-item="q2"] [data-rc-queue-deliver]')
+					?.getAttribute("data-rc-queue-deliver"),
+			).toBe("followUp");
 			expect(document.querySelector('[data-rc-queue-item="q2"]')?.textContent).toContain("later please");
 			expect(document.querySelector("[data-rc-queue-terminal]")).toBeNull();
 
 			// Approval flow: the card appears for the pending hold and posts on click.
 			const card = document.querySelector("[data-rc-approval]");
 			expect(card?.getAttribute("data-rc-approval-tool")).toBe("bash");
+			// The card floats over the transcript and never sits in the composer dock.
+			expect(card?.closest(".rc-composer-dock")).toBeNull();
+			expect(card?.closest(".rc-transcript .rc-approval-layer")).not.toBeNull();
 			// The attention state is never color alone: the label chip names it.
 			expect(document.querySelector("[data-rc-approval-label]")?.textContent).toBe("approval");
 			// Expiry is honest: the card states the fail-open terms.
@@ -1034,7 +1245,9 @@ describe("app: shell integration", () => {
 		localStorage.clear();
 		const records: RecordedFetch[] = [];
 		vi.stubGlobal("fetch", hangingFetch(records));
-		const mounted = await mount(<ApprovalCard holds={[]} onResolve={() => Promise.resolve({ ok: true, status: 202 })} />);
+		const mounted = await mount(
+			<ApprovalCard holds={[]} onResolve={() => Promise.resolve({ ok: true, status: 202 })} />,
+		);
 		try {
 			await flush();
 			expect(document.querySelector("[data-rc-approval]")).toBeNull();
@@ -1060,7 +1273,10 @@ describe("app: shell integration", () => {
 
 			// Adding a host through the form lands the row and retires onboarding.
 			await act(async () => {
-				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-origin]") as HTMLInputElement, "http://127.0.0.1:7777");
+				setNativeValue(
+					document.querySelector<HTMLInputElement>("[data-rc-add-origin]") as HTMLInputElement,
+					"http://127.0.0.1:7777",
+				);
 				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-token]") as HTMLInputElement, "tok");
 			});
 			await click(document.querySelector("[data-rc-add-submit]"));
@@ -1091,7 +1307,9 @@ describe("app: shell integration", () => {
 		const fetchImpl = (url: string | URL, init?: RequestInit): Promise<Response> => {
 			const urlText = url.toString();
 			if (urlText.endsWith("/events")) {
-				return Promise.resolve(fakeResponse({ ok: true, status: 200, body: liveStreamOf([new TextEncoder().encode("")]) }));
+				return Promise.resolve(
+					fakeResponse({ ok: true, status: 200, body: liveStreamOf([new TextEncoder().encode("")]) }),
+				);
 			}
 			posts.push({ url: urlText, init });
 			return Promise.resolve(fakeResponse({ ok: !failRegistration, status: failRegistration ? 403 : 202 }));
@@ -1103,14 +1321,20 @@ describe("app: shell integration", () => {
 
 			// First host: cross-origin, and the registration POST fails.
 			await act(async () => {
-				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-origin]") as HTMLInputElement, "http://127.0.0.1:7777");
+				setNativeValue(
+					document.querySelector<HTMLInputElement>("[data-rc-add-origin]") as HTMLInputElement,
+					"http://127.0.0.1:7777",
+				);
 				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-token]") as HTMLInputElement, "tok");
 			});
 			await click(document.querySelector("[data-rc-add-submit]"));
 			await flush();
 			const registration = postBodies(posts).find((post) => post.url.endsWith("/settings/console-origins"));
 			expect(registration).toBeDefined();
-			expect(registration?.body).toEqual({ id: expect.stringMatching(/^[0-9a-f-]{36}$/), origin: window.location.origin });
+			expect(registration?.body).toEqual({
+				id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+				origin: window.location.origin,
+			});
 			expect(registration?.headers).toMatchObject({ authorization: "Bearer tok" });
 			const warning = document.querySelector("[data-rc-origin-warn]");
 			expect(warning?.textContent).toContain("origins not registered - cross-origin may fail");
@@ -1119,7 +1343,10 @@ describe("app: shell integration", () => {
 			// Second host: the registration succeeds, so its row stays silent.
 			failRegistration = false;
 			await act(async () => {
-				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-origin]") as HTMLInputElement, "http://127.0.0.1:8888");
+				setNativeValue(
+					document.querySelector<HTMLInputElement>("[data-rc-add-origin]") as HTMLInputElement,
+					"http://127.0.0.1:8888",
+				);
 				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-token]") as HTMLInputElement, "tok2");
 			});
 			await click(document.querySelector("[data-rc-add-submit]"));
@@ -1129,7 +1356,10 @@ describe("app: shell integration", () => {
 
 			// The page's own origin needs no registration.
 			await act(async () => {
-				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-origin]") as HTMLInputElement, window.location.origin);
+				setNativeValue(
+					document.querySelector<HTMLInputElement>("[data-rc-add-origin]") as HTMLInputElement,
+					window.location.origin,
+				);
 				setNativeValue(document.querySelector<HTMLInputElement>("[data-rc-add-token]") as HTMLInputElement, "tok3");
 			});
 			await click(document.querySelector("[data-rc-add-submit]"));
@@ -1146,7 +1376,7 @@ describe("app: shell integration", () => {
 		const records: RecordedFetch[] = [];
 		vi.stubGlobal("fetch", hangingFetch(records));
 		try {
-			window.location.hash = "#"+TOKEN_A;
+			window.location.hash = `#${TOKEN_A}`;
 			const mounted = await mount(<App />);
 			try {
 				await flush();
@@ -1174,14 +1404,18 @@ describe("components: sliding pill", () => {
 	 * stubbing the offset getters the component reads (options sit on a 64px
 	 * grid, each 60px wide). */
 	function stubPillLayout(): Array<MockInstance> {
-		const left = vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (this: HTMLElement) {
+		const left = vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (
+			this: HTMLElement,
+		) {
 			if (!this.classList.contains("rc-pill-btn") || this.parentElement === null) return 0;
 			const options = Array.from(this.parentElement.children).filter(
 				(node): node is HTMLElement => node instanceof HTMLElement && node.classList.contains("rc-pill-btn"),
 			);
 			return options.indexOf(this) * 64;
 		});
-		const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+		const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (
+			this: HTMLElement,
+		) {
 			return this.classList.contains("rc-pill-btn") ? 60 : 0;
 		});
 		return [left, width];
@@ -1242,7 +1476,15 @@ describe("components: sliding pill", () => {
 		}
 		vi.stubGlobal("ResizeObserver", StubObserver);
 		const mounted = await mount(
-			<SlidingPill options={[{ value: "a", label: "A" }, { value: "b", label: "B" }]} active="a" onChange={() => undefined} ariaLabel="pick" />,
+			<SlidingPill
+				options={[
+					{ value: "a", label: "A" },
+					{ value: "b", label: "B" },
+				]}
+				active="a"
+				onChange={() => undefined}
+				ariaLabel="pick"
+			/>,
 		);
 		try {
 			await flush();
@@ -1291,7 +1533,10 @@ describe("components: sliding pill", () => {
 			expect(followUp?.getAttribute("aria-pressed")).toBe("false");
 			// The prompt posts with the active mode.
 			await act(async () => {
-				setNativeValue(document.querySelector<HTMLTextAreaElement>("[data-rc-composer-input]") as HTMLTextAreaElement, "go");
+				setNativeValue(
+					document.querySelector<HTMLTextAreaElement>("[data-rc-composer-input]") as HTMLTextAreaElement,
+					"go",
+				);
 			});
 			await click(document.querySelector("[data-rc-send]"));
 			expect(sent).toEqual([["go", "steer"]]);
@@ -1303,10 +1548,16 @@ describe("components: sliding pill", () => {
 	it("sends on Enter, inserts a newline on Shift+Enter, and ignores Enter during IME composition", async () => {
 		const sent: Array<[string, string]> = [];
 		const mounted = await mount(
-			<Composer hostId="h1" queue={null} disabled={false} onSend={(text, deliverAs) => {
+			<Composer
+				hostId="h1"
+				queue={null}
+				disabled={false}
+				onSend={(text, deliverAs) => {
 					sent.push([text, deliverAs]);
 					return Promise.resolve({ ok: true, status: 202 });
-				}} onAbort={() => Promise.resolve({ ok: true, status: 202 })} />,
+				}}
+				onAbort={() => Promise.resolve({ ok: true, status: 202 })}
+			/>,
 		);
 		try {
 			await flush();
@@ -1346,13 +1597,40 @@ describe("components: sliding pill", () => {
 	});
 
 	it("offers the stop button only while the agent works", async () => {
-		const mounted = await mount(<Composer hostId="h1" queue={null} disabled={false} working={false} onSend={() => Promise.resolve({ ok: true, status: 202 })} onAbort={() => Promise.resolve({ ok: true, status: 202 })} />);
+		const mounted = await mount(
+			<Composer
+				hostId="h1"
+				queue={null}
+				disabled={false}
+				working={false}
+				onSend={() => Promise.resolve({ ok: true, status: 202 })}
+				onAbort={() => Promise.resolve({ ok: true, status: 202 })}
+			/>,
+		);
 		try {
 			await flush();
 			expect(document.querySelector("[data-rc-abort]")).toBeNull();
-			await mounted.render(<Composer hostId="h1" queue={null} disabled={false} working onSend={() => Promise.resolve({ ok: true, status: 202 })} onAbort={() => Promise.resolve({ ok: true, status: 202 })} />);
-			expect(document.querySelector("[data-rc-abort]")?.getAttribute("aria-label")).toBe("abort");
-			await mounted.render(<Composer hostId="h1" queue={null} disabled={false} working={false} onSend={() => Promise.resolve({ ok: true, status: 202 })} onAbort={() => Promise.resolve({ ok: true, status: 202 })} />);
+			await mounted.render(
+				<Composer
+					hostId="h1"
+					queue={null}
+					disabled={false}
+					working
+					onSend={() => Promise.resolve({ ok: true, status: 202 })}
+					onAbort={() => Promise.resolve({ ok: true, status: 202 })}
+				/>,
+			);
+			expect(document.querySelector("[data-rc-abort]")?.getAttribute("aria-label")).toBe("Stop");
+			await mounted.render(
+				<Composer
+					hostId="h1"
+					queue={null}
+					disabled={false}
+					working={false}
+					onSend={() => Promise.resolve({ ok: true, status: 202 })}
+					onAbort={() => Promise.resolve({ ok: true, status: 202 })}
+				/>,
+			);
 			expect(document.querySelector("[data-rc-abort]")).toBeNull();
 		} finally {
 			await mounted.unmount();
@@ -1417,7 +1695,13 @@ describe("connection: stalled stream watchdog", () => {
 		const states: ConnectionState[] = [];
 		const fetchImpl = (url: string | URL, init?: RequestInit): Promise<Response> => {
 			records.push({ url: url.toString(), init });
-			return Promise.resolve(fakeResponse({ ok: true, status: 200, body: liveStreamOf([new TextEncoder().encode("id: 9\ndata: {}\n\n")]) }));
+			return Promise.resolve(
+				fakeResponse({
+					ok: true,
+					status: 200,
+					body: liveStreamOf([new TextEncoder().encode("id: 9\ndata: {}\n\n")]),
+				}),
+			);
 		};
 		const connection = connectSse({
 			origin: "http://127.0.0.1:9",
@@ -1446,9 +1730,17 @@ describe("connection: stalled stream watchdog", () => {
 			},
 		});
 		const fetchMock = vi.fn(() => Promise.resolve(fakeResponse({ ok: true, status: 200, body })));
-		const connection = connectSse({ origin: "http://127.0.0.1:9", token: "secret", fetchImpl: fetchMock as unknown as typeof fetch, onFrame: () => undefined, onState: () => undefined });
+		const connection = connectSse({
+			origin: "http://127.0.0.1:9",
+			token: "secret",
+			fetchImpl: fetchMock as unknown as typeof fetch,
+			onFrame: () => undefined,
+			onState: () => undefined,
+		});
 		await vi.advanceTimersByTimeAsync(40_000);
-		(controller as ReadableStreamDefaultController<Uint8Array> | null)?.enqueue(new TextEncoder().encode(": ping\n\n"));
+		(controller as ReadableStreamDefaultController<Uint8Array> | null)?.enqueue(
+			new TextEncoder().encode(": ping\n\n"),
+		);
 		await vi.advanceTimersByTimeAsync(40_000);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		connection.close();
@@ -1467,18 +1759,32 @@ describe("store: fail-safe and correctness", () => {
 		holds: [],
 		queue: { items: [], terminalQueued: 0 },
 	};
-	const ensured = (): HostStore => reduceHosts({}, { type: "ensure", hostId: "h1", label: "lab", origin: "http://127.0.0.1:9" });
-	const apply = (store: HostStore, event: AnyRemoteEvent, receivedAt = 1000): HostStore => reduceHosts(store, { type: "event", hostId: "h1", event, receivedAt });
+	const ensured = (): HostStore =>
+		reduceHosts({}, { type: "ensure", hostId: "h1", label: "lab", origin: "http://127.0.0.1:9" });
+	const apply = (store: HostStore, event: AnyRemoteEvent, receivedAt = 1000): HostStore =>
+		reduceHosts(store, { type: "event", hostId: "h1", event, receivedAt });
 
 	it("keeps the state and records the seq when a payload is malformed", () => {
 		const good = apply(ensured(), makeEvent("snapshot", 1, SNAP));
-		const bad = apply(good, { v: 1, seq: 2, ts: TS, type: "snapshot", payload: { sessionId: "x" } } as unknown as AnyRemoteEvent);
+		const bad = apply(good, {
+			v: 1,
+			seq: 2,
+			ts: TS,
+			type: "snapshot",
+			payload: { sessionId: "x" },
+		} as unknown as AnyRemoteEvent);
 		expect(bad.h1?.sessionId).toBe("s1");
 		expect(bad.h1?.lastSeq).toBe(2);
 		const badStatus = apply(good, { v: 1, seq: 3, ts: TS, type: "status", payload: {} } as unknown as AnyRemoteEvent);
 		expect(badStatus.h1?.status).toEqual(STATUS);
 		expect(badStatus.h1?.lastSeq).toBe(3);
-		const throwing = apply(good, { v: 1, seq: 4, ts: TS, type: "approval", payload: {} } as unknown as AnyRemoteEvent);
+		const throwing = apply(good, {
+			v: 1,
+			seq: 4,
+			ts: TS,
+			type: "approval",
+			payload: {},
+		} as unknown as AnyRemoteEvent);
 		expect(throwing.h1?.holds).toEqual([]);
 		expect(throwing.h1?.lastSeq).toBe(4);
 	});
@@ -1498,9 +1804,15 @@ describe("store: fail-safe and correctness", () => {
 
 	it("a different session resets tok/s and activity; a snapshot clears tool updates", () => {
 		let store = apply(ensured(), makeEvent("snapshot", 1, SNAP));
-		store = apply(store, makeEvent("status", 2, { status: { kind: "working", model: null, stats: { tokensPerSecond: 30 } } }));
+		store = apply(
+			store,
+			makeEvent("status", 2, { status: { kind: "working", model: null, stats: { tokensPerSecond: 30 } } }),
+		);
 		store = apply(store, makeEvent("activity", 3, { activity: { kind: "compaction", phase: "start" } }));
-		store = apply(store, makeEvent("tool_update", 4, { toolCallId: "t1", phase: "update", toolName: "bash", partialResult: "x" }));
+		store = apply(
+			store,
+			makeEvent("tool_update", 4, { toolCallId: "t1", phase: "update", toolName: "bash", partialResult: "x" }),
+		);
 		expect(store.h1?.toolUpdates.size).toBe(1);
 		const same = apply(store, makeEvent("session", 5, { sessionId: "s1", sessionName: "renamed" }));
 		expect(same.h1?.lastTokensPerSecond).toBe(30);
@@ -1560,11 +1872,11 @@ describe("hosts: strict origins and token adoption", () => {
 	it("adopts only a fragment shaped like the server token and leaves any other untouched", () => {
 		const history = { replaceState: vi.fn() } as unknown as History;
 		expect(adoptLocalHost("#section-2", fakeLocation, history)).toBeNull();
-		expect(adoptLocalHost("#" + "a".repeat(31), fakeLocation, history)).toBeNull();
-		expect(adoptLocalHost("#" + "a".repeat(63) + "!", fakeLocation, history)).toBeNull();
+		expect(adoptLocalHost(`#${"a".repeat(31)}`, fakeLocation, history)).toBeNull();
+		expect(adoptLocalHost(`#${"a".repeat(63)}!`, fakeLocation, history)).toBeNull();
 		expect(history.replaceState).not.toHaveBeenCalled();
 		expect(listHosts()).toEqual([]);
-		expect(adoptLocalHost("#" + "0123456789abcdef".repeat(4), fakeLocation, history)?.token).toHaveLength(64);
+		expect(adoptLocalHost(`#${"0123456789abcdef".repeat(4)}`, fakeLocation, history)?.token).toHaveLength(64);
 		expect(history.replaceState).toHaveBeenCalledTimes(1);
 	});
 });
@@ -1582,11 +1894,16 @@ describe("components: composer failures, availability, and drafts", () => {
 	}
 	const type = (text: string) =>
 		act(async () => {
-			setNativeValue(document.querySelector<HTMLTextAreaElement>("[data-rc-composer-input]") as HTMLTextAreaElement, text);
+			setNativeValue(
+				document.querySelector<HTMLTextAreaElement>("[data-rc-composer-input]") as HTMLTextAreaElement,
+				text,
+			);
 		});
 
 	it("keeps the draft and shows an alert on a failed send, then clears it on edit", async () => {
-		const mounted = await mount(<Composer {...composerProps({ onSend: () => Promise.resolve({ ok: false, status: 401 }) })} />);
+		const mounted = await mount(
+			<Composer {...composerProps({ onSend: () => Promise.resolve({ ok: false, status: 401 }) })} />,
+		);
 		try {
 			await type("keep me");
 			await click(document.querySelector("[data-rc-send]"));
@@ -1597,10 +1914,14 @@ describe("components: composer failures, availability, and drafts", () => {
 			expect(error?.textContent).toBe("Not sent: unauthorized (status 401)");
 			await type("keep me!");
 			expect(document.querySelector("[data-rc-send-error]")).toBeNull();
-			await mounted.render(<Composer {...composerProps({ onSend: () => Promise.resolve({ ok: false, status: 0 }) })} />);
+			await mounted.render(
+				<Composer {...composerProps({ onSend: () => Promise.resolve({ ok: false, status: 0 }) })} />,
+			);
 			await click(document.querySelector("[data-rc-send]"));
 			expect(document.querySelector("[data-rc-send-error]")?.textContent).toBe("Not sent: host unreachable");
-			await mounted.render(<Composer {...composerProps({ onSend: () => Promise.resolve({ ok: false, status: 503 }) })} />);
+			await mounted.render(
+				<Composer {...composerProps({ onSend: () => Promise.resolve({ ok: false, status: 503 }) })} />,
+			);
 			await click(document.querySelector("[data-rc-send]"));
 			expect(document.querySelector("[data-rc-send-error]")?.textContent).toBe("Not sent: status 503");
 		} finally {
@@ -1610,12 +1931,17 @@ describe("components: composer failures, availability, and drafts", () => {
 
 	it("disables send while a send is in flight and clears the error after a success", async () => {
 		let finish: (result: { ok: boolean; status: number }) => void = () => undefined;
-		const onSend = vi.fn(() => new Promise<{ ok: boolean; status: number }>((resolve) => (finish = resolve)));
+		const onSend = vi.fn(
+			() =>
+				new Promise<{ ok: boolean; status: number }>((resolve) => {
+					finish = resolve;
+				}),
+		);
 		const mounted = await mount(<Composer {...composerProps({ onSend })} />);
 		try {
 			await type("once");
 			await click(document.querySelector("[data-rc-send]"));
-			expect(document.querySelector<HTMLButtonElement>("[data-rc-send]")?.disabled).toBe(true);
+			expect(document.querySelector("[data-rc-send]")?.getAttribute("aria-busy")).toBe("true");
 			await click(document.querySelector("[data-rc-send]"));
 			expect(onSend).toHaveBeenCalledTimes(1);
 			await act(async () => finish({ ok: true, status: 202 }));
@@ -1627,7 +1953,9 @@ describe("components: composer failures, availability, and drafts", () => {
 	});
 
 	it("shows an error line when abort fails", async () => {
-		const mounted = await mount(<Composer {...composerProps({ working: true, onAbort: () => Promise.resolve({ ok: false, status: 0 }) })} />);
+		const mounted = await mount(
+			<Composer {...composerProps({ working: true, onAbort: () => Promise.resolve({ ok: false, status: 0 }) })} />,
+		);
 		try {
 			await click(document.querySelector("[data-rc-abort]"));
 			expect(document.querySelector("[data-rc-send-error]")?.textContent).toContain("host unreachable");
@@ -1637,7 +1965,9 @@ describe("components: composer failures, availability, and drafts", () => {
 	});
 
 	it("names why the composer is disabled in the placeholder", async () => {
-		const mounted = await mount(<Composer {...composerProps({ disabled: true, disabledReason: "reconnecting..." })} />);
+		const mounted = await mount(
+			<Composer {...composerProps({ disabled: true, disabledReason: "reconnecting..." })} />,
+		);
 		try {
 			const input = document.querySelector<HTMLTextAreaElement>("[data-rc-composer-input]");
 			expect(input?.placeholder).toBe("reconnecting...");
@@ -1662,7 +1992,8 @@ describe("components: composer failures, availability, and drafts", () => {
 	it("keeps the delivery pill enabled and the container unmarked when the composer is enabled", async () => {
 		const mounted = await mount(<Composer {...composerProps()} />);
 		try {
-			for (const pill of document.querySelectorAll<HTMLButtonElement>("[data-rc-deliver-mode]")) expect(pill.disabled).toBe(false);
+			for (const pill of document.querySelectorAll<HTMLButtonElement>("[data-rc-deliver-mode]"))
+				expect(pill.disabled).toBe(false);
 			expect(document.querySelector("[data-rc-composer]")?.hasAttribute("data-rc-disabled")).toBe(false);
 		} finally {
 			await mounted.unmount();
@@ -1689,11 +2020,23 @@ describe("components: composer failures, availability, and drafts", () => {
 });
 
 describe("components: approval card resilience", () => {
-	const hold = (over: Partial<WireApproval> = {}): WireApproval => ({ id: "a1", toolName: "bash", argsPreview: "ls", deadlineMs: Date.now() + 60_000, createdAt: TS, ...over });
+	const hold = (over: Partial<WireApproval> = {}): WireApproval => ({
+		id: "a1",
+		toolName: "bash",
+		argsPreview: "ls",
+		deadlineMs: Date.now() + 60_000,
+		createdAt: TS,
+		...over,
+	});
 
 	it("disables both buttons while resolving, posts once, and shows an alert on failure", async () => {
 		let finish: (result: { ok: boolean; status: number }) => void = () => undefined;
-		const onResolve = vi.fn(() => new Promise<{ ok: boolean; status: number }>((resolve) => (finish = resolve)));
+		const onResolve = vi.fn(
+			() =>
+				new Promise<{ ok: boolean; status: number }>((resolve) => {
+					finish = resolve;
+				}),
+		);
 		const mounted = await mount(<ApprovalCard holds={[hold()]} onResolve={onResolve} />);
 		try {
 			await click(document.querySelector('[data-rc-approve="a1"]'));
@@ -1714,7 +2057,12 @@ describe("components: approval card resilience", () => {
 
 	it("discloses long args with Show all / Show less and exposes group semantics in a live region", async () => {
 		const args = "line one\nline two\nline three\nline four";
-		const mounted = await mount(<ApprovalCard holds={[hold({ argsPreview: args })]} onResolve={() => Promise.resolve({ ok: true, status: 202 })} />);
+		const mounted = await mount(
+			<ApprovalCard
+				holds={[hold({ argsPreview: args })]}
+				onResolve={() => Promise.resolve({ ok: true, status: 202 })}
+			/>,
+		);
 		try {
 			const card = document.querySelector("[data-rc-approval]");
 			expect(card?.getAttribute("role")).toBe("group");
@@ -1723,10 +2071,14 @@ describe("components: approval card resilience", () => {
 			const more = document.querySelector("[data-rc-approval-more]");
 			expect(more?.textContent).toBe("Show all");
 			expect(more?.getAttribute("aria-expanded")).toBe("false");
-			expect(document.querySelector("[data-rc-approval-args]")?.getAttribute("data-rc-approval-args")).toBe("clamped");
+			expect(document.querySelector("[data-rc-approval-args]")?.getAttribute("data-rc-approval-args")).toBe(
+				"clamped",
+			);
 			await click(more);
 			expect(document.querySelector("[data-rc-approval-more]")?.textContent).toBe("Show less");
-			expect(document.querySelector("[data-rc-approval-args]")?.getAttribute("data-rc-approval-args")).toBe("expanded");
+			expect(document.querySelector("[data-rc-approval-args]")?.getAttribute("data-rc-approval-args")).toBe(
+				"expanded",
+			);
 			expect(document.querySelector("[data-rc-approval-args]")?.textContent).toBe(args);
 		} finally {
 			await mounted.unmount();
@@ -1734,7 +2086,9 @@ describe("components: approval card resilience", () => {
 	});
 
 	it("short args get no disclosure", async () => {
-		const mounted = await mount(<ApprovalCard holds={[hold()]} onResolve={() => Promise.resolve({ ok: true, status: 202 })} />);
+		const mounted = await mount(
+			<ApprovalCard holds={[hold()]} onResolve={() => Promise.resolve({ ok: true, status: 202 })} />,
+		);
 		try {
 			expect(document.querySelector("[data-rc-approval-more]")).toBeNull();
 		} finally {
@@ -1748,7 +2102,13 @@ describe("components: approval card resilience", () => {
 		const skew = 3_600_000;
 		const mounted = await mount(<ApprovalCard holds={[]} clockOffsetMs={skew} onResolve={onResolve} />);
 		try {
-			await mounted.render(<ApprovalCard holds={[hold({ deadlineMs: Date.now() - skew + 30_000 })]} clockOffsetMs={skew} onResolve={onResolve} />);
+			await mounted.render(
+				<ApprovalCard
+					holds={[hold({ deadlineMs: Date.now() - skew + 30_000 })]}
+					clockOffsetMs={skew}
+					onResolve={onResolve}
+				/>,
+			);
 			const seconds = Number(document.querySelector("[data-rc-countdown]")?.getAttribute("data-rc-countdown"));
 			expect(seconds).toBeGreaterThan(27);
 			expect(seconds).toBeLessThanOrEqual(30);
