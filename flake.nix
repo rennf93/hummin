@@ -25,18 +25,37 @@
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
       nixpkgsFor = system: if system == "x86_64-darwin" then nixpkgs-darwin-x64 else nixpkgs;
-      packageFor =
-        system:
-        let
-          pkgs = import (nixpkgsFor system) { inherit system; };
-        in
-        pkgs.callPackage ./nix/package.nix { source = self; };
+      pkgsFor = system: import (nixpkgsFor system) { inherit system; };
+      packageFor = system: (pkgsFor system).callPackage ./nix/package.nix { source = self; };
     in
     {
       packages = forAllSystems (system: {
         default = packageFor system;
         pi = packageFor system;
       });
+
+      # Tools ./test.sh needs besides Node, for hosts that lack them (NixOS): fd and ripgrep for the
+      # find/grep tool tests, cargo and rustc for the pi-env daemon build, and bubblewrap for the
+      # sandbox extension on Linux. Not rustup: the pi-env tests run cargo from packages/env, above
+      # daemon/rust-toolchain.toml, so rustup finds no pin there and needs a default toolchain, as CI
+      # runners have. Usage: `nix develop -c ./test.sh`.
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = pkgsFor system;
+        in
+        {
+          default = pkgs.mkShell {
+            packages = [
+              pkgs.fd
+              pkgs.ripgrep
+              pkgs.cargo
+              pkgs.rustc
+            ]
+            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.bubblewrap ];
+          };
+        }
+      );
 
       apps = forAllSystems (system: {
         default = {

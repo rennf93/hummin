@@ -13,6 +13,7 @@ import {
 	secretReadDenySubpaths,
 } from "../extensions/hummin-sandbox.ts";
 import { CONFIG_DIR_NAME } from "../src/config.ts";
+import { getShellConfig } from "../src/utils/shell.ts";
 
 describe("secretReadDenySubpaths", () => {
 	it("excludes ~/.ssh, ~/.gnupg and ~/.hummin/agent", () => {
@@ -161,7 +162,7 @@ describe("sandboxOperations exec gating", () => {
 	const base = (over: Partial<Parameters<typeof sandboxOperations>[0]> = {}) =>
 		sandboxOperations({
 			activeConfig: async () => undefined,
-			shellPath: () => "/bin/echo",
+			shellPath: () => getShellConfig().shell,
 			fallback: () => "block",
 			mode: () => "off",
 			...over,
@@ -170,13 +171,13 @@ describe("sandboxOperations exec gating", () => {
 
 	it("runs plain when mode is off even though no sandbox plan exists", async () => {
 		const ops = base();
-		const result = await ops.exec("hello", process.cwd(), { onData: noop, signal: undefined, env: {} });
+		const result = await ops.exec("echo hello", process.cwd(), { onData: noop, signal: undefined, env: {} });
 		expect(result.exitCode).toBe(0);
 	});
 
 	it("blocks with actionable message in workspace mode without support and fallback block", async () => {
 		const ops = base({ mode: () => "workspace", fallback: () => "block" });
-		await expect(ops.exec("hello", process.cwd(), { onData: noop, signal: undefined, env: {} })).rejects.toThrow(
+		await expect(ops.exec("echo hello", process.cwd(), { onData: noop, signal: undefined, env: {} })).rejects.toThrow(
 			/\[Sandbox\]/,
 		);
 	});
@@ -190,7 +191,7 @@ describe("sandboxOperations exec gating", () => {
 				notices += 1;
 			},
 		});
-		const result = await ops.exec("hello", process.cwd(), { onData: noop, signal: undefined, env: {} });
+		const result = await ops.exec("echo hello", process.cwd(), { onData: noop, signal: undefined, env: {} });
 		expect(result.exitCode).toBe(0);
 		expect(notices).toBe(1);
 	});
