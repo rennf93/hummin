@@ -274,23 +274,25 @@ describe("failures stay until retry or a rollout (R2)", () => {
 	});
 
 	it("the start timer covers only the start: a slow load after connecting is not killed (Q4)", async () => {
-		const { server, workers, behaviours } = await fleet();
+		const { server, workers, behaviours, output } = await fleet();
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const kills = vi.spyOn(process, "kill");
 		try {
 			behaviours.set("S1", { hang: true });
 			const notes = server.hold(Notes, { id: "S1" }, context);
-			await vi.waitFor(() => expect(stateOf(workers.state.value, "S1")?.status).toBe("starting"), {
-				timeout: 5_000,
-			});
-			await new Promise((resolve) => setImmediate(resolve));
+			// Connected, not only forked (`starting` is set at the fork): a slow child still had the start timer running.
+			await vi.waitFor(() => expect(output).toContain("session|S1 hanging"), { timeout: 10_000 });
 			await vi.advanceTimersByTimeAsync(120_000);
+			// The start timer kills in its callback; the exit that would fail the address may come after these checks.
+			expect(kills).not.toHaveBeenCalled();
 			expect(stateOf(workers.state.value, "S1")?.status).toBe("starting");
 			expect(notes.state.value.kind).toBe("loading");
 			notes.release();
 		} finally {
+			kills.mockRestore();
 			vi.useRealTimers();
 		}
-	});
+	}, 15_000);
 });
 
 describe('stale lock files (macOS, the BSDs; decision "Stale lock files are cleared by the starter")', () => {

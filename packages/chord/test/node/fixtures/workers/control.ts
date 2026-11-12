@@ -34,7 +34,7 @@ export type WorkerBehaviour = {
 	readonly connect?: boolean;
 	/** Wait this long after connecting, before the load. */
 	readonly loadMs?: number;
-	/** Never load. */
+	/** Never load; `hanging` on stdout once connected. */
 	readonly hang?: boolean;
 	/** A file the closers append their names to, in the order they run. */
 	readonly log?: string;
