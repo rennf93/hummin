@@ -63,8 +63,10 @@
 	border-radius: var(--rc-radius-sm);
 	background: var(--rc-pressed);
 	pointer-events: none;
+	/* height is the documented layout exception (DESIGN.md 4.2): absolutely positioned, same duration and easing as the move */
 	transition:
 		transform var(--rc-duration-base) var(--rc-ease-spring),
+		height var(--rc-duration-base) var(--rc-ease-spring),
 		opacity var(--rc-duration-fast) var(--rc-ease-out);
 }
 
@@ -78,34 +80,61 @@
 		transform var(--rc-duration-fast) var(--rc-ease-out);
 }
 
-.rc-host-row:hover {
-	background: var(--rc-hover);
-	transform: translateY(var(--rc-lift));
+@media (hover: hover) {
+	.rc-host-row:hover {
+		background: var(--rc-hover);
+		transform: translateY(var(--rc-lift));
+	}
 }
 
-.rc-host-select {
+/* the row's three lines; the select button stretches over all of them (::after) so
+   the copyable session id, a real button, can sit inside the row without nesting */
+.rc-host-main {
 	flex: 1;
 	min-width: 0;
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
 	padding: var(--rc-space-2) var(--rc-space-3);
+}
+
+.rc-host-select {
+	display: flex;
+	align-items: center;
+	gap: var(--rc-space-2);
+	min-width: 0;
+	padding: 0;
 	background: transparent;
 	border: none;
-	border-radius: var(--rc-radius-sm);
 	color: inherit;
 	font: inherit;
 	text-align: left;
 	cursor: pointer;
 }
 
-.rc-host-line {
-	display: flex;
-	align-items: center;
-	gap: var(--rc-space-2);
-	min-width: 0;
+.rc-host-select::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	border-radius: var(--rc-radius-sm);
 }
 
+/* touch: the stretched hit area is at least the minimum target tall */
+@media (pointer: coarse) {
+	.rc-host-select::after {
+		inset: min(0px, calc((100% - var(--rc-control-touch)) / 2)) 0;
+	}
+}
+
+.rc-host-select:focus-visible {
+	outline: none;
+}
+
+.rc-host-select:focus-visible::after {
+	box-shadow: var(--rc-focus-ring);
+}
+
+/* the session name: line 1, the primary identity */
 .rc-host-label {
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -115,7 +144,7 @@
 	color: var(--rc-fg);
 }
 
-/* the sub lines align under the label, past the dot */
+/* the sub lines align under the name, past the dot */
 .rc-host-sub,
 .rc-host-model,
 .rc-host-hint {
@@ -133,12 +162,46 @@
 	display: none;
 }
 
+/* line 2 while connected: host label (truncates) · session id (never shrinks, above the select stretch) */
 .rc-host-sub {
-	overflow: hidden;
-	text-overflow: ellipsis;
+	display: flex;
+	align-items: center;
+	min-width: 0;
 	white-space: nowrap;
 	font-size: var(--rc-text-xs);
-	color: var(--rc-fg-faint);
+	/* dim, not faint: the active row's pressed fill takes faint text below 4.5:1 in glass and terminal */
+	color: var(--rc-fg-dim);
+}
+
+.rc-host-sub .rc-session-id {
+	color: inherit;
+}
+
+.rc-host-sub-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.rc-host-sub .rc-session-id {
+	flex: none;
+	z-index: 1;
+}
+
+/* not connected: the state word in its status tone (the dot colour backs it) */
+.rc-host-state {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--rc-fg-dim);
+}
+
+.rc-host-state[data-rc-host-sub="stale"] {
+	color: var(--rc-warn);
+}
+
+.rc-host-state[data-rc-host-sub="unauthorized"] {
+	color: var(--rc-bad);
 }
 
 .rc-host-model {
@@ -164,21 +227,53 @@
 }
 
 .rc-host-remove {
+	z-index: 1;
 	flex: none;
 	margin: var(--rc-space-1) var(--rc-space-1) 0 0;
 	opacity: 0;
 	transition: opacity var(--rc-duration-fast) var(--rc-ease-out);
 }
 
-.rc-host-row:hover .rc-host-remove,
 .rc-host-row:focus-within .rc-host-remove {
 	opacity: 1;
 }
 
+@media (hover: hover) {
+	.rc-host-row:hover .rc-host-remove {
+		opacity: 1;
+	}
+}
+
+/* touch: no hover to reveal the X, so it is always visible */
 @media (hover: none) {
 	.rc-host-remove {
 		opacity: 1;
 	}
+}
+
+/* inline remove confirm: replaces the row's contents until answered */
+.rc-host-confirm {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--rc-space-2);
+	padding: var(--rc-space-1) var(--rc-space-2) var(--rc-space-1) var(--rc-space-3);
+}
+
+.rc-host-confirm-text {
+	min-width: 0;
+	overflow-wrap: anywhere;
+	font-size: var(--rc-text-sm);
+	color: var(--rc-fg);
+}
+
+.rc-host-confirm-actions {
+	display: inline-flex;
+	flex: none;
+	gap: var(--rc-space-1);
 }
 
 /* add-host form */
@@ -204,8 +299,10 @@
 	transition: border-color var(--rc-duration-fast) var(--rc-ease-out);
 }
 
-.rc-add-input:hover {
-	border-color: var(--rc-fg-faint);
+@media (hover: hover) {
+	.rc-add-input:hover {
+		border-color: var(--rc-fg-faint);
+	}
 }
 
 .rc-add-input:focus-visible {

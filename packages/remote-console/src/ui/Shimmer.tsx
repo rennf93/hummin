@@ -4,7 +4,15 @@
  */
 import type { ReactNode } from "react";
 
-export function Shimmer({ children, active = true, className }: { children: ReactNode; active?: boolean; className?: string }) {
+export function Shimmer({
+	children,
+	active = true,
+	className,
+}: {
+	children: ReactNode;
+	active?: boolean;
+	className?: string;
+}) {
 	return (
 		<span className={className === undefined ? "rc-shimmer" : `rc-shimmer ${className}`} data-active={active}>
 			{children}

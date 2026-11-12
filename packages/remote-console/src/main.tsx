@@ -4,6 +4,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
+import { applyAppearance, loadAppearance } from "./hosts.ts";
 import "./index.css";
 
 /** Top-level boundary: a render error shows a recoverable message instead of a blank page. */
@@ -35,6 +36,7 @@ const rootElement = document.getElementById("root");
 if (!rootElement) {
 	throw new Error("remote console: index.html is missing the #root element");
 }
+applyAppearance(document.documentElement, loadAppearance());
 createRoot(rootElement).render(
 	<ErrorBoundary>
 		<App />

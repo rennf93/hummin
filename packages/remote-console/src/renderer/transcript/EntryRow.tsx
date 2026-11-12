@@ -9,7 +9,7 @@
  * only the slot row.
  */
 /// <reference lib="dom" />
-import { memo, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { memo, type ReactNode, useId, useLayoutEffect, useRef, useState } from "react";
 import type { WireAgentMessage, WireContentBlock, WireTranscriptEntry } from "../../harness/replay-log.ts";
 import { Disclosure } from "../../ui/Disclosure.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -19,7 +19,7 @@ import { Markdown } from "../markdown/Markdown.tsx";
 import { STATE_ICON, STATE_LABEL, ToolCard } from "../tool/ToolCard.tsx";
 import type { ToolLiveState, ToolResultView } from "../tool/tool-view.ts";
 import { firstLine, formatDuration, specializeTool, toolVerb } from "../tool/tool-view.ts";
-import { blocksText, noticeParts, type NoticeParts } from "./notice.ts";
+import { blocksText, type NoticeParts, noticeParts } from "./notice.ts";
 import type { LiveSlot, LiveSlotBlock } from "./stream-slot.ts";
 
 type ToolMaps = {
@@ -60,7 +60,12 @@ export const EntryRow = memo(function EntryRow({
 				thinking={message.role === "assistant" || message.role === "custom"}
 				streaming={false}
 			/>
-			<MessageMeta role={message.role} blocks={message.blocks} usage={message.usage} durationMs={message.durationMs} />
+			<MessageMeta
+				role={message.role}
+				blocks={message.blocks}
+				usage={message.usage}
+				durationMs={message.durationMs}
+			/>
 		</article>
 	);
 });
@@ -92,7 +97,9 @@ export const SlotRow = memo(function SlotRow({
 				thinking
 				streaming={streaming}
 			/>
-			{!streaming && <MessageMeta role={slot.role} blocks={slot.blocks} usage={slot.usage} durationMs={slot.durationMs} />}
+			{!streaming && (
+				<MessageMeta role={slot.role} blocks={slot.blocks} usage={slot.usage} durationMs={slot.durationMs} />
+			)}
 		</article>
 	);
 });
@@ -149,10 +156,18 @@ function MessageContent({
 	repeat?: number;
 } & ToolMaps) {
 	const body = (
-		<BlocksView blocks={blocks} results={results} toolUpdates={toolUpdates} thinking={thinking} streaming={streaming} />
+		<BlocksView
+			blocks={blocks}
+			results={results}
+			toolUpdates={toolUpdates}
+			thinking={thinking}
+			streaming={streaming}
+		/>
 	);
 	if (role === "system" || role === "custom") {
-		return <Notice role={role} blocks={blocks} body={body} customType={customType} details={details} repeat={repeat} />;
+		return (
+			<Notice role={role} blocks={blocks} body={body} customType={customType} details={details} repeat={repeat} />
+		);
 	}
 	return body;
 }
@@ -182,8 +197,12 @@ function Notice({
 	// shortcut: once a notice has been seen clipped it keeps its toggle, even if a wider
 	// pane would now fit it; flipping back and forth would resize the text it measures.
 	const expandable =
-		clipped || text.includes("\n") || text.length > NOTICE_INLINE_MAX || blocks.some((block) => block.type !== "text");
+		clipped ||
+		text.includes("\n") ||
+		text.length > NOTICE_INLINE_MAX ||
+		blocks.some((block) => block.type !== "text");
 	// The collapsed text clamps at three lines in CSS; a clamped notice must be expandable.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: text is a re-measure trigger; the effect reads the DOM
 	useLayoutEffect(() => {
 		const element = textRef.current;
 		if (element === null || clipped) return;
@@ -311,7 +330,8 @@ function BlockView({
 		case "text":
 			return smooth ? <SmoothMarkdown text={block.text} /> : <Markdown text={block.text} />;
 		case "thinking":
-			if (thinking && (block.text !== "" || liveThinking)) return <ThinkingBlock text={block.text} live={liveThinking} />;
+			if (thinking && (block.text !== "" || liveThinking))
+				return <ThinkingBlock text={block.text} live={liveThinking} />;
 			return block.text === "" ? null : <Markdown text={block.text} className="rc-md-thinking" />;
 		case "toolCall":
 			return null;
@@ -349,7 +369,15 @@ function ThinkingBlock({ text, live }: { text: string; live: boolean }) {
 	);
 }
 
-function ToolResultRow({ entryId, message, arrived }: { entryId: string; message: WireAgentMessage; arrived: boolean }) {
+function ToolResultRow({
+	entryId,
+	message,
+	arrived,
+}: {
+	entryId: string;
+	message: WireAgentMessage;
+	arrived: boolean;
+}) {
 	const isError = message.isError === true;
 	const kind = isError ? "error" : "completed";
 	const name = message.toolName ?? "tool result";

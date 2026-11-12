@@ -8,8 +8,8 @@ dist/
 packages/*/dist/
 packages/*/dist-chrome/
 packages/*/dist-firefox/
-# The remote console's built bundle is committed: the extension serves it and
-# installed binaries need it seeded (see packages/remote-console/README.md).
+# The remote console's built bundle is committed: the extension serves it, and the
+# coding-agent package ships a copy of it (see packages/remote-console/README.md).
 !packages/remote-console/dist/
 # packages/ai/src/providers/data/ is tracked in this fork: CI diffs regenerated
 # data against the committed copy so upstream metadata drift shows as a reviewable diff.
@@ -51,7 +51,8 @@ plans/
 collect.sh
 packages/agent/docs/extensions/pi-server-artifact/index.md
 SPEC-ZCODE-CLI.md
-DESIGN.md
+# root scratch only: a bare DESIGN.md silently ignored packages/remote-console/DESIGN.md (the console's design contract)
+/DESIGN.md
 
 bench/results/
 

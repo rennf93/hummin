@@ -2,15 +2,17 @@
 // the 20KB render cap, unicode hostility, autolink hardening, and structural parsing.
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { Markdown } from "./Markdown.tsx";
-import { parseMarkdown } from "./parse.ts";
 import { loadCorpusEvents, snapshotText } from "../test/corpus.ts";
 import { mount } from "../test/mount.tsx";
+import { Markdown } from "./Markdown.tsx";
+import { parseMarkdown } from "./parse.ts";
 
 /** Asserts the rendered container carries no executable or event-handler surface:
  * no script-like elements, no on* attributes, no javascript: hrefs anywhere. */
 function assertInert(container: HTMLElement): void {
-	const dangerous = container.querySelectorAll("script, iframe, object, embed, form, input, style, img, svg:not(.rc-icon), video, audio");
+	const dangerous = container.querySelectorAll(
+		"script, iframe, object, embed, form, input, style, img, svg:not(.rc-icon), video, audio",
+	);
 	expect(dangerous.length).toBe(0);
 	for (const element of container.querySelectorAll("*")) {
 		for (const attribute of Array.from(element.attributes)) {
@@ -64,6 +66,25 @@ describe("markdown pipeline", () => {
 		}
 	});
 
+	it("links real email addresses but leaves package specs as text", async () => {
+		const mounted = await mount(
+			<Markdown
+				text={
+					"mail a@b.com, first.last@sub.example.org. Pkgs chord@1.7.0 pi-telemetry@1.7.0 @scope/pkg@1.2.3 name@^1.2 name@latest"
+				}
+			/>,
+		);
+		try {
+			const hrefs = Array.from(mounted.container.querySelectorAll("a")).map((link) => link.getAttribute("href"));
+			expect(hrefs).toEqual(["mailto:a@b.com", "mailto:first.last@sub.example.org"]);
+			expect(mounted.container.textContent).toContain(
+				"chord@1.7.0 pi-telemetry@1.7.0 @scope/pkg@1.2.3 name@^1.2 name@latest",
+			);
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
 	it("renders an inline javascript: link as plain text with the destination visible", async () => {
 		const mounted = await mount(<Markdown text={"see [click me](javascript:alert(1)) for details"} />);
 		try {
@@ -105,14 +126,14 @@ describe("markdown pipeline", () => {
 	});
 
 	it("terminates on an unclosed fence and marks the block honestly", async () => {
-		const parsed = parseMarkdown("```ts\nconst broken = \"never closed\"\nstill inside");
+		const parsed = parseMarkdown('```ts\nconst broken = "never closed"\nstill inside');
 		expect(parsed.length).toBe(1);
 		const block = parsed[0];
 		expect(block?.kind).toBe("code");
 		if (block?.kind !== "code") throw new Error("expected a code block");
 		expect(block.closed).toBe(false);
 		expect(block.code).toBe('const broken = "never closed"\nstill inside');
-		const mounted = await mount(<Markdown text={"```ts\nconst broken = \"never closed\""} />);
+		const mounted = await mount(<Markdown text={'```ts\nconst broken = "never closed"'} />);
 		try {
 			expect(mounted.container.textContent).toContain("fence not closed");
 			expect(mounted.container.textContent).toContain("never closed");

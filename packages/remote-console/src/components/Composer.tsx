@@ -9,12 +9,12 @@
  * read.
  */
 /// <reference lib="dom" />
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type ActionResult, describeSendFailure } from "../connection.ts";
 import type { WireQueue } from "../harness/replay-log.ts";
-import { IconButton } from "../ui/Button.tsx";
+import { Button, IconButton } from "../ui/Button.tsx";
 import { usePresence } from "../ui/usePresence.ts";
-import { SlidingPill, type PillButtonProps } from "./SlidingPill.tsx";
+import { type PillButtonProps, SlidingPill } from "./SlidingPill.tsx";
 
 /** The server rejects prompts above 12000 characters (PROMPT_MAX_CHARS). */
 const PROMPT_MAX_CHARS = 12_000;
@@ -31,10 +31,11 @@ interface Draft {
 	text: string;
 	deliverAs: "steer" | "followUp";
 	sending: boolean;
+	aborting: boolean;
 	error: string | null;
 }
 
-const EMPTY_DRAFT: Draft = { text: "", deliverAs: "followUp", sending: false, error: null };
+const EMPTY_DRAFT: Draft = { text: "", deliverAs: "followUp", sending: false, aborting: false, error: null };
 
 export function Composer({
 	hostId,
@@ -58,7 +59,7 @@ export function Composer({
 }) {
 	const [drafts, setDrafts] = useState<Readonly<Record<string, Draft>>>({});
 	const draft = drafts[hostId] ?? EMPTY_DRAFT;
-	const { text, deliverAs, sending, error } = draft;
+	const { text, deliverAs, sending, aborting, error } = draft;
 	const patchDraft = (id: string, patch: Partial<Draft>): void =>
 		setDrafts((current) => ({ ...current, [id]: { ...(current[id] ?? EMPTY_DRAFT), ...patch } }));
 	const setText = (next: string): void => patchDraft(hostId, { text: next, error: null });
@@ -68,30 +69,62 @@ export function Composer({
 	const ready = !disabled && !sending && text.trim() !== "";
 	// Autosize: collapse first so scrollHeight shrinks with deleted lines; the
 	// css max-height (40vh) caps growth and the textarea scrolls beyond it.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: text and hostId are re-fit triggers; the effect reads the DOM, not them
 	useLayoutEffect(() => {
-		const fit = (): void => {
+		const fitHeight = (): void => {
 			const node = input.current;
 			if (node === null) return;
 			node.style.height = "auto";
 			node.style.height = `${node.scrollHeight}px`;
 		};
-		fit();
+		fitHeight();
 		// A width change rewraps the text: a height measured at another width is stale.
-		window.addEventListener("resize", fit);
-		return () => window.removeEventListener("resize", fit);
+		window.addEventListener("resize", fitHeight);
+		return () => window.removeEventListener("resize", fitHeight);
 	}, [text, hostId]);
+	// iOS keeps innerHeight when the keyboard opens: expose the covered height so the dock can clear it.
+	useEffect(() => {
+		const viewport = window.visualViewport;
+		// Absent in older browsers and some test DOMs.
+		if (!viewport) return;
+		const root = document.documentElement;
+		let frame = 0;
+		const update = (): void => {
+			if (frame !== 0) return;
+			frame = requestAnimationFrame(() => {
+				frame = 0;
+				const inset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+				root.style.setProperty("--rc-keyboard-inset", `${inset}px`);
+			});
+		};
+		viewport.addEventListener("resize", update);
+		viewport.addEventListener("scroll", update);
+		return () => {
+			viewport.removeEventListener("resize", update);
+			viewport.removeEventListener("scroll", update);
+			cancelAnimationFrame(frame);
+			root.style.removeProperty("--rc-keyboard-inset");
+		};
+	}, []);
 	const send = async (): Promise<void> => {
 		if (!ready) return;
 		const target = hostId;
 		patchDraft(target, { sending: true, error: null });
 		const result = await onSend(text, deliverAs);
 		// Success clears the draft; failure keeps the text and says why.
-		patchDraft(target, result.ok ? { text: "", sending: false } : { sending: false, error: describeSendFailure(result) });
+		patchDraft(
+			target,
+			result.ok ? { text: "", sending: false } : { sending: false, error: describeSendFailure(result) },
+		);
 	};
 	const abort = async (): Promise<void> => {
 		const target = hostId;
+		patchDraft(target, { aborting: true });
 		const result = await onAbort();
-		patchDraft(target, { error: result.ok ? null : describeSendFailure(result).replace("Not sent", "Stop not sent") });
+		patchDraft(target, {
+			aborting: false,
+			error: result.ok ? null : describeSendFailure(result).replace("Not sent", "Stop not sent"),
+		});
 	};
 	const items = queue?.items ?? [];
 	const terminalQueued = queue?.terminalQueued ?? 0;
@@ -109,7 +142,11 @@ export function Composer({
 					))}
 				</ul>
 			)}
-			{terminalQueued > 0 && <div className="rc-queue-terminal" data-rc-queue-terminal="true">{terminalQueued} queued in terminal</div>}
+			{terminalQueued > 0 && (
+				<div className="rc-queue-terminal" data-rc-queue-terminal="true">
+					{terminalQueued} queued in terminal
+				</div>
+			)}
 			<textarea
 				ref={input}
 				className="rc-composer-input"
@@ -149,16 +186,20 @@ export function Composer({
 				</span>
 				<span className="rc-composer-actions">
 					{stop.mounted && (
-						<IconButton
+						<Button
 							icon="stop"
-							label="abort"
+							aria-label="Stop"
+							title="Stop"
 							variant="danger"
 							className="rc-composer-abort"
 							data-rc-state={stop.state}
 							data-rc-abort="true"
+							busy={aborting}
 							disabled={disabled}
 							onClick={() => void abort()}
-						/>
+						>
+							<span className="rc-composer-abort-label">Stop</span>
+						</Button>
 					)}
 					<IconButton
 						icon="arrow-up"
@@ -166,7 +207,8 @@ export function Composer({
 						variant="primary"
 						className="rc-composer-send rc-pressable"
 						data-rc-send="true"
-						disabled={!ready}
+						busy={sending}
+						disabled={disabled || (!sending && text.trim() === "")}
 						onClick={() => void send()}
 					/>
 				</span>

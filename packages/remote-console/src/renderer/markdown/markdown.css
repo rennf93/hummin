@@ -175,9 +175,11 @@
 		box-shadow var(--rc-duration-fast) var(--rc-ease-out);
 }
 
-.rc-md-link:hover {
-	color: var(--rc-primary-hover);
-	text-decoration-color: currentColor;
+@media (hover: hover) {
+	.rc-md-link:hover {
+		color: var(--rc-primary-hover);
+		text-decoration-color: currentColor;
+	}
 }
 
 .rc-md-link:focus-visible {

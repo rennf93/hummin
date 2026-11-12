@@ -169,3 +169,15 @@ body {
 	outline-offset: 2px;
 	box-shadow: var(--rc-focus-ring);
 }
+
+/* touch: no tap flash (the pressed state replaces it), no double-tap zoom delay */
+button,
+a,
+input,
+textarea,
+select,
+[role="button"],
+label {
+	-webkit-tap-highlight-color: transparent;
+	touch-action: manipulation;
+}

@@ -9,7 +9,7 @@
 /// <reference lib="dom" />
 import { act } from "react";
 import { describe, expect, it } from "vitest";
-import { Header, headerStatus } from "./components/Header.tsx";
+import { Header, headerStatus, headerStatusShort } from "./components/Header.tsx";
 import { HostRail } from "./components/HostRail.tsx";
 import { clampedPlacement, formatCompactNumber, formatCost } from "./components/StatsPopover.tsx";
 import type {
@@ -22,7 +22,7 @@ import type {
 	WireStatus,
 } from "./harness/replay-log.ts";
 import { mount } from "./renderer/test/mount.tsx";
-import { initialHostState, reduceHosts, type HostState, type HostStore } from "./store.ts";
+import { type HostState, type HostStore, initialHostState, reduceHosts } from "./store.ts";
 
 function makeEvent<K extends RemoteEventType>(type: K, seq: number, payload: RemoteEventPayloadMap[K]): AnyRemoteEvent {
 	// The type/payload correlation holds by construction: the payload is typed from the same key.
@@ -30,8 +30,24 @@ function makeEvent<K extends RemoteEventType>(type: K, seq: number, payload: Rem
 }
 
 const SERVERS: WireFleetServer[] = [
-	{ id: "llamacpp-fleet-a.test-8080", engine: "llamacpp", host: "fleet-a.test", port: 8080, discovery: "fresh", models: ["demo-coder-30b"], active: true },
-	{ id: "colibri-fleet-b.test-8081", engine: "colibri", host: "fleet-b.test", port: 8081, discovery: "stale", models: [], active: false },
+	{
+		id: "llamacpp-fleet-a.test-8080",
+		engine: "llamacpp",
+		host: "fleet-a.test",
+		port: 8080,
+		discovery: "fresh",
+		models: ["demo-coder-30b"],
+		active: true,
+	},
+	{
+		id: "colibri-fleet-b.test-8081",
+		engine: "colibri",
+		host: "fleet-b.test",
+		port: 8081,
+		discovery: "stale",
+		models: [],
+		active: false,
+	},
 ];
 
 const FULL_STATUS: WireStatus = {
@@ -57,7 +73,15 @@ function hostState(overrides: Partial<HostState> = {}): HostState {
 }
 
 function renderHeader(state: HostState, appearanceOpen = false) {
-	return <Header state={state} preset="studio" onPreset={() => undefined} onOpenAppearance={() => undefined} appearanceOpen={appearanceOpen} />;
+	return (
+		<Header
+			state={state}
+			preset="studio"
+			onPreset={() => undefined}
+			onOpenAppearance={() => undefined}
+			appearanceOpen={appearanceOpen}
+		/>
+	);
 }
 
 describe("stats: formatters", () => {
@@ -170,7 +194,9 @@ describe("stats: header", () => {
 			expect(document.querySelector("[data-rc-cost] .rc-sr-only")?.textContent).toBe("session cost $1.55");
 			expect(document.querySelector("[data-rc-todos] .rc-header-metric-visual")?.textContent).toBe("3/6");
 			expect(document.querySelector("[data-rc-todos] .rc-sr-only")?.textContent).toBe("todos 3 of 6 done");
-			expect(document.querySelector("[data-rc-ctx] .rc-sr-only")?.textContent).toBe("context usage 31 percent, auto-compact on");
+			expect(document.querySelector("[data-rc-ctx] .rc-sr-only")?.textContent).toBe(
+				"context usage 31 percent, auto-compact on",
+			);
 		} finally {
 			await mounted.unmount();
 		}
@@ -208,16 +234,24 @@ describe("stats: header", () => {
 	});
 
 	it("shows the activity label in place of the run status, and the failed form", async () => {
-		const mounted = await mount(renderHeader(hostState({ status: FULL_STATUS, activity: { kind: "compaction", phase: "start" } })));
+		const mounted = await mount(
+			renderHeader(hostState({ status: FULL_STATUS, activity: { kind: "compaction", phase: "start" } })),
+		);
 		try {
 			const word = () => document.querySelector(".rc-header-status-word");
 			expect(word()?.textContent).toBe("Compacting");
-			await mounted.render(renderHeader(hostState({ status: FULL_STATUS, activity: { kind: "memory_fold", phase: "start" } })));
+			await mounted.render(
+				renderHeader(hostState({ status: FULL_STATUS, activity: { kind: "memory_fold", phase: "start" } })),
+			);
 			expect(word()?.textContent).toBe("Folding memory");
-			await mounted.render(renderHeader(hostState({ status: FULL_STATUS, activity: { kind: "memory_fold", phase: "failed" } })));
+			await mounted.render(
+				renderHeader(hostState({ status: FULL_STATUS, activity: { kind: "memory_fold", phase: "failed" } })),
+			);
 			expect(word()?.textContent).toBe("Memory fold failed");
 			expect(word()?.querySelector(".rc-icon")).not.toBeNull();
-			await mounted.render(renderHeader(hostState({ status: FULL_STATUS, activity: { kind: "compaction", phase: "failed" } })));
+			await mounted.render(
+				renderHeader(hostState({ status: FULL_STATUS, activity: { kind: "compaction", phase: "failed" } })),
+			);
 			expect(word()?.textContent).toBe("Compaction failed");
 			await mounted.render(renderHeader(hostState({ status: FULL_STATUS })));
 			expect(word()?.textContent).toBe("working");
@@ -243,7 +277,9 @@ describe("stats: header", () => {
 			expect(dialog?.getAttribute("role")).toBe("dialog");
 			expect(dialog?.getAttribute("aria-label")).toBe("session stats");
 			expect(button?.getAttribute("aria-expanded")).toBe("true");
-			const rows = [...document.querySelectorAll("[data-rc-stats-row]")].map((row) => row.getAttribute("data-rc-stats-row"));
+			const rows = [...document.querySelectorAll("[data-rc-stats-row]")].map((row) =>
+				row.getAttribute("data-rc-stats-row"),
+			);
 			expect(rows).toEqual(["cache-hit", "changes", "version"]);
 			expect(document.querySelector('[data-rc-stats-row="changes"]')?.textContent).toContain("+850");
 			expect(document.querySelector('[data-rc-stats-row="changes"]')?.textContent).toContain("-148");
@@ -262,7 +298,10 @@ describe("stats: header", () => {
 			kind: "idle",
 			model: null,
 			// The wire type says every field is present; the host may still omit one.
-			stats: { tokens: { input: 1200, output: Number.NaN, cacheWrite: 2500 } as WireStats["tokens"], todos: { done: 0, total: 0 } },
+			stats: {
+				tokens: { input: 1200, output: Number.NaN, cacheWrite: 2500 } as WireStats["tokens"],
+				todos: { done: 0, total: 0 },
+			},
 		};
 		const mounted = await mount(renderHeader(hostState({ status })));
 		try {
@@ -370,8 +409,21 @@ describe("stats: header", () => {
 		const mounted = await mount(renderHeader(hostState({ status: FULL_STATUS })));
 		try {
 			await act(async () => document.querySelector<HTMLButtonElement>("[data-rc-stats-open]")?.click());
-			const rows = [...document.querySelectorAll("[data-rc-stats-row]")].map((row) => row.getAttribute("data-rc-stats-row"));
-			expect(rows).toEqual(["workspace", "model", "tokens", "cache-hit", "cost", "speed", "context", "changes", "todos", "version"]);
+			const rows = [...document.querySelectorAll("[data-rc-stats-row]")].map((row) =>
+				row.getAttribute("data-rc-stats-row"),
+			);
+			expect(rows).toEqual([
+				"workspace",
+				"model",
+				"tokens",
+				"cache-hit",
+				"cost",
+				"speed",
+				"context",
+				"changes",
+				"todos",
+				"version",
+			]);
 			expect(document.querySelector('[data-rc-stats-row="tokens"]')?.textContent).toContain("cache write 1k");
 			expect(document.querySelector('[data-rc-stats-row="tokens"]')?.textContent).toContain("1.5M");
 			expect(document.querySelector('[data-rc-stats-row="tokens"]')?.textContent).toContain("266k");
@@ -399,7 +451,9 @@ describe("stats: header", () => {
 			expect(word?.textContent).toBe("reconnecting");
 			expect(document.querySelector(".rc-shimmer")).toBeNull();
 			expect(word?.getAttribute("data-rc-activity")).toBeNull();
-			expect(document.querySelector("[data-rc-status-dot]")?.getAttribute("data-rc-status-dot")).toBe("reconnecting");
+			expect(document.querySelector("[data-rc-status-dot]")?.getAttribute("data-rc-status-dot")).toBe(
+				"reconnecting",
+			);
 			expect(document.querySelector("[data-rc-tps]")).toBeNull();
 			expect(document.querySelector("[data-rc-ctx]")?.getAttribute("data-rc-stale")).toBe("true");
 			expect(document.querySelector("[data-rc-cost]")?.getAttribute("data-rc-stale")).toBe("true");
@@ -421,7 +475,11 @@ describe("stats: header", () => {
 	});
 
 	it("renders none of the new elements when nothing is published", async () => {
-		const status: WireStatus = { kind: "idle", model: { provider: "a", modelId: "b" }, contextUsage: { tokens: 1, contextWindow: 10, percent: 10 } };
+		const status: WireStatus = {
+			kind: "idle",
+			model: { provider: "a", modelId: "b" },
+			contextUsage: { tokens: 1, contextWindow: 10, percent: 10 },
+		};
 		const mounted = await mount(renderHeader(hostState({ status })));
 		try {
 			for (const hook of ["tps", "autocompact", "cost", "todos", "stats-open", "activity"]) {
@@ -437,7 +495,17 @@ describe("stats: header", () => {
 describe("stats: add-host form", () => {
 	const noop = () => undefined;
 	function renderRail(hosts: { id: string; label: string; origin: string; token: string }[], onAdd = noop) {
-		return <HostRail hosts={hosts} states={{}} activeId={null} originWarnings={{}} onSelect={noop} onAdd={onAdd} onRemove={noop} />;
+		return (
+			<HostRail
+				hosts={hosts}
+				states={{}}
+				activeId={null}
+				originWarnings={{}}
+				onSelect={noop}
+				onAdd={onAdd}
+				onRemove={noop}
+			/>
+		);
 	}
 
 	function type(input: HTMLInputElement | null, value: string) {
@@ -450,7 +518,9 @@ describe("stats: add-host form", () => {
 	it("sets mobile-friendly input attributes", async () => {
 		const mounted = await mount(renderRail([]));
 		try {
-			const [label, origin, token] = ["label", "origin", "token"].map((name) => document.querySelector<HTMLInputElement>(`[data-rc-add-${name}]`));
+			const [label, origin, token] = ["label", "origin", "token"].map((name) =>
+				document.querySelector<HTMLInputElement>(`[data-rc-add-${name}]`),
+			);
 			for (const input of [label, origin, token]) {
 				expect(input?.getAttribute("autocapitalize")).toBe("off");
 				expect(input?.getAttribute("autocorrect")).toBe("off");
@@ -577,7 +647,15 @@ describe("stats: rail fleet", () => {
 	});
 
 	it("labels a server with no discovery record as not discovered", async () => {
-		const undiscovered: WireFleetServer = { id: "llamacpp-fleet-c.test-8082", engine: "llamacpp", host: "fleet-c.test", port: 8082, discovery: "none", models: [], active: false };
+		const undiscovered: WireFleetServer = {
+			id: "llamacpp-fleet-c.test-8082",
+			engine: "llamacpp",
+			host: "fleet-c.test",
+			port: 8082,
+			discovery: "none",
+			models: [],
+			active: false,
+		};
 		const mounted = await mount(renderRail([undiscovered]));
 		try {
 			const row = document.querySelector('[data-rc-fleet-server="llamacpp-fleet-c.test-8082"]');
@@ -592,6 +670,126 @@ describe("stats: rail fleet", () => {
 		const mounted = await mount(renderRail([]));
 		try {
 			expect(document.querySelector("[data-rc-fleet]")).toBeNull();
+		} finally {
+			await mounted.unmount();
+		}
+	});
+});
+
+describe("stats: session identity and status", () => {
+	const noop = () => undefined;
+	const HOST = { id: "h1", label: "studio-mac", origin: "demo://local", token: "t" };
+	const FULL_ID = "0198a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+
+	function renderRail(state: HostState, onRemove: (id: string) => void = noop) {
+		return (
+			<HostRail
+				hosts={[HOST]}
+				states={{ h1: state }}
+				activeId="h1"
+				originWarnings={{}}
+				onSelect={noop}
+				onAdd={noop}
+				onRemove={onRemove}
+			/>
+		);
+	}
+
+	function visibleText(root: Element | null): string {
+		const clone = root?.cloneNode(true) as Element;
+		for (const hidden of clone.querySelectorAll(".rc-sr-only")) hidden.remove();
+		return clone.textContent ?? "";
+	}
+
+	it("rail row leads with the session name, then host label and short id, and never shows 'connected'", async () => {
+		const mounted = await mount(renderRail(hostState({ sessionName: "my session", sessionId: FULL_ID })));
+		try {
+			const row = document.querySelector('[data-rc-host-row="h1"]');
+			expect(document.querySelector(".rc-host-label")?.textContent).toBe("my session");
+			expect(document.querySelector('[data-rc-host-sub="connected"]')?.textContent).toContain("studio-mac");
+			expect(document.querySelector(".rc-session-id")?.textContent).toBe("0198a1b2");
+			expect(visibleText(row)).not.toContain("connected");
+			expect(row?.querySelector(".rc-sr-only")?.textContent).toBe("connected");
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("falls back to the host label as the name and renders no id when there is none", async () => {
+		const mounted = await mount(renderRail(hostState({ sessionName: null, sessionId: null })));
+		try {
+			expect(document.querySelector(".rc-host-label")?.textContent).toBe("studio-mac");
+			expect(document.querySelector(".rc-session-id")).toBeNull();
+			expect(document.querySelector('[data-rc-host-sub="connected"]')).toBeNull();
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("shows the state word instead of the id when not connected", async () => {
+		const mounted = await mount(
+			renderRail(hostState({ connection: "reconnecting", sessionName: "my session", sessionId: FULL_ID })),
+		);
+		try {
+			expect(document.querySelector('[data-rc-host-sub="reconnecting"]')?.textContent).toBe("reconnecting");
+			expect(document.querySelector(".rc-session-id")).toBeNull();
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("header shows the session name and id, and no visible 'connected' without a run status", async () => {
+		const mounted = await mount(
+			renderHeader(hostState({ sessionName: "my session", sessionId: FULL_ID, status: null })),
+		);
+		try {
+			expect(document.querySelector(".rc-header-title")?.textContent).toBe("my session");
+			expect(document.querySelector(".rc-header-identity .rc-session-id")?.textContent).toBe("0198a1b2");
+			expect(visibleText(document.querySelector(".rc-header-status-word"))).toBe("");
+			expect(document.querySelector(".rc-header-status-word .rc-sr-only")?.textContent).toBe("connected");
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("gives the status a short label for narrow headers, and never a different meaning", async () => {
+		const waiting = hostState({ status: { kind: "waiting", detail: "approval", model: null } });
+		expect(headerStatus(waiting)).toBe("waiting: approval");
+		expect(headerStatusShort(waiting)).toBe("approval");
+		expect(headerStatusShort(hostState({ status: FULL_STATUS }))).toBe("working");
+		expect(headerStatusShort(hostState({ connection: "unreachable" }))).toBe("unreachable");
+		const mounted = await mount(renderHeader(waiting));
+		try {
+			expect(document.querySelector(".rc-status-full")?.textContent).toBe("waiting: approval");
+			expect(document.querySelector(".rc-status-short")?.textContent).toBe("approval");
+		} finally {
+			await mounted.unmount();
+		}
+	});
+
+	it("asks before removing a host; Cancel and Escape restore focus to the X", async () => {
+		const removed: string[] = [];
+		const mounted = await mount(renderRail(hostState(), (id) => removed.push(id)));
+		try {
+			const remove = () => document.querySelector<HTMLButtonElement>("[data-rc-remove]");
+			await act(async () => remove()?.click());
+			expect(removed).toEqual([]);
+			expect(document.querySelector("[data-rc-remove-confirm]")?.textContent).toContain("Remove studio-mac?");
+			await act(async () => document.querySelector<HTMLButtonElement>("[data-rc-remove-cancel]")?.click());
+			expect(document.querySelector("[data-rc-remove-confirm]")).toBeNull();
+			expect(document.activeElement).toBe(remove());
+			await act(async () => remove()?.click());
+			await act(async () => {
+				document
+					.querySelector("[data-rc-remove-confirm]")
+					?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+			});
+			expect(document.querySelector("[data-rc-remove-confirm]")).toBeNull();
+			expect(document.activeElement).toBe(remove());
+			expect(removed).toEqual([]);
+			await act(async () => remove()?.click());
+			await act(async () => document.querySelector<HTMLButtonElement>("[data-rc-remove-confirm-yes]")?.click());
+			expect(removed).toEqual(["h1"]);
 		} finally {
 			await mounted.unmount();
 		}

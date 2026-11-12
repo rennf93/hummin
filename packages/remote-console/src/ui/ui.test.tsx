@@ -8,13 +8,34 @@ import { mount } from "../renderer/test/mount.tsx";
 import { Button, IconButton } from "./Button.tsx";
 import { Disclosure } from "./Disclosure.tsx";
 import { Icon, type IconName } from "./Icon.tsx";
-import { useSmoothText } from "./useSmoothText.ts";
+import { SessionId } from "./SessionId.tsx";
 import { usePresence } from "./usePresence.ts";
+import { useSmoothText } from "./useSmoothText.ts";
 
 const ALL_ICONS: IconName[] = [
-	"chevron-right", "chevron-down", "check", "x", "alert", "arrow-up", "arrow-down", "stop", "plus", "sliders",
-	"terminal", "file", "pencil", "search", "sparkle", "clock", "spinner", "trash", "queue", "task", "question",
-	"tool", "copy",
+	"chevron-right",
+	"chevron-down",
+	"check",
+	"x",
+	"alert",
+	"arrow-up",
+	"arrow-down",
+	"stop",
+	"plus",
+	"sliders",
+	"terminal",
+	"file",
+	"pencil",
+	"search",
+	"sparkle",
+	"clock",
+	"spinner",
+	"trash",
+	"queue",
+	"task",
+	"question",
+	"tool",
+	"copy",
 ];
 
 afterEach(() => {
@@ -32,7 +53,11 @@ function Smooth({ text, streaming }: { text: string; streaming: boolean }) {
 
 describe("ui primitives", () => {
 	it("Button forwards data-* and aria-*", async () => {
-		const view = await mount(<Button variant="primary" size="sm" icon="plus" data-x="1" aria-label="add">Go</Button>);
+		const view = await mount(
+			<Button variant="primary" size="sm" icon="plus" data-x="1" aria-label="add">
+				Go
+			</Button>,
+		);
 		const el = view.container.querySelector("button");
 		expect(el?.getAttribute("data-x")).toBe("1");
 		expect(el?.getAttribute("aria-label")).toBe("add");
@@ -53,13 +78,105 @@ describe("ui primitives", () => {
 		await view.unmount();
 	});
 
+	it("busy Button swallows clicks, sets aria-busy and stays focusable", async () => {
+		const onClick = vi.fn();
+		const view = await mount(
+			<Button busy onClick={onClick}>
+				Send
+			</Button>,
+		);
+		const el = view.container.querySelector("button") as HTMLButtonElement;
+		expect(el.getAttribute("aria-busy")).toBe("true");
+		expect(el.disabled).toBe(false);
+		await act(async () => {
+			el.click();
+		});
+		expect(onClick).not.toHaveBeenCalled();
+		el.focus();
+		expect(document.activeElement).toBe(el);
+		expect(el.querySelector(".rc-icon-spinner")).not.toBeNull();
+		await view.render(<Button onClick={onClick}>Send</Button>);
+		await act(async () => {
+			view.container.querySelector("button")?.click();
+		});
+		expect(onClick).toHaveBeenCalledTimes(1);
+		await view.unmount();
+	});
+
+	it("busy IconButton swaps the icon for the spinner and swallows clicks", async () => {
+		const onClick = vi.fn();
+		const view = await mount(<IconButton icon="x" label="Stop" busy onClick={onClick} />);
+		const el = view.container.querySelector("button") as HTMLButtonElement;
+		expect(el.getAttribute("aria-busy")).toBe("true");
+		expect(el.querySelector(".rc-icon-spinner")).not.toBeNull();
+		await act(async () => {
+			el.click();
+		});
+		expect(onClick).not.toHaveBeenCalled();
+		await view.unmount();
+	});
+
+	it("SessionId shows the 8-char prefix, copies the full id and announces Copied", async () => {
+		vi.useFakeTimers();
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		vi.stubGlobal("navigator", { clipboard: { writeText } });
+		try {
+			const id = "0123456789abcdef";
+			const view = await mount(<SessionId id={id} />);
+			const el = view.container.querySelector("button") as HTMLButtonElement;
+			expect(el.textContent).toBe("01234567");
+			expect(el.getAttribute("aria-label")).toBe(`Copy session id ${id}`);
+			expect(el.getAttribute("title")).toBe(id);
+			await act(async () => {
+				el.click();
+			});
+			expect(writeText).toHaveBeenCalledWith(id);
+			expect(view.container.querySelector("[aria-live=polite]")?.textContent).toBe("Copied");
+			await act(async () => {
+				vi.advanceTimersByTime(1501);
+			});
+			expect(view.container.querySelector("[aria-live=polite]")?.textContent).toBe("");
+			await view.unmount();
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("SessionId stays silent when the clipboard fails and renders nothing for an empty id", async () => {
+		vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } });
+		try {
+			const view = await mount(<SessionId id="abcdefghij" />);
+			await act(async () => {
+				view.container.querySelector("button")?.click();
+			});
+			expect(view.container.querySelector("[aria-live=polite]")?.textContent).toBe("");
+			await view.render(<SessionId id="" />);
+			expect(view.container.innerHTML).toBe("");
+			await view.unmount();
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
 	it("Disclosure mounts children when open and unmounts when closed", async () => {
-		const view = await mount(<Disclosure open={false}><i data-testid="c" /></Disclosure>);
+		const view = await mount(
+			<Disclosure open={false}>
+				<i data-testid="c" />
+			</Disclosure>,
+		);
 		expect(view.container.querySelector("[data-testid=c]")).toBeNull();
-		await view.render(<Disclosure open><i data-testid="c" /></Disclosure>);
+		await view.render(
+			<Disclosure open>
+				<i data-testid="c" />
+			</Disclosure>,
+		);
 		expect(view.container.querySelector("[data-testid=c]")).not.toBeNull();
 		expect(view.container.querySelector(".rc-disclosure")?.getAttribute("data-open")).toBe("true");
-		await view.render(<Disclosure open={false}><i data-testid="c" /></Disclosure>);
+		await view.render(
+			<Disclosure open={false}>
+				<i data-testid="c" />
+			</Disclosure>,
+		);
 		expect(view.container.querySelector("[data-testid=c]")).toBeNull();
 		await view.unmount();
 	});

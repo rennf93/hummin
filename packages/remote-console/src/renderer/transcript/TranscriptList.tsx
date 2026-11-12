@@ -7,12 +7,12 @@
  * result); orphans still render. Adjacent identical notices render as one row with a
  * repeat count (the first entry's key and id; the duplicates never reach the DOM). Follow-bottom activates within 96px of the bottom and
  * keeps pinning as content height changes (ResizeObserver), and a snapshot that
- * replaces the list pins to the bottom. A reader who scrolled up is never moved. The
+ * replaces the list pins to the bottom. Only user input (wheel up, touch, scroll keys, scrollbar drag) turns following off; a reader who scrolled up is never moved. The
  * live streaming slot renders below the entries, deduplicated against a frozen entry
  * that has landed; a working indicator fills the gap before its first visible content.
  */
 /// <reference lib="dom" />
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ConnectionState } from "../../connection.ts";
 import type { WireTranscriptEntry } from "../../harness/replay-log.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -26,6 +26,11 @@ import { isNearBottom } from "./follow-bottom.ts";
 import { noticeSignature } from "./notice.ts";
 import type { LiveSlot } from "./stream-slot.ts";
 import "../renderer.css";
+
+/** How long a wheel, key or touch input keeps a scroll event attributable to the user. */
+const USER_INPUT_WINDOW_MS = 800;
+/** A scroll event this soon after the previous one continues the user's gesture (fling momentum, key repeat, scrollbar drag). */
+const SCROLL_GESTURE_GAP_MS = 250;
 
 /** An entry with its render key: the entryId, or a position key when an older server sent "". */
 interface KeyedEntry {
@@ -53,9 +58,11 @@ function useArrivals(
 	keyed: readonly KeyedEntry[],
 ): { arrived: ReadonlySet<string>; replaced: boolean } {
 	const seenRef = useRef<ReadonlySet<string> | null>(null);
-	const lastRef = useRef<{ entries: readonly WireTranscriptEntry[]; arrived: ReadonlySet<string>; replaced: boolean } | null>(
-		null,
-	);
+	const lastRef = useRef<{
+		entries: readonly WireTranscriptEntry[];
+		arrived: ReadonlySet<string>;
+		replaced: boolean;
+	} | null>(null);
 	if (lastRef.current !== null && lastRef.current.entries === entries) return lastRef.current;
 	const seen = seenRef.current;
 	const keys = keyed.map((item) => item.key);
@@ -93,17 +100,20 @@ function useLandedSlots(keyed: readonly KeyedEntry[], slot: LiveSlot | null | un
 		handled.current = keyed;
 		const previous = live.current;
 		if (previous !== null && (slot === undefined || slot === null || slot.slotKey !== previous.slotKey)) {
-			const fresh = keyed.find((candidate) => !known.current.has(candidate.key) && candidate.entry.message.role === previous.role);
+			const fresh = keyed.find(
+				(candidate) => !known.current.has(candidate.key) && candidate.entry.message.role === previous.role,
+			);
 			if (fresh !== undefined) landed.current.set(fresh.key, previous.slotKey);
 		}
 		known.current = new Set(keyed.map((item) => item.key));
 		for (const key of landed.current.keys()) if (!known.current.has(key)) landed.current.delete(key);
 	}
 	// "" is no id: an older server's empty entryId never matches an entry
-	if (slot !== undefined && slot !== null && slot.frozen && slot.entryId !== null && slot.entryId !== "" && known.current.has(slot.entryId)) {
+	if (slot?.frozen && slot.entryId !== null && slot.entryId !== "" && known.current.has(slot.entryId)) {
 		landed.current.set(slot.entryId, slot.slotKey);
 	}
-	live.current = slot !== undefined && slot !== null && !slot.frozen ? { slotKey: slot.slotKey, role: slot.role } : null;
+	live.current =
+		slot !== undefined && slot !== null && !slot.frozen ? { slotKey: slot.slotKey, role: slot.role } : null;
 	return landed.current;
 }
 
@@ -131,9 +141,7 @@ function landedSlot(entry: WireTranscriptEntry, slotKey: string): LiveSlot {
 
 /** True once the slot would paint something: text, thinking, a tool call or an image note. */
 function slotHasContent(slot: LiveSlot): boolean {
-	return slot.blocks.some((block) =>
-		block.type === "text" || block.type === "thinking" ? block.text !== "" : true,
-	);
+	return slot.blocks.some((block) => (block.type === "text" || block.type === "thinking" ? block.text !== "" : true));
 }
 
 interface RowGroup {
@@ -227,7 +235,10 @@ export function TranscriptList({
 	const { arrived, replaced } = useArrivals(entries, keyed);
 	const landed = useLandedSlots(keyed, slot);
 	// "" is never a known id: only a real entryId can dedupe the frozen slot against its landed entry
-	const entryIds = useMemo(() => new Set(entries.filter((entry) => entry.entryId !== "").map((entry) => entry.entryId)), [entries]);
+	const entryIds = useMemo(
+		() => new Set(entries.filter((entry) => entry.entryId !== "").map((entry) => entry.entryId)),
+		[entries],
+	);
 	// Each row reads only its own tool calls' results and live phases, kept referentially
 	// stable across renders, so one tool_update re-renders one row instead of every tool row.
 	const toolMapsRef = useRef(new Map<string, RowToolMaps>());
@@ -250,53 +261,154 @@ export function TranscriptList({
 	const followRef = useRef(true);
 	const [nearBottom, setNearBottom] = useState(true);
 	const jump = usePresence(!nearBottom);
-	const pin = () => {
+	// Layout reads (scrollHeight) happen at most once per frame: every pin request
+	// coalesces into one requestAnimationFrame callback.
+	const frameRef = useRef(0);
+	// Time of the last user input that can move the view up: only input, never a scrollTop or
+	// scrollHeight change, can turn following off (content-visibility rows resize on their own).
+	const lastInputRef = useRef(Number.NEGATIVE_INFINITY);
+	const pinNow = useCallback(() => {
 		const element = scrollerRef.current;
-		if (element !== null) element.scrollTop = element.scrollHeight;
-	};
+		if (element === null || !followRef.current) return;
+		element.scrollTop = element.scrollHeight;
+	}, []);
+	const schedulePin = useCallback(() => {
+		if (frameRef.current !== 0) return;
+		frameRef.current = requestAnimationFrame(() => {
+			frameRef.current = 0;
+			pinNow();
+		});
+	}, [pinNow]);
+	useEffect(() => () => cancelAnimationFrame(frameRef.current), []);
 	// Direct scroll listener: scroll does not bubble, and React's delegated handler is not
 	// reliable across environments (happy-dom dispatches do not reach it).
 	useEffect(() => {
 		const element = scrollerRef.current;
 		if (element === null) return;
+		let gesture = false;
+		let lastScroll = Number.NEGATIVE_INFINITY;
+		let scrollbarHeld = false;
+		let touching = false;
+		const markInput = () => {
+			lastInputRef.current = performance.now();
+			gesture = true;
+		};
+		const onTouchStart = () => {
+			touching = true;
+			markInput();
+		};
+		const onTouchEnd = () => {
+			touching = false;
+			markInput();
+		};
+		const onPointerUp = () => {
+			scrollbarHeld = false;
+		};
+		const onWheel = (event: WheelEvent) => {
+			if (event.deltaY < 0) markInput();
+		};
+		const onKeyDown = (event: KeyboardEvent) => {
+			const target = event.target;
+			if (target !== document.body && !(target instanceof Node && element.contains(target))) return;
+			if (["PageUp", "ArrowUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) markInput();
+		};
+		const onPointerDown = (event: PointerEvent) => {
+			// the scrollbar gutter belongs to the scroller itself, right of its client area
+			if (event.target === element && event.clientX - element.getBoundingClientRect().left > element.clientWidth) {
+				scrollbarHeld = true;
+				markInput();
+			}
+		};
 		const handler = () => {
+			const now = performance.now();
+			// Intent lasts for the whole continuous gesture: scroll events less than a gap apart extend it.
+			const intent =
+				scrollbarHeld ||
+				touching ||
+				now - lastInputRef.current < USER_INPUT_WINDOW_MS ||
+				(gesture && now - lastScroll < SCROLL_GESTURE_GAP_MS);
+			gesture = intent;
+			lastScroll = now;
+			// Following without user input: growth, shrink and our own pins never turn it off, so no layout read.
+			if (followRef.current && !intent) return;
 			const near = isNearBottom(element.scrollTop, element.clientHeight, element.scrollHeight);
-			followRef.current = near;
-			setNearBottom(near);
+			if (near) {
+				followRef.current = true;
+				setNearBottom(true);
+			} else if (intent) {
+				followRef.current = false;
+				setNearBottom(false);
+			}
 		};
 		element.addEventListener("scroll", handler);
-		return () => element.removeEventListener("scroll", handler);
+		element.addEventListener("wheel", onWheel, { passive: true });
+		element.addEventListener("touchmove", markInput, { passive: true });
+		element.addEventListener("pointerdown", onPointerDown);
+		element.addEventListener("touchstart", onTouchStart, { passive: true });
+		element.addEventListener("touchend", onTouchEnd);
+		element.addEventListener("touchcancel", onTouchEnd);
+		window.addEventListener("pointerup", onPointerUp);
+		window.addEventListener("pointercancel", onPointerUp);
+		document.addEventListener("keydown", onKeyDown);
+		return () => {
+			element.removeEventListener("scroll", handler);
+			element.removeEventListener("wheel", onWheel);
+			element.removeEventListener("touchmove", markInput);
+			element.removeEventListener("pointerdown", onPointerDown);
+			element.removeEventListener("touchstart", onTouchStart);
+			element.removeEventListener("touchend", onTouchEnd);
+			element.removeEventListener("touchcancel", onTouchEnd);
+			window.removeEventListener("pointerup", onPointerUp);
+			window.removeEventListener("pointercancel", onPointerUp);
+			document.removeEventListener("keydown", onKeyDown);
+		};
 	}, []);
 	// content-visibility rows change scrollHeight after layout: keep pinning while following.
 	useEffect(() => {
 		const content = contentRef.current;
 		const scroller = scrollerRef.current;
 		if (content === null || scroller === null || typeof ResizeObserver === "undefined") return;
-		const observer = new ResizeObserver(() => {
-			if (followRef.current) pin();
+		const observer = new ResizeObserver((resized) => {
+			if (!followRef.current) return;
+			// Pin before paint, from the observed content height (no scrollHeight read): the browser
+			// clamps to the real bottom. A frame of lag would shift the settling rows on screen.
+			const sized = resized.find((entry) => entry.target === content);
+			if (sized === undefined) return schedulePin();
+			scroller.scrollTop = sized.borderBoxSize[0]?.blockSize ?? sized.contentRect.height;
 		});
 		observer.observe(content);
 		// The scroller shrinks on composer autosize, window resize, or a mobile keyboard.
 		observer.observe(scroller);
 		return () => observer.disconnect();
-	}, []);
+	}, [schedulePin]);
 	// A replaced snapshot always opens at the bottom; otherwise follow only while near it.
 	const handledEntriesRef = useRef<readonly WireTranscriptEntry[] | null>(null);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: slot and working changes must re-pin; the effect reads refs
 	useLayoutEffect(() => {
 		// `replaced` stays true for the same entries reference, so consume it once or a
 		// slot update would yank a reader who has since scrolled up.
 		if (replaced && handledEntriesRef.current !== entries) {
 			followRef.current = true;
 			setNearBottom(true);
+			schedulePin();
 		}
 		handledEntriesRef.current = entries;
-		if (followRef.current) pin();
-	}, [entries, slot, working, replaced]);
-	const slotVisible = slot !== undefined && slot !== null && !(slot.frozen && slot.entryId !== null && entryIds.has(slot.entryId));
+		// Later growth (entries, slot, working) is pinned by the ResizeObserver callback before paint;
+		// without one, pin per update.
+		if (followRef.current && typeof ResizeObserver === "undefined") schedulePin();
+	}, [entries, slot, working, replaced, schedulePin]);
+	const slotVisible =
+		slot !== undefined && slot !== null && !(slot.frozen && slot.entryId !== null && entryIds.has(slot.entryId));
 	const showWorking = working && !(slotVisible && slotHasContent(slot));
 	const isEmpty = rows.length === 0 && !slotVisible;
 	const emptyMessage =
-		connection === undefined ? undefined : connection === "connected" ? (snapshotReceived ? "No messages yet." : undefined) : EMPTY_STATE_MESSAGES[connection];
+		connection === undefined
+			? undefined
+			: connection === "connected"
+				? snapshotReceived
+					? "No messages yet."
+					: undefined
+				: EMPTY_STATE_MESSAGES[connection];
 	const showSkeleton = isEmpty && emptyMessage === undefined;
 	// One array: the live slot and its landed entry must share a parent for React to keep the keyed row mounted.
 	const rowNodes: ReactNode[] = rows.map(({ entry, key, repeat }) => {
@@ -308,7 +420,9 @@ export function TranscriptList({
 		return <EntryRow key={key} entry={entry} arrived={arrived.has(key)} repeat={repeat} {...maps} />;
 	});
 	if (slotVisible) {
-		rowNodes.push(<SlotRow key={`slot-${slot.slotKey}`} slot={slot} {...toolMapsFor(`slot-${slot.slotKey}`, slot.blocks)} />);
+		rowNodes.push(
+			<SlotRow key={`slot-${slot.slotKey}`} slot={slot} {...toolMapsFor(`slot-${slot.slotKey}`, slot.blocks)} />,
+		);
 	}
 	toolMapsRef.current = nextToolMaps;
 	return (
@@ -319,6 +433,21 @@ export function TranscriptList({
 				role="log"
 				aria-label="transcript"
 				aria-relevant="additions"
+				onFocus={(event) => {
+					// Tab entering the log from above lands on the newest row, not the oldest one
+					// 200 entries up; Shift+Tab from below already arrives there. Keyboard focus only
+					// (:focus-visible): a mouse click on an old row also reports the prior element as relatedTarget.
+					if (!(event.target instanceof Element) || !event.target.matches(":focus-visible")) return;
+					const from = event.relatedTarget;
+					const content = event.currentTarget;
+					if (!(from instanceof Node) || content.contains(from)) return;
+					if (!(from.compareDocumentPosition(content) & Node.DOCUMENT_POSITION_FOLLOWING)) return;
+					const focusables = content.querySelectorAll<HTMLElement>(
+						"button, a[href], [tabindex]:not([tabindex='-1'])",
+					);
+					const newest = focusables[focusables.length - 1];
+					if (newest !== undefined && newest !== event.target) newest.focus();
+				}}
 			>
 				{showSkeleton && (
 					<div className="rc-skeleton" aria-hidden="true">
@@ -349,7 +478,8 @@ export function TranscriptList({
 						data-state={jump.state}
 						onClick={() => {
 							followRef.current = true;
-							pin();
+							setNearBottom(true);
+							schedulePin();
 						}}
 					>
 						<Icon name="arrow-down" />

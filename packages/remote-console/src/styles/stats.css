@@ -5,6 +5,12 @@
 	flex: none;
 }
 
+/* selected look while the popover is open */
+.rc-stats-anchor .rc-btn[data-rc-stats-open="true"] {
+	background: var(--rc-pressed);
+	color: var(--rc-fg);
+}
+
 .rc-stats-pop {
 	position: fixed;
 	z-index: 20;

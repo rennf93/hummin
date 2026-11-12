@@ -7,7 +7,7 @@
  * track reflow. Pure CSS transitions; aria-pressed carries the selection.
  */
 /// <reference lib="dom" />
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
+import { type ComponentPropsWithoutRef, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /** Button props with the data-* extras call sites hang off for tests. */
 export type PillButtonProps = ComponentPropsWithoutRef<"button"> & Record<`data-${string}`, string | undefined>;
@@ -50,9 +50,11 @@ export function SlidingPill<V extends string>({
 		const width = button.offsetWidth;
 		setPill((current) => (current.left === left && current.width === width ? current : { left, width }));
 	}, [activeIndex]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: measure is passed as the effect itself; its identity changes with the active index
 	useLayoutEffect(measure, [measure]);
 	// Keep the pill under the active option when the track or any label changes
 	// size (preset font swaps, late web fonts); window resize is the fallback.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: options.length re-observes the buttons when options are added or removed
 	useEffect(() => {
 		window.addEventListener("resize", measure);
 		const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
@@ -73,7 +75,13 @@ export function SlidingPill<V extends string>({
 		};
 	}, [measure, options.length]);
 	return (
-		<span ref={track} className={className === undefined ? "rc-pill" : `rc-pill ${className}`} role="group" aria-label={ariaLabel}>
+		// biome-ignore lint/a11y/useSemanticElements: pill track is a styled inline span; fieldset is block-level with default border/padding
+		<span
+			ref={track}
+			className={className === undefined ? "rc-pill" : `rc-pill ${className}`}
+			role="group"
+			aria-label={ariaLabel}
+		>
 			<span
 				className="rc-pill-thumb"
 				aria-hidden="true"

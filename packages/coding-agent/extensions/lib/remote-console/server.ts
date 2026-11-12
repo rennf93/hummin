@@ -38,6 +38,7 @@ const ASSET_TYPES: Record<string, string> = {
 	".woff2": "font/woff2",
 	".woff": "font/woff",
 	".json": "application/json",
+	".webmanifest": "application/manifest+json",
 	".map": "application/json",
 	".txt": "text/plain; charset=utf-8",
 };
@@ -52,6 +53,11 @@ export interface ConsoleActionHandlers {
 export interface ConsoleServerOptions {
 	token: string;
 	host: string;
+	/** Extra lowercase hostnames a fronting HTTPS proxy reaches this server by
+	 * (Tailscale Serve, Caddy); accepted in the Host and Origin headers. */
+	allowedHosts: readonly string[];
+	/** The configured public origin, accepted even with an explicit port. */
+	publicOrigin: string | undefined;
 	port: number;
 	source: ConsoleEventSource;
 	approvals: ApprovalRegistry | undefined;
@@ -85,11 +91,11 @@ export async function startConsoleServer(options: ConsoleServerOptions): Promise
 		const registry = options.origins.list();
 		const origin = firstHeader(request.headers.origin);
 		const host = firstHeader(request.headers.host) ?? "";
-		if (!hostAllowed(host, options.host)) {
+		if (!hostAllowed(host, options.host, options.allowedHosts)) {
 			replyJson(response, 403, { error: "Invalid host" });
 			return;
 		}
-		if (origin && !originAllowed(origin, host, registry)) {
+		if (origin && !originAllowed(origin, host, registry, options.allowedHosts, options.publicOrigin)) {
 			replyJson(response, 403, { error: "Invalid origin" });
 			return;
 		}
@@ -252,20 +258,41 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
 
 /** Host-header check, generalized from remote.ts for the LAN bind: the bound
  * host and the loopback names, and - for an any-interface bind, where every
- * local address is a valid reach name - any hostname. The bearer token
- * remains the real gate. */
-function hostAllowed(host: string, bindHost: string): boolean {
+ * local address is a valid reach name - any hostname - plus the configured
+ * proxy hostnames. The bearer token remains the real gate. */
+function hostAllowed(host: string, bindHost: string, allowedHosts: readonly string[]): boolean {
 	if (!host) return false;
 	if (bindHost === "0.0.0.0" || bindHost === "::") return true;
 	const name = host.replace(/:\d+$/, "");
+	if (allowedHosts.includes(name.toLowerCase())) return true;
 	return name === bindHost || name === "localhost" || name === "127.0.0.1" || name === "::1" || name === "[::1]";
 }
 
 /** Same-origin requests carry the request's own host; registry origins are
- * the console hosts the user added for fleet aggregation. */
-function originAllowed(origin: string, host: string, registry: readonly string[]): boolean {
+ * the console hosts the user added for fleet aggregation. A proxy may rewrite
+ * Host to the loopback upstream while the browser still sends its public
+ * origin, so origins on a configured proxy hostname are accepted too. */
+function originAllowed(
+	origin: string,
+	host: string,
+	 registry: readonly string[],
+	allowedHosts: readonly string[],
+	publicOrigin: string | undefined,
+): boolean {
 	if (origin === `http://${host}` || origin === `https://${host}`) return true;
-	return registry.includes(origin);
+	if (registry.includes(origin) || origin === publicOrigin) return true;
+	let parsed: URL;
+	try {
+		parsed = new URL(origin);
+	} catch {
+		return false;
+	}
+	// port "" is the scheme's default port: a proxy fronts on 80/443, not an arbitrary local port
+	return (
+		(parsed.protocol === "https:" || parsed.protocol === "http:") &&
+		parsed.port === "" &&
+		allowedHosts.includes(parsed.hostname)
+	);
 }
 
 /** CORS preflight. The allowlist is the console-origin registry, NOT an auth
@@ -359,7 +386,7 @@ function servePageOrAsset(
 			}
 			response.setHeader(
 				"Content-Security-Policy",
-				`default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ${registry.join(" ")}; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
+				`default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; connect-src 'self' ${registry.join(" ")}; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
 			);
 			response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
 			response.end(page);

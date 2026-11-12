@@ -101,10 +101,15 @@ html {
 	--rc-header-height: 3.25rem;
 	--rc-control-sm: 1.75rem;
 	--rc-control-md: 2.125rem;
+	--rc-control-touch: 2.75rem;
 	--rc-icon: 1rem;
 	--rc-icon-sm: 0.875rem;
 	--rc-dot-size: 0.5rem;
 	--rc-hairline-width: 1px;
+	/* on-screen keyboard overlap, set inline on the root at runtime from visualViewport (Composer) */
+	--rc-keyboard-inset: 0px;
+	/* height of the approval layer over the transcript bottom, set inline on the transcript region at runtime from a ResizeObserver (App) */
+	--rc-approval-space: 0px;
 
 	/* type scale. Labels are sentence-case in studio and paper; glass and terminal
 	   keep their uppercase tracked micro-labels through the two label tokens. */
@@ -176,9 +181,7 @@ html {
 	--rc-duration-pulse: 2s;
 	--rc-duration-spin: 900ms;
 	--rc-duration-drift: 72s;
-	/* stream reveal: the fade of each newly revealed chunk; stagger: per-item delay
-	   in grouped entrances */
-	--rc-duration-reveal: 320ms;
+	/* stagger: per-item delay in grouped entrances */
 	--rc-stagger: 28ms;
 	--rc-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 	--rc-ease-in: cubic-bezier(0.5, 0, 0.9, 0.4);
@@ -418,6 +421,16 @@ html {
 	--rc-shadow-thumb: 0 1px 3px rgb(43 36 26 / 0.22);
 }
 
+/* paper accent contrast: at a fixed 33% lightness the yellow-to-cyan hues fall to 3.5:1 on the
+   light surfaces. Darkening by up to 5% around hue 80 keeps the accent and its on-primary text
+   at 4.5:1 or better for every hue (checked over 0-360 in 2-degree steps against base, surface
+   and raised). Behind @supports: without trig functions the declaration would be dropped. */
+@supports (width: calc(1px * cos(0deg))) {
+	[data-rc-preset="paper"] {
+		--rc-primary: hsl(var(--rc-accent-hue) 55% calc(33% - 5% * max(0, cos((var(--rc-accent-hue) - 80) * 0.6deg))));
+	}
+}
+
 /* terminal: monospace-first near-black with sharp radii. */
 [data-rc-preset="terminal"] {
 	color-scheme: dark;
@@ -500,7 +513,6 @@ html {
 	--rc-duration-drift: 0ms;
 	--rc-duration-exit: 0ms;
 	--rc-duration-spin: 0ms;
-	--rc-duration-reveal: 0ms;
 	--rc-stagger: 0ms;
 }
 
@@ -528,8 +540,7 @@ html {
 		--rc-duration-drift: 0ms;
 		--rc-duration-exit: 0ms;
 		--rc-duration-spin: 0ms;
-		--rc-duration-reveal: 0ms;
-		--rc-stagger: 0ms;
+			--rc-stagger: 0ms;
 	}
 	*,
 	*::before,

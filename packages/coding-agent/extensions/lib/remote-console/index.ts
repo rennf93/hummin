@@ -72,6 +72,12 @@ export interface RemoteConsoleConfig {
 	hostLabel: string;
 	approvalTools: readonly string[];
 	approvalTimeoutMs: number;
+	/** Origin of a fronting HTTPS proxy (Tailscale Serve, Caddy); the console
+	 * URL is printed on it. */
+	publicUrl: string | undefined;
+	/** Lowercase proxy hostnames accepted in Host and Origin; includes the
+	 * publicUrl hostname. */
+	allowedHosts: readonly string[];
 }
 
 export interface RemoteConsoleOptions {
@@ -94,6 +100,8 @@ export interface RemoteConsoleHandle {
 	/** Console URL with the access token in the fragment; the token is never
 	 * logged and never appears in any response. */
 	url: string;
+	/** The same URL on the configured publicUrl origin, when one is set. */
+	publicUrl: string | undefined;
 	port: number;
 	close: () => Promise<void>;
 	/** Record a console-sent message that queued because the agent was busy.
@@ -145,7 +153,15 @@ export function resolveRemoteConsoleConfig(
 	const host = LOOPBACK_HOSTS.has(rawHost) || lanAllowed ? rawHost : "127.0.0.1";
 	const lan = !LOOPBACK_HOSTS.has(rawHost) && lanAllowed;
 	const rawTimeout = remoteControlNumber(settings, "approvalTimeoutMs");
+	const publicUrl = parsePublicUrl((env.HUMMIN_REMOTE_PUBLIC_URL ?? "").trim() || remoteControlString(settings, "publicUrl"));
+	const allowedHosts = parseAllowedHosts(env.HUMMIN_REMOTE_ALLOWED_HOSTS, remoteControlValue(settings, "allowedHosts"));
+	if (publicUrl !== undefined) {
+		const publicHost = new URL(publicUrl).hostname;
+		if (!allowedHosts.includes(publicHost)) allowedHosts.push(publicHost);
+	}
 	return {
+		publicUrl,
+		allowedHosts,
 		disabled,
 		host,
 		port: resolvePort(settings, env),
@@ -185,6 +201,37 @@ function resolvePort(settings: unknown, env: NodeJS.ProcessEnv): number {
 	const setting = remoteControlNumber(settings, "port");
 	if (setting !== undefined && Number.isInteger(setting) && setting >= 0 && setting <= 65_535) return setting;
 	return 0;
+}
+
+/** An absolute http(s) URL reduced to its origin; anything else is ignored. */
+function parsePublicUrl(value: string | undefined): string | undefined {
+	if (value === undefined || value === "") return undefined;
+	try {
+		const url = new URL(value);
+		return url.protocol === "https:" || url.protocol === "http:" ? url.origin : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** HUMMIN_REMOTE_ALLOWED_HOSTS (comma list) wins over remoteControl.allowedHosts
+ * (array or comma list, from settings JSON). Entries are bare hostnames:
+ * lowercased, port and scheme not accepted. */
+function parseAllowedHosts(envValue: string | undefined, setting: unknown): string[] {
+	const raw =
+		(envValue ?? "").trim() !== ""
+			? (envValue ?? "").split(",")
+			: Array.isArray(setting)
+				? setting.filter((entry): entry is string => typeof entry === "string")
+				: typeof setting === "string"
+					? setting.split(",")
+					: [];
+	const hosts: string[] = [];
+	for (const entry of raw) {
+		const name = entry.trim().toLowerCase();
+		if (name !== "" && /^[a-z0-9.-]+$/.test(name) && !hosts.includes(name)) hosts.push(name);
+	}
+	return hosts;
 }
 
 function parseApprovalTools(value: string | undefined): string[] {
@@ -681,6 +728,8 @@ export async function startRemoteConsole(pi: ExtensionAPI, options: RemoteConsol
 	const server: ConsoleServerHandle = await startConsoleServer({
 		token,
 		host,
+		allowedHosts: config.allowedHosts,
+		publicOrigin: config.publicUrl,
 		port: options.port ?? config.port,
 		source,
 		approvals,
@@ -720,6 +769,7 @@ export async function startRemoteConsole(pi: ExtensionAPI, options: RemoteConsol
 
 	return {
 		url: `http://${displayHost(host)}:${server.port}/#${token}`,
+		publicUrl: config.publicUrl === undefined ? undefined : `${config.publicUrl}/#${token}`,
 		port: server.port,
 		close,
 		trackQueued,

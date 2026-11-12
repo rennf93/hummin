@@ -11,27 +11,38 @@
 	container-name: rc-header;
 }
 
-/* the title shrinks before anything but never below 4rem */
-.rc-header-title {
+/* identity: session name (strong) then its copyable id. It is the only item that
+   shrinks, so the status and the controls never lose room to a long name. */
+.rc-header-identity {
+	display: flex;
+	align-items: center;
 	flex: 0 1 auto;
-	min-width: 4rem;
+	gap: var(--rc-space-2);
+	min-width: 0;
+}
+
+.rc-header-title {
+	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: var(--rc-text-sm);
-	font-weight: var(--rc-weight-medium);
+	font-size: var(--rc-text-base);
+	font-weight: var(--rc-weight-bold);
 	color: var(--rc-fg);
 }
 
-/* the dot carries colour and motion, the word names the state: never colour alone */
+.rc-header-identity .rc-session-id {
+	flex: none;
+}
+
+/* the dot carries colour and motion, the word names the state: never colour alone.
+   The status never shrinks and never ellipsizes; narrow containers swap in the short label. */
 .rc-header-status {
 	position: relative;
 	display: inline-flex;
 	align-items: center;
-	flex: 0 1 auto;
+	flex: none;
 	gap: var(--rc-space-2);
-	/* dot + gap + the word's 4rem floor: the status never shrinks past this */
-	min-width: calc(var(--rc-dot-size) + var(--rc-space-2) + 4rem);
 	font-size: var(--rc-text-sm);
 	color: var(--rc-fg-dim);
 }
@@ -44,14 +55,15 @@
 /* sentence case without touching the text content */
 .rc-header-status-word {
 	display: inline-block;
-	min-width: 4rem;
-	overflow: hidden;
-	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
 .rc-header-status-word::first-letter {
 	text-transform: uppercase;
+}
+
+.rc-status-short {
+	display: none;
 }
 
 .rc-header-spacer {

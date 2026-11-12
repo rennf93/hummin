@@ -31,8 +31,10 @@
 		box-shadow var(--rc-duration-fast) var(--rc-ease-out);
 }
 
-button.rc-tool-row:hover {
-	background: var(--rc-hover);
+@media (hover: hover) {
+	button.rc-tool-row:hover {
+		background: var(--rc-hover);
+	}
 }
 
 button.rc-tool-row:active {
@@ -274,4 +276,10 @@ button.rc-tool-row:focus-visible {
 
 .rc-tool-meta:first-child {
 	margin-top: 0;
+}
+
+@media (pointer: coarse) {
+	button.rc-tool-row {
+		min-height: var(--rc-control-touch);
+	}
 }

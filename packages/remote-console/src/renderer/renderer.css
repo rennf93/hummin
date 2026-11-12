@@ -18,6 +18,8 @@
 	padding: var(--rc-space-5) var(--rc-space-4) var(--rc-space-6);
 	/* keyboard focus scrolled flush to an edge keeps its full ring visible */
 	scroll-padding-block: var(--rc-space-3);
+	/* no pull-to-refresh, no scroll chaining into the page */
+	overscroll-behavior: contain;
 }
 
 .rc-transcript-content {
@@ -26,6 +28,8 @@
 	gap: var(--rc-space-5);
 	width: min(100%, var(--rc-column));
 	margin-inline: auto;
+	/* end space matching the approval layer floating over the transcript bottom */
+	padding-bottom: var(--rc-approval-space);
 }
 
 .rc-entry {
@@ -126,9 +130,11 @@
 		box-shadow var(--rc-duration-fast) var(--rc-ease-out);
 }
 
-.rc-notice-toggle:hover {
-	background: var(--rc-hover);
-	color: var(--rc-fg-dim);
+@media (hover: hover) {
+	.rc-notice-toggle:hover {
+		background: var(--rc-hover);
+		color: var(--rc-fg-dim);
+	}
 }
 
 .rc-notice-toggle:active {
@@ -187,9 +193,11 @@
 		box-shadow var(--rc-duration-fast) var(--rc-ease-out);
 }
 
-.rc-thinking-toggle:hover {
-	background: var(--rc-hover);
-	color: var(--rc-fg-dim);
+@media (hover: hover) {
+	.rc-thinking-toggle:hover {
+		background: var(--rc-hover);
+		color: var(--rc-fg-dim);
+	}
 }
 
 .rc-thinking-toggle:active {
@@ -282,7 +290,7 @@
    has no height so it never adds scrollable space */
 .rc-jump-dock {
 	position: sticky;
-	bottom: var(--rc-space-4);
+	bottom: calc(var(--rc-space-4) + var(--rc-approval-space));
 	display: flex;
 	align-items: flex-end;
 	justify-content: center;
@@ -314,8 +322,10 @@
 		transform var(--rc-duration-exit) var(--rc-ease-in);
 }
 
-.rc-jump:hover {
-	background: var(--rc-overlay);
+@media (hover: hover) {
+	.rc-jump:hover {
+		background: var(--rc-overlay);
+	}
 }
 
 /* the pill floats over text, so --rc-pressed (translucent) is layered over the opaque fill, not swapped in */
@@ -347,4 +357,12 @@
 
 .rc-notice-bad {
 	color: var(--rc-bad);
+}
+
+/* touch: toggles reach the minimum target height */
+@media (pointer: coarse) {
+	.rc-notice-toggle,
+	.rc-thinking-toggle {
+		min-height: var(--rc-control-touch);
+	}
 }
