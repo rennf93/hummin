@@ -95,6 +95,8 @@ export async function gitRepository(
 		execFileSync("git", ["-c", "user.email=test@example.com", "-c", "user.name=test", ...args], {
 			cwd,
 			encoding: "utf8",
+			// The developer's global config (hooks, commit and tag signing) must not reach fixture repositories.
+			env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
 		}).trim();
 	const work = previous?.work ?? (await tempRoot());
 	if (previous === undefined) git(work, "init", "--quiet");

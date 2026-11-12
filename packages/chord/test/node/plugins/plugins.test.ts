@@ -396,6 +396,8 @@ describe("installs through the component", () => {
 		await itemPlugin(root, "a", "a1");
 		const tools = await tempRoot();
 		await writeFiles(tools, { "npm.mjs": "process.exit(0);" });
+		// macOS: the fixture writes must reach FSEvents before the watch starts, or the package.json change is lost.
+		await settleFileEvents();
 		const reported: unknown[] = [];
 		const plugins = createPlugins(
 			{
