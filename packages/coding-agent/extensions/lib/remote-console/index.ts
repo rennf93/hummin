@@ -196,13 +196,14 @@ function parseApprovalTools(value: string | undefined): string[] {
 }
 
 /** Console dist candidates, first containing an index.html wins: an explicit
- * env dir, the workspace build (source runs), and the seeded agent-dir copy
- * (installed binaries). */
+ * env dir, the workspace build (source runs), the copy shipped inside the
+ * package (installed binaries), and the seeded agent-dir copy. */
 function defaultDistDirs(): string[] {
 	const dirs: string[] = [];
 	const envDist = process.env.HUMMIN_REMOTE_CONSOLE_DIST;
 	if (envDist) dirs.push(envDist);
 	dirs.push(join(getPackageDir(), "..", "remote-console", "dist"));
+	dirs.push(join(getPackageDir(), "extensions", "lib", "remote-console", "dist"));
 	dirs.push(join(getAgentDir(), "remote-console", "dist"));
 	return dirs;
 }
