@@ -175,6 +175,7 @@ For release preparation, publishing, verification, or recovery, load and follow 
 - `src/core/http-dispatcher.ts` replaces the global fetch with an undici `EnvHttpProxyAgent`. Local model servers need `httpIdleTimeoutMs: 0` in user settings (slow prefills otherwise look like dead connections); do not "fix" reported hangs by shortening default timeouts.
 - Runtime process title is `hummin`; a TUI session and spawned `-p` children look identical in `ps` - never kill by name pattern.
 - Extensions autoload from `~/.hummin/agent/extensions/` (runtime TS, synced from `packages/coding-agent/extensions/` after changes).
+- `./test.sh` needs `fd`, `rg` and `cargo` on PATH (CI installs fd and rg; runners ship rustup with a default toolchain). On hosts without them, such as NixOS, run `nix develop -c ./test.sh`: the flake's dev shell provides them.
 - Verify absence claims with a search before asserting them - both a `/copy` command and the vault contents were wrongly declared missing before (2026-09).
 - Inspect uncommitted worktree changes (`git diff`) before attributing them to other sessions; never invent ownership. Ask the user if genuinely unclear.
 - Memory/vault tests must point `HUMMIN_MEMORY_DIR` and `HUMMIN_MEMORY_VAULT_DIR` at temp dirs; never let tests write the real `~/.hummin/agent/memory` store (65 test lessons had to be pruned once).
