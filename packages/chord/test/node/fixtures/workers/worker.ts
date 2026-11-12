@@ -119,7 +119,11 @@ workerMain(
 		if (behaviour.connect === false) await sleep(1e9, undefined, { signal: ctx.abortSignal });
 		worker.connect(parent, { principal: { kind: "server" }, trusted: true }, ctx);
 		if (behaviour.loadMs !== undefined) await sleep(behaviour.loadMs, undefined, { signal: ctx.abortSignal });
-		if (behaviour.hang === true) await sleep(1e9, undefined, { signal: ctx.abortSignal });
+		if (behaviour.hang === true) {
+			// After `started`, which `connect` sent first on the IPC channel: the server handled it when this line arrives.
+			process.stdout.write("hanging\n");
+			await sleep(1e9, undefined, { signal: ctx.abortSignal });
+		}
 		await plugins.load(worker, { kind: "worker", core: [{ name: "@test/core", facet: core }] }, ctx);
 		if (behaviour.disconnectAndBlock === true) {
 			setTimeout(() => {
