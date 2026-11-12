@@ -1005,7 +1005,7 @@ forEachCodec(() => {
 			expect(counts()["chord.link.inflates"]).toBeUndefined();
 			peer.send({ kind: "event", events: [{ hold, member: PLAYER.events.paddle!, at: 1, value: deflated(2) }] });
 			// The web inflate runs on libuv's thread pool: no count of turns bounds it, so wait for the delivery itself.
-			while (seen.length === 0) await transported();
+			await vi.waitFor(() => expect(seen).toEqual([2]), { timeout: 4_000 });
 			await transported();
 			expect(seen).toEqual([2]);
 			expect(counts()["chord.link.inflates"]).toBe(1);
@@ -1077,7 +1077,7 @@ forEachCodec(() => {
 				expect(eventAcks(peer)).toEqual([]);
 				gate.resolve();
 				// The real inflate under the gate runs on libuv's thread pool: wait for the delivery, not a count of turns.
-				while (seen.length === 0) await transported();
+				await vi.waitFor(() => expect(seen).toEqual([1]), { timeout: 4_000 });
 				await transported();
 				expect(seen).toEqual([1]);
 				expect(eventAcks(peer)).toEqual([1]);
