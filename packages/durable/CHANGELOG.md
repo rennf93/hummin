@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Code-mode namespaces come from extensions, not name prefixes: `Extension.namespace` (`ToolNamespace`: `{ name, description, instructions? }`) groups the tools the extension brings (a tool several extensions name belongs to the first). `CodemodeNamespace`, its `prefix`, `namespaceOf` and `CodemodeToolOptions.namespaces` are removed, with no fallback. The `codemode` section lists every namespace of a selected extension, also one without tools yet (an MCP server waiting for sign-in), as `## <name>` and its one-line `description`, without tool counts, so the prompt stays the same when the extension's deferred tools appear; `instructions` are returned only by `describeNamespace()`, and `searchTools()` searches both. `namespacesOf(extensions)` (`@earendil-works/pi-durable/codemode`) maps tool names to their namespaces. Migration: move `namespaces: [{ name, description, prefix }]` into the extensions that bring those tools, as `namespace: { name, description, instructions? }`.
+
 ## [1.11.0] - 2026-11-11
 
 ### Breaking Changes
