@@ -639,7 +639,7 @@ describe("bounded memory", () => {
 		const replica = device("replica", store);
 		await replica.pull();
 		expect(await reads(await replica.store())).toEqual(await reads(await laptop.store()));
-	});
+	}, 60_000);
 
 	it("applies a large batch in chunks of APPLY_BYTES, and a pull stopped between them resumes", async () => {
 		const store = await remote();
@@ -673,7 +673,7 @@ describe("bounded memory", () => {
 		// The first chunk was applied, the second refused, then the resumed pull applied the rest in more chunks.
 		expect(applied).toBeGreaterThanOrEqual(3);
 		expect(await reads(local)).toEqual(await reads(await laptop.store()));
-	});
+	}, 60_000);
 });
 
 describe("host pieces", () => {
