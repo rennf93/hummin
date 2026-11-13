@@ -405,12 +405,14 @@ describe("routes and wraps failing", () => {
 
 describe("reloads and close", () => {
 	it("a reload swapping a route leaves a running request on the old router; the next uses the new one", async () => {
+		const entered = Promise.withResolvers<void>();
 		const gate = Promise.withResolvers<void>();
 		const old = contributing({
 			routes: {
 				"GET /v": {
 					public: true,
 					handler: async () => {
+						entered.resolve();
 						await gate.promise;
 						return { kind: "html", body: "old" };
 					},
@@ -419,7 +421,7 @@ describe("reloads and close", () => {
 		});
 		const server = await served({ "@app/v": old });
 		const running = send(server.port, "GET", "/v");
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		await entered.promise;
 		const next = contributing({
 			routes: { "GET /v": { public: true, handler: async () => ({ kind: "html", body: "new" }) } },
 		});
@@ -431,7 +433,8 @@ describe("reloads and close", () => {
 	});
 
 	it("close refuses new requests (503), waits for running ones up to closeTimeout, then seals them (503)", async () => {
-		let sealed: AbortSignal | undefined;
+		const quickRunning = Promise.withResolvers<void>();
+		const stuckRunning = Promise.withResolvers<AbortSignal | undefined>();
 		const server = await served(
 			{
 				"@app/slow": contributing({
@@ -439,6 +442,7 @@ describe("reloads and close", () => {
 						"GET /quick": {
 							public: true,
 							handler: async () => {
+								quickRunning.resolve();
 								await new Promise((resolve) => setTimeout(resolve, 30));
 								return { kind: "html", body: "done" };
 							},
@@ -446,7 +450,7 @@ describe("reloads and close", () => {
 						"GET /stuck": {
 							public: true,
 							handler: async (_request, ctx: Ctx) => {
-								sealed = ctx.abortSignal;
+								stuckRunning.resolve(ctx.abortSignal);
 								return new Promise(() => {});
 							},
 						},
@@ -457,7 +461,8 @@ describe("reloads and close", () => {
 		);
 		const quick = send(server.port, "GET", "/quick");
 		const stuck = send(server.port, "GET", "/stuck");
-		await new Promise((resolve) => setTimeout(resolve, 10));
+		// Running, not only sent: a request reaching the server after close is refused, so a fixed wait raced the sockets.
+		const [, sealed] = await Promise.all([quickRunning.promise, stuckRunning.promise]);
 		const closing = server.http.close(context);
 		expect((await server.http.fetch(loopback("/quick"), LOOPBACK)).status).toBe(503);
 		expect((await quick).body.toString()).toBe("done");
