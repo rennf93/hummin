@@ -102,6 +102,7 @@
 - Fixed the live `message_end` event sent to the remote console carrying an empty id, because core emits it before the entry is persisted; it now sends a unique `live:<slotKey>` id. The console's CSP gains `font-src 'self'` and `.woff` is served, so the bundled fonts are no longer blocked; a malformed entry no longer empties the snapshot ([#28](https://github.com/rennf93/hummin/pull/28))
 - Fixed `pi-ai` provider session resources of a durable Harness staying open after the Harness closed, which could keep the process alive with a legacy OpenAI Codex WebSocket ([#11961](https://github.com/earendil-works/pi/pull/11961) by [@carenthomas](https://github.com/carenthomas))
 - Fixed pi crashing with `RangeError: Maximum call stack size exceeded` when rendering a very large edit diff, for example after editing a file with a multi-megabyte line, and again on every resume of that session ([#8036](https://github.com/earendil-works/pi/issues/8036))
+- Fixed pressing Esc during a batch of tool calls leaving the calls that had not started yet without a result in the session; they now get an "Operation aborted" result ([#9986](https://github.com/earendil-works/pi/issues/9986))
 
 ## [1.10.2] - 2026-11-10
 
