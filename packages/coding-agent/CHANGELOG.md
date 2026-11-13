@@ -7,10 +7,13 @@
 - Remote console behind an HTTPS proxy: `HUMMIN_REMOTE_PUBLIC_URL` / `remoteControl.publicUrl` makes `/remote-control` print the console URL on the proxy origin (for example `https://<machine>.<tailnet>.ts.net` from Tailscale Serve), and `HUMMIN_REMOTE_ALLOWED_HOSTS` / `remoteControl.allowedHosts` lists extra proxy hostnames the Host and Origin checks accept. The server stays on loopback and the bearer token still gates every request. See [Remote console](docs/environment-variables.md#remote-console).
 - Remote console attention signals: the tab title carries the session name and a pending-approval count, the favicon shows a dot while an approval waits or a run is working, and an opt-in system notification fires for a new approval while the tab is hidden (HTTPS or localhost only).
 - Remote console install to a phone home screen: web app manifest, icons, and a `theme-color` that follows the active preset. The console server's CSP gains `manifest-src 'self'` and serves `.webmanifest`.
+- Added `deepseek-v4.1-flash` and `deepseek-v4.1-flash-1017` to the Qwen Token Plan Individual providers, and per-plan key variables `QWEN_TOKEN_PLAN_TEAM_API_KEY`, `QWEN_TOKEN_PLAN_TEAM_CN_API_KEY`, `QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY`, and `QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY`; the shared `QWEN_TOKEN_PLAN_API_KEY` and `QWEN_TOKEN_PLAN_CN_API_KEY` still work ([#11773](https://github.com/earendil-works/pi/issues/11773))
 
 ### Changed
 
 - Remote console UX pass: the session name and a short copyable session id lead the header, rail rows and phone chips, and "connected" is no longer printed next to the green dot (screen readers still hear it). Removing a host asks for confirmation. Busy states on send, stop, approve and deny. Touch targets are at least 44 px on touch screens, hover styles apply only to hover-capable pointers, the composer stays above the on-screen keyboard and respects safe areas, and the phone header is shorter and never truncates the run status. The approval card leaves with an exit animation and lays its buttons out full width on phones. The design contract and motion spec live in `packages/remote-console/DESIGN.md`.
+- Qwen Token Plan providers now use the current gateways (`token-plan.maas.qwencloudapi.com` international, `token-plan.maas.qianwenaiapi.com` China), and `qwen-token-plan` and `qwen-token-plan-cn` are named "Qwen Token Plan Team" and "Qwen Token Plan Team CN". Provider IDs are unchanged, and the old `aliyuncs.com` hosts still work ([#11773](https://github.com/earendil-works/pi/issues/11773))
+- The find tool's path patterns are now relative to the search directory, like grep's `glob`: `src/*.ts` finds `src/a.ts` but no longer `pkg/src/a.ts`; use `**/src/*.ts` to match at any depth. Patterns without `/` still match file names at any depth ([#12066](https://github.com/earendil-works/pi/issues/12066))
 
 ### Fixed
 
@@ -18,6 +21,15 @@
 - Remote console transcript forced a synchronous layout read on every streaming update while pinned to the bottom.
 - Remote console logged 24 Content-Security-Policy errors per load: the build inlined small Geist font subsets as `data:` URIs, which `font-src 'self'` blocks. Fonts now always ship as files.
 - Remote console approval card no longer shifts the composer when it appears or resolves (it floats above the composer and reserves matching space at the end of the transcript).
+- Fixed the bash tool returning no output, with a footer like `[Showing lines 3-2 of 2]`, when the output ends in one line longer than about 100KB, such as a `grep` match in a minified file; it now shows the end of that line ([#12062](https://github.com/earendil-works/pi/issues/12062))
+- Fixed provider errors reading "Connection closed." not triggering automatic retries ([#12064](https://github.com/earendil-works/pi/issues/12064))
+- Fixed `/resume` sometimes selecting an unrelated session while the list reloads after deleting or renaming a session ([#12106](https://github.com/earendil-works/pi/issues/12106))
+- Fixed `enabledModels`/`--models` warnings such as `No models match pattern "github-copilot/nope"` being written over the interactive TUI on every `/new`, `/resume` and `/fork`, which left stale lines in fullscreen mode. The warnings are now shown once at startup, in the chat in interactive mode and on stderr in other modes; RPC mode no longer repeats them on stderr for each `new_session`, `switch_session` or `fork` ([#11264](https://github.com/earendil-works/pi/issues/11264))
+- Fixed the find tool matching path patterns through folders above the search path: with the project in `~/src/app`, `src/**/*.ts` returned every `.ts` file in the project ([#12066](https://github.com/earendil-works/pi/issues/12066))
+
+### Removed
+
+- Removed the retired `deepseek-v3.2` and `deepseek-v4-flash` from the Qwen Token Plan Team providers; use `deepseek-v4-flash-0731` or `deepseek-v4.1-flash` ([#11773](https://github.com/earendil-works/pi/issues/11773))
 
 ## [1.11.0] - 2026-11-11
 

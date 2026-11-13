@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `telemetryIngestFacet` requires `admit(principal)`: only the pages of principals it admits may send their spans to `PageTelemetry`; a refused principal's hold fails `forbidden`. The app kit admits every signed-in page. Migration: pass `admit` (`() => true` keeps the old behaviour).
+
+### Added
+
+- `@earendil-works/chord/telemetry-ingest`: the telemetry recorder, the page and worker batches and objects, the ingest facet and the senders, for an app wiring telemetry into hosts of its own.
+
 ## [1.11.0] - 2026-11-11
 
 ### Added

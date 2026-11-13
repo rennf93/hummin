@@ -2349,6 +2349,29 @@ validation and copies the v2 kernel added around Delta.
   `watch` and `registry`, releasing everything on dispose, calling one `changed` callback the app wires to its redraw
   (one line with pi-tui; any library works). p2's retry with backoff for gone references is not carried over (v2
   references wait and rebind by themselves). No pi-tui dependency.
+- **Admitting pages' telemetry (owner, 2026-11-12: "`telemetryIngestFacet({ admit(principal) })` (refused:
+  forbidden)"; p2 wiring telemetry; refines "Telemetry from browser pages"):** the ingest facet takes `admit(principal)`,
+  required: `PageTelemetry` serves a principal it admits, and a refused principal's hold fails `forbidden` (no contract
+  change, nothing written). Why: the budget of 1,200 spans per minute is per page (incarnation), and one principal may
+  open up to 1,000 pages' worth of links, so a guest could fill the store's queue for its whole retention; an app admits
+  whom it trusts (p2: owners only). The kit admits every page (its links are signed in). Its entry points are public for
+  an app with its own hosts: `@earendil-works/chord/telemetry-ingest` (the recorder, the batches and objects, the facet,
+  the senders).
+- **Surfaces for an app with its own HTTP stack and styling (owner, 2026-11-12: "Chord 1: yes", "Chord 2: yes", "Cloud:
+  (b)"; p2's move onto the web surface):** (1) `webSurface(server, { ..., routes: false })` contributes no `Http`
+  routes; the surface gives `file(path)`, `pageAssets()` and `base()`, and the app serves them through its own HTTP
+  stack with its own access rules and page template (`pageScripts`). (2) `startPage({ themes: false })` loads no
+  `Themes` provider and writes no theme on `:root`: an app with its own stylesheet keeps its variables. (3)
+  `startPage({ follow: false })` (and `startClient`'s `follow`): a static page that loads its combined plugins and
+  never follows the scripts object nor asks the server's base, for a page built offline and served elsewhere, whose
+  server publishes scripts it cannot load; built with `buildBase` and `pageBootstrap` (exported for it), its plugin
+  scripts registered by `registeredSource`. (4) (owner, 2026-11-12: "make the surface's base and plugin builds resolve
+  exactly like the server process does (source, no dist needed)") `webSurface`'s and `tuiSurface`'s `tsconfig` (and
+  `buildBase`'s `BaseResolution`): the base resolves through that tsconfig.json's `paths`, for a server whose loader
+  resolves workspace packages through them (p2's source resolver). Conditions alone missed a package whose `exports`
+  name only `dist/` (pi-ai's `./utils/*`): a checkout that never builds `dist/` (p2 on a phone) failed its base. Without
+  `tsconfig` every tsconfig.json stays ignored. Plugin builds need nothing: they bundle a plugin's own `dependencies`
+  only, the app's packages being host packages.
 - **`chord.plugins` is a package's manifest of plugins, as pi's (owner, 2026-11-01: "yes"; slice 12 review, Opus H1;
   refines "The plugin model ... imports and builds" (Imports) and `slice-12.md` §2, §5):** a package (npm, git, local)
   declares the plugins it provides in its `package.json`, `"chord": { "plugins": ["./notes", "./search"] }` (globs and
@@ -2542,7 +2565,8 @@ validation and copies the v2 kernel added around Delta.
   instance exists"; a per-binding view is possible later, the blip is cosmetic). Carry-over: calls surviving a
   `loading` unbind (slices.md, "Later: reload").
 - **Telemetry from browser pages (owner, 2026-11-04: "I just need this implemented"; "it couldn't really fuck the
-  server up"; tutorial gap):** a page records spans in memory (the click and the calls it makes, carriers on its calls
+  server up"; tutorial gap; (**superseded in part** by "Admitting pages' telemetry": an app admits pages by principal
+  through a hook, not "anonymous pages")):** a page records spans in memory (the click and the calls it makes, carriers on its calls
   as any client) and sends finished spans in batches every few seconds and when hidden, over its existing Chord link,
   to a telemetry object on the server (`ingest(batch)`): sign-in, principals, part limits and flow control apply as for
   any call; an app may admit anonymous pages. The server treats them as untrusted, best effort: batch size and rate
