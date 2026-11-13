@@ -82,21 +82,27 @@ describe("MCP OAuth refresh", () => {
 
 	it("cancels a sign-in that waits for another process's refresh", async () => {
 		const { server, lockDir, process } = await signedIn();
+		const locked = Promise.withResolvers<void>();
 		let release = () => {};
 		const held = process().store.withRefreshLock(
 			() =>
 				new Promise<void>((resolve) => {
 					release = resolve;
+					locked.resolve();
 				}),
 		);
+		// Held, not only requested: a sign-in that wins the lock race refreshes and resolves instead of waiting.
+		await locked.promise;
 		// The sign-in's store, recording its wait for the lock.
 		const store = process().store;
 		let waiting: Promise<unknown> | undefined;
+		const waitStarted = Promise.withResolvers<void>();
 		const recording: McpOAuthServerStore = {
 			...store,
 			withRefreshLock: (fn) => {
 				const run = store.withRefreshLock(fn);
 				waiting = run;
+				waitStarted.resolve();
 				return run;
 			},
 		};
@@ -108,7 +114,8 @@ describe("MCP OAuth refresh", () => {
 			prompt: { showAuthorizationUrl: () => {}, promptForRedirectUrl: async () => undefined },
 			signal: controller.signal,
 		});
-		setTimeout(() => controller.abort(), 200);
+		await waitStarted.promise;
+		controller.abort();
 		await expect(signIn).rejects.toBeInstanceOf(McpSignInCancelledError);
 
 		release();
