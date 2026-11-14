@@ -4720,6 +4720,26 @@ exits after 30 s without images (`{ worker: false }` prepares them inline);
 does not take images still gets the image; pi-ai replaces it with a placeholder
 in requests, and the diagnostic says so.
 
+Images reach the model in two other ways, which `/images/fit` fits with any
+processor before they are stored, so the transcript, and with it the provider's
+prompt cache, never changes later (nothing is fitted per request):
+`fitImage(bytes, mimeType, limits, processor)` and `fitImages(content, limits,
+processor)` fit a host's input before it submits it, and
+`createFitImagesExtension(processor)` (the `fit-images` extension) is an
+`afterTool` hook that fits the images of every result a model-issued call
+writes, whichever tool made them, with an `info` diagnostic (code `image`)
+saying what changed. Nested calls' results are left as they are: the calling
+program gets them, not the model. Hooks of extensions installed before it see
+the images unfitted. The limits are the conversation model's when the image
+enters (`imageLimits(model)`, exported by `/tools`); a later switch to a model
+with smaller limits does not refit stored images. Every image goes through the
+processor, which decodes it, as the coding agent's images do, so a damaged
+image never reaches the transcript; its type is read from its bytes, and one
+the processor cannot prepare, or fails on, and malformed base64, is left out
+with a note. Unlike the coding agent, which keeps a tool's original image when
+it cannot process it, the image is left out: kept, it would fail every later
+request. `/images/fit` does not load Photon.
+
 For text, `read` reads a file through `openBinaryReader`: image detection reads
 the header (and a PNG's chunk headers), `scanLines` counts and locates the
 selected lines, and only the shown head is read and decoded, so its cost and transfer are bounded by the
