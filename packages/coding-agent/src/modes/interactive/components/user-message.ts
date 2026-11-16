@@ -34,6 +34,7 @@ export class UserMessageComponent extends Container {
 	// hummin overlay: the visible time tag, taken from the message's own epoch timestamp.
 	private displayTimestamp?: number;
 	private showTimestamp = true;
+	private zoneLines?: { source: readonly string[]; lines: string[]; tagKey?: string };
 
 	constructor(
 		text: string,
@@ -93,21 +94,28 @@ export class UserMessageComponent extends Container {
 		);
 	}
 
-	override render(width: number): string[] {
+	override render(width: number): readonly string[] {
 		const lines = super.render(width);
 		if (lines.length === 0) {
 			return lines;
 		}
 
+		// Container output is shared across frames; copy it once per change instead of mutating it.
+		let output: readonly string[] = lines;
+		const tagKey = `${this.showTimestamp}:${this.displayTimestamp ?? ""}`;
 		if (this.showTimestamp && this.displayTimestamp !== undefined) {
 			const tag = theme.fg("dim", formatMessageTimestamp(this.displayTimestamp));
 			const padWidth = Math.max(0, width - 1 - visibleWidth(tag));
-			const tagLine = " ".repeat(padWidth) + tag;
-			lines.push(truncateToWidth(tagLine, width));
+			const tagLine = truncateToWidth(" ".repeat(padWidth) + tag, width);
+			output = [...lines, tagLine];
 		}
 
-		lines[0] = OSC133_ZONE_START + lines[0];
-		lines[lines.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[lines.length - 1];
-		return lines;
+		if (this.zoneLines?.source !== output || this.zoneLines.tagKey !== tagKey) {
+			const zoned = [...output];
+			zoned[0] = OSC133_ZONE_START + zoned[0];
+			zoned[zoned.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + zoned[zoned.length - 1];
+			this.zoneLines = { source: output, lines: zoned, tagKey };
+		}
+		return this.zoneLines.lines;
 	}
 }
