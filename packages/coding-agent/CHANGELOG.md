@@ -104,6 +104,7 @@
 - Fixed `pi-ai` provider session resources of a durable Harness staying open after the Harness closed, which could keep the process alive with a legacy OpenAI Codex WebSocket ([#11961](https://github.com/earendil-works/pi/pull/11961) by [@carenthomas](https://github.com/carenthomas))
 - Fixed pi crashing with `RangeError: Maximum call stack size exceeded` when rendering a very large edit diff, for example after editing a file with a multi-megabyte line, and again on every resume of that session ([#8036](https://github.com/earendil-works/pi/issues/8036))
 - Fixed pressing Esc during a batch of tool calls leaving the calls that had not started yet without a result in the session; they now get an "Operation aborted" result ([#9986](https://github.com/earendil-works/pi/issues/9986))
+- Fixed an unreadable `CHANGELOG.md` (pi's own or an extension package's) printing `Warning: Could not parse changelog` over the interactive TUI; it now shows no changelog notes ([#11264](https://github.com/earendil-works/pi/issues/11264))
 
 ## [1.10.2] - 2026-11-10
 
