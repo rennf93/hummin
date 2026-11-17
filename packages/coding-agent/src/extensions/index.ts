@@ -3,8 +3,8 @@ import codemodeExtension from "./codemode/index.ts";
 import entireCompanionExtension from "./entire-companion/index.ts";
 import llamaExtension from "./llama/index.ts";
 import mcpExtension from "./mcp/index.ts";
-import todoReminderExtension from "./todo-reminder/index.ts";
 import sessionHistoryExtension from "./session-history/index.ts";
+import todoReminderExtension from "./todo-reminder/index.ts";
 import toolSearchExtension from "./tool-search/index.ts";
 import warpExtension from "./warp/index.ts";
 
