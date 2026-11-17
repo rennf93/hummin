@@ -4,6 +4,7 @@
 
 ### New Features
 
+- **Entire companion (optional)**: when a project is Entire-enabled and the `entire` CLI is on PATH, hummin forwards session lifecycle to Entire so checkpoints, transcripts, brain recall, and resume work for hummin sessions; brain brief/recall arrives as hidden context, and a new `/entire` command prints the project's Entire facts. Projects without Entire see nothing. hummin never enables Entire, writes settings or hooks, pushes, or installs daemons. See [Entire](docs/reference/entire.md).
 - **/carry, a linked clear**: start an empty session that keeps a reference to the one it left behind. The new session records the previous transcript as its `parentSession` and a hidden pointer entry names the file, its size, and where it ended; the bundled `sessions` tool (armed automatically after `/carry`, `/clear`, `/fork`, or `/resume`) searches and reads past transcripts with capped output. No summarization call, nothing carried over.
 
 ### Behavior Changes
