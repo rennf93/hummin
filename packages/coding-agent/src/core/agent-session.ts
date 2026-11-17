@@ -150,6 +150,7 @@ import {
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions, DEFAULT_SELECTED_TOOLS } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
+import { parseUsageLimitResetAt, planUsageLimitWait } from "./usage-limit.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
 import {
 	findLatestResponse,
@@ -445,6 +446,8 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+	/** How many provider usage-limit waits this session has performed (separate from retry.maxRetries). */
+	private _usageLimitWaitCount = 0;
 	/**
 	 * Failed response that the next request repeats, set by auto-retry and overflow recovery. The
 	 * retry is routed with it as `failed`, since the context no longer contains it.
@@ -524,6 +527,9 @@ export class AgentSession {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
+		// Persist-time secret masking consults persistMasking.enabled; the session
+		// manager keeps raw entries in memory and only masks the bytes on disk.
+		config.sessionManager.setPersistMaskingEnabled(() => this.settingsManager.getPersistMaskingEnabled());
 		this._scopedModels = config.scopedModels ?? [];
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
@@ -2123,6 +2129,11 @@ export class AgentSession {
 		}
 		if (!message) return this.agent.hasQueuedMessages();
 
+		if (message.stopReason === "error" && (await this._handleUsageLimitWait(message))) {
+			if (this._agentRunAbortRequested) this._finishCancelledRetry();
+			this._failedResponse = message;
+			return !this._agentRunAbortRequested;
+		}
 		if (this._isRetryableError(message) && (await this._prepareRetry(message))) {
 			if (this._agentRunAbortRequested) this._finishCancelledRetry();
 			this._failedResponse = message;
@@ -3902,6 +3913,7 @@ export class AgentSession {
 	}): void {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
+		const shellDefaultTimeout = this.settingsManager.getShellDefaultTimeout();
 		const shellPath = this.settingsManager.getShellPath();
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
@@ -3912,7 +3924,12 @@ export class AgentSession {
 				)
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					bash: {
+						commandPrefix: shellCommandPrefix,
+						shellPath,
+						defaultTimeout: shellDefaultTimeout,
+					},
+					powershell: { defaultTimeout: shellDefaultTimeout },
 				});
 
 		this._baseToolDefinitions = new Map(
@@ -4107,6 +4124,44 @@ export class AgentSession {
 			this._retryAbortController = undefined;
 		}
 
+		return true;
+	}
+
+	/**
+	 * Provider usage limits (e.g. "Usage limit reached for 5 hour. Your limit will reset
+	 * at ...") are not short-backoff retryable: wait until the documented reset, then let
+	 * the same turn continue. Counted separately from retry.maxRetries and capped by
+	 * usageLimitWait.maxWaitMinutes; aborting the run cancels the wait.
+	 */
+	private async _handleUsageLimitWait(message: AssistantMessage): Promise<boolean> {
+		if (!message.errorMessage) return false;
+		const resetAt = parseUsageLimitResetAt(message.errorMessage);
+		if (!resetAt) return false;
+		const settings = this.settingsManager.getUsageLimitWaitSettings();
+		if (!settings.enabled) return false;
+		const plan = planUsageLimitWait(resetAt, settings.maxWaitMinutes);
+		if (!plan) return false;
+
+		this._usageLimitWaitCount++;
+		this._emit({
+			type: "auto_retry_start",
+			attempt: this._usageLimitWaitCount,
+			maxAttempts: this._usageLimitWaitCount,
+			delayMs: plan.waitMs,
+			errorMessage: `Usage limit reached; waiting until ${plan.resetAt.toISOString()} then continuing this session`,
+		});
+		// Same durability as the retry path: keep the failed attempt out of model projection.
+		this._omitRecoveryAttempt(message);
+
+		this._retryAbortController = new AbortController();
+		try {
+			await sleep(plan.waitMs, this._retryAbortController.signal);
+		} catch {
+			this._finishCancelledRetry();
+			return false;
+		} finally {
+			this._retryAbortController = undefined;
+		}
 		return true;
 	}
 
