@@ -398,6 +398,13 @@ export const SettingsSchema = Type.Object(
 		markdown: Type.Optional(MarkdownSettingsSchema),
 		warnings: Type.Optional(WarningSettingsSchema),
 		codemode: Type.Optional(CodemodeSettingsSchema),
+		shellDefaultTimeout: Type.Optional(
+			timeoutSetting({
+				description:
+					'Default timeout in seconds for bash and PowerShell commands the model runs without an explicit timeout; 0 or "disabled" disables the default. Does not apply to sandboxed bash.',
+				default: SETTINGS_DEFAULTS.shellDefaultTimeout,
+			}),
+		),
 		sessionDir: Type.Optional(
 			Type.String({
 				description: "Custom session storage directory, in the same format as the --session-dir CLI flag.",

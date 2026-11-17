@@ -455,6 +455,8 @@ export type { CodemodeStoreEntryData, CodemodeToolDetails } from "./extensions/c
 export { createEntireCompanionExtension } from "./extensions/entire-companion/index.ts";
 export type { LoadedMcpConfig, McpExposure, McpServerConfig, McpServerEntry } from "./extensions/mcp/config.ts";
 export { createMcpExtension, type McpExtensionOptions, type McpTransportFactory } from "./extensions/mcp/index.ts";
+export { createSessionHistoryExtension } from "./extensions/session-history/index.ts";
+export type { SessionsToolDetails } from "./extensions/session-history/tool.ts";
 export { createToolSearchExtension } from "./extensions/tool-search/index.ts";
 // Main entry point
 export { type MainOptions, main } from "./main.ts";
