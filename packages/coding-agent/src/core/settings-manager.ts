@@ -1024,6 +1024,11 @@ export class SettingsManager {
 		return this.settings.compactPrompt ?? false;
 	}
 
+	/** Default timeout in seconds for bash and PowerShell commands without an explicit timeout. Default 120; 0 or "disabled" disables. */
+	getShellDefaultTimeout(): number | "disabled" {
+		return this.settings.shellDefaultTimeout ?? SETTINGS_DEFAULTS.shellDefaultTimeout;
+	}
+
 	setCompactPrompt(enabled: boolean): void {
 		this.globalSettings.compactPrompt = enabled;
 		this.markModified("compactPrompt");
