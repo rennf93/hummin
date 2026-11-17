@@ -71,6 +71,15 @@ const RetrySettingsSchema = Type.Object({
 	),
 });
 
+const PersistMaskingSettingsSchema = Type.Object({
+	enabled: Type.Optional(
+		Type.Boolean({
+			description: "Mask known secret token formats when session entries are written to disk.",
+			default: SETTINGS_DEFAULTS.persistMasking.enabled,
+		}),
+	),
+});
+
 const TerminalSettingsSchema = Type.Object({
 	showImages: Type.Optional(
 		Type.Boolean({
@@ -252,6 +261,7 @@ export const SettingsSchema = Type.Object(
 		compaction: Type.Optional(CompactionSettingsSchema),
 		branchSummary: Type.Optional(BranchSummarySettingsSchema),
 		retry: Type.Optional(RetrySettingsSchema),
+		persistMasking: Type.Optional(PersistMaskingSettingsSchema),
 		hideThinkingBlock: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.hideThinkingBlock })),
 		showCacheMissNotices: Type.Optional(
 			Type.Boolean({
@@ -485,6 +495,7 @@ export interface CompactionSettings extends Static<typeof CompactionSettingsSche
 export interface BranchSummarySettings extends Static<typeof BranchSummarySettingsSchema> {}
 export interface ProviderRetrySettings extends Static<typeof ProviderRetrySettingsSchema> {}
 export interface RetrySettings extends Omit<Static<typeof RetrySettingsSchema>, "maxDelayMs"> {}
+export interface PersistMaskingSettings extends Static<typeof PersistMaskingSettingsSchema> {}
 export interface TerminalSettings extends Static<typeof TerminalSettingsSchema> {}
 export interface ImageSettings extends Static<typeof ImageSettingsSchema> {}
 export interface ThinkingBudgetsSettings extends Static<typeof ThinkingBudgetsSettingsSchema> {}

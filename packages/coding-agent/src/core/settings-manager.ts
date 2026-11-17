@@ -1237,6 +1237,10 @@ export class SettingsManager {
 		return this.settings.retry?.enabled ?? SETTINGS_DEFAULTS.retry.enabled;
 	}
 
+	getPersistMaskingEnabled(): boolean {
+		return this.settings.persistMasking?.enabled ?? SETTINGS_DEFAULTS.persistMasking.enabled;
+	}
+
 	setRetryEnabled(enabled: boolean): void {
 		if (!this.globalSettings.retry) {
 			this.globalSettings.retry = {};
