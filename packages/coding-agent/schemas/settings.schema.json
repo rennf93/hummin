@@ -412,6 +412,20 @@
       "description": "Register skills as /skill:name commands.",
       "default": true
     },
+    "skillsMaxPromptEntries": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "Maximum number of skills listed in the system prompt section, cut alphabetically by name with a note about the rest. 0 disables the cap.",
+      "default": 0
+    },
+    "contextFileMaxBytes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "Maximum size in bytes for a single AGENTS.md or CLAUDE.md context file; larger files are skipped entirely. 0 disables the cap.",
+      "default": 0
+    },
     "terminal": {
       "type": "object",
       "properties": {

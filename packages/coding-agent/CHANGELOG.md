@@ -9,6 +9,8 @@
 
 - **Secret masking at persist time**: known secret token formats (GitHub, OpenAI, Anthropic, OpenRouter, AWS keys, bearer headers, private key blocks) are replaced with `[REDACTED:<kind>]` placeholders when session entries are written to disk, on by default; set `persistMasking.enabled` to `false` to keep sessions raw.
 
+- Optional default-off caps for prompt bloat: `skillsMaxPromptEntries` limits the skills section of the system prompt (alphabetical cut with a "more skills available on disk" note), and `contextFileMaxBytes` skips any single `AGENTS.md`/`CLAUDE.md` context file over the size limit with a one-time warning. `0` (the default for both) keeps today's uncapped behavior.
+
 ### Behavior Changes
 
 - **Usage-limit auto-wait**: when a provider fails a turn with a textual usage-limit reset time (OpenRouter, Z.AI coding plans), hummin waits until the reset (plus a 30-second buffer) and continues the same session instead of failing the turn. Controlled by `usageLimitWait.enabled` (default on) and capped by `usageLimitWait.maxWaitMinutes` (default 360 minutes); the run's abort cancels the wait, and waits do not consume retry limits.

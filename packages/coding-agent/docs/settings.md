@@ -166,6 +166,8 @@ Resource paths in user settings resolve from the agent directory. Paths in proje
 | `prompts` | `string[]` | `[]` | Prompt-template files or directories. |
 | `themes` | `string[]` | `[]` | Theme files or directories. |
 | `enableSkillCommands` | boolean | `true` | Register skills as `/skill:name` commands. |
+| `skillsMaxPromptEntries` | number | `0` | Maximum skills listed in the system prompt section, cut alphabetically by name with a note about the rest. `0` disables the cap. |
+| `contextFileMaxBytes` | number | `0` | Maximum size in bytes for a single `AGENTS.md`/`CLAUDE.md` context file; larger files are skipped entirely with a one-time warning. `0` disables the cap. |
 
 Resource arrays support glob exclusions with `!pattern`, exact inclusion with `+path`, and exact exclusion with `-path`. Pi loads resources listed in both user-level and project settings.
 

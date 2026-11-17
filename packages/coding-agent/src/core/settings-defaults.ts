@@ -39,6 +39,8 @@ export const SETTINGS_DEFAULTS = {
 	enableInstallTelemetry: true,
 	enableAnalytics: false,
 	enableSkillCommands: true,
+	skillsMaxPromptEntries: 0,
+	contextFileMaxBytes: 0,
 	terminal: {
 		showImages: true,
 		imageWidthCells: 60,
