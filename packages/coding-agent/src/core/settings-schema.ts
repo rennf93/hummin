@@ -71,6 +71,15 @@ const RetrySettingsSchema = Type.Object({
 	),
 });
 
+const PersistMaskingSettingsSchema = Type.Object({
+	enabled: Type.Optional(
+		Type.Boolean({
+			description: "Mask known secret token formats when session entries are written to disk.",
+			default: SETTINGS_DEFAULTS.persistMasking.enabled,
+		}),
+	),
+});
+
 const TerminalSettingsSchema = Type.Object({
 	showImages: Type.Optional(
 		Type.Boolean({
@@ -139,6 +148,11 @@ const MarkdownSettingsSchema = Type.Object({
 			default: SETTINGS_DEFAULTS.markdown.mermaid,
 		}),
 	),
+});
+
+const UsageLimitWaitSettingsSchema = Type.Object({
+	enabled: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.usageLimitWait.enabled })),
+	maxWaitMinutes: Type.Optional(nonNegativeSafeInteger({ default: SETTINGS_DEFAULTS.usageLimitWait.maxWaitMinutes })),
 });
 
 const WarningSettingsSchema = Type.Object({
@@ -247,6 +261,7 @@ export const SettingsSchema = Type.Object(
 		compaction: Type.Optional(CompactionSettingsSchema),
 		branchSummary: Type.Optional(BranchSummarySettingsSchema),
 		retry: Type.Optional(RetrySettingsSchema),
+		persistMasking: Type.Optional(PersistMaskingSettingsSchema),
 		hideThinkingBlock: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.hideThinkingBlock })),
 		showCacheMissNotices: Type.Optional(
 			Type.Boolean({
@@ -398,6 +413,14 @@ export const SettingsSchema = Type.Object(
 		markdown: Type.Optional(MarkdownSettingsSchema),
 		warnings: Type.Optional(WarningSettingsSchema),
 		codemode: Type.Optional(CodemodeSettingsSchema),
+		usageLimitWait: Type.Optional(UsageLimitWaitSettingsSchema),
+		shellDefaultTimeout: Type.Optional(
+			timeoutSetting({
+				description:
+					'Default timeout in seconds for bash and PowerShell commands the model runs without an explicit timeout; 0 or "disabled" disables the default. Does not apply to sandboxed bash.',
+				default: SETTINGS_DEFAULTS.shellDefaultTimeout,
+			}),
+		),
 		sessionDir: Type.Optional(
 			Type.String({
 				description: "Custom session storage directory, in the same format as the --session-dir CLI flag.",
@@ -472,6 +495,7 @@ export interface CompactionSettings extends Static<typeof CompactionSettingsSche
 export interface BranchSummarySettings extends Static<typeof BranchSummarySettingsSchema> {}
 export interface ProviderRetrySettings extends Static<typeof ProviderRetrySettingsSchema> {}
 export interface RetrySettings extends Omit<Static<typeof RetrySettingsSchema>, "maxDelayMs"> {}
+export interface PersistMaskingSettings extends Static<typeof PersistMaskingSettingsSchema> {}
 export interface TerminalSettings extends Static<typeof TerminalSettingsSchema> {}
 export interface ImageSettings extends Static<typeof ImageSettingsSchema> {}
 export interface ThinkingBudgetsSettings extends Static<typeof ThinkingBudgetsSettingsSchema> {}

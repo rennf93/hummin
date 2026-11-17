@@ -38,7 +38,11 @@ function resolveTimeoutMs(timeout: number | undefined): number | undefined {
 
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Shell command to execute" }),
-	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
+	timeout: Type.Optional(
+		Type.Number({
+			description: "Timeout in seconds (optional; without it the shellDefaultTimeout setting applies)",
+		}),
+	),
 });
 
 export const bashToolSystemPromptContribution = {
@@ -250,6 +254,8 @@ export interface BashToolOptions {
 	exposeSessionEnvironment?: boolean;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
+	/** Default timeout in seconds for calls that omit `timeout`. 0, "disabled", or undefined disables the default. */
+	defaultTimeout?: number | "disabled";
 }
 
 export type BashRenderState = {
@@ -278,10 +284,11 @@ export function createShellToolDefinition(
 	const commandPrefix = options?.commandPrefix;
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
+	const defaultTimeout = options?.defaultTimeout;
 	return {
 		name: config.name,
 		label: config.label,
-		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds; without one, the configured default timeout applies.`,
 		promptSnippet: config.promptSnippet,
 		promptGuidelines: exposeSessionEnvironment && config.promptGuidelines ? [...config.promptGuidelines] : undefined,
 		parameters: bashSchema,
@@ -389,11 +396,18 @@ export function createShellToolDefinition(
 
 			try {
 				let exitCode: number | null;
+				// Per-call timeout wins; otherwise the configured default applies (0 or "disabled" turns it
+				// off). Clamped so a wild setting value fails safe instead of throwing at command time.
+				const effectiveTimeout =
+					timeout ??
+					(typeof defaultTimeout === "number" && defaultTimeout > 0
+						? Math.min(defaultTimeout, MAX_TIMEOUT_SECONDS)
+						: undefined);
 				try {
 					const result = await ops.exec(spawnContext.command, spawnContext.cwd, {
 						onData: handleData,
 						signal,
-						timeout,
+						timeout: effectiveTimeout,
 						env: spawnContext.env,
 					});
 					exitCode = result.exitCode;

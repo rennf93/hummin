@@ -52,6 +52,11 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "login", description: "Configure provider authentication", argumentHint: "<provider>", category: "Models" },
 	{ name: "logout", description: "Remove provider authentication", category: "Models" },
 	{ name: "clear", description: "Start a new session", category: "Session" },
+	{
+		name: "carry",
+		description: "Start a new session linked to the previous transcript (reference only, history not carried)",
+		category: "Session",
+	},
 	{ name: "queue", description: "Inspect queued messages", category: "Session" },
 	{ name: "queue", description: "Inspect queued messages", category: "Session" },
 	{ name: "compact", description: "Manually compact the session context", category: "Session" },

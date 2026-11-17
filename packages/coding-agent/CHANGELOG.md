@@ -2,8 +2,17 @@
 
 ## [Unreleased]
 
+### New Features
+
+- **Entire companion (optional)**: when a project is Entire-enabled and the `entire` CLI is on PATH, hummin forwards session lifecycle to Entire so checkpoints, transcripts, brain recall, and resume work for hummin sessions; brain brief/recall arrives as hidden context, and a new `/entire` command prints the project's Entire facts. Projects without Entire see nothing. hummin never enables Entire, writes settings or hooks, pushes, or installs daemons. See [Entire](docs/reference/entire.md).
+- **/carry, a linked clear**: start an empty session that keeps a reference to the one it left behind. The new session records the previous transcript as its `parentSession` and a hidden pointer entry names the file, its size, and where it ended; the bundled `sessions` tool (armed automatically after `/carry`, `/clear`, `/fork`, or `/resume`) searches and reads past transcripts with capped output. No summarization call, nothing carried over.
+
+- **Secret masking at persist time**: known secret token formats (GitHub, OpenAI, Anthropic, OpenRouter, AWS keys, bearer headers, private key blocks) are replaced with `[REDACTED:<kind>]` placeholders when session entries are written to disk, on by default; set `persistMasking.enabled` to `false` to keep sessions raw.
+
 ### Behavior Changes
 
+- **Usage-limit auto-wait**: when a provider fails a turn with a textual usage-limit reset time (OpenRouter, Z.AI coding plans), hummin waits until the reset (plus a 30-second buffer) and continues the same session instead of failing the turn. Controlled by `usageLimitWait.enabled` (default on) and capped by `usageLimitWait.maxWaitMinutes` (default 360 minutes); the run's abort cancels the wait, and waits do not consume retry limits.
+- **Default shell command timeout**: `bash` and `powershell` commands the model runs without an explicit timeout are killed after `shellDefaultTimeout` (120 seconds; `0` or `"disabled"` turns it off). The per-call `timeout` parameter still wins. PowerShell previously had no timeout path at all.
 - Per-turn TODO reminder: when a session has a `todo` list with open items that has not been updated for 5+ turns, a short reminder is injected as hidden context (not shown in the transcript) listing the in-progress and first pending items, nudging the model to update the list via the `todo` tool or mark items done. Sessions without a todo list pay nothing.
 
 ## [1.12.0] - 2026-11-13

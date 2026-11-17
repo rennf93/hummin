@@ -117,11 +117,18 @@ import {
 	MissingSessionCwdError,
 } from "../../core/session-cwd.ts";
 import {
+	parseSessionEntries,
 	type SessionEntry,
 	SessionManager,
 	sessionEntryToContextMessages,
 	type UsageEntry,
 } from "../../core/session-manager.ts";
+import {
+	buildSessionReferenceContent,
+	extractFirstUserText,
+	extractLastAssistantText,
+	SESSION_REFERENCE_CUSTOM_TYPE,
+} from "../../core/session-reference.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import { getSourcePackageKey, type SourceInfo } from "../../core/source-info.ts";
@@ -3442,6 +3449,12 @@ export class InteractiveMode {
 			if (text === "/clear") {
 				this.editor.setText("");
 				await this.handleClearCommand();
+				return;
+			}
+			if (text === "/carry" || text.startsWith("/carry ")) {
+				const note = text.startsWith("/carry ") ? text.slice(7).trim() : undefined;
+				this.editor.setText("");
+				await this.handleCarryCommand(note || undefined);
 				return;
 			}
 			if (text === "/queue") {
@@ -7334,6 +7347,83 @@ export class InteractiveMode {
 			}
 			this.chatContainer.addChild(new Spacer(1));
 			this.chatContainer.addChild(new ThemedText(() => theme.fg("accent", migration.successMessage), 1, 1));
+			if (migration.migrate) await this.session.restoreRememberedModel().catch(() => {});
+			await restoreQueuedAfterMigration(this.session, migration);
+			void this.session.restoreRememberedModel().catch(() => {});
+			this.ui.requestRender();
+		} catch (error: unknown) {
+			await this.handleFatalRuntimeError("Failed to create session", error);
+		}
+	}
+
+	/**
+	 * `/carry [note]`: start an empty session that keeps a reference to the current one. The
+	 * previous transcript stays on disk untouched, the new header records it as `parentSession`,
+	 * and an advisory pointer message tells the model where to look. History is not carried over.
+	 */
+	private async handleCarryCommand(note?: string): Promise<void> {
+		this.clearStatusIndicator();
+		const previousSessionFile = this.session.sessionFile;
+		if (!previousSessionFile) {
+			// Nothing to link (session never persisted): degrade to a plain clear.
+			await this.handleClearCommand();
+			return;
+		}
+		try {
+			const migration = await beginSessionClear({
+				session: this.session,
+				compactionQueuedMessages: this.compactionQueuedMessages,
+				footerDataProvider: this.footerDataProvider,
+				showExtensionSelector: (title, options) => this.showExtensionSelector(title, options),
+			});
+			if (!migration) return; // escape cancels the carry
+			const previousEntries = this.session.sessionManager.getEntries();
+			let entryCount = previousEntries.length;
+			const result = await this.runtimeHost.newSession({
+				parentSession: previousSessionFile,
+				setup: async (sessionManager) => {
+					// Settling a mid-response carry appends to the old transcript (aborted response,
+					// tool results); read the persisted file so the pointer carries the real end state.
+					let entries: SessionEntry[] = previousEntries;
+					try {
+						entries = parseSessionEntries(fs.readFileSync(previousSessionFile, "utf8")).filter(
+							(entry): entry is SessionEntry => entry.type !== "session",
+						);
+					} catch {
+						// Fall back to the in-memory snapshot.
+					}
+					entryCount = entries.length;
+					sessionManager.appendCustomMessageEntry(
+						SESSION_REFERENCE_CUSTOM_TYPE,
+						buildSessionReferenceContent({
+							sessionFile: previousSessionFile,
+							entryCount: entries.length,
+							firstUserText: extractFirstUserText(entries),
+							lastAssistantText: extractLastAssistantText(entries),
+							note,
+						}),
+						false,
+						{ entryCount: entries.length },
+					);
+				},
+			});
+			migration.releaseChoice();
+			if (result.cancelled) {
+				return;
+			}
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new ThemedText(() => theme.fg("accent", migration.successMessage), 1, 1));
+			this.chatContainer.addChild(
+				new ThemedText(
+					() =>
+						theme.fg(
+							"accent",
+							`Linked to previous session (reference only, ${entryCount} entries on disk): consult it with the sessions tool`,
+						),
+					1,
+					1,
+				),
+			);
 			if (migration.migrate) await this.session.restoreRememberedModel().catch(() => {});
 			await restoreQueuedAfterMigration(this.session, migration);
 			void this.session.restoreRememberedModel().catch(() => {});

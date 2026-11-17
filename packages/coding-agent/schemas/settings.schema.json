@@ -208,6 +208,16 @@
         }
       }
     },
+    "persistMasking": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Mask known secret token formats when session entries are written to disk.",
+          "default": true
+        }
+      }
+    },
     "hideThinkingBlock": {
       "type": "boolean",
       "default": false
@@ -647,6 +657,35 @@
           "default": 3000
         }
       }
+    },
+    "usageLimitWait": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "maxWaitMinutes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "default": 360
+        }
+      }
+    },
+    "shellDefaultTimeout": {
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "const": "disabled"
+        }
+      ],
+      "description": "Default timeout in seconds for bash and PowerShell commands the model runs without an explicit timeout; 0 or \"disabled\" disables the default. Does not apply to sandboxed bash.",
+      "default": 120
     },
     "sessionDir": {
       "type": "string",
