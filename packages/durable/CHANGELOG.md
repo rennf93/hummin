@@ -7,6 +7,10 @@
 - `@earendil-works/pi-durable/images/fit` fits the images entering a conversation to its model's limits with any `ImageProcessor`, before they are stored, as the coding agent does: `createFitImagesExtension(processor)` is an `afterTool` hook for the results of every tool the model calls (MCP tools, code mode's `image()`), and `fitImage(bytes, mimeType, limits, processor)` and `fitImages(content, limits, processor)` fit a host's input before it is submitted. An image that cannot be prepared is left out with a note. `imageLimits(model)` (`/tools`) resolves a model's limits as `read` does. Example 47 shows both.
 - `onAbort: "keep"` on an input submission keeps it queued through `Conversation.abort()` and abort cascades, as a failed run keeps its queue under `afterFailedRun: "keep"`: the next input places it and that run answers it. For input its sender cannot take back, such as another agent's message; `Submission.abort()` still withdraws it. The default, `"withdraw"`, settles it `unanswered` with reason `aborted` as before.
 
+### Fixed
+
+- `read` no longer adds a diagnostic saying the current model does not support images, which stayed in the tool result after switching to a vision model; the image is still replaced with a placeholder per request for models without image input, and `details.imageUnsupportedByModel` names such a model for UIs ([#12131](https://github.com/earendil-works/pi/issues/12131))
+
 ## [1.12.0] - 2026-11-13
 
 ### Breaking Changes
@@ -36,7 +40,6 @@
 
 ### Fixed
 
-- `read` no longer adds a diagnostic saying the current model does not support images, which stayed in the tool result after switching to a vision model; the image is still replaced with a placeholder per request for models without image input, and `details.imageUnsupportedByModel` names such a model for UIs ([#12131](https://github.com/earendil-works/pi/issues/12131))
 - `NodeExecutionEnv.listDir()` leaves out an entry removed between enumeration and `lstat` instead of failing, so a read-only JSONL open beside a live writer no longer rejects with `JSONL directory listing failed: ENOENT` when the writer renames a `.reclaim` file over a sidecar during the listing. Names that are not valid UTF-8, which `lstat` also reports as missing, are now left out the same way instead of failing the listing, as the directory readers already did ([#11994](https://github.com/earendil-works/pi/issues/11994))
 - Fixed `Submission.wait()` and `waitForTask()` leaving an unhandled promise rejection when the wait was cancelled or the Harness closed after the wait was checked but before its result reached the caller, as when a host shuts down while earlier commits are still being published. The caller still gets the rejection ([#11963](https://github.com/earendil-works/pi/issues/11963), [#11820](https://github.com/earendil-works/pi/issues/11820))
 - Fixed task changes deep in a long ownership chain costing time proportional to the chain's depth: finding the conversations whose idleness a change can affect walked every owner task up to the conversation, so creating or ending a chain of n tasks cost O(n²). A child task lives in its owner's conversation, so the walk now starts there

@@ -2,10 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added GPT-6.2 Astra and GPT-6.2 Sol to the OpenAI, Azure OpenAI Responses, and OpenAI Codex providers with official pricing (Astra: $8 input, $0.40 cached input, $10 cache writes, $40 output; Sol: $2, $0.10, $2.50, $10; long-context tier above 272k), tool search, additional tools, and mid-conversation effort changes. Both reject reasoning effort `none` and `minimal`, so `off` is unavailable. Azure serves them with a 1.05M context window; Codex serves GPT-6.2 Sol with 500K and GPT-6.2 Astra with 272K
+
 ### Fixed
 
 - Fixed provider errors that report only a Node socket error code, such as `read ECONNRESET`, `write EPIPE`, or `connect ETIMEDOUT`, not being retried ([#12128](https://github.com/earendil-works/pi/issues/12128))
 - Fixed Mistral Large 4 tool calls stalling for minutes: Mistral models no longer receive strict (schema-constrained) tools unless `compat.supportsStrictMode` is set ([#12148](https://github.com/earendil-works/pi/issues/12148))
+- Fixed the OpenAI Codex WebSocket 60-minute connection limit failing the turn when it hit mid-stream, for example during long thinking. The error is now retried on a fresh connection, and new requests stop reusing a cached connection after 45 minutes instead of 55, so a long response is less likely to reach the limit ([#12124](https://github.com/earendil-works/pi/issues/12124))
 
 ## [1.12.0] - 2026-11-13
 
@@ -13,7 +18,6 @@
 
 - Added custom `fetch` support to the `google-generative-ai` and `google-vertex` adapters; Vertex ADC token requests still use `google-auth-library`'s own HTTP client ([#12103](https://github.com/earendil-works/pi/pull/12103) by [@rometi](https://github.com/rometi))
 - Added `deepseek-v4.1-flash` and `deepseek-v4.1-flash-1017` to the Qwen Token Plan Individual providers, and per-plan key variables `QWEN_TOKEN_PLAN_TEAM_API_KEY`, `QWEN_TOKEN_PLAN_TEAM_CN_API_KEY`, `QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY`, and `QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY`; the shared `QWEN_TOKEN_PLAN_API_KEY` and `QWEN_TOKEN_PLAN_CN_API_KEY` still work ([#11773](https://github.com/earendil-works/pi/issues/11773))
-- Added GPT-6.2 Astra and GPT-6.2 Sol to the OpenAI, Azure OpenAI Responses, and OpenAI Codex providers with official pricing (Astra: $8 input, $0.40 cached input, $10 cache writes, $40 output; Sol: $2, $0.10, $2.50, $10; long-context tier above 272k), tool search, additional tools, and mid-conversation effort changes. Both reject reasoning effort `none` and `minimal`, so `off` is unavailable. Azure serves them with a 1.05M context window; Codex serves GPT-6.2 Sol with 500K and GPT-6.2 Astra with 272K
 
 ### Changed
 
@@ -23,11 +27,8 @@
 ### Fixed
 
 - Fixed tools with `strict: "prefer"` constrained sampling being sent in strict mode when their schema contains a node without a `type` (such as `items: {}`, `Type.Unknown()`, or a bare `const`), which OpenAI rejects with a 400 error; these tools now fall back to non-strict mode, and `strict: "require"` fails locally. Nodes with only an `enum` stay strict ([#12049](https://github.com/earendil-works/pi/issues/12049))
-- Fixed provider errors that report only a Node socket error code, such as `read ECONNRESET`, `write EPIPE`, or `connect ETIMEDOUT`, not being retried ([#12128](https://github.com/earendil-works/pi/issues/12128))
 - Fixed provider errors reading "Connection closed." not being retried ([#12064](https://github.com/earendil-works/pi/issues/12064))
-- Fixed Mistral Large 4 tool calls stalling for minutes: Mistral models no longer receive strict (schema-constrained) tools unless `compat.supportsStrictMode` is set ([#12148](https://github.com/earendil-works/pi/issues/12148))
 - Fixed non-strict Anthropic tool schemas dropping the root `additionalProperties`, so the model was not told that extra arguments are forbidden ([#12067](https://github.com/earendil-works/pi/issues/12067))
-- Fixed the OpenAI Codex WebSocket 60-minute connection limit failing the turn when it hit mid-stream, for example during long thinking. The error is now retried on a fresh connection, and new requests stop reusing a cached connection after 45 minutes instead of 55, so a long response is less likely to reach the limit ([#12124](https://github.com/earendil-works/pi/issues/12124))
 
 ### Removed
 
