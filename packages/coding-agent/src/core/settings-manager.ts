@@ -1250,6 +1250,15 @@ export class SettingsManager {
 		};
 	}
 
+	/** Auto-wait out provider usage-limit resets, then continue the same session. Waits are capped. */
+	getUsageLimitWaitSettings(): { enabled: boolean; maxWaitMinutes: number } {
+		return {
+			enabled: this.settings.usageLimitWait?.enabled ?? SETTINGS_DEFAULTS.usageLimitWait.enabled,
+			maxWaitMinutes:
+				this.settings.usageLimitWait?.maxWaitMinutes ?? SETTINGS_DEFAULTS.usageLimitWait.maxWaitMinutes,
+		};
+	}
+
 	getHttpIdleTimeoutMs(): number {
 		return parseTimeoutSetting(this.settings.httpIdleTimeoutMs, "httpIdleTimeoutMs") ?? DEFAULT_HTTP_IDLE_TIMEOUT_MS;
 	}
