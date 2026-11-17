@@ -15,6 +15,10 @@ export const SETTINGS_DEFAULTS = {
 		reserveTokens: 16384,
 		skipPrompt: false,
 	},
+	usageLimitWait: {
+		enabled: true,
+		maxWaitMinutes: 360,
+	},
 	retry: {
 		enabled: true,
 		maxRetries: 3,
@@ -61,6 +65,7 @@ export const SETTINGS_DEFAULTS = {
 		mode: "on",
 		inlineBudget: 3000,
 	},
+	shellDefaultTimeout: 120,
 	cacheWarming: "idle",
 	tuiMode: "fullscreen",
 	fullscreenExitOutput: "transcript",

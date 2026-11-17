@@ -1024,6 +1024,11 @@ export class SettingsManager {
 		return this.settings.compactPrompt ?? false;
 	}
 
+	/** Default timeout in seconds for bash and PowerShell commands without an explicit timeout. Default 120; 0 or "disabled" disables. */
+	getShellDefaultTimeout(): number | "disabled" {
+		return this.settings.shellDefaultTimeout ?? SETTINGS_DEFAULTS.shellDefaultTimeout;
+	}
+
 	setCompactPrompt(enabled: boolean): void {
 		this.globalSettings.compactPrompt = enabled;
 		this.markModified("compactPrompt");
@@ -1251,6 +1256,15 @@ export class SettingsManager {
 			maxRetries: this.settings.retry?.maxRetries ?? SETTINGS_DEFAULTS.retry.maxRetries,
 			baseDelayMs: this.settings.retry?.baseDelayMs ?? SETTINGS_DEFAULTS.retry.baseDelayMs,
 			maxAgentDelayMs: this.settings.retry?.maxAgentDelayMs ?? SETTINGS_DEFAULTS.retry.maxAgentDelayMs,
+		};
+	}
+
+	/** Auto-wait out provider usage-limit resets, then continue the same session. Waits are capped. */
+	getUsageLimitWaitSettings(): { enabled: boolean; maxWaitMinutes: number } {
+		return {
+			enabled: this.settings.usageLimitWait?.enabled ?? SETTINGS_DEFAULTS.usageLimitWait.enabled,
+			maxWaitMinutes:
+				this.settings.usageLimitWait?.maxWaitMinutes ?? SETTINGS_DEFAULTS.usageLimitWait.maxWaitMinutes,
 		};
 	}
 

@@ -150,6 +150,11 @@ const MarkdownSettingsSchema = Type.Object({
 	),
 });
 
+const UsageLimitWaitSettingsSchema = Type.Object({
+	enabled: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.usageLimitWait.enabled })),
+	maxWaitMinutes: Type.Optional(nonNegativeSafeInteger({ default: SETTINGS_DEFAULTS.usageLimitWait.maxWaitMinutes })),
+});
+
 const WarningSettingsSchema = Type.Object({
 	anthropicExtraUsage: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.warnings.anthropicExtraUsage })),
 });
@@ -408,6 +413,14 @@ export const SettingsSchema = Type.Object(
 		markdown: Type.Optional(MarkdownSettingsSchema),
 		warnings: Type.Optional(WarningSettingsSchema),
 		codemode: Type.Optional(CodemodeSettingsSchema),
+		usageLimitWait: Type.Optional(UsageLimitWaitSettingsSchema),
+		shellDefaultTimeout: Type.Optional(
+			timeoutSetting({
+				description:
+					'Default timeout in seconds for bash and PowerShell commands the model runs without an explicit timeout; 0 or "disabled" disables the default. Does not apply to sandboxed bash.',
+				default: SETTINGS_DEFAULTS.shellDefaultTimeout,
+			}),
+		),
 		sessionDir: Type.Optional(
 			Type.String({
 				description: "Custom session storage directory, in the same format as the --session-dir CLI flag.",
