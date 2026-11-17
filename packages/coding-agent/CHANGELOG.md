@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Behavior Changes
+
+- **Default shell command timeout**: `bash` and `powershell` commands the model runs without an explicit timeout are killed after `shellDefaultTimeout` (120 seconds; `0` or `"disabled"` turns it off). The per-call `timeout` parameter still wins. PowerShell previously had no timeout path at all.
+
 ## [1.12.0] - 2026-11-13
 
 ### New Features
