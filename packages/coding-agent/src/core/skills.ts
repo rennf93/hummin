@@ -344,6 +344,15 @@ function loadSkillFromFile(
 	};
 }
 
+export interface FormatSkillsForPromptOptions {
+	/**
+	 * Maximum number of skills to list in the prompt. 0 (the default) lists every skill.
+	 * When the list exceeds the cap, the first entries alphabetically by name are kept
+	 * (deterministic) and one line notes how many more are available on disk.
+	 */
+	maxEntries?: number;
+}
+
 /**
  * Format skills for inclusion in a system prompt.
  * Uses XML format per Agent Skills standard.
@@ -355,12 +364,24 @@ function loadSkillFromFile(
  * `fileReadTool` names the tool that loads skill files; `indirect` names none, for a reader that
  * is reachable only through another tool.
  */
-export function formatSkillsForPrompt(skills: Skill[], fileReadTool: "read" | "bash" | "indirect" = "read"): string {
+export function formatSkillsForPrompt(
+	skills: Skill[],
+	fileReadTool: "read" | "bash" | "indirect" = "read",
+	options?: FormatSkillsForPromptOptions,
+): string {
 	const visibleSkills = skills.filter((s) => !s.disableModelInvocation);
 
 	if (visibleSkills.length === 0) {
 		return "";
 	}
+
+	const maxEntries = options?.maxEntries ?? 0;
+	const capped = maxEntries > 0 && visibleSkills.length > maxEntries;
+	// Cut alphabetically by name (code-unit order, not locale-aware) so identical inputs
+	// always keep the same entries regardless of discovery order.
+	const listedSkills = capped
+		? [...visibleSkills].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)).slice(0, maxEntries)
+		: visibleSkills;
 
 	const lines = [
 		"\n\nThe following skills provide specialized instructions for specific tasks.",
@@ -374,7 +395,7 @@ export function formatSkillsForPrompt(skills: Skill[], fileReadTool: "read" | "b
 		"<available_skills>",
 	];
 
-	for (const skill of visibleSkills) {
+	for (const skill of listedSkills) {
 		lines.push("  <skill>");
 		lines.push(`    <name>${escapeXml(skill.name)}</name>`);
 		lines.push(`    <description>${escapeXml(skill.description)}</description>`);
@@ -383,6 +404,11 @@ export function formatSkillsForPrompt(skills: Skill[], fileReadTool: "read" | "b
 	}
 
 	lines.push("</available_skills>");
+
+	if (capped) {
+		const remaining = visibleSkills.length - listedSkills.length;
+		lines.push(`+ ${remaining} more skills available on disk (see the skills directories)`);
+	}
 
 	return lines.join("\n");
 }

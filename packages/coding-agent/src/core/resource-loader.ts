@@ -209,14 +209,41 @@ function resolvePromptInput(input: string | undefined, description: string): str
 	return input;
 }
 
-function loadContextFileFromDir(dir: string): { path: string; content: string } | null {
+/**
+ * Context files already reported as over `contextFileMaxBytes` this session, so each
+ * oversized file warns once no matter how often the ancestor walk re-visits it.
+ */
+const oversizedContextFileWarnings = new Set<string>();
+
+/** Forget the oversized-context-file warnings already printed (used by tests). */
+export function resetContextFileSizeWarnings(): void {
+	oversizedContextFileWarnings.clear();
+}
+
+function loadContextFileFromDir(dir: string, maxBytes = 0): { path: string; content: string } | null {
 	const candidates = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
 	for (const filename of candidates) {
 		const filePath = join(dir, filename);
 		if (existsSync(filePath)) {
 			try {
-				if (!statSync(filePath).isFile()) {
+				const stats = statSync(filePath);
+				if (!stats.isFile()) {
 					continue;
+				}
+				if (maxBytes > 0 && stats.size > maxBytes) {
+					// The candidates are priority aliases for the dir's one context file, so an
+					// oversized winner skips the dir entirely. The set keys on canonical paths and
+					// keeps the warning to once per file per session across repeated loads.
+					const warnedKey = getResourcePathKey(filePath);
+					if (!oversizedContextFileWarnings.has(warnedKey)) {
+						oversizedContextFileWarnings.add(warnedKey);
+						console.error(
+							chalk.yellow(
+								`[hummin] skipping ${filePath} (${stats.size} bytes > contextFileMaxBytes ${maxBytes})`,
+							),
+						);
+					}
+					break;
 				}
 				return {
 					path: filePath,
@@ -239,7 +266,7 @@ function loadContextFileFromDir(dir: string): { path: string; content: string } 
  * file's `gitdir:` target in realpath form while cwd may still be symlinked
  * (macOS `/tmp` -> `/private/tmp`).
  */
-function findShadowedContextFile(cwd: string): string | undefined {
+function findShadowedContextFile(cwd: string, maxBytes = 0): string | undefined {
 	const gitPaths = findGitPaths(cwd);
 	if (!gitPaths) return undefined;
 	const commonGitDir = canonicalizePath(gitPaths.commonGitDir);
@@ -253,21 +280,24 @@ function findShadowedContextFile(cwd: string): string | undefined {
 	// `proj/main`) it is just the directory holding `.bare`, which tracks nothing; a
 	// submodule's gitdir has no `commondir`, so it lands under `.git/modules`.
 	if (!pathsEqual(canonicalizePath(join(mainRepoRoot, ".git")), commonGitDir)) return undefined;
-	const worktreeContextFile = loadContextFileFromDir(worktreeRoot);
+	const worktreeContextFile = loadContextFileFromDir(worktreeRoot, maxBytes);
 	return worktreeContextFile ? join(mainRepoRoot, basename(worktreeContextFile.path)) : undefined;
 }
 
 export function loadProjectContextFiles(options: {
 	cwd: string;
 	agentDir: string;
+	/** Skip context files larger than this many bytes. 0 (the default) loads every file. */
+	contextFileMaxBytes?: number;
 }): Array<{ path: string; content: string }> {
 	const resolvedCwd = resolvePath(options.cwd);
 	const resolvedAgentDir = resolvePath(options.agentDir);
+	const contextFileMaxBytes = options.contextFileMaxBytes ?? 0;
 
 	const contextFiles: Array<{ path: string; content: string }> = [];
 	const seenPaths = new Set<string>();
 
-	const globalContext = loadContextFileFromDir(resolvedAgentDir);
+	const globalContext = loadContextFileFromDir(resolvedAgentDir, contextFileMaxBytes);
 	if (globalContext) {
 		contextFiles.push(globalContext);
 		seenPaths.add(globalContext.path);
@@ -275,11 +305,11 @@ export function loadProjectContextFiles(options: {
 
 	const ancestorContextFiles: Array<{ path: string; content: string }> = [];
 
-	const shadowedContextFile = findShadowedContextFile(resolvedCwd);
+	const shadowedContextFile = findShadowedContextFile(resolvedCwd, contextFileMaxBytes);
 	let currentDir = resolvedCwd;
 
 	while (true) {
-		const contextFile = loadContextFileFromDir(currentDir);
+		const contextFile = loadContextFileFromDir(currentDir, contextFileMaxBytes);
 		// Compare the directory's real path, not the file's: a worktree AGENTS.md that
 		// symlinks to the main repo's file resolves to the shadowed path itself.
 		const isShadowed =
@@ -681,6 +711,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				: loadProjectContextFiles({
 						cwd: this.cwd,
 						agentDir: this.agentDir,
+						contextFileMaxBytes: this.settingsManager.getContextFileMaxBytes(),
 					}),
 		};
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;

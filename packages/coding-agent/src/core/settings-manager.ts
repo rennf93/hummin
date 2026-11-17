@@ -1850,6 +1850,24 @@ export class SettingsManager {
 		this.save();
 	}
 
+	/** Maximum skills listed in the system prompt; 0 (the default) lists every skill. */
+	getSkillsMaxPromptEntries(): number {
+		const value = this.settings.skillsMaxPromptEntries;
+		if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+			return SETTINGS_DEFAULTS.skillsMaxPromptEntries;
+		}
+		return Math.floor(value);
+	}
+
+	/** Maximum context-file size in bytes; 0 (the default) loads files of any size. */
+	getContextFileMaxBytes(): number {
+		const value = this.settings.contextFileMaxBytes;
+		if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+			return SETTINGS_DEFAULTS.contextFileMaxBytes;
+		}
+		return Math.floor(value);
+	}
+
 	getThinkingBudgets(): ThinkingBudgetsSettings | undefined {
 		return this.settings.thinkingBudgets;
 	}

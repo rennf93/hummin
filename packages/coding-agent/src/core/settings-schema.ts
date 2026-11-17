@@ -2,7 +2,7 @@ import { type Static, type TSchemaOptions, Type } from "typebox";
 import { ModelThinkingLevelSchema } from "./pi-ai-schemas.ts";
 import { SETTINGS_DEFAULTS } from "./settings-defaults.ts";
 
-function nonNegativeSafeInteger(options: { default?: number } = {}) {
+function nonNegativeSafeInteger(options: TSchemaOptions = {}) {
 	return Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER, ...options });
 }
 
@@ -333,6 +333,20 @@ export const SettingsSchema = Type.Object(
 			Type.Boolean({
 				description: "Register skills as /skill:name commands.",
 				default: SETTINGS_DEFAULTS.enableSkillCommands,
+			}),
+		),
+		skillsMaxPromptEntries: Type.Optional(
+			nonNegativeSafeInteger({
+				description:
+					"Maximum number of skills listed in the system prompt section, cut alphabetically by name with a note about the rest. 0 disables the cap.",
+				default: SETTINGS_DEFAULTS.skillsMaxPromptEntries,
+			}),
+		),
+		contextFileMaxBytes: Type.Optional(
+			nonNegativeSafeInteger({
+				description:
+					"Maximum size in bytes for a single AGENTS.md or CLAUDE.md context file; larger files are skipped entirely. 0 disables the cap.",
+				default: SETTINGS_DEFAULTS.contextFileMaxBytes,
 			}),
 		),
 		terminal: Type.Optional(TerminalSettingsSchema),

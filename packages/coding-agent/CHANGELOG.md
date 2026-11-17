@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### New Features
+
+- Optional default-off caps for prompt bloat: `skillsMaxPromptEntries` limits the skills section of the system prompt (alphabetical cut with a "more skills available on disk" note), and `contextFileMaxBytes` skips any single `AGENTS.md`/`CLAUDE.md` context file over the size limit with a one-time warning. `0` (the default for both) keeps today's uncapped behavior.
+
 ## [1.12.0] - 2026-11-13
 
 ### New Features

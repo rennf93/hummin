@@ -35,6 +35,11 @@ export interface BuildSystemPromptOptions {
 	contextFiles?: Array<{ path: string; content: string }>;
 	/** Pre-loaded skills. */
 	skills?: Skill[];
+	/**
+	 * Maximum number of skills listed in the skills section. 0 (the default) lists every
+	 * skill; a positive value cuts the list alphabetically by name and notes the remainder.
+	 */
+	skillsMaxPromptEntries?: number;
 	/** Compact mode: shrink the hummin docs guidance block to two lines (fixed token overhead reduction). */
 	compact?: boolean;
 }
@@ -93,6 +98,7 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptOption
 		cwd: input.cwd,
 		contextFiles: (input.contextFiles ?? []).map((file) => ({ ...file })),
 		skills: (input.skills ?? []).map((skill) => ({ ...skill })),
+		skillsMaxPromptEntries: input.skillsMaxPromptEntries,
 		compact: input.compact,
 	};
 }
@@ -166,6 +172,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 		cwd,
 		contextFiles,
 		skills,
+		skillsMaxPromptEntries,
 		compact,
 	} = options;
 
@@ -206,7 +213,9 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 		readers.find((tool) => declaredTools.includes(tool)) ??
 		(readers.some((tool) => selectedTools.includes(tool)) ? "indirect" : undefined);
 	if (skillFileReadTool && skills.length > 0) {
-		const skillsPrompt = formatSkillsForPrompt(skills, skillFileReadTool).trim();
+		const skillsPrompt = formatSkillsForPrompt(skills, skillFileReadTool, {
+			maxEntries: skillsMaxPromptEntries,
+		}).trim();
 		if (skillsPrompt) promptSections.skills = skillsPrompt;
 	}
 	promptSections.cwd = cwd.replace(/\\/g, "/");

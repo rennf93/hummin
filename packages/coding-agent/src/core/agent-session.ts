@@ -1860,6 +1860,7 @@ export class AgentSession {
 		this._baseSystemPromptOptions = normalizeBuildSystemPromptOptions({
 			cwd: this._cwd,
 			skills: loadedSkills,
+			skillsMaxPromptEntries: this.settingsManager.getSkillsMaxPromptEntries(),
 			contextFiles: loadedContextFiles,
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt,
