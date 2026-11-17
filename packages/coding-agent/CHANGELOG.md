@@ -6,97 +6,73 @@
 
 - **Usage-limit auto-wait**: when a provider fails a turn with a textual usage-limit reset time (OpenRouter, Z.AI coding plans), hummin waits until the reset (plus a 30-second buffer) and continues the same session instead of failing the turn. Controlled by `usageLimitWait.enabled` (default on) and capped by `usageLimitWait.maxWaitMinutes` (default 360 minutes); the run's abort cancels the wait, and waits do not consume retry limits.
 
-## [1.12.0] - 2026-11-13
+## [Unreleased]
 
-### New Features
+### Breaking Changes
 
-- **Remote console behind an HTTPS proxy**: `HUMMIN_REMOTE_PUBLIC_URL` / `remoteControl.publicUrl` and `HUMMIN_REMOTE_ALLOWED_HOSTS` serve the console through Tailscale Serve or another HTTPS proxy while the server stays on loopback. See [Remote console](docs/environment-variables.md#remote-console).
-- **Remote console on your phone**: install it to the home screen; the tab title counts pending approvals, the favicon shows a dot while an approval waits or a run works, an opt-in notification announces new approvals, and the layout is sized for touch.
-- **Qwen Token Plan Individual**: `deepseek-v4.1-flash` models and per-plan API key variables, with the Team plans moved to the current gateways.
-- **Anchored find patterns**: the find tool's path patterns match relative to the search directory, like grep's `glob`; use `**/src/*.ts` to match at any depth.
+- Extension components: `render()` now returns `readonly string[]`, and `Container` returns the same cached array while its children are unchanged. Extensions that modify render output in place, including `super.render()` in a `Container` subclass or an embedded component's output, must copy it first ([#9549](https://github.com/earendil-works/pi/issues/9549))
 
 ### Added
 
-- Remote console behind an HTTPS proxy: `HUMMIN_REMOTE_PUBLIC_URL` / `remoteControl.publicUrl` makes `/remote-control` print the console URL on the proxy origin (for example `https://<machine>.<tailnet>.ts.net` from Tailscale Serve), and `HUMMIN_REMOTE_ALLOWED_HOSTS` / `remoteControl.allowedHosts` lists extra proxy hostnames the Host and Origin checks accept. The server stays on loopback and the bearer token still gates every request. See [Remote console](docs/environment-variables.md#remote-console).
-- Remote console attention signals: the tab title carries the session name and a pending-approval count, the favicon shows a dot while an approval waits or a run is working, and an opt-in system notification fires for a new approval while the tab is hidden (HTTPS or localhost only).
-- Remote console install to a phone home screen: web app manifest, icons, and a `theme-color` that follows the active preset. The console server's CSP gains `manifest-src 'self'` and serves `.webmanifest`.
 - Added `deepseek-v4.1-flash` and `deepseek-v4.1-flash-1017` to the Qwen Token Plan Individual providers, and per-plan key variables `QWEN_TOKEN_PLAN_TEAM_API_KEY`, `QWEN_TOKEN_PLAN_TEAM_CN_API_KEY`, `QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY`, and `QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY`; the shared `QWEN_TOKEN_PLAN_API_KEY` and `QWEN_TOKEN_PLAN_CN_API_KEY` still work ([#11773](https://github.com/earendil-works/pi/issues/11773))
 
 ### Changed
 
-- Remote console UX pass: the session name and a short copyable session id lead the header, rail rows and phone chips, and "connected" is no longer printed next to the green dot (screen readers still hear it). Removing a host asks for confirmation. Busy states on send, stop, approve and deny. Touch targets are at least 44 px on touch screens, hover styles apply only to hover-capable pointers, the composer stays above the on-screen keyboard and respects safe areas, and the phone header is shorter and never truncates the run status. The approval card leaves with an exit animation and lays its buttons out full width on phones. The design contract and motion spec live in `packages/remote-console/DESIGN.md`.
 - Qwen Token Plan providers now use the current gateways (`token-plan.maas.qwencloudapi.com` international, `token-plan.maas.qianwenaiapi.com` China), and `qwen-token-plan` and `qwen-token-plan-cn` are named "Qwen Token Plan Team" and "Qwen Token Plan Team CN". Provider IDs are unchanged, and the old `aliyuncs.com` hosts still work ([#11773](https://github.com/earendil-works/pi/issues/11773))
+- Updated `undici` to 8.12.4 for security advisories GHSA-mqg3-3v4r-cm32, GHSA-7xg3-fphp-28hg, GHSA-5rm8-gv32-r954, GHSA-9v6h-8rgp-m69f, GHSA-3g9m-rv3r-w5w2, and GHSA-r4pc-4jcp-7pqc ([#12200](https://github.com/earendil-works/pi/issues/12200))
 - The find tool's path patterns are now relative to the search directory, like grep's `glob`: `src/*.ts` finds `src/a.ts` but no longer `pkg/src/a.ts`; use `**/src/*.ts` to match at any depth. Patterns without `/` still match file names at any depth ([#12066](https://github.com/earendil-works/pi/issues/12066))
-- Google models: a `CONTINUATION` finish now ends the turn with stop reason `length`; `@google/genai` 2.32.0's automatic continuation is turned off in the Google adapters ([#12103](https://github.com/earendil-works/pi/pull/12103) by [@rometi](https://github.com/rometi))
 
 ### Fixed
 
-- Remote console rendered package specs such as `chord@1.7.0` as `mailto:` links.
-- Remote console transcript forced a synchronous layout read on every streaming update while pinned to the bottom.
-- Remote console logged 24 Content-Security-Policy errors per load: the build inlined small Geist font subsets as `data:` URIs, which `font-src 'self'` blocks. Fonts now always ship as files.
-- Remote console approval card no longer shifts the composer when it appears or resolves (it floats above the composer and reserves matching space at the end of the transcript).
-- Fixed the bash tool returning no output, with a footer like `[Showing lines 3-2 of 2]`, when the output ends in one line longer than about 100KB, such as a `grep` match in a minified file; it now shows the end of that line ([#12062](https://github.com/earendil-works/pi/issues/12062))
-- Fixed provider errors reading "Connection closed." not triggering automatic retries ([#12064](https://github.com/earendil-works/pi/issues/12064))
-- Fixed `/resume` sometimes selecting an unrelated session while the list reloads after deleting or renaming a session ([#12106](https://github.com/earendil-works/pi/issues/12106))
-- Fixed `enabledModels`/`--models` warnings such as `No models match pattern "github-copilot/nope"` being written over the interactive TUI on every `/new`, `/resume` and `/fork`, which left stale lines in fullscreen mode. The warnings are now shown once at startup, in the chat in interactive mode and on stderr in other modes; RPC mode no longer repeats them on stderr for each `new_session`, `switch_session` or `fork` ([#11264](https://github.com/earendil-works/pi/issues/11264))
-- Fixed the find tool matching path patterns through folders above the search path: with the project in `~/src/app`, `src/**/*.ts` returned every `.ts` file in the project ([#12066](https://github.com/earendil-works/pi/issues/12066))
-- Fixed `/remote-control` in npm installs serving a build-it-yourself page instead of the console: the console frontend now ships inside the coding-agent package ([#30](https://github.com/rennf93/hummin/pull/30))
-- Fixed `pi.exec` reporting a command ended by a signal (a timeout, an abort, a crash or an outside kill) as exit code 0; it now reports 128 plus the signal number, as a shell does (143 for SIGTERM, 137 for SIGKILL), or 1 when there is neither a code nor a signal ([#12089](https://github.com/earendil-works/pi/pull/12089) by [@acmerfight](https://github.com/acmerfight))
-- Fixed Kitty and iTerm2 images covering overlays drawn over them. An image that an overlay overlaps by row and column is now removed while the overlay is open and drawn again when it closes. Images beside an overlay, such as a sidebar, stay visible ([#11584](https://github.com/earendil-works/pi/issues/11584))
-- Fixed tools with `strict: "prefer"` constrained sampling being sent in strict mode when their schema contains a node without a `type` (such as `items: {}`, `Type.Unknown()`, or a bare `const`), which OpenAI rejects with a 400 error; these tools now fall back to non-strict mode ([#12049](https://github.com/earendil-works/pi/issues/12049))
-- Fixed non-strict Anthropic tool schemas dropping the root `additionalProperties`, so the model was not told that extra arguments are forbidden ([#12067](https://github.com/earendil-works/pi/issues/12067))
-
-### Removed
-
-- Removed the retired `deepseek-v3.2` and `deepseek-v4-flash` from the Qwen Token Plan Team providers; use `deepseek-v4-flash-0731` or `deepseek-v4.1-flash` ([#11773](https://github.com/earendil-works/pi/issues/11773))
-
-## [1.11.0] - 2026-11-11
-
-### New Features
-
-- **Remote console**: `/remote-control` serves a browser console for the live session, with an SSE event stream, a fleet view of every registered host, tool approval holds, and the new `studio` preset. See [Remote console](docs/environment-variables.md#remote-console).
-- **Per-kind System-1 calibration**: `/friction` reports each read kind against its own threshold and suggests a gate threshold only when the confirmed-safe and blocked score bands separate.
-- **Child task acceptance read**: finished child tasks carry a `sys1 acceptance` advisory line on their result; `HUMMIN_SYS1_ACCEPT=off` skips it.
-- **Background job tools**: `job_output` polls and `job_stop` stops a running exec or monitor job by id, with no interactive panel needed.
-- **Durable suspendable work**: signals, tools that park, gates, and hook tasks. See [suspendable work](../durable/docs/suspendable/spec.md).
-- **Chord events**: fire-and-forget event members beside state and methods, and call windows that depend on link trust. See [the events spec](../chord/docs/events/spec.md).
-
-### Added
-
-- Per-kind System-1 calibration: `/friction` now renders one section per logged read kind (steer, decide, triage, intake, ask; the gate keeps its existing calibration section) with score distributions and near-miss bands against each kind's own threshold. The gate's threshold suggestion ships behind a band-separation check: it appears only when the confirmed-safe and blocked score bands do not overlap, and the report says "not enough separation to suggest" otherwise (the old rule suggested a threshold for the 2026-09 data shape, where confirmed-safe scores sit inside the blocked band; the separation check suppresses it)
-- Child result acceptance read: when a child task finishes, one System-1 read scores P(on-task, complete) from the child's final report and the result the parent sees gains a `sys1 acceptance` advisory line (asking to inspect below 0.5). Advisory only, fail-open, audited to sys1-gate.log as kind `accept`; `HUMMIN_SYS1_ACCEPT=off` skips it
-- Background shell job tools: `job_output` polls an exec or monitor job's state and output tail by job id, and `job_stop` stops a running one - exec jobs previously had no programmatic poll or stop (only the interactive /background panel). Subagent task jobs keep their dedicated `task_status` / `task_cancel` pair and are refused here with a pointer. No new spawn path: jobs start, gate, and deliver exactly as before
-- The remote console: `/remote-control` starts an extension HTTP server for the live session with an SSE event stream (per-host monotonic seqs, `Last-Event-ID` cursor replay from a bounded buffer, a fresh snapshot for unusable cursors, queue-pressure disconnects that never drop events), token-in-fragment auth with timing-safe bearer checks, opt-in tool approval holds (`remoteControl.approvalTools`; fail-open on expiry; concurrent holds served as arrays), LAN bind gates (`HUMMIN_REMOTE_HOST` plus `remoteControl.allowLan` and `HUMMIN_REMOTE_LAN`), and the rewritten `/remote-control` command (status line, usage notify, console-tracked queue). Environment variables are documented in `docs/environment-variables.md` (Remote console section).
-- The `@earendil-works/remote-console` workspace package: the browser console with token theming and three presets (glass, paper, terminal), a streaming renderer with a safe markdown pipeline, fleet host aggregation over one SSE stream per registered host (cross-origin console origins registered through `POST /settings/console-origins`), and an appearance panel (preset, accent, density, motion).
-- Remote console wire additions (protocol version stays 1): the status event carries optional session `stats`, `workspace`, `autoCompact` and `version`; new `fleet` (read from settings and the health file, no probe, omitted when no servers are explicitly configured) and `activity` events; custom messages travel with `customType` and bounded `details`. `hummin-memory` emits memory fold `start`, `end` and `failed` activity on the event bus ([#28](https://github.com/rennf93/hummin/pull/28))
-- The remote console's default preset is now `studio` (Geist Sans, flat warm-neutral surfaces); glass, paper and terminal remain and differ by tokens only. The transcript gains a prose column, one-line tool rows with merged results, typed notices, per-message footers (tokens, duration, tok/s) and paced streaming, and the header shows tok/s, context, cost, a todo chip and a session stats popover ([#28](https://github.com/rennf93/hummin/pull/28))
-
-### Changed
-
-- `extensions/lib/remote.ts` and `extensions/lib/remote-page.ts` are superseded by `extensions/lib/remote-console/` and removed; the old bridge's security perimeter (fragment-only token, timing-safe compare, host/origin checks, hardened headers, POST idempotency, connection caps) is carried forward.
-
-### Fixed
-
+- Fixed `read` storing a note that the current model does not support images, which was replayed to the model as stale text after switching to a vision model. The image is still replaced with a placeholder per request for models without image input, and the read result now shows the warning in the TUI only, also when collapsed ([#12131](https://github.com/earendil-works/pi/issues/12131))
 - Fixed MCP tools loaded by `tool_search` being dropped on resume and `/reload` when an extension deactivates only its own tool at `session_start`, as pi-web-access and pi-subagents do in `toolActivation: "auto"` mode ([#11996](https://github.com/earendil-works/pi/issues/11996))
 - Fixed the standalone binary failing to resolve extension npm dependencies whose entry point is declared in `package.json` `main` or `exports` (for example `shiki`, `yaml`, `graceful-fs`), including imports made from inside other dependencies ([#12012](https://github.com/earendil-works/pi/issues/12012))
 - Fixed the find tool returning no results for patterns starting with `./`, such as `./src/*.ts` ([#12020](https://github.com/earendil-works/pi/issues/12020))
 - Fixed pi exiting with an uncaught `AbortError` when a `read` tool call is cancelled while the file is being opened ([#11956](https://github.com/earendil-works/pi/issues/11956))
 - Fixed pi exiting with an uncaught `AbortError` when the session picker cancels loading after skipping a `.jsonl` file that is not a session, and fixed such files staying open ([#11956](https://github.com/earendil-works/pi/issues/11956))
 - Fixed `/share` crashing pi when the GitHub CLI fails to start
-- Fixed Anthropic OAuth requests reporting an outdated Claude Code version
 - Fixed `pi update` on Windows managed installs failing with "Could not verify managed Pi" when an older system Node.js comes before the installer's standalone Node.js on PATH ([#12048](https://github.com/earendil-works/pi/issues/12048))
 - Fixed `/export` HTML showing raw terminal hyperlink escape codes around links in custom tool output; links are now clickable ([#12003](https://github.com/earendil-works/pi/issues/12003))
-- Fixed memory fold activity reaching the wrong session: a fold worker that outlived a reload or shutdown, or was spawned while no event bus was installed, reported its `end` into the bus of a later session. Activity now goes only to the bus the worker was spawned under ([#28](https://github.com/rennf93/hummin/pull/28), [#29](https://github.com/rennf93/hummin/pull/29))
-- Fixed the live `message_end` event sent to the remote console carrying an empty id, because core emits it before the entry is persisted; it now sends a unique `live:<slotKey>` id. The console's CSP gains `font-src 'self'` and `.woff` is served, so the bundled fonts are no longer blocked; a malformed entry no longer empties the snapshot ([#28](https://github.com/rennf93/hummin/pull/28))
-- Fixed `pi-ai` provider session resources of a durable Harness staying open after the Harness closed, which could keep the process alive with a legacy OpenAI Codex WebSocket ([#11961](https://github.com/earendil-works/pi/pull/11961) by [@carenthomas](https://github.com/carenthomas))
+- Fixed the bash tool returning no output, with a footer like `[Showing lines 3-2 of 2]`, when the output ends in one line longer than about 100KB, such as a `grep` match in a minified file; it now shows the end of that line ([#12062](https://github.com/earendil-works/pi/issues/12062))
+- Fixed provider errors reading "Connection closed." not triggering automatic retries ([#12064](https://github.com/earendil-works/pi/issues/12064))
+- Fixed `/resume` sometimes selecting an unrelated session while the list reloads after deleting or renaming a session ([#12106](https://github.com/earendil-works/pi/issues/12106))
+- Fixed `enabledModels`/`--models` warnings such as `No models match pattern "github-copilot/nope"` being written over the interactive TUI on every `/new`, `/resume` and `/fork`, which left stale lines in fullscreen mode. The warnings are now shown once at startup, in the chat in interactive mode and on stderr in other modes; RPC mode no longer repeats them on stderr for each `new_session`, `switch_session` or `fork` ([#11264](https://github.com/earendil-works/pi/issues/11264))
+- Fixed the find tool matching path patterns through folders above the search path: with the project in `~/src/app`, `src/**/*.ts` returned every `.ts` file in the project ([#12066](https://github.com/earendil-works/pi/issues/12066))
+- Fixed pi crashing with `RangeError: Maximum call stack size exceeded` when rendering a very large edit diff, for example after editing a file with a multi-megabyte line, and again on every resume of that session ([#8036](https://github.com/earendil-works/pi/issues/8036))
+- Fixed pressing Esc during a batch of tool calls leaving the calls that had not started yet without a result in the session; they now get an "Operation aborted" result ([#9986](https://github.com/earendil-works/pi/issues/9986))
+- Fixed an unreadable `CHANGELOG.md` (pi's own or an extension package's) printing `Warning: Could not parse changelog` over the interactive TUI; it now shows no changelog notes ([#11264](https://github.com/earendil-works/pi/issues/11264))
+- Fixed problems found when replacing the session with `/new`, `/resume`, `/fork` or RPC `new_session`, `switch_session` and `fork` never being shown, for example a project extension that fails to load after `/resume` into another project, or an `enabledModels` pattern that matches nothing after a settings change. Interactive mode now shows them in the chat and print, JSON and RPC modes write them to stderr; a problem already reported is not repeated. SDK hosts can call the new `AgentSessionRuntime.takeUnreportedDiagnostics()` at startup and after each replacement to get each diagnostic once
+- Fixed RPC `new_session`, `switch_session`, `fork` and `clone` running extension `session_start` and `resources_discover` handlers twice for the new session. RPC clients now also receive events emitted by `session_start` handlers, such as `entry_appended` for entries they append ([#10470](https://github.com/earendil-works/pi/issues/10470))
+- Fixed an exception thrown by an extension's `pi.events` handler being printed with `console.error` over the interactive TUI. It is now reported like other extension errors: in the chat in interactive mode, as `extension_error` in RPC mode and as `Extension error (...)` in print mode. Errors from a handler that fails after its session was replaced are dropped ([#11264](https://github.com/earendil-works/pi/issues/11264))
+- Fixed `AgentSession.reload()` not emitting `session_start` to extensions when the SDK host bound them with `bindExtensions({})`, after it had already emitted `session_shutdown`. Extensions that start work in `session_start`, such as the MCP extension connecting its servers, stayed stopped after a reload
+- Fixed `--mode json` dropping events emitted by extension `session_start` handlers, such as `entry_appended` for entries they append, at startup and after an extension replaces the session
+- Fixed `Could not restore model <provider>/<model>. Using <fallback>` being shown only at interactive startup. Resuming or forking into a session whose model no longer exists or has no login switched to another model without notice, and print, JSON and RPC modes never showed it. It is now reported in every mode, at startup and after `/resume`, `/fork` and RPC `switch_session` or `fork`
+- Fixed git and npm output, such as `Cloning into ...` or `added 12 packages`, being drawn over the interactive TUI when pi installed or refreshed packages during `/reload`, `/new`, `/resume` and `/fork`, including temporary `-e git:` and `-e npm:` packages. In interactive mode their output is now captured, and a failed install reports the end of it. Until the TUI starts, each install is announced as `Installing <source>...` on stderr instead of showing git and npm output. git and ssh can no longer prompt in interactive mode: a package that needs a typed password or passphrase fails with a hint to set up a credential helper or ssh agent, or to run `pi install <source>` once from the shell. `pi install` and `pi update` keep live output ([#11264](https://github.com/earendil-works/pi/issues/11264))
+- Fixed fullscreen scrolling in long sessions saturating a CPU core by re-rendering the whole transcript on every wheel event ([#9549](https://github.com/earendil-works/pi/issues/9549))
 
-## [1.10.2] - 2026-11-10
+### Removed
 
-## [1.10.1] - 2026-11-10
+- Removed the retired `deepseek-v3.2` and `deepseek-v4-flash` from the Qwen Token Plan Team providers; use `deepseek-v4-flash-0731` or `deepseek-v4.1-flash` ([#11773](https://github.com/earendil-works/pi/issues/11773))
+
+## [1.5.2] - 2026-11-10
 
 ### New Features
 
-- **Warp CLI-agent integration**: when hummin runs inside Warp (or a Warpified SSH session), it emits Warp's CLI-agent events over OSC 777 (`session_start`, `prompt_submit`, `stop`, `stop_failure`, and `attention` while a blocking prompt waits), which drive Warp's task status badges and notification inbox entries — the same mechanism Claude Code uses for its tab icon and inbox handling. Inert outside Warp; nothing to configure.
+- **Fork sessions whose folder is gone**: when a session's original folder was moved or deleted, you can now fork it into the current folder instead of only continuing, so later resumes no longer ask. See [Continue or switch sessions](docs/sessions.md#continue-or-switch-sessions).
+
+### Changed
+
+- When a session's working directory no longer exists, for example after the project folder was renamed, interactive mode now offers `Continue`, `Fork`, or `Cancel` instead of only continuing. `Continue` runs the session in the current directory without storing the choice, as before; `Fork` copies it into the current directory as a new session with a new ID, like `--fork`, so the next resume no longer asks. This applies at startup (`--session`, `--resume`), to `/resume`, to `/import`, and to `ctx.switchSession()` from extensions ([#11975](https://github.com/earendil-works/pi/pull/11975) by [@petrroll](https://github.com/petrroll), fixes [#11060](https://github.com/earendil-works/pi/issues/11060))
+
+### Fixed
+
+- Fixed `/import` of a session whose working directory no longer exists leaving a copy in the session directory, and continuing it leaving a second copy with the same ID (`s.jsonl` and `s-1.jsonl`); the failed copy is now removed ([#11975](https://github.com/earendil-works/pi/pull/11975) by [@petrroll](https://github.com/petrroll), fixes [#11060](https://github.com/earendil-works/pi/issues/11060))
+- Fixed Anthropic OAuth requests reporting an outdated Claude Code version
+
+## [1.5.1] - 2026-11-09
+
+### New Features
+
 - **Shell login and logout**: use `pi auth login <provider>` and `pi auth logout <provider>` without starting a session, with API-key and no-browser sign-in options. See [Credential commands](docs/cli.md#credential-commands).
 - **Idle prompt cache warming**: eligible caches now stay warm for up to 30 minutes between runs when a refresh is expected to pay for itself. See [`cacheWarming`](docs/settings.md#model-and-thinking).
 - **Anthropic message threads**: requests send only new messages while the server continues the conversation, with full-request fallback when earlier context changes. See [Anthropic compatibility](docs/models-configuration.md#anthropic-messages).
@@ -123,7 +99,6 @@
 - Added syntax highlighting for Dart, Nix, Groovy, and Gradle files in read and write views ([#11643](https://github.com/earendil-works/pi/issues/11643))
 - Added GLM 5.3 to the Qwen Token Plan Individual model allowlist ([#11658](https://github.com/earendil-works/pi/issues/11658))
 - Added Claude Fable 5.2 (`claude-fable-5-2`) to the `anthropic` provider ($8/$40 per million input/output tokens, 1M context, 128K output). Like Fable 5.1 it uses per-message effort and mid-conversation system messages; requests its safety classifiers refuse before any output are answered by Claude Opus 5 through server-side fallback and billed at Opus 5's price. Claude Fable 5.2 and Mythos 5.2 on other providers, such as OpenRouter's `anthropic/claude-fable-5.2`, get the same per-message effort support
-- Ordered System-1 engine fallbacks: `decision.fallbackUrls` (or `HUMMIN_DECISION_FALLBACK_URLS`) lists endpoints tried in order when the primary engine is unreachable or answers 5xx/401/403/408/429. Fallbacks are never started or woken; reads still fail open when all are down. The built-in default endpoint moved from port 9987 to 9997.
 
 ### Changed
 
@@ -134,7 +109,6 @@
 - The OpenAI Codex provider is shown as "OpenAI Codex" again instead of "OpenAI Codex (legacy)" in `/login` and the model selector
 - The `/login` and `/logout` provider lists and `/login <provider>` completions now show the preferred partners Radius and OpenRouter first, then all other providers alphabetically. In the provider lists, partners are marked with `✦`, the selected Radius row shimmers in the Radius logo colors and the selected OpenRouter row glows in OpenRouter's brand color (lime on dark themes, violet on light themes)
 - Upgraded terminal Mermaid rendering to support more diagram types, including pie charts, author-defined styles, and clickable labels on terminals with hyperlink support ([#8158](https://github.com/earendil-works/pi/pull/8158) by [@xl0](https://github.com/xl0))
-- When a session's working directory no longer exists, for example after the project folder was renamed, interactive mode now offers `Continue`, `Fork`, or `Cancel` instead of only continuing. `Continue` runs the session in the current directory without storing the choice, as before; `Fork` copies it into the current directory as a new session with a new ID, like `--fork`, so the next resume no longer asks. This applies at startup (`--session`, `--resume`), to `/resume`, to `/import`, and to `ctx.switchSession()` from extensions ([#11060](https://github.com/earendil-works/pi/issues/11060))
 
 ### Fixed
 
@@ -210,9 +184,8 @@
 - Fixed MCP Streamable HTTP JSON replies bypassing message-size limits and HTTP errors buffering entire response bodies. Oversized replies and error-body content beyond the first 8 KiB are now cancelled ([#11335](https://github.com/earendil-works/pi/issues/11335))
 - Fixed valid tool arguments being rejected when their schema combined local `$ref`s with a relative root `$id`, such as `schemas/tool.json` ([#11697](https://github.com/earendil-works/pi/issues/11697))
 - Fixed the find tool starting an untracked `fd` process when cancelled during its parent-directory lookup ([#11974](https://github.com/earendil-works/pi/pull/11974) by [@petrroll](https://github.com/petrroll))
-- Fixed `/import` of a session whose working directory no longer exists leaving a copy in the session directory, and continuing it leaving a second copy with the same ID (`s.jsonl` and `s-1.jsonl`); the failed copy is now removed ([#11060](https://github.com/earendil-works/pi/issues/11060))
 
-## [1.10.0] - 2026-11-04
+## [1.5.0] - 2026-11-02
 
 ### New Features
 
@@ -220,19 +193,13 @@
 - **Faster streaming**: large tool calls are parsed incrementally, and code-heavy answers and tool rows reuse highlighting and rendered Markdown instead of repeating the work on every update. See [Keep rendering responsive](docs/tui.md#keep-rendering-responsive).
 - **Custom self-update commands**: use `PI_SELF_UPDATE_COMMAND` or `selfUpdateCommand` to update pi through a wrapper or another package manager. See [Custom update command](docs/cli.md#custom-update-command).
 - **GPT-6.1 Terra**: available through OpenAI, Azure OpenAI Responses, and OpenAI Codex, with tool search, mid-conversation thinking-level changes, and thinking `off`. Codex offers a 500K context window. See [Models](docs/cli.md#models).
-- **systemd fleet servers**: run the local model fleet on Linux. Fleet servers with `"kind": "systemd"` are probed with `systemctl is-active` and started and stopped with `sudo -n systemctl`. See [fleet](docs/settings.md#fleet).
-- **Confirm risky bash steps**: with `HUMMIN_CONFIRM=1`, Hummin asks Allow or Deny before a bash step that deletes files, runs with elevated privileges, changes the system or its services, installs packages globally, pushes, cleans or hard-resets git, or pipes into a shell.
-- **Anthropic message threads**: Anthropic sessions send only the new messages and the server continues from the previous reply. On by default on `api.anthropic.com`; `compat.supportsMessageThreads` turns it on for gateways that forward the thread field. See [anthropic-messages](docs/models-configuration.md#anthropic-messages).
-- **Markdown transformers on more surfaces**: `pi.registerMarkdownTransformer()` can opt into custom messages, skill blocks, branch and compaction summaries, and changelog views, and the built-in Mermaid renderer draws diagrams in expanded summaries. See [pi.registerMarkdownTransformer](docs/extensions.md#piregistermarkdowntransformertransformer-options).
 
 ### Breaking Changes
 
-- Removed `readFile` from `GrepOperations`. The grep tool now takes context lines from ripgrep and no longer reads matched files itself. To search a remote system, override grep's `execute()`; see [Remote Execution](docs/extensions.md#remote-execution) ([#9276](https://github.com/earendil-works/pi/issues/9276))
 - Tool argument validation runs on `@earendil-works/pi-schema`. TypeBox features outside JSON Schema (`Type.Refine()`, `Type.BigInt()`, `Type.Undefined()`, codecs, `Format.Set()` formats) no longer apply to tool arguments; see [Tool parameter schemas and TypeBox](docs/extensions.md#tool-parameter-schemas-and-typebox). Plain JSON Schema tools, including MCP tools, now get the same coercion as TypeBox tools, such as converting numeric strings and wrapping a single value into an array. Validation failures the model sees list pi-schema's messages (`- path: missing`, `- limit: expected number, got string`) instead of TypeBox's (`must have required properties path`, `must be number`).
 
 ### Added
 
-- Fleet servers can use `"kind": "systemd"` for Linux hosts: Hummin probes the unit with `systemctl is-active` and starts or stops it with `sudo -n systemctl` (restart is stop then start). Fleet commands run through `/bin/sh` outside macOS, since NixOS has no `/bin/zsh`
 - Extension packages can now show their changelog after an update. Pi reads `pi.changelogPath` from the package's `package.json`, or `CHANGELOG.md` in the package root, and on the next fresh launch shows entries newer than the last seen version under "Extension Updates". The `collapseChangelog` setting condenses this to one line per package ([#5958](https://github.com/earendil-works/pi/issues/5958), [#8790](https://github.com/earendil-works/pi/pull/8790))
 - `pi.exec()` accepts a `maxBuffer` option that limits stdout and stderr combined, and its result has a `truncated` field that is true when output exceeded the limit ([#11360](https://github.com/earendil-works/pi/issues/11360))
 - Device-code login (for example GitHub Copilot) now opens the verification page and copies the code when you press Enter. Providers can turn either action off with `openBrowserOnConfirm: false` or `copyCodeOnConfirm: false` ([#9282](https://github.com/earendil-works/pi/issues/9282), [#9301](https://github.com/earendil-works/pi/pull/9301))
@@ -243,17 +210,12 @@
 - Added `Usage.cost.totalFromProvider` to distinguish billed totals from catalog estimates in SDK and extension usage data; combined usage is marked provider-reported only when every part is ([#11178](https://github.com/earendil-works/pi/pull/11178))
 - Added concrete `responseModel` metadata to messages from pi-messages providers such as Radius, including when a virtual model is requested. See [AssistantMessage](docs/message-types.md#assistantmessage) ([#11265](https://github.com/earendil-works/pi/pull/11265))
 - Added GPT-6.1 Terra for OpenAI, Azure OpenAI Responses, and OpenAI Codex, with tool search and mid-conversation thinking-level changes. It supports thinking `off`; Codex offers a 500K context window
-- Bundled `hummin-confirm` extension: with `HUMMIN_CONFIRM=1`, Hummin asks Allow or Deny before a bash step that deletes files (such as `rm`, `shred`, `find -delete`, `gio trash`), runs with elevated privileges (`sudo`, `doas`, `pkexec`, `su`), changes the system or its services (such as `dd`, `chown`, `kill`, `reboot`, `mkfs`, `nixos-rebuild`, recursive `chmod`, `systemctl` without `--user`), installs or removes packages globally (`pip`, `uv pip`, `npm -g`, `cargo install`, `nix profile`, `flatpak`), runs `git push`, `git clean` or `git reset --hard`, or pipes into `sh` or `bash`. It looks through `env`, `command`, `nice`, `time`, `nohup` and `exec` wrappers, `VAR=x` prefixes, path-prefixed commands and git global options such as `-C`. Over RPC the question reaches the client as an `extension_ui_request`; a denied step is blocked with its reason. Read, edit and write calls never ask. It is a prompt for the person at the keyboard, not a security boundary: command substitution, `eval`, aliases, `xargs`, `find -exec`, `bash -c` strings and `( )` or `{ }` groups are not analyzed
-- Added Microsoft-Decision-1 (`microsoft-decision-1`) to GitHub Copilot as a `typesafe-system-one` classifier with a 32,768-token context ([#11679](https://github.com/earendil-works/pi/pull/11679) by [@Marvae](https://github.com/Marvae))
 
 ### Changed
 
-- Updated dependencies flagged by `npm audit`: zod is pinned to 4.6.7 for every package (GHSA-mrhx-c7xc-m3w5), minimatch to 11.0.3 (GHSA-g3hv-75wg-m249), `@anthropic-ai/sandbox-runtime` to 0.0.81 (it reads zod through `zod/v3`), shx to 0.4.0 and `@cloudflare/vitest-plugin` to 1.4.11. The `minimatch` module bundled for extensions no longer exports `makeRe` or `AST`
-- `pi update` now lists each updated package with its npm version or git commit change, for example `npm:foo 1.2.0 -> 1.3.0`, and prints `Packages are already up to date` when nothing changed. When nothing changed but an update printed a warning, for example because npm left the old version installed after resolving stale registry metadata, it prints `No packages were updated, see the warnings above` instead; in offline mode it prints `Skipped package updates (offline mode)`. `PackageManager.update()` reports each changed package as a new `result` progress event whose `message` holds that line ([#11707](https://github.com/earendil-works/pi/pull/11707), [#11711](https://github.com/earendil-works/pi/pull/11711))
-- Anthropic sessions now use message threads: each request sends only the new messages and the server continues from the previous reply, falling back to the full request when the conversation changed (for example after compaction or a tool list change). On by default for the `anthropic` provider on `api.anthropic.com`; set `compat.supportsMessageThreads` in `models.json` to enable it for gateways that forward the `thread` field, or to turn it off. Cache warming does not touch the session's thread ([#11545](https://github.com/earendil-works/pi/pull/11545))
-- `pi.registerMarkdownTransformer()` takes an optional `{ messageTypes }` that selects the Markdown surfaces a transformer runs on. Besides user, assistant, and thinking Markdown, transformers can now opt into `custom` (custom messages and skill blocks), `summary` (branch and compaction summaries), and `changelog` (What's New, `/changelog`, the Extension Updates notice, and the Update Available note). Without options a transformer runs on user, assistant, and thinking Markdown as before. The built-in Mermaid renderer now also draws diagrams in expanded branch and compaction summaries
 - Extensions keep importing `Type`, `Static` and `TSchema` from `@earendil-works/pi-ai`: Pi maps that import to pi-ai's compat entry plus the TypeBox it bundles, now that pi-ai itself no longer re-exports TypeBox, and its `StringEnum` there stays a TypeBox `TUnsafe<T>`. The built-in tool factories (`createReadTool()` and the others) return `TypeBoxAgentTool<typeof schema>`, which keeps `params` typed for TypeBox.
 - Tightened system prompt
+- `pi update` for installs from the pi.dev installer no longer passes `--min-release-age=0` to `npm ci`. The release lockfile pins every package, so the flag had no effect, and security scanners that block it stopped the update ([#11262](https://github.com/earendil-works/pi/issues/11262))
 - `/model` and `/scoped-models` now show a model's name next to its ID when the name adds words the ID lacks, such as a renamed `models.json` override ([#5916](https://github.com/earendil-works/pi/issues/5916), [#11347](https://github.com/earendil-works/pi/pull/11347))
 - MCP OAuth sign-in now uses pi's Client ID Metadata Document by default when the authorization server supports it for public clients, and registers a client dynamically otherwise, like Codex, Claude Code, and opencode. Clients registered before stay in use while their redirect URI matches. The new default `oauth.clientRegistration: "auto"` registers when `clientName` or a non-default `callbackUrl` is set; `"dcr"` always registers. `pi mcp add --oauth-client-registration` sets the mode ([#11426](https://github.com/earendil-works/pi/issues/11426))
 - Changed the default OpenAI model from `gpt-5.5` to `gpt-6.1-sol`, including after ChatGPT sign-in when no model is selected ([#11442](https://github.com/earendil-works/pi/issues/11442))
@@ -261,12 +223,6 @@
 
 ### Fixed
 
-- A failed token refresh of an MCP connection no longer registers an OAuth client or replaces the PKCE verifier of a sign-in in progress, which made that sign-in fail. MCP sign-in now refreshes the stored tokens with the stored client even when the loopback callback port changed, instead of registering a new client and opening the browser. Ctrl+C in `/mcp` and the `--timeout` of `pi mcp login` now also stop a sign-in while it waits up to 25 seconds for another pi process's token refresh, and a refresh lock that fails for another reason than that wait now fails the sign-in instead of opening the browser.
-- Fixed RPC mode ignoring an extension's `ctx.shutdown()` while idle, for example from a timer: the process kept running until the client sent another command. pi now shuts down right away when idle, and a shutdown requested by an extension command waits until the command's `prompt` response is written ([#11599](https://github.com/earendil-works/pi/issues/11599))
-- Fixed changelog notes repeating on every fresh launch when the installed package version has a prerelease suffix, such as `0.1.5-20261020.7`: the saved version was read as `0.1.0`, so the `0.1.1` to `0.1.5` notes counted as new each time. A saved version without `major.minor.patch` now shows no notes and is replaced by the installed version, instead of showing the whole changelog ([#11703](https://github.com/earendil-works/pi/issues/11703))
-- Fixed RPC mode cutting off shutdown cleanup, such as a pending MCP token refresh, when stdin closed and SIGTERM arrived together, which process managers like Paseo and systemd do. Pi lost the refreshed token and the MCP server revoked the sign-in. Once a shutdown has started, a stdin EOF or a single signal no longer interrupts it; a second signal still exits at once. Print mode likewise no longer dies from a signal that arrives during its final cleanup ([#11599](https://github.com/earendil-works/pi/issues/11599))
-- Fixed the grep tool reading every matched file into memory when `context` was set, which ran out of memory on large files; context now comes from ripgrep, which also fixes UTF-16 files and lone CRs in matched lines, and the match limit notice no longer appears when exactly `limit` matches exist ([#9276](https://github.com/earendil-works/pi/issues/9276), [#11423](https://github.com/earendil-works/pi/issues/11423))
-- Fixed the find tool reporting the result limit when exactly `limit` files match, and `limit: 0` in find and ls returning every result or an empty listing; limits below 1 now mean 1 ([#7121](https://github.com/earendil-works/pi/issues/7121))
 - Updated glob matching to prevent denial of service from amplified glob patterns.
 - Fixed a saved "Do not trust" decision being ignored for projects without trust-requiring resources, for example a folder with only `AGENTS.md`. pi auto-trusted such projects, so `ctx.isProjectTrusted()` returned true and package commands treated them as trusted. A saved decision in `trust.json` now takes precedence; auto-trust applies only when no decision is saved ([#10947](https://github.com/earendil-works/pi/issues/10947))
 - Fixed `Shift+Enter` queueing a follow-up instead of inserting a newline in Apple Terminal setups that send `ESC` + Return. pi now checks the local Shift key state for that sequence, as it already did for plain Return; `Alt+Enter` without Shift still queues a follow-up ([#11559](https://github.com/earendil-works/pi/issues/11559))
@@ -297,6 +253,7 @@
 - Fixed `tool_search` and codemode `searchTools()` ranking a tool below tools that only mention its name in their descriptions, for example `peekaboo app` ranking `mcp__peekaboo__app` 14th. A tool matching more of the query's words now ranks above one matching fewer, a query word in a tool's name scores more than any number of mentions in its description, a tool whose whole name is in the query gets a large bonus, and long server instructions no longer lower the scores of that server's tools ([#11331](https://github.com/earendil-works/pi/issues/11331))
 - Fixed `tool_search` and codemode `searchTools()` finding nothing for Chinese, Japanese, Thai, and other non-ASCII queries, because the tokenizer kept only ASCII letters and digits. Words in any script now match, text without spaces between words such as `搜索记录` is split into words, and canonically equivalent text such as `café` and `cafe\u0301` matches ([#10816](https://github.com/earendil-works/pi/issues/10816), [#11037](https://github.com/earendil-works/pi/pull/11037) by [@haoqixu](https://github.com/haoqixu))
 - Fixed `pi update` stopping with `git clean -fdx failed with code 1` on Windows when another pi session had a git extension's native module or executable open. Windows cannot delete such files, so the update left the new code with the old dependencies. pi now warns, installs the dependencies anyway, and retries the clean on the next update ([#11597](https://github.com/earendil-works/pi/issues/11597))
+- Fixed two pi processes refreshing OAuth credentials at the same time when they reach the same `auth.json` through different paths, such as a symlinked `auth.json` in a separate agent directory. The auth lock now uses the file's resolved path ([#11655](https://github.com/earendil-works/pi/issues/11655))
 - Fixed tool rows and streamed answers highlighting the same code again on every redraw. A running codemode row highlighted its whole script on every progress update and timer tick, a complete `write` row its whole file on every update and expand toggle, a streamed `write` its first 50 lines on every delta, and a streamed answer every earlier code block on every delta. Rows now reuse their last highlighting until the code, theme, or loaded grammars change, and assistant messages keep their rendered Markdown blocks while streaming ([#10971](https://github.com/earendil-works/pi/issues/10971))
 - Fixed resized photos being sent as multi-megabyte PNGs even when JPEG was much smaller, causing large requests to fail or time out. Image resizing now tries the smaller encoding first ([#11551](https://github.com/earendil-works/pi/issues/11551))
 - Fixed `pi update --extensions` reporting success without warning when npm's stale registry metadata left a package at its old version. pi now reports the installed and expected versions ([#11536](https://github.com/earendil-works/pi/issues/11536))
@@ -340,24 +297,12 @@
 - Fixed display math wider than the content area being split apart by line wrapping; it now falls back to raw LaTeX ([#11483](https://github.com/earendil-works/pi/issues/11483))
 - Fixed styled words ending exactly at the wrap width adding a leading space on the next line, and strikethrough leaking into wrapped-line padding ([#10925](https://github.com/earendil-works/pi/issues/10925))
 - Fixed `/tree` branch summaries including failed assistant replies and original content that context edits had hidden or replaced. Summaries now honor the same context edits as live requests and compaction ([#11602](https://github.com/earendil-works/pi/issues/11602))
-- Fixed `PI_STARTUP_BENCHMARK=1` never disposing the session runtime: extensions did not get `session_shutdown`, so a timer or socket they close there kept the process running after it printed the timings ([#11693](https://github.com/earendil-works/pi/issues/11693))
-- Fixed the OpenAI Codex provider leaving one `abort` listener on the request's signal after every retry backoff: three 429 responses followed by a success left three listeners behind ([#11708](https://github.com/earendil-works/pi/issues/11708))
-- Fixed OpenCode Go Claude Haiku 5.5 failing with a 400 (`Invalid signature in thinking block ... bound to a different conversation`) after the tool list, system prompt, or earlier history changed, which left the session failing on every retry. OpenCode Go and Zen Claude 5.5 models, Opus 5, and Fable 5.1 now use per-message effort and send `thinking.block_binding: drop_block`, like the Anthropic provider ([#10954](https://github.com/earendil-works/pi/issues/10954))
-- Fixed Anthropic non-strict tool schemas dropping root `$defs` and `definitions`, which left property `$ref`s pointing at nothing. Claude then produced wrong arguments for such tools (common in MCP servers), for example a JSON string instead of an object, and some Anthropic-compatible gateways rejected the request outright ([#9557](https://github.com/earendil-works/pi/issues/9557))
-- Fixed OpenRouter rejecting requests with a 400 (`This endpoint's maximum context length is ...`) for models whose output limit is close to the context window, such as DeepSeek flash. OpenRouter counts the input with its own tokenizer, which can be several percent higher than the provider's count, and pi left only 4,096 tokens spare. pi then treated the 400 as a context overflow and compacted the session, even at around 20% of the window. The default output limit now leaves 15% of the estimated input unused, and near a full window at most 32,768 output tokens are requested ([#10497](https://github.com/earendil-works/pi/issues/10497))
-- Fixed Markdown rendering HTML comments (`<!-- ... -->`) as visible text ([#11710](https://github.com/earendil-works/pi/issues/11710))
 
 ### Removed
 
 - Removed the native OS `sandbox/` extension example and its dependency. Use the [Gondolin example](examples/extensions/gondolin/) or the [containerization guide](docs/containerization.md).
 
-## [1.9.0] - 2026-10-22
-
-### Changed
-
-- `pi update` for installs from the pi.dev installer no longer passes `--min-release-age=0` to `npm ci`. The release lockfile pins every package, so the flag had no effect, and security scanners that block it stopped the update ([#11262](https://github.com/earendil-works/pi/issues/11262))
-
-## [1.8.0] - 2026-10-22
+## [1.4.0] - 2026-10-21
 
 ### New Features
 
@@ -413,6 +358,7 @@
 - Fixed Markdown bold and italic not rendering next to CJK punctuation ([#10730](https://github.com/earendil-works/pi/pull/10730) by [@theBucky](https://github.com/theBucky))
 - Fixed `@` file autocomplete returning no results for queries containing regex metacharacters such as `[` or `(` ([#10972](https://github.com/earendil-works/pi/issues/10972))
 
+## [1.3.0] - 2026-10-15
 
 ### New Features
 
@@ -458,135 +404,18 @@
 - Fixed Claude Haiku 5.5 and Claude Opus 5 not supporting the `off` thinking level ([#10753](https://github.com/earendil-works/pi/issues/10753))
 - Fixed `done()` of an extension's `ctx.ui.custom({ overlay: true })` closing the topmost overlay instead of its own, which left the finished overlay on screen and another extension's dialog unresolved ([#10648](https://github.com/earendil-works/pi/issues/10648), [#10999](https://github.com/earendil-works/pi/pull/10999) by [@masonc15](https://github.com/masonc15))
 
-## [1.7.0] - 2026-10-21
+## [1.2.0] - 2026-10-12
 
 ### New Features
 
-- **Stacked extension dialogs**: concurrent extension `select`/`confirm`/`input`/`editor` dialogs now stack instead of replacing each other - dismissing the visible dialog reveals the previous one, so background tool confirmations no longer swallow earlier questions.
-- **Rex terminal support**: OSC 8 hyperlinks and the Kitty graphics protocol are detected on Rex, matching the fidelity already available in iTerm2, WezTerm, and Kitty.
-- **Windows shell resolution**: interactive mode resolves PowerShell and pwsh from their installation directories and accepts Windows Store shell aliases, so `!` bash mode and shell spawning work from Store-installed terminals.
-- **New models**: `MiniMax-M3.1-Flash` (effort-based adaptive thinking) on the MiniMax providers, and `xhigh` thinking for Grok 4.3 and Grok 4.5 on `xai`.
-
-### Changed
-
-- The default GitHub Copilot model is now `gpt-5.4-nano`; models.dev removed `gpt-5.4` from the provider catalog.
-
-### Fixed
-
-- Fixed stale pixels surviving under blank rows in fullscreen mode: when a frame's content shrank (for example the footer after `/reload`), rows the model considered empty were skipped by the differential painter, leaving orphaned content from an earlier frame visible until a full repaint. Blank rows are now rewritten every frame.
-- Fixed `pi update` failing with "Managed install marker is missing or invalid" when `managed-install.json` starts with a UTF-8 BOM, which Windows PowerShell 5.1 adds when it rewrites the file.
-- Fixed HTML export showing literal asterisks for Markdown bold and italic next to CJK punctuation ([#3353](https://github.com/earendil-works/pi/issues/3353), [#10154](https://github.com/earendil-works/pi/issues/10154))
-- Fixed the terminal staying in mouse-tracking, focus-reporting, Kitty keyboard, and alternate-screen modes when pi exits without its normal terminal teardown, which flooded the shell prompt with escape sequences ([#11170](https://github.com/earendil-works/pi/issues/11170))
-- Fixed concurrent extension `select`/`confirm`/`input`/`editor` dialogs and inline `custom()` components in interactive mode: a second dialog replaced the first and the first promise never settled; closing the visible dialog now shows the previous one again ([#11166](https://github.com/earendil-works/pi/issues/11166), [#9909](https://github.com/earendil-works/pi/issues/9909))
-- Fixed pasting in the shell hanging after copying text in pi and suspending it with Ctrl+Z on Linux: the background `wl-copy`/`xclip`/`xsel` process that keeps serving the clipboard was suspended along with pi ([#11179](https://github.com/earendil-works/pi/issues/11179))
-- Fixed codemode scripts failing immediately when both codemode workers are busy, for example with parallel codemode calls or in-process subagents. Scripts now wait up to 60 seconds for a free worker, and `PI_CODEMODE_MAX_WORKERS` raises the limit of two workers ([#11184](https://github.com/earendil-works/pi/issues/11184))
-- Fixed extensions failing to load when importing `@earendil-works/pi-ai/models` (e.g. for `clampThinkingLevel`) by exposing the subpath through the extension loader aliases and virtual modules ([#11156](https://github.com/earendil-works/pi/issues/11156))
-- Fixed `mcp.json` files that start with a UTF-8 BOM failing to parse, which skipped all their MCP servers and made `pi mcp add`/`pi mcp remove` fail ([#11191](https://github.com/earendil-works/pi/issues/11191))
-
-## [1.6.4] - 2026-10-18
-
-### Added
-
-- **Drag-and-drop image conversion**: dropping an image file into the editor inserts its path as typed text (terminals have no drop event), so submit now converts any line that is exactly one absolute image path - bare, backslash-escaped (Warp), or quoted (Terminal.app) - into a session-continuing `[Image N]` marker and attaches the image. Prose lines, relative paths, and invalid files stay text; invalid image-shaped lines warn.
-
-## [1.6.3] - 2026-10-17
-
-### Changed
-
-- **Paste-time `[Image N]` markers**: pasting an image inserts `[Image N]` into the editor immediately, where N counts every image pasted in the session, instead of inserting the file path and rewriting it on submit. Submit attaches the image behind each marker still in the text; deleting a marker drops the image. Finder-copied files, clipboard bitmaps, and clipboard text that is nothing but image paths (shell-escaped or bare spaces) all become markers; files that cannot attach keep their path text with a warning. Queued-message round-trips restore markers instead of raw paths.
-
-## [1.6.2] - 2026-10-17
-
-### New Features
-
-- **Pasted images attach on submit**: clipboard-pasted image paths become `[Image N]` markers with real image attachments, so the model sees the image immediately instead of reading the temporary file itself, and the transcript stays legible. Queued-message round-trips preserve the attachments.
-
-## [1.6.1] - 2026-10-17
-
-### New Features
-
-- **sys1 ask gate**: `ask_user` recommendations are now checked against the session's stated intent by a System-1 choice read (the engine picks the option that best matches the user's recent messages). A confident disagreement (threshold `decision.askThreshold`, default 0.7) holds the question once and steers the model back with the disagreement; an unchanged re-ask is shown to the user annotated with both opinions. Fails open everywhere; `HUMMIN_SYS1_ASK=off` or `decision.askGate: false` disables.
-- **Decision-engine config warnings and criteria normalization**: a missing/unset `decision.url` now warns once at startup (stderr + terminal notification) while reads fall back to the built-in default endpoint; an explicit empty url stays a silent opt-out. `choice` questions sent to the engine (sys1_decide tool and the ask gate) normalize label-array criteria to label -> label objects, which is the shape engine builds validate.
-
-### Added
-
-- Added a Models Configuration reference generated from the `models.json` schema, listing all provider, model, model override, and compatibility fields ([#10790](https://github.com/earendil-works/pi/issues/10790))
-
-### Fixed
-
-- Fixed `models.schema.json` missing descriptions for provider and model fields, so editors showed no hints for them ([#10790](https://github.com/earendil-works/pi/issues/10790))
-
-## [1.6.0] - 2026-10-16
-
-### New Features
-
-- **Cache-preserving thinking level changes on OpenAI GPT-6**: changing the thinking level mid-session with an API key keeps the prompt cache.
-- **Kimi Code over Chat Completions**: tools added mid-conversation no longer invalidate the prompt cache. `models.json` base URL overrides must now include `/v1`. See [Providers](docs/providers.md).
-- **Clean model switching**: thinking from a previous model is dropped instead of being shown to the new model as text.
+- **Per-key OpenRouter model lists**: with an OpenRouter key, Pi lists only the models that key may use, with the key's context size, max output, and prices, including regional endpoints set in `models.json`. See [OpenRouter](docs/providers.md#openrouter).
+- **Published configuration schemas**: add `$schema` to `settings.json`, `models.json`, keybindings, and themes for editor validation and completion. See [Settings](docs/settings.md), [Models](docs/models.md), [Keybindings](docs/keybindings.md), and [Themes](docs/themes.md).
+- **Clipboard copies over remote sessions**: `PI_CLIPBOARD_OSC52=1` sends copied text to a remote client's clipboard when Pi cannot detect the remote session, such as a multiplexer attached from another machine. See [Pi Process Configuration](docs/environment-variables.md#pi-process-configuration).
+- **Codemode improvements**: tool declarations show input constraints such as integer, minimum/maximum, and default, and codemode rows show elapsed and total time. See [Codemode](docs/codemode.md).
+- **`before_agent_start` for extension-triggered runs**: runs started by `pi.sendMessage(..., { triggerTurn: true })` go through the same setup as prompts. See [Events and concurrency](docs/extensions.md#events-and-concurrency).
 
 ### Breaking Changes
 
-- Changed the `kimi-coding` provider to use OpenAI Chat Completions at `https://api.kimi.com/coding/v1`, the protocol used by the official Kimi Code client. K3, K3-256K, and Kimi For Coding now accept tools added mid-conversation without invalidating the prompt cache. `models.json` overrides of the `kimi-coding` base URL must now include `/v1` ([#10720](https://github.com/earendil-works/pi/issues/10720))
-
-### Added
-
-- Changing the thinking level mid-session on OpenAI GPT-6 models (API key) now keeps the prompt cache ([#10853](https://github.com/earendil-works/pi/issues/10853))
-
-### Changed
-
-- Changed requests to configured hummin fleet servers to ignore the HTTP idle timeout, so slow local prefills are no longer aborted; `httpIdleTimeoutMs` still applies to every other host, and an explicit `retry.provider.timeoutMs` still wins
-- Changed settings items that no hummin tab places to appear in an "Other" tab instead of being hidden
-- Changed the default Xiaomi MiMo model of the `xiaomi` and `xiaomi-token-plan-*` providers to `mimo-v2.6-pro`; models.dev now marks `mimo-v2.5` and `mimo-v2.5-pro` deprecated, so they leave the generated catalog
-- Changed model switching to drop thinking blocks from earlier assistant messages produced by a different model, instead of sending them as plain text. The new model previously saw the old model's reasoning as part of its replies and could start writing its own reasoning into the visible answer ([#10995](https://github.com/earendil-works/pi/issues/10995))
-- `generateSummary()` and `generateSummaryWithUsage()` now ignore their `reserveTokens` parameter. Summary requests use the model's output limit instead.
-
-### Changed
-
-- Changed the default NVIDIA model to `nvidia/nemotron-3.5-super-vl-120b-a12b` ([#10910](https://github.com/earendil-works/pi/pull/10910) by [@cv](https://github.com/cv))
-
-### Fixed
-
-- Fixed bash-mode input highlighting disappearing after the cursor when the cursor was not at the end of the line, and on wrapped or continuation lines
-- Fixed hummin fleet providers (`llamacpp-*`, `colibri-*`) never being treated as curated: they now sort first in the model picker, colibri models are included in ctrl+P/N cycling, and fleet providers show in the provider list
-- Fixed guardrail post-mortems being written to `~/.hummin/agent/post-mortems` even when `HUMMIN_CODING_AGENT_DIR` points elsewhere; they now go to the configured agent dir
-- Fixed `--model` choosing a provider by catalog order when several providers offer the match; Pi now prefers the provider with credentials and otherwise reports the ambiguity. `--models` and `enabledModels` add a model for each provider that offers it and warn about the ambiguity ([#10160](https://github.com/earendil-works/pi/issues/10160)). A model served by several hummin fleet servers resolves to the first server in fleet order instead, which also fixes `--model <exact id>` reporting such a model as ambiguous
-- Fixed `read` line-range labels for numeric-string or null arguments in the TUI, session tree, HTML exports, and examples ([#9887](https://github.com/earendil-works/pi/issues/9887))
-- Fixed the Nix flake build failing when a provider switched APIs: the model catalog pin is now refreshed from the newest published catalog when its model API groups differ. hummin releases skip upstream's pin-and-build step unless `HUMMIN_RELEASE_PIN_MODEL_CATALOG=1` ([#10985](https://github.com/earendil-works/pi/issues/10985))
-- Fixed the Nix package putting its Node.js first on `PATH`, which made bash tool shells use Pi's Node instead of the user's `node`/`npm`. Pi's Node is now only a fallback ([#10519](https://github.com/earendil-works/pi/issues/10519))
-- Fixed prompt templates dropping empty quoted arguments (`""` or `''`), which shifted later positional arguments and prevented positional defaults from applying ([#10867](https://github.com/earendil-works/pi/issues/10867))
-- Fixed the Nix package build failing in its install check because it still expected chord and esbuild, which Pi no longer depends on
-- Fixed tool-call argument parsing dropping fields when a string contains an invalid `\u` escape such as `\usepackage` ([#10868](https://github.com/earendil-works/pi/issues/10868))
-- Fixed Anthropic and Bedrock Claude requests failing with a 400 when an error tool result contains images; the images are now sent after the tool results of the turn, so the model still sees them ([#10794](https://github.com/earendil-works/pi/issues/10794))
-- Fixed OpenCode Go Gemini models failing with a 404 by moving OpenCode Zen and OpenCode Go to the `opencode.ai/inference` endpoints, and added Google Generative AI support to the OpenCode Go provider
-- Fixed OpenCode Go MiniMax M2.7 failing with "Model does not support this protocol" by using the Anthropic Messages API
-- Fixed automatic retry not triggering for gateway `Unable to forward upstream stream` errors ([#10920](https://github.com/earendil-works/pi/issues/10920))
-- Fixed automatic retry not triggering for `The service is temporarily unavailable` errors, which also made compaction fail on the first attempt ([#10965](https://github.com/earendil-works/pi/issues/10965))
-- Fixed OpenAI-compatible responses showing thinking after the answer when a proxy such as LiteLLM sends reasoning and content in the same stream chunk ([#10926](https://github.com/earendil-works/pi/issues/10926))
-- Fixed Gemini 4 Argon requests on Google Vertex failing with "Thinking budget is not supported", and its thinking level being ignored on the Gemini API ([#10890](https://github.com/earendil-works/pi/issues/10890))
-- Fixed Xiaomi MiMo models failing with a 400 at the `minimal` thinking level; they now expose only the `off` and `high` levels ([#10818](https://github.com/earendil-works/pi/issues/10818))
-- Fixed `openai-codex/gpt-6.1-sol` using a 272K context window instead of the 500K window Codex now provides ([#10840](https://github.com/earendil-works/pi/issues/10840))
-- Fixed tool calls whose final arguments are malformed JSON silently running with only the fields parsed before the error; they now fail validation and show the model the raw arguments it sent ([#10897](https://github.com/earendil-works/pi/issues/10897))
-- Fixed Claude Haiku 5.5 and Claude Opus 5 not supporting the `off` thinking level ([#10753](https://github.com/earendil-works/pi/issues/10753))
-- Fixed `done()` of an extension's `ctx.ui.custom({ overlay: true })` closing the topmost overlay instead of its own, which left the finished overlay on screen and another extension's dialog unresolved ([#10648](https://github.com/earendil-works/pi/issues/10648), [#10999](https://github.com/earendil-works/pi/pull/10999) by [@masonc15](https://github.com/masonc15))
-- Fixed compaction and branch summaries failing with "generation hit the token cap" when reasoning used most of the fixed summary output limit. Summaries now use the model's output limit, and `compaction.reserveTokens` only controls when compaction starts ([#9512](https://github.com/earendil-works/pi/issues/9512), [#9075](https://github.com/earendil-works/pi/issues/9075)).
-- Fixed bug-report summaries using a fixed 4096-token output cap, which reasoning models could exhaust before writing the summary ([#9512](https://github.com/earendil-works/pi/issues/9512))
-- Fixed automatic retry not triggering when the Google Vertex OAuth token refresh fails with a transient network error such as `request to https://oauth2.googleapis.com/token failed, reason:` ([#10996](https://github.com/earendil-works/pi/issues/10996))
-- Fixed whitespace-only tool output (for example a bare `\r\n` from bash) being sent as-is to OpenAI Completions, OpenAI Responses, and Google providers; it now uses the same placeholder as empty output, since some providers reject whitespace-only tool content with a 400 ([#8720](https://github.com/earendil-works/pi/issues/8720))
-- Fixed automatic retry not triggering for gateway upstream failures such as `upstream_error: Upstream request failed`, `upstream_stream_read_error`, and `Upstream HTTP/2 stream failed` ([#10920](https://github.com/earendil-works/pi/issues/10920))
-
-## [1.5.0] - 2026-10-14
-
-### New Features
-
-- **Per-key OpenRouter model lists**: with an OpenRouter key, hummin lists only the models that key may use, with the key's context size, max output, and prices. hummin narrows its shipped catalog and does not fetch the pi.dev catalog. See [OpenRouter](docs/providers.md#openrouter).
-- **Claude Haiku 5.5**: `anthropic/claude-haiku-5-5`, with adaptive thinking up to `xhigh`/`max` effort.
-- **`--tools` modifiers and patterns**: `--tools` entries like `+codemode,-write` change the default selection instead of replacing it, `--tools` and `--exclude-tools` accept `*` patterns such as `'mcp__radius__*'`, and `--no-mcp` disables the built-in MCP support for one run. See [Tools](docs/cli.md#tools).
-- **Native llama.cpp decision models and GPT-6 Luna**: Julia-1, Laya, Kev, lev, and OpenJev served by llama.cpp 0.6.0 or later run natively as classifiers, OpenAI's GPT-6 Luna is available as a classifier through the Decisions API, and codemode's `models.classify()` accepts images. See [Classification](docs/llama-cpp.md#classification) and [Use classifier models](docs/models.md#use-classifier-models).
-- **Program status reporting**: terminals and agent dashboards that support OSC 7501 see whether hummin is working, blocked on a dialog or login, done, or failed. See [Program status](docs/terminal-setup.md#program-status).
-
-### Breaking Changes
-
-- Renamed the Azure provider from `azure-openai-responses` to `azure`. Rename the provider key in `auth.json` (or run `/login` again), in `models.json`, and in `settings.json` (`defaultProvider`, `enabledModels` patterns, and `modelThinkingLevels` keys). Sessions that used the old provider fall back to another model when resumed, and their prompt cache is not reused. The `AZURE_OPENAI_*` environment variables are unchanged ([#9714](https://github.com/earendil-works/pi/pull/9714) by [@jsanter27](https://github.com/jsanter27))
 - Published generated configuration schemas for models, settings, keybindings, and themes at `https://pi.dev/schemas/*.schema.json`. The theme schema moved to `https://pi.dev/schemas/theme.schema.json`; themes loaded during startup now receive the same schema validation as later reloads. Update theme `$schema` references, define reusable colors under `vars`, and remove unsupported metadata ([#9880](https://github.com/earendil-works/pi/pull/9880), [#10751](https://github.com/earendil-works/pi/pull/10751) by [@christianklotz](https://github.com/christianklotz))
 - Changed `before_agent_start` to also fire for runs started by `pi.sendMessage(..., { triggerTurn: true })` while idle. `BeforeAgentStartEvent` is now a union on `messageType`: `"user"` events carry `prompt` and `images`, and `"custom"` events carry the starting `message` and no `prompt`. Messages returned by handlers are added to both kinds of run, and pending `deliverAs: "nextTurn"` messages are delivered with the custom-message run. Handlers that should act only on user prompts must check `event.messageType === "user"` ([#10267](https://github.com/earendil-works/pi/issues/10267), [#5581](https://github.com/earendil-works/pi/issues/5581), [#10739](https://github.com/earendil-works/pi/pull/10739) by [@davidbrai](https://github.com/davidbrai))
 - Changed the session to count as busy while a run starts, including during `before_agent_start` handlers: `ctx.isIdle()` is false, `pi.sendMessage()` queues into the starting run instead of starting a second run that failed with "Agent is already processing", `pi.sendUserMessage()` requires `deliverAs`, and an abort requested meanwhile aborts the run once it starts ([#10739](https://github.com/earendil-works/pi/pull/10739) by [@davidbrai](https://github.com/davidbrai))
@@ -594,19 +423,6 @@
 
 ### Added
 
-- Added Azure Foundry Chat Completions deployments, starting with `azure/deepseek-v4-pro` ([#9645](https://github.com/earendil-works/pi/issues/9645), [#9714](https://github.com/earendil-works/pi/pull/9714) by [@jsanter27](https://github.com/jsanter27))
-- Added `*` patterns to `--tools` and `--exclude-tools`, for example `--tools read,codemode,'mcp__radius__*'`
-- Added `--no-mcp` to disable the built-in MCP support for one run
-- Added `+name` and `-name` entries to `--tools`, which change the default tool selection instead of replacing it, for example `pi -t +codemode`
-- Added `durationMs` to the tool render context and to `tool_execution_end` extension events: the recorded execution time of a final tool result ([#10549](https://github.com/earendil-works/pi/issues/10549))
-- Added `outputPad` to the tool render context ([#10557](https://github.com/earendil-works/pi/pull/10557) by [@rwachtler](https://github.com/rwachtler))
-- Added OpenAI's GPT-6 Luna as a classifier model through the Decisions API, available with `OPENAI_API_KEY` (see [Use classifier models](docs/models.md#use-classifier-models))
-- Added `images` to codemode's `models.classify()` context, so classifiers that accept images, such as GPT-6 Luna, can judge them
-- Added program status reporting with OSC 7501: terminals and agent dashboards that support it see whether Pi is working, blocked on a dialog or login, done, or failed. `PI_PROGRAM_STATUS=1|0` overrides detection (see [Terminal setup](docs/terminal-setup.md#program-status)) ([#10607](https://github.com/earendil-works/pi/issues/10607))
-- Added `aborted` to `agent_settled` session, extension, and JSON events, so integrations can tell a cancelled run from a finished one ([#10607](https://github.com/earendil-works/pi/issues/10607))
-- Added Claude Haiku 5.5 (`anthropic/claude-haiku-5-5`), with adaptive thinking up to `xhigh`/`max` effort and prompt caching on Bedrock
-- Added native llama.cpp decision models: Julia-1, Laya, Kev, lev, and OpenJev served by llama.cpp 0.6.0 or later are listed only as classifiers through `/v1/systemone` instead of as chat models (see [Classification](docs/llama-cpp.md#classification)) ([#10382](https://github.com/earendil-works/pi/pull/10382))
-- Added the `sessionShareDestination` setting to choose automatic, GitHub gist, or Radius uploads for `/share` ([#10870](https://github.com/earendil-works/pi/issues/10870))
 - Added `reachesTools` to tool definitions, so tools that reach other tools (such as `codemode` and `tool_search`) declare which tools a call may reach; the MCP extension uses it to wait for the servers a call needs and to decide whether a replacement `codemode` or `tool_search` tool can reach MCP tools
 - Added `aliases` to tool namespaces; codemode's `describeNamespace()` and the `namespace` option of `searchTools()` match them, and MCP namespaces use the server name
 - Added per-key OpenRouter model lists: with an OpenRouter key, Pi lists only the chat models that key may use, with the key's context size, max output, and prices, including guardrails and regional endpoints set as the base URL in `models.json`. The list is saved and used offline ([#10353](https://github.com/earendil-works/pi/issues/10353), [#10672](https://github.com/earendil-works/pi/pull/10672) by [@davidbrai](https://github.com/davidbrai))
@@ -615,9 +431,6 @@
 
 ### Changed
 
-- `Home`/`End` now always move the editor cursor to the line start/end; fullscreen transcript top/bottom moved to `Ctrl+Home`/`Ctrl+End`, which no longer move the editor cursor ([#10314](https://github.com/earendil-works/pi/issues/10314))
-- Changed `outputPad` to also apply to `!` command output, tool output, and summary blocks ([#9946](https://github.com/earendil-works/pi/issues/9946), [#10557](https://github.com/earendil-works/pi/pull/10557) by [@rwachtler](https://github.com/rwachtler))
-- Changed `pi mcp login --timeout` to limit the whole sign-in, including requests to the authorization server, instead of only the wait for the browser ([#10565](https://github.com/earendil-works/pi/issues/10565))
 - Changed the `showHardwareCursor` setting to use only the terminal cursor instead of also drawing Pi's reverse-video cursor
 - Changed codemode tool declarations to show input constraints such as integer, minimum/maximum, length, pattern, and default as `@` tags on property comments, so scripts see them without the tool repeating them in descriptions ([#10707](https://github.com/earendil-works/pi/issues/10707))
 - Changed codemode declarations of MCP tools to spell out the result type (`content`, `structuredContent`, `isError`) instead of referring to `CallToolResult<T>`, which `describeTool()`, `searchTools()`, and `ALL_TOOLS` showed without defining it; the codemode description no longer includes the shared MCP types
@@ -625,36 +438,6 @@
 
 ### Fixed
 
-- Fixed syntax highlighting losing colors after the first line of multiline strings and comments in fenced code blocks ([#10143](https://github.com/earendil-works/pi/issues/10143))
-- Fixed codemode scripts not receiving images from `read`: `tools.read()` now resolves to an image block for image files, which `image()` shows ([#10251](https://github.com/earendil-works/pi/issues/10251))
-- Fixed MCP OAuth sign-in failing with `invalid_redirect_uri` on servers with OpenID Connect client registration, such as `mcp.modem.dev`: pi now registers as a native client ([#10493](https://github.com/earendil-works/pi/issues/10493))
-- Fixed `--tools` removing MCP tools, which left `pi --tools codemode` without any MCP servers. `--tools` now keeps MCP tools unless an entry starts with `mcp__`
-- Fixed MCP session shutdown returning while a server was still connecting, leaving its transport open until the server answered or timed out ([#10249](https://github.com/earendil-works/pi/issues/10249))
-- Fixed system prompt rules and the skills hint naming tools hidden by `prepareLoadout`. Hidden tools are left out of the rules, the skills hint names no tool when the file reader is hidden, and `codemode` shows each tool's prompt guidelines with its declaration; `ToolLoadout` gains `getPromptGuidelines()` ([#10343](https://github.com/earendil-works/pi/issues/10343))
-- Fixed Bedrock requests that fail with `The pending stream has been canceled` after a stalled HTTP/2 connection not being retried automatically ([#10379](https://github.com/earendil-works/pi/issues/10379))
-- Fixed codemode scripts that patch built-ins (for example `Array.prototype.toJSON = ...`) crashing pi and leaving the tool call unsettled. Built-ins are now frozen before the script runs, so such patches have no effect ([#10444](https://github.com/earendil-works/pi/issues/10444))
-- Fixed bash and PowerShell results losing `Took` after reloading a session, and the live `Took` including wall-clock steps; both now show the recorded execution time ([#10549](https://github.com/earendil-works/pi/issues/10549))
-- Fixed managed installs keeping every old release; `pi update` now keeps only the new release and the one it updated from ([#10392](https://github.com/earendil-works/pi/issues/10392), [#10511](https://github.com/earendil-works/pi/pull/10511) by [@davidbrai](https://github.com/davidbrai))
-- Fixed standalone binaries loading `.env`, `.env.local`, and `.env.development` from the launch directory into Pi's environment ([#10473](https://github.com/earendil-works/pi/issues/10473))
-- Fixed `!!` command headers losing their dim color once output arrives ([#10557](https://github.com/earendil-works/pi/pull/10557) by [@rwachtler](https://github.com/rwachtler))
-- Fixed the codemode description not marking `searchTools()`, `describeTool()`, and `describeNamespace()` as async, which led models to serialize the unawaited promise as `{}` ([#10555](https://github.com/earendil-works/pi/issues/10555))
-- Fixed codemode output items running together, so models could not tell where one `text()` or `console.log()` output ended and the next began. With several text items, each now starts with a `==> text N/M <==` line, and `console` calls follow the other output in one `<console_output>` block with one line per call
-- Fixed `/mcp` waiting for all servers to connect before opening; the manager now updates live and remains usable while enabling, reconnecting, or disabling servers ([#10562](https://github.com/earendil-works/pi/issues/10562))
-- Fixed images being dropped as "could not be resized" when running under `node --watch` on Node 24.19+ and 26.x, where Node posts its own messages on the image resize worker channel ([#10527](https://github.com/earendil-works/pi/issues/10527))
-- Fixed clipboard paste doing nothing in Termux, and failed copies there omitting the Termux:API install hint ([#10391](https://github.com/earendil-works/pi/issues/10391))
-- Fixed `!` and RPC `bash` output keeping fragments of color codes, such as a stray `m`, when a code was split across output chunks ([#10504](https://github.com/earendil-works/pi/issues/10504))
-- Fixed MCP OAuth sign-ins that could not be cancelled while waiting on the authorization server and kept running after the session ended. The sign-in screen now cancels with Esc at every step, session shutdown aborts a running sign-in, and each request to the authorization server times out after 15 seconds ([#10565](https://github.com/earendil-works/pi/issues/10565))
-- Fixed shutdown waiting up to 15 seconds to refresh an MCP OAuth token that was about to expire, only to close the server's session ([#10565](https://github.com/earendil-works/pi/issues/10565))
-- Fixed the fullscreen text selection surviving session switches and other transcript rebuilds, which highlighted unrelated text in the new transcript ([#9311](https://github.com/earendil-works/pi/issues/9311), [#10567](https://github.com/earendil-works/pi/pull/10567) by [@christianklotz](https://github.com/christianklotz))
-- Fixed OpenAI models on Bedrock ignoring the thinking level and always running at Bedrock's default reasoning effort ([#9331](https://github.com/earendil-works/pi/issues/9331), [#10142](https://github.com/earendil-works/pi/pull/10142) by [@jsanter27](https://github.com/jsanter27))
-- Fixed model `headers` in `models.json` not overriding the `originator` and `User-Agent` headers of Codex requests ([#10429](https://github.com/earendil-works/pi/pull/10429) by [@lucasmeijer](https://github.com/lucasmeijer))
-- Fixed `server_busy` and `servers are currently busy` provider errors ending the turn instead of being retried ([#10543](https://github.com/earendil-works/pi/issues/10543))
-- Fixed Mistral responses that end with `finish_reason: "error"` not being retried ([#10487](https://github.com/earendil-works/pi/issues/10487))
-- Reduced context-limit request failures by estimating input at 3.5 characters per token instead of 4 when calculating output limits ([#10497](https://github.com/earendil-works/pi/issues/10497))
-- Fixed Radius models disabled by an organization owner still being listed
-- Fixed Anthropic browser login failing with "localhost refused to connect" when port 53692 is reserved or in use, for example by Hyper-V/WSL port exclusions on Windows: login now falls back to a free loopback port ([#10571](https://github.com/earendil-works/pi/issues/10571))
-- Fixed session costs undercounting long prompts on models with prompt-length pricing tiers, such as Claude Haiku 5.5, Gemini 3.1 Pro, and GPT-5.4, through OpenCode, OpenCode Go, OpenRouter, Vercel AI Gateway, Google, MiniMax, and other providers
-- Fixed Markdown links not being clickable in Herdr ([#10573](https://github.com/earendil-works/pi/issues/10573))
 - Fixed codemode ignoring a `// @options:` line that is not the first line of the script, which ran the script without the requested `timeout_ms`; the call now fails with an error before the script runs ([#10631](https://github.com/earendil-works/pi/issues/10631))
 - Fixed Mistral streams being aborted mid-generation (e.g. during long thinking) after the request timeout; the timeout now applies only to waiting for response headers ([#10609](https://github.com/earendil-works/pi/issues/10609))
 - Fixed a symlinked `AGENTS.md` in a git worktree nested inside its main repo causing no project context file to load ([#10681](https://github.com/earendil-works/pi/issues/10681))
@@ -678,27 +461,107 @@
 - Fixed MCP tool calls that were cancelled or timed out while waiting for an OAuth refresh still being sent to the server once the refresh finished ([#10598](https://github.com/earendil-works/pi/issues/10598))
 - Fixed MCP OAuth sign-in accepting an authorization response with an `iss` parameter that could not be checked because no authorization server metadata was discovered; sign-in now fails with an issuer mismatch. Reported by [@AizenvoltPrime](https://github.com/AizenvoltPrime)
 - Fixed codemode failing with a broken bridge error when Pi runs under `node --watch` on Node 24 or 26 ([#10725](https://github.com/earendil-works/pi/issues/10725))
-- Pinned internal Pi dependencies to exact release versions to prevent fresh installs from mixing incompatible packages ([#10865](https://github.com/earendil-works/pi/issues/10865))
-- Fixed resumed sessions dropping tools activated during the session. Resume now restores the session's active tools, with `--tools +name`/`-name` entries applied to them, unless `--tools` with tool names, `--no-tools`, or `--no-builtin-tools` selects tools explicitly ([#10785](https://github.com/earendil-works/pi/issues/10785))
-- Fixed stopping a codemode script or reaching its deadline waiting for a non-interruptible built-in to return on Bun ([#10748](https://github.com/earendil-works/pi/issues/10748))
-- Fixed repeated codemode timeouts or aborts accumulating surviving workers; admission now limits live workers to two across sessions, counting cancelled workers until actual exit ([#10748](https://github.com/earendil-works/pi/issues/10748))
 
 ### Removed
 
 - Removed the unreleased experimental server, client, and plugin stack (`src/experimental`, `src/cli/experimental`) and its source-only `./client` and `./experimental/plugin` exports; none of it was part of the published package. The `@earendil-works/pi-client`, `@earendil-works/pi-protocol`, and `@earendil-works/pi-server` packages it used are removed and no longer released
 - Removed the dependency on `@earendil-works/chord`
 
-## [1.4.0] - 2026-10-05
+## [1.1.0] - 2026-10-07
+
+### New Features
+
+- **Program status reporting**: terminals and agent dashboards that support OSC 7501 see whether Pi is working, blocked on a dialog or login, done, or failed. See [Program status](docs/terminal-setup.md#program-status).
+- **Claude Haiku 5.5**: `anthropic/claude-haiku-5-5`, with adaptive thinking up to `xhigh`/`max` effort.
+- **Adjust default tools with `+name`/`-name`**: `--tools` entries like `pi -t +codemode,-write` change the default selection instead of replacing it. See [Tools](docs/cli.md#tools).
+- **GPT-6 Luna and image classification**: OpenAI's GPT-6 Luna is available as a classifier model through the Decisions API, and codemode's `models.classify()` accepts images for classifiers that support them. See [Use classifier models](docs/models.md#use-classifier-models).
+- **Native llama.cpp decision models**: Julia-1, Laya, Kev, lev, and OpenJev served by llama.cpp 0.6.0 or later run natively as classifiers through `/v1/systemone`. See [Classification](docs/llama-cpp.md#classification).
 
 ### Added
 
-- cc-tg-hub Telegram bridge (`hummin-tg-hub` extension, opt-in via `TG_HUB=1` or the `tgHub` setting): the session registers with a running [cc-tg-hub](https://github.com/rennf93/cc-tg-hub) broker and becomes drivable from its Telegram topic - inbound messages are injected as user messages (steer while working, follow-up when idle), a `tg_reply` tool answers the topic, and tools listed in `tgHub.askTools` / `TG_HUB_ASK_TOOLS` raise Allow/Deny buttons (Deny blocks the call; Allow never bypasses a terminal dialog). Broker respawn, reconnect, and re-register mirror cc-tg-hub's own client, so Claude Code sessions and hummin sessions can share one broker. Default off, so child/cron sessions never register.
-- Replay trimming (settings key `replayTrim`): completed turns are rewritten per LLM request before reaching the provider - replayed reasoning/thinking blocks are dropped and old tool results are pruned to head+marker+tail with a rerun hint (both on by default, matching the standalone zcode-token-proxy's `all` mode; `replayTrim.toolResults: false` keeps old tool results lossless). Session history is never modified; the active tool loop, redacted thinking, and thinking blocks carrying structured/encrypted replay signatures always pass through. Applies to `anthropic-messages` and `openai-completions` models via a single trim point in `ModelRuntime` (interactive, SDK, and cache-warmer paths included); other APIs are left untouched until verified.
+- Added `+name` and `-name` entries to `--tools`, which change the default tool selection instead of replacing it, for example `pi -t +codemode`
+- Added `durationMs` to the tool render context and to `tool_execution_end` extension events: the recorded execution time of a final tool result ([#10549](https://github.com/earendil-works/pi/issues/10549))
+- Added `outputPad` to the tool render context ([#10557](https://github.com/earendil-works/pi/pull/10557) by [@rwachtler](https://github.com/rwachtler))
+- Added OpenAI's GPT-6 Luna as a classifier model through the Decisions API, available with `OPENAI_API_KEY` (see [Use classifier models](docs/models.md#use-classifier-models))
+- Added `images` to codemode's `models.classify()` context, so classifiers that accept images, such as GPT-6 Luna, can judge them
+- Added program status reporting with OSC 7501: terminals and agent dashboards that support it see whether Pi is working, blocked on a dialog or login, done, or failed. `PI_PROGRAM_STATUS=1|0` overrides detection (see [Terminal setup](docs/terminal-setup.md#program-status)) ([#10607](https://github.com/earendil-works/pi/issues/10607))
+- Added `aborted` to `agent_settled` session, extension, and JSON events, so integrations can tell a cancelled run from a finished one ([#10607](https://github.com/earendil-works/pi/issues/10607))
+- Added Claude Haiku 5.5 (`anthropic/claude-haiku-5-5`), with adaptive thinking up to `xhigh`/`max` effort and prompt caching on Bedrock
+- Added native llama.cpp decision models: Julia-1, Laya, Kev, lev, and OpenJev served by llama.cpp 0.6.0 or later are listed only as classifiers through `/v1/systemone` instead of as chat models (see [Classification](docs/llama-cpp.md#classification)) ([#10382](https://github.com/earendil-works/pi/pull/10382))
+
+### Changed
+
+- Changed `outputPad` to also apply to `!` command output, tool output, and summary blocks ([#9946](https://github.com/earendil-works/pi/issues/9946), [#10557](https://github.com/earendil-works/pi/pull/10557) by [@rwachtler](https://github.com/rwachtler))
+- Changed `pi mcp login --timeout` to limit the whole sign-in, including requests to the authorization server, instead of only the wait for the browser ([#10565](https://github.com/earendil-works/pi/issues/10565))
+
+### Fixed
+
+- Fixed bash and PowerShell results losing `Took` after reloading a session, and the live `Took` including wall-clock steps; both now show the recorded execution time ([#10549](https://github.com/earendil-works/pi/issues/10549))
+- Fixed managed installs keeping every old release; `pi update` now keeps only the new release and the one it updated from ([#10392](https://github.com/earendil-works/pi/issues/10392), [#10511](https://github.com/earendil-works/pi/pull/10511) by [@davidbrai](https://github.com/davidbrai))
+- Fixed standalone binaries loading `.env`, `.env.local`, and `.env.development` from the launch directory into Pi's environment ([#10473](https://github.com/earendil-works/pi/issues/10473))
+- Fixed `!!` command headers losing their dim color once output arrives ([#10557](https://github.com/earendil-works/pi/pull/10557) by [@rwachtler](https://github.com/rwachtler))
+- Fixed the codemode description not marking `searchTools()`, `describeTool()`, and `describeNamespace()` as async, which led models to serialize the unawaited promise as `{}` ([#10555](https://github.com/earendil-works/pi/issues/10555))
+- Fixed codemode output items running together, so models could not tell where one `text()` or `console.log()` output ended and the next began. With several text items, each now starts with a `==> text N/M <==` line, and `console` calls follow the other output in one `<console_output>` block with one line per call
+- Fixed `/mcp` waiting for all servers to connect before opening; the manager now updates live and remains usable while enabling, reconnecting, or disabling servers ([#10562](https://github.com/earendil-works/pi/issues/10562))
+- Fixed images being dropped as "could not be resized" when running under `node --watch` on Node 24.19+ and 26.x, where Node posts its own messages on the image resize worker channel ([#10527](https://github.com/earendil-works/pi/issues/10527))
+- Fixed clipboard paste doing nothing in Termux, and failed copies there omitting the Termux:API install hint ([#10391](https://github.com/earendil-works/pi/issues/10391))
+- Fixed `!` and RPC `bash` output keeping fragments of color codes, such as a stray `m`, when a code was split across output chunks ([#10504](https://github.com/earendil-works/pi/issues/10504))
+- Fixed MCP OAuth sign-ins that could not be cancelled while waiting on the authorization server and kept running after the session ended. The sign-in screen now cancels with Esc at every step, session shutdown aborts a running sign-in, and each request to the authorization server times out after 15 seconds ([#10565](https://github.com/earendil-works/pi/issues/10565))
+- Fixed shutdown waiting up to 15 seconds to refresh an MCP OAuth token that was about to expire, only to close the server's session ([#10565](https://github.com/earendil-works/pi/issues/10565))
+- Fixed the fullscreen text selection surviving session switches and other transcript rebuilds, which highlighted unrelated text in the new transcript ([#9311](https://github.com/earendil-works/pi/issues/9311), [#10567](https://github.com/earendil-works/pi/pull/10567) by [@christianklotz](https://github.com/christianklotz))
+- Fixed OpenAI models on Bedrock ignoring the thinking level and always running at Bedrock's default reasoning effort ([#9331](https://github.com/earendil-works/pi/issues/9331), [#10142](https://github.com/earendil-works/pi/pull/10142) by [@jsanter27](https://github.com/jsanter27))
+- Fixed model `headers` in `models.json` not overriding the `originator` and `User-Agent` headers of Codex requests ([#10429](https://github.com/earendil-works/pi/pull/10429) by [@lucasmeijer](https://github.com/lucasmeijer))
+- Fixed `server_busy` and `servers are currently busy` provider errors ending the turn instead of being retried ([#10543](https://github.com/earendil-works/pi/issues/10543))
+- Fixed Mistral responses that end with `finish_reason: "error"` not being retried ([#10487](https://github.com/earendil-works/pi/issues/10487))
+- Reduced context-limit request failures by estimating input at 3.5 characters per token instead of 4 when calculating output limits ([#10497](https://github.com/earendil-works/pi/issues/10497))
+- Fixed Radius models disabled by an organization owner still being listed
+- Fixed Anthropic browser login failing with "localhost refused to connect" when port 53692 is reserved or in use, for example by Hyper-V/WSL port exclusions on Windows: login now falls back to a free loopback port ([#10571](https://github.com/earendil-works/pi/issues/10571))
+- Fixed session costs undercounting long prompts on models with prompt-length pricing tiers, such as Claude Haiku 5.5, Gemini 3.1 Pro, and GPT-5.4, through OpenCode, OpenCode Go, OpenRouter, Vercel AI Gateway, Google, MiniMax, and other providers
+- Fixed Markdown links not being clickable in Herdr ([#10573](https://github.com/earendil-works/pi/issues/10573))
+
+## [1.0.4] - 2026-10-05
+
+### New Features
+
+- **Tool patterns and `--no-mcp`**: `--tools` and `--exclude-tools` accept `*` patterns, for example `--tools read,codemode,'mcp__radius__*'` keeps only one MCP server's tools. `--tools` now keeps MCP tools unless an entry starts with `mcp__`, and `--no-mcp` turns off MCP for one run. See [Tools](docs/cli.md#tools) and [MCP tools](docs/cli.md#mcp-tools).
+- **Codemode persists images**: `tools.read()` on an image file now gives back an image block that `image()` can show. See [Call tools](docs/codemode.md#call-tools).
+
+### Added
+
+- Added `*` patterns to `--tools` and `--exclude-tools`, for example `--tools read,codemode,'mcp__radius__*'`
+- Added `--no-mcp` to disable the built-in MCP support for one run
+
+### Fixed
+
+- Fixed syntax highlighting losing colors after the first line of multiline strings and comments in fenced code blocks ([#10143](https://github.com/earendil-works/pi/issues/10143))
+- Fixed codemode scripts not receiving images from `read`: `tools.read()` now resolves to an image block for image files, which `image()` shows ([#10251](https://github.com/earendil-works/pi/issues/10251))
+- Fixed MCP OAuth sign-in failing with `invalid_redirect_uri` on servers with OpenID Connect client registration, such as `mcp.modem.dev`: pi now registers as a native client ([#10493](https://github.com/earendil-works/pi/issues/10493))
+- Fixed `--tools` removing MCP tools, which left `pi --tools codemode` without any MCP servers. `--tools` now keeps MCP tools unless an entry starts with `mcp__`
+- Fixed MCP session shutdown returning while a server was still connecting, leaving its transport open until the server answered or timed out ([#10249](https://github.com/earendil-works/pi/issues/10249))
+- Fixed system prompt rules and the skills hint naming tools hidden by `prepareLoadout`. Hidden tools are left out of the rules, the skills hint names no tool when the file reader is hidden, and `codemode` shows each tool's prompt guidelines with its declaration; `ToolLoadout` gains `getPromptGuidelines()` ([#10343](https://github.com/earendil-works/pi/issues/10343))
+- Fixed Bedrock requests that fail with `The pending stream has been canceled` after a stalled HTTP/2 connection not being retried automatically ([#10379](https://github.com/earendil-works/pi/issues/10379))
+- Fixed codemode scripts that patch built-ins (for example `Array.prototype.toJSON = ...`) crashing pi and leaving the tool call unsettled. Built-ins are now frozen before the script runs, so such patches have no effect ([#10444](https://github.com/earendil-works/pi/issues/10444))
+
+## [1.0.3] - 2026-10-05
+
+### New Features
+
+- **Azure Foundry Chat Completions** — The `azure` provider (renamed from `azure-openai-responses`) now also serves Foundry Chat Completions deployments, starting with `azure/deepseek-v4-pro`. See [Azure OpenAI](docs/providers.md#azure-openai).
+- **Codemode images saved to files** — `image()` also writes each image to a temp file and names the path in the result, so later turns can copy or move generated images. See [Generate images](docs/codemode.md#generate-images).
+
+### Breaking Changes
+
+- Renamed the Azure provider from `azure-openai-responses` to `azure`. Rename the provider key in `auth.json` (or run `/login` again), in `models.json`, and in `settings.json` (`defaultProvider`, `enabledModels` patterns, and `modelThinkingLevels` keys). Sessions that used the old provider fall back to another model when resumed, and their prompt cache is not reused. The `AZURE_OPENAI_*` environment variables are unchanged ([#9714](https://github.com/earendil-works/pi/pull/9714) by [@jsanter27](https://github.com/jsanter27))
+
+### Added
+
+- Added Azure Foundry Chat Completions deployments, starting with `azure/deepseek-v4-pro` ([#9645](https://github.com/earendil-works/pi/issues/9645), [#9714](https://github.com/earendil-works/pi/pull/9714) by [@jsanter27](https://github.com/jsanter27))
 
 ### Changed
 
 - Codemode `image()` now also saves each image to a temp file and names the path in the result, so later turns can copy or move generated images ([#10310](https://github.com/earendil-works/pi/issues/10310))
 - Output files (full text of truncated tool output, binary MCP resources, codemode images) are now readable only by the user
+- `Home`/`End` now always move the editor cursor to the line start/end; fullscreen transcript top/bottom moved to `Ctrl+Home`/`Ctrl+End`, which no longer move the editor cursor ([#10314](https://github.com/earendil-works/pi/issues/10314))
 
 ### Fixed
 
@@ -706,316 +569,242 @@
 - Fixed codemode failing for the rest of a session after a pnpm global update removed the running install, and added a restart hint when errors occur after pi was updated or removed on disk ([#10439](https://github.com/earendil-works/pi/issues/10439))
 - Fixed interactive sessions reporting a `read EIO` or `setRawMode EIO` crash (and asking to run /bug) when the terminal went away, e.g. after closing the window or resuming a suspended pi in a closed terminal
 
-## [1.3.1] - 2026-10-04
-
-### Breaking Changes
-
-- The System-1 decision layer has exactly one engine, named `sys1`. The laya/clef/jev engine selector is gone: `decision.engine` and the per-engine `decision.laya.*` / `decision.clef.*` / `decision.jev.*` settings namespaces are replaced by a flat `decision.*` namespace (`decision.url`, `.apiKey`, `.gateThreshold`, `.steerThreshold`, `.triageThreshold`, `.intakeThreshold`, and the four timeout fields). Defaults are the clef-calibrated profile (gate 0.75, steer 0.8, `http://127.0.0.1:9987/v1/systemone`). The legacy `HUMMIN_LAYA_URL`, `HUMMIN_LAYA_GATE`, `HUMMIN_LAYA_STEER`, `HUMMIN_LAYA_GATE_THRESHOLD`, `HUMMIN_LAYA_STEER_THRESHOLD`, `HUMMIN_LAYA_TRIAGE`, `HUMMIN_LAYA_INTAKE` env variables and `HUMMIN_DECISION_ENGINE` are no longer read — set `HUMMIN_DECISION_URL` (or settings `decision.url`) to point at a different server. `COLI_API_KEY` still serves as the local-fleet credential fallback.
-- The bash gate's confirm marker is `# sys1-gate: confirmed` (was `# laya-gate: confirmed`); the gate's block message always names the current marker.
-- Dropped the pre-rename settings fallback keys `layaGateThreshold`, `layaSteerThreshold`, `layaGate`, and `layaRightSize` (use `decision.*`, `sys1Gate`, and `rightSize`), and the legacy `HUMMIN_LAYA_RIGHTSIZE` / `HUMMIN_LAYA_RIGHTSIZE_SWING` env aliases.
-
-### Fixed
-
-- Fixed `hummin-cli@1.3.0` being uninstallable from npm: the staged package pinned upstream `@earendil-works/*` dependencies to `^0.87.1`, a line the new `pi-codemode`/`pi-mcp`/`pi-durable` dependencies never had. Ranges now track the merged upstream release (`^1.0.2`).
-
-## [1.3.0] - 2026-10-04
+## [1.0.2] - 2026-10-04
 
 ### New Features
 
-- **Codemode and MCP** — connect MCP servers over stdio or streamable HTTP and let models run JavaScript in a QuickJS sandbox that calls tools in parallel; `tool_search` finds tools that are not declared to the model and declares them. Servers come from `mcp.json` (global, or per project once trusted) or `pi.registerMcpServer()`, authenticate with OAuth or a provider login, and are managed with `/mcp` and `hummin mcp add|remove|list|login|logout`. Enable codemode with `defaultTools` or `--tools`; configure it with `codemode.mode` and `codemode.inlineBudget` ([#10040](https://github.com/earendil-works/pi/issues/10040)).
-- **Virtual models** — extensions register virtual models with `pi.registerVirtualModel()` and route each request to a physical model and thinking level; the footer shows the routed model and `/session` lists cost per physical model. See `docs/virtual-models.md` ([#10035](https://github.com/earendil-works/pi/issues/10035)).
-- **Fullscreen by default** — the TUI now runs fullscreen; set `tuiMode` to `"regular"` (or pass `--tui-mode regular`) to keep the terminal's normal scrollback. Fullscreen mouse-wheel scrolling is configurable via `fullscreenWheelScrollLines` (default `"auto"` acceleration for fast spins).
-- **Sign in with ChatGPT** — use a ChatGPT subscription with the OpenAI provider through `/login openai`; the inherited OpenAI Codex provider is now labeled "OpenAI Codex (legacy)".
-- **MCP OAuth hardening** — `oauth.authServerMetadataUrl` overrides broken or missing discovery, RFC 9207 `iss` responses are verified before code exchange, credentials are stored per server name and URL (same URL, different accounts), refreshes are serialized across processes, and step-up sign-in keeps the scopes granted so far.
-- **Radius in `/login`** — sign in with Radius and configure its MCP server in one step; cancelling a login returns to the menu it started from.
-- **Anthropic copy code login** — `/login` for Anthropic offers a copy-code method that shows the authorization code on Anthropic's page for pasting into hummin, for headless setups where the browser runs on another machine ([#10194](https://github.com/earendil-works/pi/pull/10194) by [@lucasmeijer](https://github.com/lucasmeijer)).
-- **Header-only quiet startup** — `quietStartup: "header"` keeps the startup header with version and key hints and hides the model scope line and loaded-resource listing.
-- **Experimental durable agent** — the experimental client/server coding agent now runs on the durable task runtime (`@earendil-works/pi-durable`): a TUI with a task panel, extensions and per-conversation agents, structured concurrency with ownership cascades, asynchronous SQLite storage, compaction and overflow, and a task graph view; includes a vacation planner demo.
+- **Sampling by thinking level** — `samplingParamsByThinkingLevel` in `models.json` sets sampling parameters such as `temperature` and `top_p` for each thinking level on OpenAI-compatible APIs. See [Configure sampling by thinking level](docs/models.md#configure-sampling-by-thinking-level).
 
 ### Added
 
-- Extension tool orchestration APIs: tool `exposure` (`direct`, `model-only`, `codemode`, `deferred`, or `hidden`), `namespace`, `annotations`, `outputSchema` with `structuredContent`, `isError` results, `prepareLoadout()`, and `ctx.executeTool()` for nested tool calls, which emit events with `parentToolCallId` and are recorded as bounded `nestedCalls` on the calling tool's result.
-- `pi.registerToolRenderer()` chooses how calls to a tool are drawn, including tools that are not registered yet, such as MCP tools in resumed sessions ([#10285](https://github.com/earendil-works/pi/issues/10285)).
-- Project `mcp.json` entries without `command` or `url` set only `enabled`, `exposure`, and `toolExposure` of a user-level server, and `/mcp` can enable or disable a server for the current project ([#10277](https://github.com/earendil-works/pi/issues/10277)).
-- MCP server options: a `description` shown in the system prompt and used to rank tools in tool search, `oauth.clientName` for servers that only accept known clients ([#10226](https://github.com/earendil-works/pi/issues/10226)), `oauth.clientRegistration: "cimd"` to identify hummin by its Client ID Metadata Document instead of dynamic registration ([#10302](https://github.com/earendil-works/pi/issues/10302)), and `"auth": { "provider": "<provider>" }` to authenticate HTTP servers with a provider's `/login` token.
-- Per-thinking-level sampling parameter overrides (`samplingParamsByThinkingLevel`) in `models.json` for OpenAI-compatible APIs ([#9776](https://github.com/earendil-works/pi/pull/9776) by [@mrexodia](https://github.com/mrexodia)).
-- Cloudflare's Clef and Clef Flash classifier models on `cloudflare-workers-ai`, usable from codemode scripts and extensions ([#10316](https://github.com/earendil-works/pi/pull/10316) by [@ndisidore](https://github.com/ndisidore)).
-- Anthropic workload identity federation from the `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, and `ANTHROPIC_IDENTITY_TOKEN_FILE` environment variables ([#10242](https://github.com/earendil-works/pi/pull/10242) by [@philfreo](https://github.com/philfreo)).
-- GPT-6.1 Sol on OpenAI, Azure OpenAI, and OpenAI Codex, now the default Codex model; Claude Sonnet 5.5 on Anthropic with adaptive thinking and a 1M context window.
-- `models.generateImages()` in codemode scripts runs image models with the session's credentials; usage counts toward the session cost, as does `models.classify()`.
-- `+name` and `-name` entries in `defaultTools` add or remove tools without repeating the defaults, and `/reload` enables tools newly added to the setting ([#10245](https://github.com/earendil-works/pi/issues/10245)).
-- `bash` and `powershell` structured results handed to codemode scripts hold up to 1 MiB of output (with `truncated` and `full_output_path`) instead of the model-facing 2000 lines or 50KB.
-- A copy key (`app.message.copy`, default `ctrl+x`) on OAuth sign-in screens in `/login`, `/mcp`, and `/mcp login` copies the sign-in URL when the browser cannot be opened.
-- A shared OAuth callback server and sign-in page for provider logins.
-- A Nix flake for macOS and Linux builds ([#9137](https://github.com/earendil-works/pi/pull/9137)).
-- A warning when an extension that registers the same tool, command, or flag replaces a built-in extension ([#10174](https://github.com/earendil-works/pi/pull/10174) by [@cristinaponcela](https://github.com/cristinaponcela)).
-- Easter eggs: a 3D Armin on `/arminsayshi` in fullscreen mode, the 3D pi logo restored alongside it, and a hidden one in the header logo.
-- System-1 decision engine selector: one engine at a time (laya, clef, or jev) answers every System-1 read (bash gate gray zone, per-turn steer, test-failure triage, memory intake, child-dispatch review, decide tool), with per-engine settings (`decision.<engine>.url`/`.apiKey`/thresholds/timeouts), `HUMMIN_DECISION_*` env overrides, and an `engine` field in sys1-gate.log entries (audit file renamed from laya-gate.log; readers fall back to the old file for history). No per-read engine mixing and no auto-failover; thresholds stay per engine so calibration does not mix distributions.
-- `/friction` calibration now scopes blocks, confirmations, and near-misses to the active engine and suggests `decision.<engine>.gateThreshold`; applying a suggestion persists the per-engine key.
-- Recalibrated the clef engine against the production gate rubric (53-probe matrix on the Mac MLX instance): gate line stays 0.75 (safe probes 0.016-0.03, destructive 0.85-0.97, gray-zone split at the line), steer moved 0.7 to 0.8 (a benign prompt scored 0.733), triage and intake keep the laya lines, gate timeout 6.5s to 8s (measured p95 ~6.5s). Unlike laya, clef reads the full rubric tail: a one-line rubric edit moved a score from 0.13 to 0.96.
+- Added `samplingParamsByThinkingLevel` to `models.json` for per-thinking-level sampling parameter overrides on OpenAI-compatible APIs. See [Configure sampling by thinking level](docs/models.md#configure-sampling-by-thinking-level) ([#9776](https://github.com/earendil-works/pi/pull/9776) by [@mrexodia](https://github.com/mrexodia))
+
+## [1.0.1] - 2026-10-03
+
+### New Features
+
+- **Nix flake** — `nix run github:earendil-works/pi/stable` runs the latest release, and `nix profile add github:earendil-works/pi/stable` installs it. See [Install pi](docs/quickstart.md#1-install-pi).
+- **Project overrides for MCP servers** — `.pi/mcp.json` and `/mcp` can enable, disable, or change the exposure of a user-level server for one project. See [Configure servers](docs/mcp.md#configure-servers).
+- **MCP Client ID Metadata Documents** — `oauth.clientRegistration: "cimd"` lets authorization servers allow pi by its document URL instead of dynamic registration. See [Authenticate with OAuth](docs/mcp.md#authenticate-with-oauth).
+- **Tool renderers for any tool** — `pi.registerToolRenderer()` draws calls to tools that are not registered yet, such as MCP tools in resumed sessions. See [Tool rendering](docs/extensions.md#tool-rendering).
+- **Cloudflare Clef classifiers** — `@cf/cloudflare/clef` and `@cf/cloudflare/clef-flash` are usable from codemode scripts and extensions. See [Use classifier models](docs/models.md#use-classifier-models).
+
+### Added
+
+- Added a copy key (`app.message.copy`, default `ctrl+x`) to OAuth sign-in screens in `/login`, `/mcp`, and `/mcp login`, which copies the sign-in URL when the browser cannot be opened or the wrapped link cannot be selected.
+- Added `oauth.clientRegistration: "cimd"` for MCP servers, which identifies pi with its Client ID Metadata Document on pi.dev instead of dynamic client registration, so authorization servers can allow pi by URL ([#10302](https://github.com/earendil-works/pi/issues/10302))
+- Added project overrides for user-level MCP servers: a `.pi/mcp.json` entry without `command` or `url` sets only `enabled`, `exposure`, and `toolExposure` of the user-level server, and `/mcp` can enable or disable a server for the current project ([#10277](https://github.com/earendil-works/pi/issues/10277))
+- Added Cloudflare's Clef and Clef Flash classifier models to `cloudflare-workers-ai`, usable from codemode scripts and extensions ([#10316](https://github.com/earendil-works/pi/pull/10316) by [@ndisidore](https://github.com/ndisidore), [#10322](https://github.com/earendil-works/pi/pull/10322) by [@RealAlexandreAI](https://github.com/RealAlexandreAI))
+- Added `pi.registerToolRenderer()`, which chooses how calls to a tool are drawn, including tools that are not registered ([#10285](https://github.com/earendil-works/pi/issues/10285))
+- Added a Nix flake for macOS and Linux: `nix run github:earendil-works/pi/stable` runs the latest release, and `nix profile add github:earendil-works/pi/stable` installs it. See [Install pi](docs/quickstart.md#1-install-pi) ([#9137](https://github.com/earendil-works/pi/pull/9137))
 
 ### Changed
 
-- MCP servers with the default `codemode` exposure no longer block the first prompt and are no longer listed in the `codemode` description; they appear in a short `mcp_servers` system prompt section, and scripts find their tools with `searchTools()` and `describeNamespace()` ([#10212](https://github.com/earendil-works/pi/issues/10212)). MCP tool and namespace names replace `-` with `_` (`mcp__my-server__x` is now `mcp__my_server__x`), colliding tools get a hash suffix, and server names that differ only in `-` and `_` are rejected ([#10239](https://github.com/earendil-works/pi/issues/10239)).
-- Tool calls without a custom renderer, including direct MCP tool calls, now show their arguments: `key=value` pairs on the title line when collapsed, one `key: value` line per argument when expanded; MCP calls are titled `server/tool` and their results collapse to 5 lines.
-- Built-in extensions and tools are named `builtin:<name>` in errors, diagnostics, RPC source info, and bug reports; `--no-extensions` also disables the built-in extensions, and they can be loaded explicitly with `-e builtin:<name>` ([#10159](https://github.com/earendil-works/pi/issues/10159)).
-- The codemode tool description is about 40% smaller and its errors say how to recover (unknown members name close matches, malformed arguments show the expected shape); scripts that probed with `typeof tools.name` must use `"name" in tools`.
-- The first prompt no longer waits for MCP servers without `direct` tools; they connect in the background and are waited for when a script names or searches for their tools.
-- `/login` and `/logout` label providers without credentials as "not configured" instead of "unconfigured".
-- Removed `npm-shrinkwrap.json` from the published package: npm installations no longer pin transitive dependencies ([#5653](https://github.com/earendil-works/pi/issues/5653)).
-- Renamed the `laya_decide` tool to `sys1_decide` so the second-opinion tool stays generic across the laya, clef, and jev engines. The `HUMMIN_LAYA_*` kill switches and URL/threshold envs keep working as legacy aliases of the `HUMMIN_SYS1_*`/`HUMMIN_DECISION_*` names (right-size switches included); the legacy laya URL and threshold envs steer the laya engine only. The extension file, gate helpers, friction types, settings namespaces (`rightSize`, `sys1Gate`), and test files drop their laya prefixes; the flat `layaGateThreshold`/`layaSteerThreshold` settings keys and the `layaGate`/`layaRightSize` namespaces stay as read fallbacks.
-- `COLI_API_KEY` no longer applies to the hosted jev engine (it remains the legacy shared credential for the local laya/clef fleet). Hosted auth is explicit: `HUMMIN_DECISION_API_KEY` or `decision.jev.apiKey`. A local fleet secret was previously attached to every remote read.
+- `pi update` on global npm installations now recommends migrating to the managed installation from the pi.dev installer, which pins all dependencies.
+- Anthropic tools added or redefined mid-conversation are now defined inline in the conversation, so redefining a tool under the same name keeps the prompt cache instead of resending the full tool list.
 
 ### Fixed
 
-- Fixed MCP tool calls in resumed sessions and HTML exports rendering fully expanded until their server connected, or for good if it never did ([#10285](https://github.com/earendil-works/pi/issues/10285)).
-- Fixed deferred MCP tools that `tool_search` loaded being dropped on resume and `/reload` even when their server reconnected before the next prompt.
+- Fixed installations resolving vulnerable `brace-expansion` 5.0.9 by pinning `brace-expansion` 5.0.12 as a direct dependency (GHSA-q2hr-2g5m-vwhr, GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p) ([#10288](https://github.com/earendil-works/pi/issues/10288))
+- Fixed a trailing comma in `--models` adding an extra model to the model cycle ([#10334](https://github.com/earendil-works/pi/issues/10334))
+- Fixed a `codemode` script that prints in a loop crashing pi by running out of memory: a script fails once its output passes 16 Mi characters or 100000 items ([#10283](https://github.com/earendil-works/pi/issues/10283))
+- Fixed JPEG, GIF, and WebP images rendered by extensions through `Image` not appearing in Kitty, Ghostty, WezTerm, and Warp ([#10292](https://github.com/earendil-works/pi/issues/10292))
+- Fixed MCP tool calls in resumed sessions and HTML exports rendering fully expanded until their server connected, or for good if it never did ([#10285](https://github.com/earendil-works/pi/issues/10285))
+- Fixed fullscreen Kitty images collapsing to a one-row strip after scrolling in WezTerm ([#10319](https://github.com/earendil-works/pi/issues/10319))
+- Fixed "Selected model is at capacity" provider errors ending the turn instead of being retried ([#10278](https://github.com/earendil-works/pi/issues/10278))
+- Fixed Cloudflare AI Gateway Claude models failing with a 404 by using dashed model IDs (`claude-opus-5-5` instead of `claude-opus-5.5`)
+- Fixed Sign in with ChatGPT continuing when its callback port is taken by another login, which made the browser show "OAuth state mismatch"; it now fails with a port-in-use error ([#10265](https://github.com/earendil-works/pi/issues/10265))
+- Fixed Amazon Bedrock OpenAI models costing requests above 272k input tokens at the short-context rate; Bedrock models now include the pricing tiers listed on models.dev ([#10326](https://github.com/earendil-works/pi/issues/10326))
+- Fixed Amazon Bedrock Claude requests failing with "Invalid `signature` in `thinking` block" after the system prompt or tools changed ([#10324](https://github.com/earendil-works/pi/issues/10324))
+- Fixed Together DeepSeek V4 Pro losing its thinking level controls after Together renamed it to `deepseek-ai/DeepSeek-V4-Pro-0813` ([#10336](https://github.com/earendil-works/pi/pull/10336) by [@cv](https://github.com/cv))
+- Fixed the default NVIDIA model pointing at `nvidia/nemotron-3-super-120b-a12b`, which NVIDIA no longer serves; the default is now `nvidia/nemotron-3-ultra-550b-a55b`
+
+### Removed
+
+- Removed `npm-shrinkwrap.json` from the published package. npm installations no longer pin transitive dependencies, and library consumers can now override them. Use the pi.dev installer for pinned installations ([#5653](https://github.com/earendil-works/pi/issues/5653))
+
+## [1.0.0] - 2026-10-01
+
+### New Features
+
+- **Fullscreen by default** — The TUI now runs fullscreen. Set `tuiMode` to `"regular"` to keep the terminal's normal scrollback. See [Terminal and display](docs/settings.md#terminal-and-display).
+- **Leaner codemode** — About 40% fewer prompt tokens, and errors that tell the model how to recover. See [Codemode](docs/codemode.md).
+- **Image generation in codemode** — Scripts call `models.generateImages()` with the session's credentials. See [Generate images](docs/codemode.md#generate-images) and [Use image models](docs/models.md#use-image-models).
+- **Radius in `/login`** — Sign in with Radius and set up its MCP server in one step. See [Radius](docs/providers.md#radius).
+- **Anthropic copy code login** — Sign in when the browser runs on another machine. See [Authenticate interactively](docs/providers.md#authenticate-interactively).
+- **MCP OAuth hardening** — `oauth.authServerMetadataUrl`, RFC 9207 `iss` checks, credentials per server, and step-up sign-in that keeps granted scopes. See [Authenticate with OAuth](docs/mcp.md#authenticate-with-oauth).
+- **Header-only quiet startup** — `quietStartup: "header"` keeps the version and key hints and hides the rest. See [Terminal and display](docs/settings.md#terminal-and-display).
+
+### Added
+
+- Added an `oauth.authServerMetadataUrl` setting for MCP servers that advertise a wrong OAuth authorization server or none. Pi uses the configured metadata document instead of discovery ([#10172](https://github.com/earendil-works/pi/issues/10172)).
+- Added `quietStartup: "header"`, which keeps the startup header with version and key hints but hides the model scope line and loaded-resource listing.
+- Added `models.generateImages()` to codemode scripts. It runs image models such as OpenRouter's with the session's credentials and returns base64 image blocks that `image()` attaches to the result; usage counts toward the session cost like `models.classify()`. Extensions can call `ctx.modelRegistry.generateImages()`. See [Use image models](docs/models.md#use-image-models).
+- Added a copy code login method to Anthropic `/login` for headless setups where the browser runs on another machine ([#10194](https://github.com/earendil-works/pi/pull/10194) by [@lucasmeijer](https://github.com/lucasmeijer)).
+
+### Changed
+
+- Changed the default TUI mode to fullscreen. Set `tuiMode` to `"regular"` or pass `--tui-mode regular` to keep the terminal's normal scrollback.
+- `/login` now offers "Sign in with Radius" at the top level, as the last option, with its status. After a Radius sign-in, `/login` offers to configure the Radius MCP server in the global `mcp.json` with `"auth": { "provider": "radius" }` and reloads. Cancelling a login returns to the menu it was started from.
+- The provider docs page is renamed to [Providers](docs/providers.md), its "Cloud Providers" section is now "Provider Specific Config", and it documents Radius first.
+- MCP OAuth credentials are now stored per server name and URL, so MCP servers with the same URL can sign in with different accounts. Credentials stored by URL alone move to the first server that uses them ([#10252](https://github.com/earendil-works/pi/issues/10252)).
+- Codemode costs far fewer prompt tokens: with the default tools and codemode active, a GPT-5.6 request shrinks from about 5,300 to 3,300 tokens. The `codemode` description lists the script globals in one line each and points to the new [Codemode](docs/codemode.md) reference for the `models` API, which the model reads when it needs it. Declared tools say in one line how scripts call them and what the call resolves to, instead of repeating their full declaration, and the system prompt's codemode guidance and MCP server section are shorter.
+- Codemode errors now say how to recover: reading a tool or `models` member that does not exist names the close matches (`tools.Bash` suggests `tools.bash`), `models.classify()` and `models.generateImages()` reject malformed arguments with the expected shape, an unknown model points to `models.getAvailableOfType()`, an oversized `store()` value explains what the store is for, and a script that generates images without showing them gets a note. Scripts that probed for a tool with `typeof tools.name` must use `"name" in tools`.
+- `/login` and `/logout` now label providers without credentials as "not configured" instead of "unconfigured".
+- OAuth browser pages now show the color Pi logo.
+
+### Fixed
+
+- Fixed MCP OAuth sign-in accepting an authorization response whose `iss` parameter names another authorization server; the code is now rejected before it is exchanged (RFC 9207).
+- Fixed MCP OAuth sign-in failing with `Invalid scope` when the token response contains `"scope": ""`, and similar failures for other empty or `null` optional OAuth fields ([#10266](https://github.com/earendil-works/pi/issues/10266)).
+- Fixed the sign-in URL printed by `/mcp login` not being clickable when it wraps ([#10186](https://github.com/earendil-works/pi/issues/10186)).
 - Fixed `--provider` without `--model` being silently ignored and running the default model from another provider; it now fails with an error ([#10236](https://github.com/earendil-works/pi/issues/10236)).
-- Fixed a trailing comma or empty entries in `--models` adding extra models to the model cycle ([#10334](https://github.com/earendil-works/pi/issues/10334)).
+- Fixed MCP servers that ask for more scope (`insufficient_scope`) requesting sign-in over and over. The new sign-in requested only the missing scopes, so the new token lost access the previous one had; it now keeps the granted scopes.
 - Fixed user messages in the transcript keeping two full-width copies of every rendered line; they keep one, with identical output.
-- Fixed new sessions intermittently ignoring the saved default model when it belongs to an extension-registered native provider with a stored credential ([#9962](https://github.com/earendil-works/pi/issues/9962), [#10190](https://github.com/earendil-works/pi/pull/10190) by [@davidbrai](https://github.com/davidbrai)).
-- Fixed prompt submission slowing down with session length (model catalog looked up once per assistant message) and model lookups slowing down for providers with a refreshed remote catalog (quadratic merge).
+- Fixed `/login` and `/logout` labeling every OAuth sign-in, including Radius, as a subscription; only subscription-backed providers say "subscription", other OAuth sign-ins say "account".
+- Fixed the startup header logo rendering with gaps in Apple Terminal; it now shows a colored "Pi" with the version instead.
+- Fixed deferred MCP tools that `tool_search` loaded being dropped on resume and `/reload` even when their server reconnected before the next prompt, because the session restored its tools before the MCP servers reconnected.
+- Fixed the system theme making pastel palettes such as Catppuccin Frappe much more vivid; palette colors now keep their chroma ([#10255](https://github.com/earendil-works/pi/issues/10255), [#10293](https://github.com/earendil-works/pi/pull/10293) by [@dgtlntv](https://github.com/dgtlntv)).
+- Fixed slash command autocompletion not triggering when the input starts with whitespace ([#10218](https://github.com/earendil-works/pi/pull/10218) by [@haoqixu](https://github.com/haoqixu)).
+- Fixed color bleeding past mouse selections and search highlights in fullscreen mode when a styled token ends at the highlight boundary ([#10169](https://github.com/earendil-works/pi/issues/10169)).
+- Fixed memory retained per rendered message in the transcript; a long assistant message keeps about a fifth of the heap it kept before.
+
+## [0.99.2] - 2026-09-30
+
+### New Features
+
+- MCP servers stay out of the way: servers with the default `codemode` exposure are no longer listed in the `codemode` description and no longer block the first prompt. They appear in a short system prompt section, and scripts find their tools with `searchTools()` and `describeNamespace()`. See [Control tool exposure](docs/mcp.md#control-tool-exposure).
+- More MCP authentication options: `oauth.clientName` for servers that only accept known OAuth clients, and `"auth": { "provider": "<provider>" }` to authenticate HTTP servers with a provider's `/login` token. See [Authenticate with OAuth](docs/mcp.md#authenticate-with-oauth).
+- Anthropic workload identity federation from the Anthropic SDK environment variables. See [Use an API key from the environment](docs/providers.md#use-an-api-key-from-the-environment).
+- `/reload` enables tools newly added to the `defaultTools` setting. See [Tools](docs/settings.md#tools).
+
+### Added
+
+- Added a `description` field for MCP servers (`pi mcp add --description`), shown with the server in the system prompt and used to rank its tools in tool search, and a `describeNamespace(name)` codemode helper that returns a namespace's instructions and tool names. `describeNamespace()` and `searchTools()` accept a namespace as `mcp__dev-radius`, `mcp__dev_radius`, `dev-radius`, or `dev_radius`.
+- Added an `oauth.clientName` setting for MCP servers (`pi mcp add --oauth-client-name`) to change the client name sent during OAuth client registration, for servers that only accept known clients ([#10226](https://github.com/earendil-works/pi/issues/10226)).
+- Added `"auth": { "provider": "<provider>" }` for HTTP MCP servers to send a provider's current `/login` token as the bearer token instead of using MCP OAuth. The token is read on every request, so provider refreshes apply. Only allowed in the global `mcp.json` and from extensions, and requires https except on loopback hosts.
+- Added Anthropic workload identity federation from the `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, and `ANTHROPIC_IDENTITY_TOKEN_FILE` environment variables (see [Providers](docs/providers.md)) ([#10177](https://github.com/earendil-works/pi/issues/10177), [#10242](https://github.com/earendil-works/pi/pull/10242) by [@philfreo](https://github.com/philfreo)).
+- `/reload` now enables tools newly added to the `defaultTools` setting. Tools removed from it stay enabled, tools turned off during the session stay off unless newly added, and `--tools`, `--no-tools`, and `--no-builtin-tools` still override the setting ([#10245](https://github.com/earendil-works/pi/issues/10245)).
+
+### Changed
+
+- MCP servers with the default `codemode` exposure no longer appear in the `codemode` description; scripts find them with `searchTools()`. `codemode-deferred` is now an alias for `codemode`. Use `direct` exposure for tools the model should see without searching ([#10212](https://github.com/earendil-works/pi/issues/10212)).
+- The `codemode` description no longer includes deferred tools, tool counts, or MCP server instructions, so it no longer changes when MCP servers connect or change their tools. The `tool_search` description no longer lists the servers whose tools it can load, for the same reason. Servers are listed instead in an `mcp_servers` system prompt section with a one-line summary, updated at the start of each prompt; a changed section is appended to the conversation. Scripts read server instructions with `describeNamespace()` ([#10212](https://github.com/earendil-works/pi/issues/10212)).
+- The first prompt no longer waits for MCP servers without `direct` tools. They connect in the background and are waited for when a codemode script names them, a script searches tools, or `tool_search` runs ([#10212](https://github.com/earendil-works/pi/issues/10212)).
+
+### Fixed
+
+- Fixed new sessions intermittently ignoring the saved default model, or warning that no models are available, when it belongs to an extension-registered native provider with a stored credential ([#9962](https://github.com/earendil-works/pi/issues/9962), [#10190](https://github.com/earendil-works/pi/pull/10190) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed the `/mcp` sign-in URL not being clickable when it wraps across lines, by emitting it as a terminal hyperlink with a `Cmd/Ctrl+click to open` line like `/login` ([#10186](https://github.com/earendil-works/pi/issues/10186)).
 - Fixed codemode `image()` accepting malformed base64 data or unsupported image types, which persisted an invalid image block that made every later provider request fail with HTTP 400 ([#10215](https://github.com/earendil-works/pi/issues/10215)).
-- Fixed a codemode script that prints in a loop crashing hummin by running out of memory; output is capped at 16 Mi characters / 100000 items ([#10283](https://github.com/earendil-works/pi/issues/10283)).
 - Fixed codemode failing to start its script worker from the standalone Windows executable ([#10204](https://github.com/earendil-works/pi/issues/10204)).
-- Fixed collapsed `codemode` and MCP tool results filling the screen when the output is one long line; previews are limited to wrapped lines like bash output.
-- Fixed `codemode.mode: "only"` listing `read`, `bash`, `edit`, and `write` in the system prompt although requests only declare `codemode` ([#10192](https://github.com/earendil-works/pi/issues/10192)).
-- Fixed the system theme making pastel palettes such as Catppuccin Frappe much more vivid; palette colors keep their chroma ([#10255](https://github.com/earendil-works/pi/issues/10255), [#10293](https://github.com/earendil-works/pi/pull/10293) by [@dgtlntv](https://github.com/dgtlntv)).
-- Fixed MCP OAuth sign-in accepting an authorization response whose `iss` parameter names another authorization server (RFC 9207), failing with `Invalid scope` on empty or `null` optional OAuth fields ([#10266](https://github.com/earendil-works/pi/issues/10266)), and the `/mcp` sign-in URL not being clickable when it wraps ([#10186](https://github.com/earendil-works/pi/issues/10186)).
-- Fixed extension commands registered without a string name or handler crashing hummin when typing `/`; the extension now fails to load with an error ([#10054](https://github.com/earendil-works/pi/issues/10054)).
-- Fixed installations resolving vulnerable `brace-expansion` 5.0.9 by pinning `brace-expansion` 5.0.12 (GHSA-q2hr-2g5m-vwhr, GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p) ([#10288](https://github.com/earendil-works/pi/issues/10288)).
-- Fixed the default NVIDIA model pointing at `nvidia/nemotron-3-super-120b-a12b`, which NVIDIA no longer serves; the default is now `nvidia/nemotron-3-ultra-550b-a55b`.
-- Fixed the Fireworks, OpenCode Go, and Together default models pointing at the removed Kimi K2.6; they now default to Kimi K3.
-- `sys1_decide` noul answers that carry no confidence field (the Mac MLX clef instance serves `{type, noul}` only) now audit a `decide` read and feed the weakest-confidence signal via the sure mass `max(noul, 1-noul)` instead of auditing nothing. The sub-50% trust note stays reserved for engines that report a confidence.
-- The `sys1_decide` result now names the serving model on engines that report it at the top level (clef) instead of only via `routing.model` (laya).
-- Background `exec`/`monitor` spawns no longer fail with `check is not a function` when the deployed extension dir mixes rename-era files: the deployed `lib/shell-gate.ts` still imported `layaGateCheck` from the retired `hummin-laya.ts` stub. (Deployment sync fix; the repo copy was already correct.)
+- Fixed prompt submission slowing down with session length, because resolving the session's model selection looked up the model catalog once per assistant message ([#10198](https://github.com/earendil-works/pi/issues/10198)).
+- Fixed model lookups slowing down for providers with a refreshed pi.dev catalog, because merging remote catalog models took quadratic time.
+- Fixed the `built-in-tool-renderer.ts` and `minimal-mode.ts` extension examples removing the built-in tools' summaries and guidelines from the system prompt ([#10072](https://github.com/earendil-works/pi/issues/10072), [#10193](https://github.com/earendil-works/pi/pull/10193) by [@christianklotz](https://github.com/christianklotz)).
+- Fixed context overflow detection for Z.AI CN endpoint `Prompt exceeds max length` errors ([#10208](https://github.com/earendil-works/pi/issues/10208)).
+- Fixed Anthropic requests failing when a tool schema uses keywords Anthropic strict tool use rejects, such as `minimum`/`maximum`; such tools are now sent non-strict ([#9953](https://github.com/earendil-works/pi/issues/9953)).
+- Fixed provider retries firing immediately when a `Retry-After` header contains an unparseable date; they now use exponential backoff ([#9571](https://github.com/earendil-works/pi/issues/9571)).
+- Fixed extension commands registered without a string name or handler crashing pi when typing `/`; the extension now fails to load with an error instead ([#10054](https://github.com/earendil-works/pi/issues/10054)).
+- Fixed collapsed `codemode` and MCP tool results filling the screen when the output is one long line, such as minified JSON. Like bash output, the preview is now limited to wrapped lines instead of logical lines.
+- Fixed `codemode.mode: "only"` listing `read`, `bash`, `edit`, and `write` in the system prompt's tool list although requests only declare `codemode` ([#10192](https://github.com/earendil-works/pi/issues/10192)).
+- Fixed codemode scripts calling the wrong MCP tool when two tool names differ only in `-` and `_`, such as `read-file` and `read_file`. Like in Codex, MCP tool and namespace names now replace `-` with `_` (`mcp__my-server__x` is now `mcp__my_server__x`), colliding tools of a server all get a hash suffix, and server names that differ only in `-` and `_` are rejected ([#10239](https://github.com/earendil-works/pi/issues/10239)).
 
-## [1.2.10] - 2026-09-28
-
-### Added
-
-- Added the System theme, following the terminal's light/dark scheme with Oklab-based color matching; the default for an unset theme setting remains hummin-dark, and "system" is opt-in ([#10067](https://github.com/earendil-works/pi/pull/10067) by [@mitsuhiko](https://github.com/mitsuhiko)).
-- Added the `llama-cpp` classifier API and llama-cpp extension support with docs ([#10119](https://github.com/earendil-works/pi/pull/10119) by [@mitsuhiko](https://github.com/mitsuhiko)).
-
-### Changed
-
-- OpenCode Go and Fireworks default models moved to Kimi K3 after upstream model removals; the startup banner no longer lists loaded themes.
-
-### Fixed
-
-- Fixed Mistral reasoning models not receiving the requested thinking level.
-- Fixed OpenCode qwen3.8-flash rejecting empty thinking signatures.
-
-## [1.2.9] - 2026-09-28
-
-### Fixed
-
-- Background `exec` completions and `monitor` output now start a model turn when the agent is idle (`followUp` + `triggerTurn`, matching `task`/`agent_send` delivery). Previously they were only appended to session history while idle, so the model sat unaware of a finished background run until the next user message. The monitor silence heartbeat stays display-only so a quiet watch does not wake the model every minute.
-
-## [1.2.8] - 2026-09-28
-
-### Added
-
-- The footer's status row (the TODOs row) now shows the running version right-aligned (e.g. `v1.2.7`); the left side truncates first on narrow terminals, and the row only exists when there is status content to show.
-- New hook events in `hooks.json`: `user_prompt_submit` (per agent turn, payload carries the prompt text), `session_start` (fired after the hooks config loads), and `pre_compact` (before context compaction, payload carries the trigger reason and whether the aborted turn will retry). Payloads are additive on the existing event JSON.
-- The laya gate raises a terminal notification when it blocks a command, throttled to one per minute, so an unfocused user learns the agent is stopped waiting for a confirm. Headless processes suppress the terminal bytes and `--mode json` surfaces every notification as a `{type: "notification", message, channel}` event line instead; RPC mode suppresses entirely.
-- Notification subscribers (hooks, JSON streams) now see every non-off emission attempt, including ones suppressed by the focus condition or by headless mode: automation gets the event, only the terminal output is conditional.
-
-### Fixed
-
-- The laya bash gate no longer blocks the repo's own test runs: `./test.sh` scored P=0.83 in live probing even though the gate rubric scores test scripts LOW (the checkpoint cannot reliably follow the rubric tail). Test, build, and check invocations (`./test.sh`, `npm test`/`npm run test`, vitest, jest, pytest, `cargo test`, `go test`, `node --test`) now fast-pass deterministically via the same matcher the triage feature uses; destructive segments still block first.
-- The laya bash gate no longer fast-paths write redirects hidden behind read-only commands. `splitSegments` strips redirects from each segment, so `echo x > important.txt`, `cat a > b`, or `git diff > patch` passed the whole-command read-only check before the redirect downgrade could send them to laya, clobbering the target with no gate read (found by live probing). Redirect-bearing commands now always reach laya scoring; fd dups (`2>&1`) and `>/dev/null` keep the fast path.
-- The laya gate's confirm marker no longer self-authorizes. A marker re-run passes only when a block of the exact same command exists in the audit log within the last 24 hours; a marker on any other command is audited as `anomaly` and the stripped command runs the full gate (previously 36 of 45 marker confirmations in a 4-day sample had no matching block).
-
-## [1.2.7] - 2026-09-28
+## [0.99.1] - 2026-09-29
 
 ### New Features
 
-- Terminal notifications when a turn ends or the agent asks a question: BEL marks the pane (Warp dot, tmux bell) and OSC 9 raises a toast in iTerm2/Windows Terminal/ConEmu. Configure with `terminal.notifications` or `/settings` → Terminal → Notifications (see Added for details).
-- Task personas and chaining: give `task` children a named brief (`persona`) and make them wait on prior reports (`after_task_id` + `{previous}`) for multi-step pipelines.
-- One safety gate for every shell hummin spawns: `exec` and `monitor` now pass bashguard, the laya destructive gate, and the workspace sandbox exactly like the bash tool, and plan mode blocks them too.
-- `/friction` applies the laya gate's calibration suggestion in place instead of telling you to edit settings by hand.
+- **GPT-6.1 Sol** — Available on OpenAI, Azure OpenAI, and OpenAI Codex, and now the default OpenAI Codex model. See [Select a model](docs/models.md#select-a-model).
 
 ### Added
 
-- Terminal notifications when the agent finishes a turn or asks a question (ask_user): BEL marks the tab/pane (Warp dot, tmux bell), OSC 9 carries a toast payload for iTerm2/Windows Terminal/ConEmu, and `desktop` fires a real OS notification (osascript/notify-send, detected once). Channel is `terminal.notifications` (`off`/`bell`/`osc9`/`desktop`/`all`, default `bell`, env `HUMMIN_NOTIFY` overrides); `terminal.notificationsWhen` (`always`/`unfocused`, default `unfocused`, env `HUMMIN_NOTIFY_WHEN` overrides) suppresses notifications while the terminal is focused via DECSET 1004 focus reporting. Both have `/settings` entries under Terminal.
-- New hook events in `hooks.json`: `stop` (agent finished responding; Claude Code parity name), `session_end` (session shutdown), and `notification` (fires for every terminal notification with its message and channel) — extension-style scripts can now react to the same attention events the TUI notifies about.
-- Personas and chaining for the `task` tool. `persona` resolves a named brief from `.hummin/agents/<name>.md` (project, trust-gated) or `~/.hummin/agent/agents/<name>.md` (global) and prepends it to the child's brief; `after_task_id` waits for a prior task to finish and replaces `{previous}` in the prompt with that task's final report (bounded to the same 8000-char excerpt), aborting with the turn. Several `task` calls in one turn already run concurrently; the description now says so.
-- `/friction` can apply the laya gate's calibration suggestion in place: when the report shows a suggested threshold, an interactive action writes `layaGateThreshold` to global settings (atomic tmp+rename) and the gate picks it up on its next read.
-- One gate for every shell hummin spawns (`extensions/lib/shell-gate.ts`): `exec` and `monitor` commands now pass the same pipeline as the bash tool (bashguard classification first, then the laya destructive gate with its deterministic rules, gray-zone score, and confirm-marker escape), and run under the sandbox's seatbelt/bubblewrap profile when workspace mode is on via a `__humminSandboxWrap` bridge registered by the sandbox extension. Previously a background shell bypassed all three layers.
-- Plan mode blocks `exec` and `cron_create` alongside bash/edit/write/task/monitor: background shells and scheduled runs are write paths, and a read-only mode they could bypass was not read-only.
+- Added GPT-6.1 Sol (`gpt-6.1-sol`) to the OpenAI, Azure OpenAI Responses, and OpenAI Codex providers.
 
 ### Changed
 
-- `exec`/`monitor` spawn specs resolve through the new gate; blocked commands surface the same `[laya gate]`/`[BashGuard]`/`[Sandbox]` reasons as bash, and bashguard advisories are attached to the start result instead of being silently absent.
-- web_fetch hardening: redirects are followed manually with a 5-hop budget and every hop is re-validated by hostname and by its DNS answers (private/reserved ranges, IPv4-mapped and NAT64 forms, encoded IPv4 literals like `2130706433` or `0x7f000001`), and the body is read with a hard 5MB cap enforced while streaming instead of trusting `content-length`.
-- Hooks run under the user's configured shell via `getShellConfig()` (POSIX sh fallback) instead of a hardcoded `/bin/zsh -lc`: hooks work on Linux again and no longer pay login-shell startup on every tool event.
-- Sandbox bookkeeping: one seatbelt profile per (mechanism, cwd, network policy) per session instead of a leaked temp directory per command, profile directories are removed at session shutdown, and the `/sandbox` settings writes are atomic (tmp+rename).
-- `/context`'s compaction-trigger line now resolves the settings-configured compaction reserve (the same value compaction uses) instead of a hardcoded 16384.
-- Post-mortems are written only for notable sessions (a budget halt, recorded per-tool rejections, or a session past the soft-ping threshold) instead of one JSON file per shutdown.
-- Child hummin processes (`task`, cron runs, query expansion, and the memory worker's distill/fold children) resolve the CLI through the running process (`process.execPath` + the active entry, `HUMMIN_BIN` overrides) instead of trusting PATH, so dev checkouts without `npm link` stop failing silently; `HUMMIN_CRON_BIN` remains a straight binary override. The memory worker receives the parent-resolved CLI in its job file (its own argv cannot replay the entry); pre-upgrade job files fall back to `HUMMIN_BIN`, then PATH.
-- Guardrails, bashguard, and laya bookkeeping is bounded: the bashguard pending-advisory map caps at 100 entries, the laya gate's blocked-command set at 200, and memory's `state.json` prunes processed-session stamps older than 90 days on write.
+- Changed the default OpenAI Codex model to GPT-6.1 Sol (`gpt-6.1-sol`).
 
 ### Fixed
 
-- opencode-go's provider default still pointed at `kimi-k2.6`, which upstream removed from the catalog, leaving the provider with a nonexistent default model; it now resolves to the successor `kimi-k2.7-code`.
-- Safety bypass: `exec`, `monitor`, and `cron_create` escaped plan mode, and `exec`/`monitor` shells escaped the sandbox, bashguard, and the laya gate entirely. All shell paths now go through the shared gate (see Added), and plan mode covers the full write surface.
-- Auto-fold took a divergent path: it spawned a raw `hummin -p` session in the vault with no fold lock, no validation markers, and a `console.log` the TUI never displayed. It now delegates to the same locked, validated memory-worker fold path as `/vault-fold` (`enqueueFold`) and notifies through the UI.
-- Fleet discovery authenticated with `COLI_API_KEY` only, while generation resolved `HUMMIN_API_KEY` first: a user who set only `HUMMIN_API_KEY` against a keyed server got discovery 401s and no provider. Discovery now uses the same precedence (`HUMMIN_API_KEY`, then the legacy `COLI_API_KEY`, then the keyless default), and the discovery cache keys on both.
-- The distill worker no longer stores unparseable model output as a lesson: a reply with no parsable Problem/Approach/Gotcha shape is treated exactly like NONE (nothing stored, the session still marked processed so it is never re-distilled).
-- Quick capture no longer swallows markdown headings: only an explicit `#note ` prefix writes to the vault inbox; any other `#`-prefixed prompt passes through to the model untouched.
-- Cron exit recording performed an unlocked read-modify-write of `cron.json`, which could lose updates against a concurrent scheduler pass and leave an entry stuck showing "running" forever; it now serializes on the scheduler lock.
-- A corrupt `child-dispatch-reviews.json` threw out of every dispatch (task, cron, memory) until hand-deleted; the store is now quarantined (renamed with a `.corrupt-<pid>-<ts>` suffix, best effort) and treated as empty, with the append-only reviews log unaffected.
-- bashguard missed `rm --recursive` (single-dash flags only) and the laya gate missed `git push origin +<refspec>` force syntax; both classify now.
-- Memory retrieval hot path: the union lesson corpus is cached keyed on the store's mtime+size and the vault `processed/` dir mtime (retrieval consults it at least three times per prompt), and `graph.canvas` refreshes skip while a fold worker holds `.memory-fold.lock` so a canvas rewrite can no longer fail the fold's clean-worktree validation.
+- Fixed `/login` with OpenAI failing in the bundled release with a missing `openai-chatgpt.js` module error.
 
-## [1.2.6] - 2026-09-27
-
-### Fixed
-
-- MCP extension: tools now survive headless sessions. Wire-tap evidence: the MCP handshake completed cleanly (initialize answered, tools/list returned every tool) and then registration crashed with "extension ctx is stale after session replacement or reload", silently losing every tool - headless `--mode json` rebinds its session after extension load, so any handshake landing post-load registered into a dead context. The extension now runs its server connects (with retry) to completion inside the extension factory, while the context is fresh, putting the full verb surface in the model's hands from turn one; late `tools/list_changed` notifications and the unavailable notice also can no longer crash the run on a stale context.
-
-## [1.2.5] - 2026-09-27
-
-### Fixed
-
-- MCP extension: the `initialize` handshake no longer races slow server boots. The default init timeout is raised from 10s to 30s (servers that launch through a runtime bootstrapper such as uv/venv routinely exceed 10s, and several servers sharing one interpreter lock serialize those boots), `HUMMIN_MCP_INIT_TIMEOUT_MS` and `HUMMIN_MCP_REQUEST_TIMEOUT_MS` override both timeouts per deployment (invalid values fall back to the defaults), a failed initial connect is retried once against a fresh client after a 2s backoff (mirroring `/mcp` restart semantics), and a permanently unavailable server now also logs one `[hummin-mcp] server <name> unavailable: ...` line on stderr so headless `--mode json` runs leave the failure in their error log instead of only queueing a follow-up message that may never flush.
-
-### Added
-
-- `--no-json-deltas` for `--mode json`: drops `message_update` delta records from the stream while `message_end` (the authoritative full message, usage included) and all other events keep flowing, shrinking captured logs by an order of magnitude on verbose sessions for whole-message consumers. `--mode rpc` is unaffected ([docs/json.md](docs/json.md)).
-
-## [1.2.4] - 2026-09-27
-
-### Fixed
-
-- Read tool: an explicit limit below 20 lines is raised to 20, so a tiny `limit` (e.g. 1) can no longer make the model crawl a large file one line per LLM turn, and the early-stop continuation hint now suggests a copyable page size (`Use offset=K (limit=P) to continue.`) instead of a bare offset ([#8](https://github.com/rennf93/hummin/pull/8)).
-
-## [1.2.3] - 2026-09-26
-
-### Added
-
-- Embeddings hybrid retrieval for memory: when an OpenAI-shaped `POST /v1/embeddings` endpoint resolves (`HUMMIN_MEMORY_EMBED_URL`, or the `memoryEmbedUrl` setting, or the first fleet server probed once with a 5s timeout), recall and vault search blend min-max-normalized BM25 with cosine similarity (`HYBRID_EMBED_ALPHA` 0.4; `HUMMIN_MEMORY_EMBED=0` or `memoryEmbed: false` disables). Child lesson briefs (`task`/cron inheritance) stay pure-lexical zero-network so dispatch latency never depends on the embeddings endpoint. Lesson vectors live in a sidecar `<memoryDir>/vectors.jsonl` (5MB cap, oldest lines drop first) and backfill lazily at most 64 lessons per retrieval pass; every failure fails open to BM25-only, and embedding bodies are never logged.
-- Checkpoint-fed distillation: the distill worker scans the session JSONL (streaming, bounded memory) for the last compaction entry and prepends its summary, truncated to 4000 chars and labeled "Earlier session checkpoint (from compaction):", to the transcript tail. Fail-open when the session has none.
-- Cron child lesson inheritance: due cron runs prepend the same bounded inherited-lessons block the `task` tool uses (strict no-op while memory is off; the stored entry prompt is never rewritten).
-- Read-only vault for children (`HUMMIN_MEMORY_TOOLS=1` alongside `HUMMIN_MEMORY=0`): `task` and cron children load the memory extension tools-only, so they can search the vault with the `vault` tool and see `/memory`, while recall injection, shutdown distillation, auto-fold, and fold stay unregistered.
-- Fold validation pass: after a fold child exits, the worker checks that the vault git worktree is clean, the inbox drained, and every moved lesson is cited by an entity file. A failing pass gets exactly one repair retry, then records `fold-validation failed` in `fold.log`; session start surfaces a failed final state once per process.
-- Memory telemetry events through the shared sink: `memory_lessons_injected` (count, first 10 lesson ids) on auto-briefing injection and `vault_searched` (result count) on vault tool searches.
-- `/stats` command: aggregates the telemetry log (last 30 files) into a per-day table plus totals: turns, output tokens, context size, duration p50/p95, compactions by trigger, retries, per-model token totals, and memory usage (lessons injected, vault searches). `HUMMIN_TELEMETRY_DIR` overrides the directory.
-- LSP diagnostics push: after a successful `edit` or `write` on a TypeScript/JavaScript file, the tool result gains a bounded diagnostics block from the language server (1.5s bound, 8 most severe lines, clean files report "none"); fail-open, never errors the tool, no-op when the server is offline.
-
-### Changed
-
-- `cacheWarming` gains `"always"`: warms prompts on a fixed 10-minute cycle without requiring cache-lifetime metadata or cost economics, so local fleet slots stay hot (warm replays hold the same per-endpoint inference lock as real traffic). Default stays `"streaming"`.
-- Edit fuzzy matching is now indentation-insensitive: an `oldText` whose leading whitespace differs from the file still matches. Replacements re-anchor to the file's indentation: mid-line matches keep the file's indentation; line-anchored matches shift the replacement onto the file's depth with the model's relative offsets preserved, unless the model deliberately re-indents (its newText baseline differs from its oldText baseline) or uses incompatible whitespace (tabs vs spaces), which stay verbatim; blank lines are never padded; indentation-differing duplicates are still rejected as ambiguous. A match whose `oldText` starts with an empty line now maps to the correct region (previously it could leave a stray whitespace-only line behind).
-- Automatic compact prompt: when the selected model's context window is at or below 32768 tokens, the system prompt and tool descriptions build in compact mode (same as `compactPrompt: true`). Reacts to mid-session model switches on the next request. `HUMMIN_COMPACT_PROMPT_AUTO=0` disables; an explicit `compactPrompt: true` always wins.
-
-## [1.2.2] - 2026-09-26
+## [0.99.0] - 2026-09-29
 
 ### New Features
 
-- Session telemetry: the `hummin-telemetry` extension records turn completion (tokens, duration), compaction, and auto-retries to `<agentDir>/telemetry/<session-id>.jsonl`, with size-capped rotation (`HUMMIN_TELEMETRY=0` or `telemetryEnabled: false` disables; see [docs/environment-variables.md](docs/environment-variables.md)).
-- Verification nudge: when code files were edited but nothing verified the result, the next turn receives a one-time hidden reminder and an advisory lands in `friction.log`.
-- Session friction tracking: `/friction` shows this-session tool error/rejection counts, and one source crossing 3 errors in a session sends a one-time hidden steer toward a different approach.
-- Memory quality: up to three distilled lessons per session, model-assisted query expansion (`HUMMIN_MEMORY_QUERY_EXPAND=0` disables), entity-title recall in vault search, and automatic memory inheritance for `task` child briefs (`inherit: "none"` opts out).
-- `task` results now carry the child's bounded final report with the full log path instead of a truncated status tail.
-- `grep` joins the default tool loadout (`read`, `bash`, `edit`, `write`, `grep`) as the default search path.
-- Richer tool feedback: `write` overwrites return a bounded diff, `edit` failures include the nearest matching region, and `/status` shows per-section prompt token estimates with bloat warnings (see [docs/slash-commands.md](docs/slash-commands.md)).
-- Fleet health persistence: downed local servers keep last-known-good models and measured context windows for 7 days instead of falling back to `HUMMIN_CTX`.
+- **Codemode and MCP** — Connect MCP servers and let models run JavaScript that calls tools in parallel. See [MCP Servers](docs/mcp.md) and [Enable codemode](docs/cli.md#enable-codemode).
+- **System theme** — Pi's colors now come from your terminal's own palette by default. See [Use your terminal's colors](docs/themes.md#use-your-terminals-colors).
+- **Sign in with ChatGPT** — Use a ChatGPT subscription with the OpenAI provider through `/login openai`. See [Authenticate interactively](docs/providers.md#authenticate-interactively).
+- **Virtual models** — Extensions can route each request to a different physical model. See [Virtual Models](docs/virtual-models.md).
+- **Classifier models** — Run Jev classifiers from codemode scripts, or use any llama.cpp model as a classifier. See [How codemode works](docs/cli.md#how-codemode-works) and [Classification](docs/llama-cpp.md#classification).
 
 ### Added
 
-- Core session telemetry events, emitted through the `@earendil-works/pi-telemetry` event sink when one is installed: `assistant_turn_completed` (model, context/output/total tokens, duration), `compaction_completed` (trigger and tokens before/after), and `auto_retry_scheduled` (attempt, delay, error truncated to 200 chars). The sink API (`emitTelemetryEvent`, `setTelemetryEventSink`, `FileTelemetryEventSink`) is re-exported from the package barrel so extensions can install it.
-- `hummin-telemetry` extension: installs the JSONL event sink at `<agentDir>/telemetry/<session-id>.jsonl` (pid-keyed until session start; total size capped with oldest-file rotation). Disable with `HUMMIN_TELEMETRY=0` (env wins) or `telemetryEnabled=false` in settings.
-- Fleet health persistence (`<agentDir>/fleet-health.json`, `HUMMIN_FLEET_HEALTH_FILE` overrides the path): local fleet discovery records last-known-good models and measured context windows per engine-host-port server. A fresh entry (7 days) keeps a downed server's offline picker entries real instead of falling back to `HUMMIN_CTX`/16384, and stands in for `/props` when a running server does not serve that endpoint. Offline entries still never join failover chains.
-- Verification nudge in `hummin-guardrails`: the session tracks `edit`/`write` calls that touch code files and `bash`/`powershell` verification commands (test runners, `tsc`, project check scripts). At agent end, if code was edited but nothing verified it afterwards, a one-time hidden message is queued for the next turn and an advisory lands in `friction.log` (source `verify-nudge`). Disable with `verifyNudge: false` in settings.
-- Session friction consumer: per-source in-memory counters for `tool_error` and `tool_rejected` (shared across extension modules on `globalThis`, reset per session). `/friction` renders them as a leading "this session" section above the historical digest, and when one source crosses 3 errors in a session the guardrails extension sends a one-time hidden steer (re-read the target region or change approach) and logs an advisory (source `friction-steer`).
-- Memory distillation extracts up to three distinct lessons per session (single model call, per-lesson Laya intake gate; previously exactly one). Query expansion (`memoryQueryExpand`, default on; `HUMMIN_MEMORY_QUERY_EXPAND=0` disables) optionally augments recall and vault-search queries with model-proposed keywords (2s timeout, fail-open, cached per query). Vault lessons additionally rank with the titles of entities citing them, so paraphrase queries reach a lesson through its entity names.
-- Memory inheritance for child dispatches: `task` prepends the most relevant project-memory lessons to the child brief by default (retrieved from the parent's memory; children still run with `HUMMIN_MEMORY=0`). `inherit: "none"` opts out per call.
-- `task` results for finished jobs now include the child's final report: a bounded tail of its captured output (8000 chars) with the full log path, instead of a status line plus a 30-line tail; `task_status` and background completion messages carry the same excerpt.
-- `write` feedback: overwriting an existing file returns line/byte counts plus a bounded unified diff (60 lines) of what changed; new files return counts only.
-- `edit` failure errors include the nearest matching region (`path:line` context) for not-found and ambiguous multi-edit entries, so the model can fix its `oldText` without re-reading the file.
-- `/status` now shows per-section system-prompt token estimates (chars/4, same estimator as compaction) with a warning for any section over 4000 tokens or a total over 20000, making a bloated AGENTS.md or extension section visible.
-
-### Changed
-
-- The Laya bash gate gray-zone block fallback is now 0.75, aligned with the settings-layer `layaGateThreshold` default, so blocking no longer depends on settings being readable; env and settings overrides keep their order, and the gate rubric's stated block line matches.
-- Extension-injected system-prompt sections sort alphabetically after the fixed-order known sections, so the prompt prefix is byte-stable across turns (prompt-cache friendly) regardless of extension load order.
-- `grep` joined the default tool loadout (`read`, `bash`, `edit`, `write`, `grep`): purpose-built search with budgeted, annotated output replaces raw `rg` in bash as the default path.
-
-### Fixed
-
-- A failed extension load no longer exits the process: the diagnostics are reported loudly in both interactive and print modes (interactive mode also shows them in the TUI), the remaining extensions keep working, and the `hummin -ne` hint is preserved. All other fatal runtime errors still exit 1.
-- Shutdown distillation never ran: the spawned worker was started without its `distill` mode argument and exited immediately, leaving every pending job unconsumed. Jobs now dispatch correctly, and jobs held by child-dispatch review persist with a held marker and are retried once at the next startup (24h window) instead of being dropped.
-- The staged `hummin-cli` npm package now declares `"type": "module"` (inherited from the coding-agent manifest), removing the per-startup `MODULE_TYPELESS_PACKAGE_JSON` reparsing warning from the published CLI.
-
-## [1.2.1] - 2026-09-26
-
-### Added
-
-- Added Laya child-dispatch review for Hummin `task` and `cron_create` calls: it chooses among real provider/model/thinking configurations using profile descriptions, speed, and numeric costs, then blocks high-confidence mismatches for a review-tied override or emits a lower-confidence advisory.
-- `ask_user` marks the model's preferred choice with a dim `(recommended)` label via the new `recommended` (0-based index) parameter.
-- Child dispatch review records and audit lines now include the Laya decision confidence for allowed and advisory dispatches, so the swing threshold can be tuned from data.
-
-### Changed
-
-- The Laya right-size gate now blocks on the confidence margin between its pick and the requested configuration (falling back to absolute confidence when per-label probabilities are absent), instead of absolute confidence alone.
-- `/settings` surfaces the Laya right-size gate under Fleet: enabled flag, swing threshold, and a full profile editor (per-profile provider, model id, description, speed, thinking-level toggles, cost fields; add and delete).
-
-- `ask_user` free text is now always offered and typed inline in the question box (select Other... or press tab; enter submits, esc returns to the list) instead of opening a second input screen; `allowFreeText` defaults to true and non-interactive sessions default to the recommended choice.
-- The Laya bash gate deterministic layer now covers the git-only blind spots: data-store drops (redis `FLUSHALL`/`FLUSHDB`, `gh repo delete`, `aws s3 rb`), infrastructure teardown (`docker system/volume prune`, `docker volume rm`, `kubectl delete namespace`, `terraform`/`pulumi destroy`), recursive `chmod`/`chown` on system roots, and `sudo`-prefixed commands (never fast-passed; destructive inner commands still block). Write redirects (`>`, `>>` to anything but `/dev/null`) downgrade safe verdicts so `echo x > file` cannot hide behind `echo`. Gate reads include the working directory in the laya state, and `layaGate.extraSafe` / `layaGate.extraDestructive` settings accept regex strings to extend both classifier lists per installation.
-
-### Fixed
-
-- The Laya bash gate no longer false-blocks routine branch-and-stage command bundles and repo-relative installs: read-only, additive-write, and canonical-destructive segments are now classified deterministically per chain segment (same pattern as the read-only allowlist), and only unfamiliar gray-zone commands pay the Laya read. The gray-zone block threshold drops to 0.7 to match the classifier-assisted operating point, deterministic blocks carry their rule in `laya-gate.log`, and `git status`/`git branch -D`-style segment confusion is covered by tests.
-- Fixed custom themes not being constructed with the terminal's detected color mode, so truecolor was not honored (terminal capability overrides now apply to theme construction too) (fixes #9973) ([#10039](https://github.com/earendil-works/pi/issues/10039)).
-
-## [1.2.0] - 2026-09-25
-
-### Added
-
-- Upstream sync through pi 0.87.1: unified image/classifier model catalog with per-type model entries and pi.dev catalog version negotiation, `provider_stream_event` extension event, extension host-dependency warnings, TUI color values and theme styling, durable transactional sessions and documents, chord immutable delta tracker, and assorted tui/ai fixes.
-- Provider data JSONs (`packages/ai/src/providers/data/`) are now tracked, and CI regenerates them after build and fails with a reviewable diff when live models.dev/OpenRouter metadata drifts from the committed copy (previously such drift surfaced as a broken model-catalog test on main). Fix on drift: run `npm run generate:models` and commit the diff.
-- `/doctor`: new "memory config" section showing the effective vault dir, storage dir, provider, model id, and mode, so env-vs-settings override precedence is visible without reading the fork notes.
-- pi.dev user agent restored to the `pi/<version>` wire format: the model catalog protocol version-negotiates via the User-Agent, and a `hummin/` prefix silently opted out of versioned catalog shards.
-
-- Provider grouping headers in `/model`: rows are grouped under dim provider name headers (curated providers first, current model first within its group); headers are non-selectable and drop out while searching.
-- `/session` info is now rendered as aligned two-column tables per section (Session Info, Messages, Tokens, Cache Warming, Cost), matching the settings-view table style.
-- `/model` rebuilt in the settings-view style: an aligned two-column table (model name, context/provider value column), a description pane with provider, context, reasoning, and endpoint details for the highlighted model, an All/Scoped tab bar (clickable), and mouse press/click/wheel row interaction via the shared `SettingsList` component.
+- Added codemode, tool search, and MCP support as built-in extensions. The `codemode` tool runs model-written JavaScript in a QuickJS sandbox that calls pi's tools; enable it with `defaultTools` or `--tools` and configure it with `codemode.mode` and `codemode.inlineBudget`. `tool_search` finds tools that are not declared to the model and declares them. MCP servers over stdio or streamable HTTP, with OAuth, come from `mcp.json` (global, or per project once trusted) or `pi.registerMcpServer()` and are managed with `/mcp` and `pi mcp add|remove|list|login|logout`. See [MCP Servers](docs/mcp.md) and [Enable codemode](docs/cli.md#enable-codemode) ([#10040](https://github.com/earendil-works/pi/issues/10040)).
+- Added extension tool APIs for orchestrating tools: `exposure` (`direct`, `model-only`, `codemode`, `deferred`, or `hidden`), `namespace`, `annotations`, `outputSchema` with `structuredContent`, `isError` results, `prepareLoadout()`, and `ctx.executeTool()` for nested tool calls, which emit events with `parentToolCallId` and are recorded as bounded `nestedCalls` on the calling tool's result. See [Tool exposure](docs/extensions.md#tool-exposure).
+- Added a warning when an extension that registers the same tool, command, or flag replaces a built-in extension ([#10174](https://github.com/earendil-works/pi/pull/10174) by [@cristinaponcela](https://github.com/cristinaponcela)).
+- Added experimental virtual models: extensions register them with `pi.registerVirtualModel()` and pick a physical model and thinking level for each request. The footer shows the routed model, `/session` lists cost per physical model, and `examples/extensions/jev-router.ts` routes with the Jev classifier. See [Virtual Models](docs/virtual-models.md).
+- Added Sign in with ChatGPT to the OpenAI provider in `/login`, which uses a ChatGPT subscription with the OpenAI API. Pi stores a stable `deviceId` in the global settings for this login and omits it from bug reports.
+- Added the `system` theme, now the default, which derives pi's colors from the terminal's reported foreground, background, and ANSI palette and rebuilds them when the terminal switches between light and dark. See [Use your terminal's colors](docs/themes.md#use-your-terminals-colors).
+- Added `#rgb`, `oklch()`, and `okhsl()` colors and an optional `appearance` field to theme files, and `theme.style()`, `theme.colors`, and `theme.appearance` for extensions. See [Themes](docs/themes.md) and [TUI](docs/tui.md).
+- Added a classifier model for every llama.cpp chat model, answered from next-token label probabilities. See [Classification](docs/llama-cpp.md#classification).
+- Added inherited Jev classifier models on OpenRouter, Cloudflare Workers AI, Vercel AI Gateway, and OpenCode Zen.
+- Added the `fullscreenWheelScrollLines` setting and `/settings` entry for fullscreen mouse-wheel scrolling. The default `"auto"` accelerates fast wheel spins outside local macOS terminals ([#9758](https://github.com/earendil-works/pi/issues/9758)).
 - Added per-input disposition to successful RPC `prompt`, `steer`, and `follow_up` responses, `AgentSession.steer()`/`followUp()`, and `RpcClient.prompt()`/`steer()`/`followUp()`; `RpcClient.prompt()` also accepts `streamingBehavior` ([#9098](https://github.com/earendil-works/pi/issues/9098), [#9803](https://github.com/earendil-works/pi/issues/9803)).
 - Added image generation to `ModelRuntime`: `generateImages()` with runtime-resolved auth (stored credentials, OAuth, runtime API keys, `models.json` headers), plus `getModelsOfType()`, `getModelOfType()`, `getAvailableOfType()`, `getAllModels()`, and `getAllAvailable()`. OpenRouter image models are listed under the `openrouter` provider and share its credential; an upstream ID can have separate chat and image entries. `models.json` providers and extension registrations without a model list keep built-in image generation. Extension model lists can include discriminated chat, image, and classifier entries with operation implementations; when supplied, they replace the provider catalog across every operation. Chat-facing reads (`getModels()`, `getAvailableSnapshot()`, the model picker) are unchanged.
 - Added classifier support to `ModelRuntime`, including `classify()`, classifier model accessors, runtime-resolved authentication, and the built-in TypeSafe `jev-latest` model.
 - Added `types=chat,image,classifier` to pi.dev model catalog requests so remote refreshes overlay every supported model type; entries of unknown model types are ignored.
-- Added the `provider_stream_event` extension event for observing parsed provider events before normalization, with an opt-in `/debug-provider` example viewer ([#9784](https://github.com/earendil-works/pi/issues/9784)).
-- Added a show/hide toggle (`H`) in HTML exports for custom messages marked `display: false`. Messages remain hidden by default and can also be revealed from the sidebar ([#8896](https://github.com/earendil-works/pi/issues/8896)).
+- Added the `provider_stream_event` extension event for observing parsed provider events before normalization, with an opt-in `/debug-provider` example viewer ([#9784](https://github.com/earendil-works/pi/issues/9784), [#9901](https://github.com/earendil-works/pi/pull/9901) by [@davidbrai](https://github.com/davidbrai)).
+- Added a show/hide toggle (`H`) in HTML exports for custom messages marked `display: false`. Messages remain hidden by default and can also be revealed from the sidebar ([#8896](https://github.com/earendil-works/pi/issues/8896), [#10020](https://github.com/earendil-works/pi/pull/10020) by [@rwachtler](https://github.com/rwachtler)).
+- Added inherited Claude Sonnet 5.5 support for Anthropic with adaptive thinking and a 1M context window.
+- Added a Built-in section in `pi config` to disable the built-in `mcp`, `llama.cpp`, `codemode`, and `tool-search` extensions globally or per project, stored as `-builtin:<name>` in the `extensions` setting. SDK inline extensions opt in with `builtin: true`.
+- Added `+name` and `-name` entries to the `defaultTools` setting to add or remove tools without repeating the defaults, for example `"defaultTools": ["+codemode"]`. Project entries of this form apply on top of the user setting. Documented how to enable `codemode` without MCP and how to use classifier models such as Jev from codemode scripts.
+- Added the token usage and cost of codemode `models.classify()` calls to the codemode tool result, so they count toward the session cost; the codemode result shows each call's cost.
 
 ### Changed
 
 - Switched the build from the TypeScript native preview to TypeScript 7.0 with an ES2024 target, and replaced `tsx` with Node's built-in type stripping for running from source ([#9965](https://github.com/earendil-works/pi/issues/9965)).
 - Removed the `[Themes]` section from the startup banner. Custom themes remain available in `/settings`, and theme conflicts are still reported.
+- Changed the startup header to show the pi logo with the version instead of the app name.
+- Changed the built-in `dark` and `light` themes to the revised pi colors, written in OKHSL.
+- Changed light/dark terminal detection to use the reported background color first, then the terminal's light/dark report, then `COLORFGBG`. The first-time setup no longer shows the detected appearance.
+- Renamed the inherited OpenAI Codex provider to "OpenAI Codex (legacy)"; Sign in with ChatGPT on the OpenAI provider supersedes it.
+- Changed inherited terminal detection to treat `TERM=*-direct` as truecolor.
+- Built-in extensions and tools are named `builtin:<name>` (for example `builtin:mcp` and `builtin:read`) in errors, diagnostics, RPC source info, and bug reports, instead of `<inline:name>` and `<builtin:name>`. Their slash commands no longer carry a `[t]` autocomplete tag.
+- `--no-extensions` also disables the built-in extensions, including the llama.cpp provider. Load one explicitly with `-e builtin:<name>`, for example `pi -ne -e builtin:mcp`.
+- Tool calls without a custom call renderer, including direct MCP tool calls, now show their arguments: as `key=value` pairs on the title line when collapsed and one `key: value` line per argument when expanded. MCP calls are titled `server/tool` and their results collapse to 5 lines.
+- `bash` and `powershell` structured results, which codemode scripts receive, now hold up to 1 MiB of output instead of the model-facing 2000 lines or 50KB, and add `truncated` and `full_output_path`. Longer output keeps its first and last 512 KiB. Empty output is `""` instead of `(no output)`.
 
 ### Fixed
 
-- Monitor: carriage-return spinner output (`gh run watch`, progress bars) is now treated as line overwrites instead of delivering garbled fragments every interval
-- Monitor: named handles (`name` parameter on start, usable as `id` in status/stop) so watches can be referred to without UUIDs
-- Monitor: delivery to a busy agent no longer throws "Agent is already processing a prompt" and no longer loses output; failed sends are re-buffered and retried
-- Memory vault: `graph.canvas` now refreshes automatically whenever the vault is touched (write only on content change) instead of going stale between manual `/vault-canvas` runs, and reciprocal `## Links` entries render as a single undirected edge instead of doubled arrows.
-- `/rewind` (and every other extension selector flow) crashed the CLI with `TypeError: Cannot read properties of undefined (reading 'render')`: the selector-teardown hook ran between selector creation and overlay mount, so the overlay wrapped an undefined component. Selector screens mount in place of the editor again (full-width, above the input) with their content block horizontally centered (`Centered` wrapper; full-width frame rules stay unshifted, gutter clicks are swallowed) and a stable size: content is capped at a shared width (long values truncate) and centered, tabbed selectors reserve their tallest category upfront (`getMaxRenderHeight`), every selector ratchets to the tallest state seen (filtering, wrapped item descriptions), and padding is inserted before the frame's bottom rule so switching tabs never shifts the layout; the tab bars and settings-style organization are unchanged, and the centered-panel framing was removed.
 - Fixed X11 clipboard text being misidentified as an image when the clipboard owner accepts unadvertised image targets ([#9786](https://github.com/earendil-works/pi/issues/9786)).
 - Prevented managed git packages from automatically installing Pi peer dependencies and added warnings for extension packages that list host-provided modules in `dependencies` ([#9863](https://github.com/earendil-works/pi/issues/9863)).
 - Fixed pinned git extensions loaded with `-e` continuing to use the first downloaded commit after the ref changes ([#9982](https://github.com/earendil-works/pi/issues/9982)).
 - Fixed `RpcClient` skipping the next event listener when a listener unsubscribes while handling an event, which could make `waitForIdle()` time out after `collectEvents()` ([#9990](https://github.com/earendil-works/pi/issues/9990)).
 - Fixed full-file `read` calls rendering as `:1` when models send `null` for omitted `offset` and `limit` ([#9996](https://github.com/earendil-works/pi/issues/9996)).
 - Fixed new sessions being lost when pi exits before the first assistant response. The session file is now created when the first user message is sent ([#10000](https://github.com/earendil-works/pi/issues/10000)).
+- Fixed unloaded llama.cpp autoload presets overwriting a cached runtime context window with the GGUF training context ([#10077](https://github.com/earendil-works/pi/issues/10077), [#10158](https://github.com/earendil-works/pi/pull/10158) by [@cristinaponcela](https://github.com/cristinaponcela)).
+- Fixed custom themes ignoring `terminal.trueColor` and other terminal capability overrides and rendering with 256 colors ([#9973](https://github.com/earendil-works/pi/issues/9973), [#10039](https://github.com/earendil-works/pi/pull/10039) by [@christianklotz](https://github.com/christianklotz)).
+- Fixed pasting files copied in Finder inserting the file icon image instead of the file paths; paths are quoted in bash mode ([#9999](https://github.com/earendil-works/pi/issues/9999), [#10136](https://github.com/earendil-works/pi/pull/10136) by [@christianklotz](https://github.com/christianklotz)).
+- Fixed the startup header, loaded resources, and chat notices keeping their old colors after a theme change.
 - Fixed the Fireworks default model pointing at the removed Kimi K2.6 model; it now defaults to Kimi K3.
 - Fixed the OpenCode Go default model pointing at the removed Kimi K2.6 model; it now defaults to Kimi K3.
-
-### Changed
-
-- Monitor: `interval_sec` maximum raised from 60s to 600s for long CI watches
-- Laya gate: read-only allowlist now splits pipelines quote-aware, so quoted `|` patterns (e.g. `rg 'a|b'`, `awk -F'|'`) no longer trigger gate reads; allowlist expanded to common read-only commands (`gh api/run view/pr view`, `curl` GETs, `git rev-parse`/`blame`, etc.)
-- Laya gate: destructive-intent prompt recalibrated to score read-only inspection and network reads low; a second block of the same command now instructs the model to ask the user instead of retrying
-## [1.1.3] - 2026-09-22
+- Fixed the Together default model pointing at the removed Kimi K2.6 model; it now defaults to Kimi K3.
+- Reduced CPU use while streaming in long sessions and when previewing themes: the footer caches session usage totals, collapsed bash results cache their preview, and `sanitizeBinaryOutput()` no longer splits output into per-character arrays.
+- Fixed the usage of tools called through `ctx.executeTool()`, for example from codemode scripts, being dropped from the session cost; it is now added to the calling tool's result usage.
+- Fixed inherited `/skill` autocomplete appearing empty when loaded skill names did not contain the letters in `skill` ([#9944](https://github.com/earendil-works/pi/issues/9944)).
+- Fixed inherited path and `@` autocomplete not working after opening wrappers such as `(`, `[`, `{`, `<`, or a backtick.
+- Fixed inherited image stretching in terminals that use the Kitty graphics protocol ([#8938](https://github.com/earendil-works/pi/issues/8938), [#9957](https://github.com/earendil-works/pi/pull/9957) by [@rwachtler](https://github.com/rwachtler)).
+- Fixed inherited shell cursor staying hidden after exit when an extension closed an overlay during shutdown ([#10026](https://github.com/earendil-works/pi/issues/10026)).
+- Fixed inherited keyboard input being lost after a mouse click in a `/settings` submenu closed it.
+- Fixed inherited 1-hour Anthropic cache writes through Vercel AI Gateway being priced at the 5-minute rate ([#9210](https://github.com/earendil-works/pi/issues/9210)).
+- Fixed inherited model-level `samplingParams` being dropped by direct `stream()`/`complete()` calls on OpenAI-compatible APIs ([#9506](https://github.com/earendil-works/pi/issues/9506)).
+- Fixed inherited Mistral GLM requests failing with "Expected at most one leading ThinkChunk" after empty content deltas ([#9674](https://github.com/earendil-works/pi/issues/9674)).
+- Fixed inherited OpenAI Fast mode requests being priced at the standard rate ([#10034](https://github.com/earendil-works/pi/issues/10034)).
+- Fixed inherited Mistral reasoning models ignoring the requested thinking level ([#9678](https://github.com/earendil-works/pi/issues/9678)).
+- Fixed inherited OpenCode Zen and OpenCode Go `qwen3.8-flash` thinking being replayed as plain text on later turns ([#10047](https://github.com/earendil-works/pi/issues/10047)).
+- Fixed inherited OpenAI Responses streams from servers that omit `output_index`, such as llama.cpp, running mixed-up tool calls; such streams now end with an error ([#9974](https://github.com/earendil-works/pi/issues/9974)).
+- Fixed inherited Anthropic and OpenAI Codex browser sign-in waiting indefinitely after the provider redirected with an authorization error, and Anthropic sign-in failing when its callback port is in use.
+- Fixed inherited GitHub Copilot Claude Opus 5.5 offering unsupported thinking levels when upstream model metadata is incomplete.
 
 ## [0.87.1] - 2026-09-22
 
@@ -1041,187 +830,152 @@
 - Fixed inherited image-only user messages being rejected by some OpenAI-compatible providers because they included an empty text part ([#9797](https://github.com/earendil-works/pi/issues/9797)).
 - Fixed inherited Anthropic OAuth requests reporting an outdated Claude Code version.
 
-## [1.1.2] - 2026-09-22
+## [0.87.0] - 2026-09-21
 
-### Added
+### New Features
 
-- Footer tokens-per-second indicator: live completion-token rate left of the ctx meter while a response streams (EMA-smoothed, self-clears when generation stalls); `list-models --mode json` for machine-readable output.
-- `hummin sessions` terminal subcommand: `sessions [ls|show|rm]` to list, inspect, and delete stored sessions without starting the TUI (`--all`, `--project`, `--limit`, `--session-dir`; `rm` asks for confirmation unless `--yes`).
-- Fleet auto-failover: when the selected local fleet endpoint is unreachable or stays busy past the retry budget, the request continues on the next fleet server serving the same model, in fleet priority order; only before any content is emitted, each hop re-acquires that server's inference lock, and every hop is announced with a warning notification.
-- Path-scoped project rules: `.hummin/rules/*.md` with optional `paths` (globs) and `description` frontmatter. Always-apply rules are injected on the first turn; path-scoped rules are listed as a catalog and their full text is delivered the first time a tool call touches a matching file, so unused rule bodies never occupy context.
-
-### Fixed
-
-- `hummin --version` (and other global flags) was swallowed by the `sessions` subcommand dispatcher and never reached its own handling.
-- Bundled installs failed to load extensions importing `minimatch` (not resolvable next to the user's extensions directory); the runtime's own copy is now served to extensions.
-- Footer tok/s never showed for local models: OpenAI-compatible servers report token usage only in the final stream chunk, so completion-token counts stayed 0 while streaming; usage is now estimated per chunk (~4 chars/token) and overwritten by exact counts when the stream reports them. Additionally, the rate was read from completed messages instead of the in-flight streaming message, so the indicator never appeared for any provider; it now shows only while a response is streaming and clears on completion.
-- Built-in tools honor an explicit custom `cwd` when the tool set is created with `customCwd: true` (#9839): the factory cwd is authoritative over `ExtensionContext.cwd`. Without the opt-in, `ctx.cwd` (the live session cwd) still wins, preserving the #8627 behavior.
-- Persisted sessions now write the session header at `create()` time (and when branching a path without an assistant message), so the session file exists and is valid before the first assistant response; a normal termination in that window no longer loses the session (#9792). Fork gating in `agent-session-runtime` now uses the session manager flush state instead of file existence, since the file is present from create() time.
-- Importing the SDK no longer captures the global undici dispatcher (#9787): the runtime `undici` import moved out of `http-dispatcher.ts` (on the SDK import graph via `settings-manager`) into `undici-runtime.ts`, imported only by the deliberate dispatcher-configuration entry points. A bare SDK import previously installed a version-skewed default `Agent` as the global dispatcher for the process lifetime, breaking stream aborts and mid-body reads in embedded hosts.
-
-## [1.1.1] - 2026-09-21
-
-### Added
-
-- Todo plan widget above the editor: live checklist with header counts (`TODOs 2/6`), the in-progress step plus up to three pending ones, and a collapsed `+N pending, M completed` summary line; hidden once every step is completed.
-- Clear-session choice: `/clear` (and `app.session.new`) with work in flight (active response, bash, queued messages, background tasks/monitors) asks whether to continue running and migrate to the new session, or abort all; queued messages are re-delivered into the new session and background jobs are adopted by its extensions (rebindable output/completion hooks on background jobs).
-- `ask_user` transcript rendering: the call row shows the question (expanded shows numbered choices) and the result shows the picked answer or `cancelled`, instead of a raw JSON dump.
-- Categorized settings UI: /settings now groups its entries behind a tab bar (General, Agent, Models, Memory, Fleet, Editor, Terminal, Network, Shell, Privacy); `tab` or clicking a tab switches categories, and search still filters the active list.
-- Settings previously missing from /settings are now configurable: global default thinking level, per-provider list (providers.showAll), retry on failure, memory (enabled, mode, vault directory, provider, model), local fleet instances and fleet auto-start, editor mode (vim), external editor command, WebSocket connect timeout, HTTP proxy, shell path, shell command prefix, npm command, and analytics opt-in. Free-text fields open an input submenu (Enter saves, Esc cancels).
-- Upstream sync: bug reporting (`/bug` with model-generated summary), prompt cache warming with off/streaming/idle modes (setting under Agent), progressive session picker loading, faster recent session discovery, compiled Node CLI module caching, deferred extension loader dependencies, and an experimental micro agent.
-- Per-model image resize profiles: `inputLimits.images.resize` in `models.json` applies to file attachments, image reads, and tool-result images ([#9631](https://github.com/earendil-works/pi/issues/9631)).
-- Upstream sync: crash diagnostics now hint at loaded extensions that appear in the stack trace.
-
-### Changed
-
-- Tool rows drop the padded 12-char label column: each label is followed by a two-space gap, so rows like `Bash  <command>` no longer carry a wide empty stretch.
-- Footer right-aligned clusters (provider + model + thinking level, and the ctx meter) no longer start with a dim `·` separator with nothing to their left.
-- Message timestamps and skill commands moved to the General category; image settings moved to Terminal; transport and HTTP idle timeout moved to Network.
-
-### Fixed
-
-- Upstream sync: restore OSC 52 clipboard fallback for headless sessions; ignore stale tool image conversions ([#8743](https://github.com/earendil-works/pi/issues/8743)); close compaction cancellation races; compact oversized trailing tool results; suppress repeated Anthropic thinking drop notices; suppress bug hints for expected failures; preserve multiline bug descriptions; await the terminal remote prompt event; rebuild expired idle prompt-cache warming caches only when the timer or extension decision is not delayed.
-- TUI (upstream sync): preserve fullscreen images in WezTerm; rank skill autocomplete by bare name ([#9120](https://github.com/earendil-works/pi/issues/9120)); handle CJK punctuation in file autocomplete ([#9746](https://github.com/earendil-works/pi/issues/9746)); improve LaTeX compatibility and layouts.
-
-## [1.1.0] - 2026-09-19
-
-### Added
-
-- Agent teamwork: inter-agent messaging across terminals and projects - UDS broker with offline inbox and replay (`agent_send`, `agent_inbox`, `/agents`, `/agent-name`), and a shared cross-session task board (`task_board`, `/team`).
-- Cron scheduler: schedule detached `hummin -p` wake-ups per project (`cron_create`/`cron_list`/`cron_delete`, `/cron`); single-scheduler lock, one queued wake per entry.
-- MCP client: stdio JSON-RPC transport for `mcpServers` in settings (project entries trust-gated); tools register as `mcp_<server>_<tool>`; `/mcp` status panel with restart.
-- LSP client for TypeScript via `typescript-language-server`: `lsp_diagnostics`, `lsp_definition`, `lsp_references`, `lsp_hover` (1-based coordinates); auto-activates on tsconfig/jsconfig projects; `/lsp` status panel.
-- `ask_user` tool: structured multiple-choice questions through the TUI with optional free text; sequential asks no longer hang; fleet-style bordered question panel.
-- Bash sandboxing: macOS seatbelt / Linux bubblewrap workspace mode (writes limited to the working directory and temp, secrets unreadable, optional network deny) with real capability probing; `/sandbox` toggle; spawned task children inherit the mode.
-- Declarative hooks: `hooks.json` (global and trust-gated project) runs shell commands on `tool_call`, `tool_result`, `agent_start`, and `agent_end`; `tool_call` hooks can block with a reason; `/hooks` table and reload.
-- BashGuard advisory matrix: in-band warnings for destructive commands, out-of-tree `sed -i`, and outside-cwd writes; opt-in blocking and read-only deny mode (`/bashguard`).
-- Usage visibility: `/context` (system prompt, tools, conversation, cache-hit ratio, compaction trigger; est vs exact labeled) and `/cost` (per-model totals, served-locally vs cloud split).
-- Footer navigator: `alt+down` (or `down` on an empty editor) opens a selectable list of Background tasks, TODOs, Agents, and Fleet, each opening its panel; native styled TODOs footer segment (`TODOs x/y · current item`).
-- Background panel: `ctrl+b` or `/background` opens a live panel with view-tail/cancel actions, and `ctrl+x` stops the selected running task/monitor or clears a finished one; the footer status reports counts by kind ("2 tasks, 1 monitor").
-- Fleet: selecting an offline fleet model in `/model` offers to start its server first (`fleet.autoStart` skips the prompt), with readiness-gated selection via the shared fleet-actions library.
-
-### Changed
-
-- Background tasks and monitors survive agent interrupts: the turn's abort signal is no longer forwarded to background jobs (foreground tasks remain abortable).
-- Task rows show what is running (`Task  "<prompt>" · model`); background task completions and monitor notices render as collapsible one-line rows instead of always-expanded blocks.
-- The plan checklist is labeled "TODOs" everywhere and an always-current footer segment shows progress and the current item.
-- Custom `statusline.left`/`statusline.right` segments and the default footer right side use dim middot separators; vim modal editing is available via `editorMode: "vim"` (`HUMMIN_VIM=1`).
-
-### Fixed
-
-- Collapsed bash tool rows are a single line again: the command is collapsed to one line and truncated to the terminal width, with the duration/status suffix preserved; the full multi-line command and output remain available expanded.
-- Fixed the sandbox extension hard-blocking bash in the default (`off`) mode; plain execution is used unless workspace mode is active, with an actionable `[Sandbox]` message when a mechanism is unavailable.
-- Fixed the agents broker crashing extension startup when two sessions raced for the broker socket; the loser now connects as a client.
-- Fixed the seatbelt capability probe using `/bin/true`, which does not exist on macOS.
-- Fixed background task completion notices being delivered twice.
-
-## [1.0.6] - 2026-09-18
-
-### Changed
-
-- The hummin logo (pixel hummingbird mark) now heads the README on GitHub and npm.
-
-## [1.0.5] - 2026-09-18
-
-### Changed
-
-- The footer's two status rows now have a blank spacer row between them instead of sitting flush against each other.
-
-### Fixed
-
-- The npm package README is now the hummin project README instead of upstream pi's; `npm install -g hummin-cli` is the documented install path.
-
-## [1.0.4] - 2026-09-18
-
-### Fixed
-
-- Fixed the published `hummin-cli` package crashing at startup with `ENOENT ... dist/modes/interactive/theme/dark.json`: the slim publish manifest shipped only `dist/bundle`, but the bundle reads the built-in themes, interactive assets, and export-html templates from disk at runtime. Staging now ships all three asset trees.
-- Fixed TypeScript extensions failing to load with `Cannot find module 'jiti'` in npm installs: the extension loader resolves `jiti`, `typebox`, and the `@earendil-works/*` API packages from the installed package, so the manifest now carries the full upstream dependency set (including `@silvia-odwyer/photon-node` for image pasting) with `@earendil-works/*` pinned to the upstream-published `^0.85.1` line.
-- Added `scripts/stage-hummin-cli.mjs` (`npm run stage:hummin-cli`) so the staging layout is reproducible instead of hand-assembled; staging self-checks the theme/export/bundle files before packing. 1.0.3 has been yanked.
-
-## [1.0.3] - 2026-09-17
+- **Canonical session context and extension boundaries** — Edit model context without rewriting history and add actionable lifecycle hooks. See [ContextEditEntry](docs/session-format.md#contexteditentry) and [extension events](docs/extensions.md#extension-events).
+- **Full-transcript context extensions** — Use `context_with_system` for per-request system-message transformations. See [`context_with_system`](docs/extensions.md#context_with_system).
+- **Per-model image input limits** — Configure cache-safe image resizing per model for attachments, `read`, and tool-result images. See [Image Input Limits](docs/models.md#image-input-limits).
 
 ### Breaking Changes
 
+- Removed the inherited `shouldStopAfterTurn` agent option. Use `finishTurn` and return `{ action: "end" }` instead. `finishTurn` runs before `turn_end` but applies the decision afterward, and it also receives error and aborted responses; migrate normal-response predicates by returning `undefined` for those hard exits. See the `@earendil-works/pi-agent-core` changelog for a complete before-and-after example.
+- Added `ContextEditEntry` to the exported `SessionEntry` union. TypeScript consumers with exhaustive entry switches must handle `context_edit`; use `replacement: null` for omission and a content replacement otherwise.
+- Made `SessionManager` canonical for `AgentSession` provider context. Assigning `session.agent.state.messages` no longer replaces future request history; restore with `SessionManager.inMemory(cwd, { id }, entries)`, navigate with `session.navigateTree()`, or append through `session.sessionManager` and call `session.refreshContext()`.
+- Expanded `TurnEndEvent` with required boundary fields and added `AgentBeforeSettleEvent` to the exported `ExtensionEvent` union. Consumers constructing events or exhaustively switching on `ExtensionEvent` must handle the new shapes. `ExtensionRunner.emit()` no longer accepts `turn_end`; host integrations dispatch actionable boundaries with `emitBoundary(baseEvent, buildContext)`.
+- Deferred runs requested from `agent_settled` handlers until all settled handlers finish. Handlers still observe `ctx.isIdle() === true`, but no longer see a reentrant `agent_start` during the same notification dispatch.
+
+### Added
+
+- Added append-only model-context edits. For example, `sessionManager.appendContextEdit(entryId, null)` omits one message from future provider context without changing raw history, usage, or UI history.
+- Added actionable `turn_end` and `agent_before_settle` extension boundaries. Return `{ entries: [...event.entries, draft], continue: true }` to persist structural entries in order and ensure one next provider request without changing steering or follow-up scheduling.
+- Added retain-none compaction input: `sessionManager.appendCompaction(summary, null, tokensBefore)` stores the compaction's own ID as its kept boundary.
+- Added the `context_with_system` extension event, which runs after `context` handlers on the full transcript including system messages and sends its result verbatim. See [`context_with_system`](docs/extensions.md#context_with_system).
+- Added per-model image resize profiles through `inputLimits.images.resize` in `models.json`, applied to file attachments, image reads, and tool-result images ([#9631](https://github.com/earendil-works/pi/issues/9631)).
+
+### Fixed
+
+- Fixed string context-edit replacements producing invalid assistant and tool-result message content instead of text blocks.
+- Fixed context-invisible boundary metadata and replacement edits causing newly appended or replaced input to be summarized before its first provider request.
+- Fixed edited-context accounting both discarding valid assistant usage captured after the latest context edit and reusing that usage after a later compaction made it stale.
+- Fixed selected error retries and final length/overflow recovery retaining abandoned model attempts in future provider context; post-run recovery omissions are now persisted without hiding raw transcript history or changing queue scheduling.
+- Fixed `context` handlers that filter or slice messages dropping the prompt and tool declarations, which after extension-driven compaction left requests without built-in tools or made Codex emit raw tool-call text. Handlers no longer see system messages; Pi restores the prompt and tool state after they run. See [`context`](docs/extensions.md#context) ([#9789](https://github.com/earendil-works/pi/issues/9789), [#9822](https://github.com/earendil-works/pi/issues/9822)).
+- Fixed `/bug` allowing uploads in offline mode while preserving local zip exports ([#9841](https://github.com/earendil-works/pi/pull/9841) by [@christianklotz](https://github.com/christianklotz)).
+- Fixed idle prompt-cache warming rebuilding expired caches when its timer or an extension decision is delayed.
+- Improved crash diagnostics with hints identifying loaded extensions that appear in the stack trace.
+- Fixed text files beginning with `GIF` being misclassified as images and omitted from `read` and CLI `@file` input ([#9755](https://github.com/earendil-works/pi/issues/9755)).
+- Fixed malformed prompt template frontmatter being silently ignored instead of reported as a resource warning ([#9830](https://github.com/earendil-works/pi/pull/9830) by [@christianklotz](https://github.com/christianklotz)).
+- Fixed inherited unknown OpenAI-compatible Chat Completions endpoints receiving strict tool schemas unless they explicitly advertise support ([#9816](https://github.com/earendil-works/pi/issues/9816)).
+
+## [0.86.1] - 2026-09-20
+
+### New Features
+
+- **Meta Muse provider** — Sign in with Meta using `/login meta` or use `META_API_KEY` to access Muse Spark models. See [Meta (Muse subscription)](docs/providers.md#meta-muse-subscription).
+
+### Added
+
+- Added Meta (Muse subscription) login via `/login meta` with automatic Model API key refresh, plus `META_API_KEY` support ([#9096](https://github.com/earendil-works/pi/pull/9096) by [@xl0](https://github.com/xl0)).
+
+### Changed
+
+- Enabled Node's persistent compile cache before loading the bundled CLI runtime, reducing repeat launch time.
+
+### Fixed
+
+- Fixed `/bug` descriptions dropping line breaks from pasted diagnostics.
+- Fixed `/bug` hints appearing for user cancellations and retryable provider failures such as service unavailability.
+- Fixed clipboard copy failing in containers and WSL without WSLg by restoring the OSC 52 fallback when no display is available, and added a verified Windows clipboard backend for WSL ([#9688](https://github.com/earendil-works/pi/issues/9688)).
+- Fixed inherited z.ai `Prompt too long` errors not being recognized as context overflow ([#9805](https://github.com/earendil-works/pi/issues/9805)).
+- Fixed inherited Cerebras models advertising unsupported strict tool schemas, which caused HTTP 400 errors when strict and non-strict tools were mixed ([#9804](https://github.com/earendil-works/pi/pull/9804) by [@EdenGottlieb](https://github.com/EdenGottlieb)).
+
+## [0.86.0] - 2026-09-19
+
+### New Features
+
+- **Prompt cache warming** — Keep valuable prompt caches alive during long tool runs and optionally while idle using cost-aware refreshes. See [Cache Warming](docs/settings.md#cache-warming).
+- **Bug reporting** — Report problems with `/bug` using redacted diagnostics, optional transcripts, or exported ZIP archives. See [Reporting Bugs](docs/sessions.md#reporting-bugs).
+- **Transcript-aware prompt and tool updates** — Preserve instruction and tool changes across resume and branch navigation while retaining cached prefixes. See [`before_agent_start`](docs/extensions.md#before_agent_start).
+- **Offline Radius model catalog** — Select Radius models immediately, with cached and live catalogs overlaid when available. See [Radius](docs/providers.md#radius).
+- **Per-model compaction budgets** — Configure reserved and recent-token budgets by model. See [Per-model overrides](docs/compaction.md#per-model-overrides).
+
+### Breaking Changes
+
+- Changed inherited pi-ai provider stream inputs from `Context` to normalized `TranscriptContext` values. Custom providers must read system prompts and tool declarations from `context.messages` with `getCurrentSystemPrompt()` and `getCurrentTools()`. See [Custom Streaming API](docs/custom-provider.md#custom-streaming-api).
+- Restricted inherited `ToolCall.arguments` and `ToolResultMessage.details` to JSON-compatible values, changed `ToolResultMessage` into a conditional type, and made `JsonValue` arrays readonly.
 - `user_bash` now fails closed: errors or invalid defined results abort the command without invoking later handlers or executing locally. Return `undefined` to continue propagation; otherwise return `{ operations }` or `{ result }` ([#9068](https://github.com/earendil-works/pi/issues/9068)).
 
 ### Added
 
+- Added transcript-backed mid-conversation system prompt and tool changes so instruction and tool updates survive resume and branch navigation while preserving cached prefixes on supported models. See [`before_agent_start`](docs/extensions.md#before_agent_start) and [Entry Types](docs/session-format.md#entry-types) ([#9548](https://github.com/earendil-works/pi/pull/9548)).
+- Added inherited native deferred tool loading for Fireworks Messages models. Use `ToolSearch` or `tool_search` as the loader name for prompt-prefix deferral ([#9323](https://github.com/earendil-works/pi/issues/9323)).
+- Added click toggling for branch summaries, compaction summaries, and skill invocation entries.
+- Added the public Radius model catalog for immediate and offline model selection, with cached and live gateway catalogs overlaid when available.
+- Added `ctx.modelRegistry.stream()` and `streamSimple()` for extension model calls through configured providers with resolved authentication ([#8964](https://github.com/earendil-works/pi/issues/8964)).
+- Added per-model `reserveTokens` and `keepRecentTokens` settings through `compaction.modelOverrides`, with ordinary compaction settings as fallback ([#8133](https://github.com/earendil-works/pi-mono/issues/8133)).
 - Added `compat.allowedFallbackModels` configuration for overriding or disabling Anthropic server-side fallback models ([#9294](https://github.com/earendil-works/pi/issues/9294)).
 - Added an unsubscribe function from `pi.on()` so extensions can drop event handlers. Handlers added or removed during a dispatch apply to later dispatches, not the current one ([#8967](https://github.com/earendil-works/pi/issues/8967)).
+- Exported extension hook event and result types that were previously omitted from the package entry points ([#9642](https://github.com/earendil-works/pi/pull/9642)).
+- Added `/bug [description]` to report a bug to the Pi developers. The report bundles environment, model, provider, extension, and settings metadata (secrets redacted), assistant message diagnostics from the session, optionally the session transcript, or a model-written summary of what went wrong instead. It is uploaded to Radius (no login required; attributed when logged in) or exported as a zip archive, and the report id is recorded in the session as a `pi.bug-report` entry. Crashes are recorded in `~/.pi/agent/crashes.json`, announced once on the next start, and attached to the next report; unexplained errors and exhausted retries point at `/bug` once per session.
+- Added cost-aware prompt-cache warming during long tool runs and optionally while idle, with configurable modes, model cache-lifetime metadata, `/session` diagnostics, transcript notices, and the `cache_warming_decision` extension event. See [Cache Warming](docs/settings.md#cache-warming) ([#9668](https://github.com/earendil-works/pi/pull/9668)).
 
 ### Changed
 
-- Exact session-ID session lookups skip transcript scans ([#9601](https://github.com/earendil-works/pi/issues/9601)).
+- Enabled Node's persistent compile cache before loading the bundled CLI runtime, reducing repeat launch time.
+- Made `--resume` session results appear progressively, using file modification times to prioritize all-folder loading and cancelling outstanding transcript reads after selection.
+- Reduced `--continue` startup time by checking candidate session headers in modification-time order and stopping after the newest matching session.
+- Replaced the external native clipboard dependency with bundled asynchronous macOS, Windows, and X11 helpers while preserving platform command and OSC 52 fallbacks ([#9163](https://github.com/earendil-works/pi/pull/9163)).
+- Reduced inherited fuzzy search latency for long texts by using native substring search instead of scanning each character in JavaScript ([#9267](https://github.com/earendil-works/pi/issues/9267)).
+- Moved compaction, branch summarization, and retry spinners into the editor border alongside the working indicator. Custom editors use the same embedding opt-in for all status spinners.
+- Enabled strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `powershell`, `edit`, and `write` tools, without requiring `PI_EXPERIMENTAL`. Extensions can re-register tool definitions with `constrainedSampling: false`.
 - Formatted Bash and PowerShell tool durations of at least one minute as minutes and seconds, with hours when needed ([#9628](https://github.com/earendil-works/pi/issues/9628)).
+- Deferred the extension compiler and bundled virtual modules until a filesystem extension is loaded, reducing the baseline SDK import cost ([#9540](https://github.com/earendil-works/pi/issues/9540)).
 
 ### Fixed
 
+- Fixed GitHub Copilot GPT models, including GPT-6 Astra, using the Chat Completions adapter instead of the required Responses adapter ([#9253](https://github.com/earendil-works/pi/pull/9253) by [@petrroll](https://github.com/petrroll)).
+- Fixed inherited DeepSeek V4.1 thinking levels on OpenRouter and OpenCode Go preserving provider effort metadata ([#9485](https://github.com/earendil-works/pi/issues/9485)).
+- Fixed inherited bodyless HTTP 400/413 errors from non-Cerebras providers being misclassified as context overflow ([#9482](https://github.com/earendil-works/pi/issues/9482)).
+- Fixed inherited Vercel AI Gateway replaying unsigned thinking as assistant text ([#9676](https://github.com/earendil-works/pi/issues/9676)).
+- Fixed inherited Google Generative AI and Vertex AI using unsupported thinking levels when reasoning is omitted or when model capabilities differ within a Gemini family ([#9455](https://github.com/earendil-works/pi/issues/9455)).
+- Fixed inherited Anthropic-compatible relays breaking signed thinking replay when they report a different response model, while preserving fallback pricing ([#9188](https://github.com/earendil-works/pi/issues/9188)).
+- Fixed inherited Amazon Bedrock one-hour cache writes being priced at the five-minute rate ([#9457](https://github.com/earendil-works/pi/issues/9457)).
+- Fixed inherited quadratic CPU usage when draining buffered `EventStream` events ([#9055](https://github.com/earendil-works/pi/issues/9055)).
+- Fixed inherited Mistral Medium reasoning requests to use `reasoning_effort` for all reasoning-capable `mistral-medium-*` model IDs instead of the unsupported `prompt_mode` ([#8700](https://github.com/earendil-works/pi/issues/8700)).
+- Fixed inherited OpenCode and OpenCode Go requests to send `x-opencode-session` from `sessionId` across all supported API adapters ([#9326](https://github.com/earendil-works/pi/issues/9326)).
+- Fixed inherited OpenAI Codex requests to send the model's Off reasoning effort instead of omitting it, while respecting unsupported Off mappings ([#9191](https://github.com/earendil-works/pi/issues/9191)).
+- Fixed inherited Fireworks unsigned thinking replay and reasoning effort selection using catalog metadata, with verified DeepSeek V4 and Qwen3.8 fallbacks and removal of redundant GLM 5.2 and Kimi K3 effort aliases ([#9323](https://github.com/earendil-works/pi/issues/9323)).
+- Fixed inherited OpenRouter requests to send `x-session-id` from `sessionId` for Chat Completions and Anthropic Messages models when prompt caching is enabled ([#9102](https://github.com/earendil-works/pi/issues/9102)).
+- Fixed the inherited DeepSeek catalog to advertise `deepseek-flash` for DeepSeek V4.1 Flash instead of retired Flash aliases, and refreshed DeepSeek pricing metadata ([#9423](https://github.com/earendil-works/pi/issues/9423)).
+- Fixed inherited Mistral-hosted GLM-5.2 reasoning requests to use `reasoning_effort` instead of the ignored `prompt_mode` ([#9375](https://github.com/earendil-works/pi/issues/9375)).
+- Fixed inherited OpenAI-compatible Responses errors to identify the actual provider instead of always labeling them as OpenAI errors ([#9298](https://github.com/earendil-works/pi/issues/9298)).
+- Fixed inherited Baseten requests to send session-affinity headers from `sessionId` for automatic prompt-cache routing ([#9629](https://github.com/earendil-works/pi/issues/9629)).
+- Fixed inherited retry classification for Cloudflare 520 responses ([#9627](https://github.com/earendil-works/pi/issues/9627)).
+- Fixed inherited retry classification for transient Azure peak-load capacity errors ([#9669](https://github.com/earendil-works/pi/issues/9669)).
+- Fixed session tree navigation racing with active compaction and replacing its progress UI ([#9179](https://github.com/earendil-works/pi/pull/9179) by [@acmerfight](https://github.com/acmerfight)).
+- Fixed exact session ID lookup scanning complete transcript bodies instead of reading session headers ([#9601](https://github.com/earendil-works/pi/pull/9601) by [@metaist](https://github.com/metaist)).
+- Fixed repeated Anthropic thinking-drop notices being shown for the same dropped blocks, and shortened notices while retaining details in the session ([#9391](https://github.com/earendil-works/pi/issues/9391)).
 - Fixed mid-run threshold compaction silently skipping oversized trailing tool results ([#9740](https://github.com/earendil-works/pi/issues/9740)).
 - Fixed signal-terminated local shell commands being reported as successful with partial output ([#9577](https://github.com/earendil-works/pi/issues/9577) by [@BrendanJMurphy](https://github.com/BrendanJMurphy)).
 - Fixed local clipboard failures reporting success when the terminal ignored the fallback OSC 52 write, and added platform-specific setup guidance when no clipboard backend works ([#9618](https://github.com/earendil-works/pi/issues/9618)).
-- Fixed `before_agent_start` handlers returning `systemPrompt` (and `forceSystemPrompt`) on models with mid-conversation system messages: the forced prompt is now sent as the provider's leading system prompt instead of being appended as a section patch after the original prompt.
-
-## [1.0.0] - 2026-09-16
-
-First hummin release. Hummin is a thin-overlay fork of pi: zero deletions from upstream, `@earendil-works/*` internal package names preserved for cheap merges, plus hummin-specific capabilities layered on top.
-
-### Added
-
-- Fleet management for local inference servers: settings-driven `fleet.servers` (ordered priority, per-server kind/target, optional model catalogs), launchd/docker control, offline-aware model resolution, and native zai/GLM provider support with correct thinking-format handling.
-- Persistent memory: session distillation into reusable lessons, plus a vault mode that folds lessons into a linked entity graph (projects, concepts, decisions, gotchas) with `[[wikilinks]]`, an Obsidian-compatible `graph.canvas`, and a `vault` search tool with relevance-floored session recall.
-- Background work: bounded child sessions (`task`), event-driven output `monitor`s with match/batch delivery, and a `/background` panel plus `bg` footer status for at-a-glance visibility.
-- Editor upgrades: bash-mode syntax highlighting, `ctrl+r` incremental history search, ghost-text autocomplete, bracket/quote auto-pairing, and keyboard navigation between conversation markers.
-- Transcript UI: scrollbar index markers for user/system messages with click-to-jump and hover highlight, git working-tree status in the footer (dirty marker, staged/modified/untracked, ahead/behind), cumulative session diff stats, and per-tool `+N -M` headers.
-- Checkpoints: `/rewind` file tracking with silent handling of outside-project writes.
-- Performance: `--help` resolves from cached extension flags (~1.7s -> ~0.6s), cached footer aggregation, throttled streaming tool renders, and a self-contained CLI bundle.
-
-### Changed
-
-- User messages use a neutral grey background in the hummin-dark theme.
-- `write` tool results carry diff line counts instead of full patches; `edit` results drop the redundant unified patch.
-
-### Fixed
-
-- Checkpoint warnings no longer fire for legitimate outside-project writes.
-- Git status in the footer refreshes after tool executions and branch changes.
-
-## [1.0.1] - 2026-09-17
-
-### Fixed
-
-- Published `hummin-cli` package now ships hummin branding via `piConfig`: `--help` titles and `--version` report hummin/1.0.1 instead of pi/1.0.0.
-
-## [1.0.2] - 2026-09-17
-
-### Added
-
-- Compact prompt mode (`compactPrompt` setting, "Compact prompt" in /settings): condenses tool descriptions and parameter schemas to first-paragraph prose and shrinks the hummin docs guidance block, cutting ~0.8K tokens of fixed prompt overhead for the core tool set alone (extension tools compact through the same path). Designed for slow-prefill local models; off by default.
-- Content-addressed transform cache for runtime-TS extensions (`<agentDir>/cache/jiti/`): jiti/babel transforms are cached by SHA-256 over toolchain version, transform options, and source bytes, with sidecar validation, atomic writes, a background GC sweep, and `HUMMIN_JITI_CACHE=0` to disable. Warm launches skip re-transforming unchanged extensions entirely (~60% of transform work).
-- Uniform collapsed transcript rows for every tool: one line per operation with a Title Case label column (`Read`, `Edit`, `Bash`, `Plan`, `Task Status`, ...), the key detail (path, command, pattern), and a dim status suffix (duration, `+N -M` stats, `(failed)`). Errors auto-expand once; `edit`/`write`/`grep`/`find`/`ls` previews and fallback tool output are now expanded-only; running bash commands show a single live output tail line.
-- Startup "What's New" block renders as a collapsed one-line section (title, version, hint) that expands on click and collapses again, instead of dumping the full changelog markdown. The `collapseChangelog` condensed line and `/changelog` are unchanged.
-- Added `ctx.modelRegistry.stream()` and `streamSimple()` for extension model calls through configured providers with resolved authentication ([#8964](https://github.com/earendil-works/pi/issues/8964)).
-- Added per-model `reserveTokens` and `keepRecentTokens` settings through `compaction.modelOverrides`, with ordinary compaction settings as fallback ([#8133](https://github.com/earendil-works/pi-mono/issues/8133)).
-
-### Changed
-
-- Two-row footer: row 1 shows `dir | repo | branch` on the left and `(provider) + model` right-aligned; row 2 shows `diff | git | token/cost stats` (queue count first when messages are pending) with the context meter pinned right. Adds `FooterDataProvider.getGitRepoName()` (repo root basename, verbatim); the left block truncates first on narrow terminals.
-- The guardrails tool-call budget (cumulative warn/halt at 100/300 calls) is disabled by default; opt back in with `HUMMIN_BUDGET_TOOL_CALL_HALT_AT` (and optionally `HUMMIN_BUDGET_TOOL_CALL_WARN_AT`). Loop and circuit breakers are unchanged.
-- Memory: `/vault-fold` now runs through the background fold worker with the shared fold lock (previously inline `spawnSync`), returning immediately with a status message; fold results land in `<vault>/fold.log`.
-- Memory recall scoring adds an exact-phrase bonus for contiguous multi-word queries and a mild recency bias (capped so it reorders ties without beating term overlap); tokenizer floor documented as `MIN_TOKEN_LENGTH = 3`.
-- Scrollbar turn index: assistant messages anchor a dim `turnEnd` marker to their last row, user prompts keep an accent marker, and jumps align turn ends to the viewport bottom (click and `ctrl+up`/`ctrl+down`).
-- Moved compaction, branch summarization, and retry spinners into the editor border alongside the working indicator. Custom editors use the same embedding opt-in for all status spinners.
-- Enabled strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `powershell`, `edit`, and `write` tools, without requiring `PI_EXPERIMENTAL`. Extensions can re-register tool definitions with `constrainedSampling: false`.
-
-### Fixed
-
-- Fixed a second jiti instance being constructed during extension loading; the transform-cache miss path reuses jiti's own bundled babel transform, preserving the single-instance invariant from the Node SEA virtual-modules fix (#8237).
 - Capped agent-level retry backoff at `retry.maxAgentDelayMs` (60s by default) so long retry runs stay responsive during prolonged transient outages ([#8826](https://github.com/earendil-works/pi/issues/8826)).
 - Fixed direct RPC `steer` and `follow_up` commands bypassing extension `input` handlers ([#8718](https://github.com/earendil-works/pi/issues/8718)).
 - Fixed premature missing-model errors after login by waiting for catalog discovery. Radius now defaults to `balanced`, falling back to the first available Radius model when needed.
 - Fixed fullscreen mode reserving a blank row for custom footers that render zero rows ([#8919](https://github.com/earendil-works/pi/issues/8919)).
 - Fixed extension tools without parameter schemas to be rejected during registration instead of breaking provider requests ([#9300](https://github.com/earendil-works/pi/issues/9300)).
+- Fixed `before_agent_start` handlers returning `systemPrompt` (and `forceSystemPrompt`) on models with mid-conversation system messages: the forced prompt is now sent as the provider's leading system prompt instead of being appended as a section patch after the original prompt.
 - Fixed loaded llama.cpp models with `enable_thinking` chat templates ignoring Pi's thinking level ([#9528](https://github.com/earendil-works/pi/issues/9528)).
+- Fixed cancellation races that could start automatic compaction, leave stale retry state, or miss cancellation while waiting for summarization authentication ([#9340](https://github.com/earendil-works/pi/issues/9340), [#9777](https://github.com/earendil-works/pi/issues/9777)).
+- Fixed asynchronous Kitty image conversion replacing newer partial tool output images ([#8743](https://github.com/earendil-works/pi/pull/8743) by [@wutongyuonce](https://github.com/wutongyuonce)).
+- Fixed inherited skill slash-command autocomplete ranking the `skill:` prefix instead of the bare skill name ([#9120](https://github.com/earendil-works/pi/pull/9120) by [@yearth](https://github.com/yearth)).
+- Fixed inherited file autocomplete boundaries and path quoting around CJK punctuation ([#9746](https://github.com/earendil-works/pi/pull/9746) by [@haoqixu](https://github.com/haoqixu)).
+- Fixed inherited LaTeX legacy font switches falling back to raw source, centered `cases` layouts around surrounding equations, and vertically laid out unsupported and nested display scripts ([#8827](https://github.com/earendil-works/pi/issues/8827), [#9564](https://github.com/earendil-works/pi/issues/9564), [#7929](https://github.com/earendil-works/pi/issues/7929)).
+- Fixed inherited fullscreen Kitty images being erased by later row clears in WezTerm ([#9169](https://github.com/earendil-works/pi/issues/9169)).
+
+### Removed
+
+- Removed unavailable inherited GPT-5.4 and GPT-5.4 mini models from OpenAI Codex selection ([#9394](https://github.com/earendil-works/pi/issues/9394)).
 
 ## [0.85.1] - 2026-09-05
 
@@ -1255,6 +1009,7 @@ First hummin release. Hummin is a thin-overlay fork of pi: zero deletions from u
 - Added inherited OpenAI-compatible `vllmPriority` and `supportsMaxOutputTokens` model settings for vLLM scheduler priority and OpenAI Responses output-token limits ([#9004](https://github.com/earendil-works/pi/pull/9004) by [@AppleDannyClegg](https://github.com/AppleDannyClegg), [#8941](https://github.com/earendil-works/pi/pull/8941) by [@scturtle](https://github.com/scturtle)).
 - Added inherited LaTeX rendering for relational algebra join symbols ([#9050](https://github.com/earendil-works/pi/pull/9050) by [@haoqixu](https://github.com/haoqixu)).
 - Added a clickable "Jump to latest message" label with the `tui.altScreen.bottom` shortcut to the fullscreen transcript while it is scrolled up ([#9080](https://github.com/earendil-works/pi/pull/9080) by [@rwachtler](https://github.com/rwachtler)).
+- Added Meta (Muse subscription) login via `/login meta` with automatic Model API key refresh, plus `META_API_KEY` support.
 
 ### Changed
 
@@ -3347,7 +3102,6 @@ How to disable it:
 - Updated `antigravity-image-gen.ts` example extension to use User-Agent version `1.21.9` ([#2901](https://github.com/badlogic/pi-mono/pull/2901) by [@aadishv](https://github.com/aadishv))
 - Fixed `--list-models` silently swallowing `models.json` load errors; errors are now printed to stderr ([#3072](https://github.com/badlogic/pi-mono/issues/3072))
 - Fixed custom models for built-in providers (e.g. `openrouter`) being silently dropped from `--list-models` by inheriting `api`/`baseUrl` from built-in model definitions and no longer requiring `apiKey` for providers with existing auth ([#2921](https://github.com/badlogic/pi-mono/issues/2921) and [#3072](https://github.com/badlogic/pi-mono/issues/3072))
-
 ### Added
 
 - Added full `openRouterRouting` field support in `models.json`, including fallbacks, parameter requirements, data collection, ZDR, ignore lists, quantizations, provider sorting, max price, and preferred throughput and latency constraints ([#2904](https://github.com/badlogic/pi-mono/pull/2904) by [@zmberber](https://github.com/zmberber))
