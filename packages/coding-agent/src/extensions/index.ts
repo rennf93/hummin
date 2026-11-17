@@ -2,6 +2,7 @@ import type { InlineExtension } from "../core/extensions/types.ts";
 import codemodeExtension from "./codemode/index.ts";
 import llamaExtension from "./llama/index.ts";
 import mcpExtension from "./mcp/index.ts";
+import sessionHistoryExtension from "./session-history/index.ts";
 import toolSearchExtension from "./tool-search/index.ts";
 import warpExtension from "./warp/index.ts";
 
@@ -12,5 +13,6 @@ export const builtInExtensions: InlineExtension[] = [
 	{ name: "codemode", factory: codemodeExtension, replaceable: true, builtin: true },
 	{ name: "tool-search", factory: toolSearchExtension, replaceable: true, builtin: true },
 	{ name: "mcp", factory: mcpExtension, replaceable: true, builtin: true },
+	{ name: "session-history", factory: sessionHistoryExtension, builtin: true },
 	{ name: "warp", factory: warpExtension, builtin: true },
 ];
