@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### New Features
+
+- **/carry, a linked clear**: start an empty session that keeps a reference to the one it left behind. The new session records the previous transcript as its `parentSession` and a hidden pointer entry names the file, its size, and where it ended; the bundled `sessions` tool (armed automatically after `/carry`, `/clear`, `/fork`, or `/resume`) searches and reads past transcripts with capped output. No summarization call, nothing carried over.
+
 ## [1.12.0] - 2026-11-13
 
 ### New Features
