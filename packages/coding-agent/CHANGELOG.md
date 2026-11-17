@@ -20,6 +20,7 @@
 - **Usage-limit auto-wait**: when a provider fails a turn with a textual usage-limit reset time (OpenRouter, Z.AI coding plans), hummin waits until the reset (plus a 30-second buffer) and continues the same session instead of failing the turn. Controlled by `usageLimitWait.enabled` (default on) and capped by `usageLimitWait.maxWaitMinutes` (default 360 minutes); the run's abort cancels the wait, and waits do not consume retry limits.
 - **Default shell command timeout**: `bash` and `powershell` commands the model runs without an explicit timeout are killed after `shellDefaultTimeout` (120 seconds; `0` or `"disabled"` turns it off). The per-call `timeout` parameter still wins. PowerShell previously had no timeout path at all.
 - Per-turn TODO reminder: when a session has a `todo` list with open items that has not been updated for 5+ turns, a short reminder is injected as hidden context (not shown in the transcript) listing the in-progress and first pending items, nudging the model to update the list via the `todo` tool or mark items done. Sessions without a todo list pay nothing.
+- The default model for the `openai`, `azure`, and `openai-codex` providers is now GPT-6.2 Sol (`gpt-6.2-sol`) instead of GPT-6.1 Sol, at the same price
 
 ### Fixed
 
