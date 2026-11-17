@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### New Features
+
+- **Entire companion (optional)**: when a project is Entire-enabled and the `entire` CLI is on PATH, hummin forwards session lifecycle to Entire so checkpoints, transcripts, brain recall, and resume work for hummin sessions; brain brief/recall arrives as hidden context, and a new `/entire` command prints the project's Entire facts. Projects without Entire see nothing. hummin never enables Entire, writes settings or hooks, pushes, or installs daemons. See [Entire](docs/reference/entire.md).
+
 ## [1.12.0] - 2026-11-13
 
 ### New Features
