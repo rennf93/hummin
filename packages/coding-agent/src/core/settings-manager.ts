@@ -1024,6 +1024,11 @@ export class SettingsManager {
 		return this.settings.compactPrompt ?? false;
 	}
 
+	/** Default timeout in seconds for bash and PowerShell commands without an explicit timeout. Default 120; 0 or "disabled" disables. */
+	getShellDefaultTimeout(): number | "disabled" {
+		return this.settings.shellDefaultTimeout ?? SETTINGS_DEFAULTS.shellDefaultTimeout;
+	}
+
 	setCompactPrompt(enabled: boolean): void {
 		this.globalSettings.compactPrompt = enabled;
 		this.markModified("compactPrompt");
@@ -1230,6 +1235,10 @@ export class SettingsManager {
 
 	getRetryEnabled(): boolean {
 		return this.settings.retry?.enabled ?? SETTINGS_DEFAULTS.retry.enabled;
+	}
+
+	getPersistMaskingEnabled(): boolean {
+		return this.settings.persistMasking?.enabled ?? SETTINGS_DEFAULTS.persistMasking.enabled;
 	}
 
 	setRetryEnabled(enabled: boolean): void {
@@ -1857,6 +1866,24 @@ export class SettingsManager {
 		this.globalSettings.enableSkillCommands = enabled;
 		this.markModified("enableSkillCommands");
 		this.save();
+	}
+
+	/** Maximum skills listed in the system prompt; 0 (the default) lists every skill. */
+	getSkillsMaxPromptEntries(): number {
+		const value = this.settings.skillsMaxPromptEntries;
+		if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+			return SETTINGS_DEFAULTS.skillsMaxPromptEntries;
+		}
+		return Math.floor(value);
+	}
+
+	/** Maximum context-file size in bytes; 0 (the default) loads files of any size. */
+	getContextFileMaxBytes(): number {
+		const value = this.settings.contextFileMaxBytes;
+		if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+			return SETTINGS_DEFAULTS.contextFileMaxBytes;
+		}
+		return Math.floor(value);
 	}
 
 	getThinkingBudgets(): ThinkingBudgetsSettings | undefined {

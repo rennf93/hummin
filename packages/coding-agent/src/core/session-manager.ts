@@ -38,6 +38,7 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.ts";
+import { maskSessionEntry } from "./persist-masking.ts";
 export const CURRENT_SESSION_VERSION = 3;
 
 export interface SessionHeader {
@@ -1004,6 +1005,8 @@ export class SessionManager {
 	private labelsById: Map<string, string> = new Map();
 	private labelTimestampsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
+	/** Overrides persist-time secret masking; unset means enabled. */
+	private persistMaskingEnabled: (() => boolean) | undefined;
 
 	private constructor(
 		cwd: string,
@@ -1137,10 +1140,11 @@ export class SessionManager {
 
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
+		const mask = this.isPersistMaskingEnabled();
 		const fd = openSync(this.sessionFile, "w");
 		try {
 			for (const entry of this.fileEntries) {
-				writeFileSync(fd, `${JSON.stringify(entry)}\n`);
+				writeFileSync(fd, `${this._serializeEntryForDisk(entry, mask)}\n`);
 			}
 		} finally {
 			closeSync(fd);
@@ -1149,6 +1153,25 @@ export class SessionManager {
 
 	isPersisted(): boolean {
 		return this.persist;
+	}
+
+	/**
+	 * Override whether entries are masked when written to disk. The agent-session
+	 * wiring installs a callback consulting `persistMasking.enabled`; without a
+	 * callback, masking defaults to enabled. The in-memory tree always stays raw.
+	 */
+	setPersistMaskingEnabled(isEnabled: () => boolean): void {
+		this.persistMaskingEnabled = isEnabled;
+	}
+
+	private isPersistMaskingEnabled(): boolean {
+		return this.persistMaskingEnabled?.() ?? true;
+	}
+
+	/** Serialize an entry for disk, masking secrets when enabled. The session header never carries secrets. */
+	private _serializeEntryForDisk(entry: FileEntry, mask: boolean): string {
+		if (!mask || entry.type === "session") return JSON.stringify(entry);
+		return JSON.stringify(maskSessionEntry(entry));
 	}
 
 	/** Whether all in-memory entries are durably written to the session file. */
@@ -1179,6 +1202,7 @@ export class SessionManager {
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 
+		const mask = this.isPersistMaskingEnabled();
 		if (!this.flushed) {
 			// "w", not "wx": newSession() now writes the header at create time,
 			// so the file already exists. The rewrite is safe - while flushed is
@@ -1187,14 +1211,14 @@ export class SessionManager {
 			const fd = openSync(this.sessionFile, "w");
 			try {
 				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(e)}\n`);
+					writeFileSync(fd, `${this._serializeEntryForDisk(e, mask)}\n`);
 				}
 			} finally {
 				closeSync(fd);
 			}
 			this.flushed = true;
 		} else {
-			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+			appendFileSync(this.sessionFile, `${this._serializeEntryForDisk(entry, mask)}\n`);
 		}
 	}
 

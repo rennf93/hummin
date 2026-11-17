@@ -28,6 +28,9 @@ export const SETTINGS_DEFAULTS = {
 			maxRetryDelayMs: 60000,
 		},
 	},
+	persistMasking: {
+		enabled: true,
+	},
 	hideThinkingBlock: false,
 	showCacheMissNotices: false,
 	quietStartup: false,
@@ -36,6 +39,8 @@ export const SETTINGS_DEFAULTS = {
 	enableInstallTelemetry: true,
 	enableAnalytics: false,
 	enableSkillCommands: true,
+	skillsMaxPromptEntries: 0,
+	contextFileMaxBytes: 0,
 	terminal: {
 		showImages: true,
 		imageWidthCells: 60,
@@ -62,6 +67,7 @@ export const SETTINGS_DEFAULTS = {
 		mode: "on",
 		inlineBudget: 3000,
 	},
+	shellDefaultTimeout: 120,
 	cacheWarming: "idle",
 	tuiMode: "fullscreen",
 	fullscreenExitOutput: "transcript",

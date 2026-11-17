@@ -527,6 +527,9 @@ export class AgentSession {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
+		// Persist-time secret masking consults persistMasking.enabled; the session
+		// manager keeps raw entries in memory and only masks the bytes on disk.
+		config.sessionManager.setPersistMaskingEnabled(() => this.settingsManager.getPersistMaskingEnabled());
 		this._scopedModels = config.scopedModels ?? [];
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
@@ -1863,6 +1866,7 @@ export class AgentSession {
 		this._baseSystemPromptOptions = normalizeBuildSystemPromptOptions({
 			cwd: this._cwd,
 			skills: loadedSkills,
+			skillsMaxPromptEntries: this.settingsManager.getSkillsMaxPromptEntries(),
 			contextFiles: loadedContextFiles,
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt,
@@ -3909,6 +3913,7 @@ export class AgentSession {
 	}): void {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
+		const shellDefaultTimeout = this.settingsManager.getShellDefaultTimeout();
 		const shellPath = this.settingsManager.getShellPath();
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
@@ -3919,7 +3924,12 @@ export class AgentSession {
 				)
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					bash: {
+						commandPrefix: shellCommandPrefix,
+						shellPath,
+						defaultTimeout: shellDefaultTimeout,
+					},
+					powershell: { defaultTimeout: shellDefaultTimeout },
 				});
 
 		this._baseToolDefinitions = new Map(
