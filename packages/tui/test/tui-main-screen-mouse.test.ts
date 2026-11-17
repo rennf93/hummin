@@ -13,7 +13,8 @@ class MouseRecorder implements Component {
 	}
 
 	render(): string[] {
-		return this.lines;
+		// Container output is cached by identity; copying keeps in-place shifts visible.
+		return [...this.lines];
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult {
