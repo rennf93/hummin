@@ -53,30 +53,33 @@ export class Centered implements Component {
 		this.child.invalidate?.();
 	}
 
-	render(width: number): string[] {
+	render(width: number): readonly string[] {
 		const inner = Math.max(1, Math.min(width, this.maxWidth?.(width) ?? width));
 		if (this.lastWidth !== inner) {
 			this.lastWidth = inner;
 			this.maxSeen = 0;
 		}
-		const lines = this.child.render(inner);
-		this.maxSeen = Math.max(this.maxSeen, lines.length);
+		const rendered = this.child.render(inner);
+		this.maxSeen = Math.max(this.maxSeen, rendered.length);
 		// Some children (e.g. text inputs) pad lines with trailing spaces out to
 		// the full width; ignore that when measuring the content block.
 		let maxContent = 0;
-		for (const line of lines) maxContent = Math.max(maxContent, visibleWidth(line.replace(/\s+$/, "")));
+		for (const line of rendered) maxContent = Math.max(maxContent, visibleWidth(line.replace(/\s+$/, "")));
 		this.lastPad = Math.floor(Math.max(0, width - maxContent) / 2);
+		// Vertical floor: pad just before the trailing frame rule(s) so the frame
+		// stays at a fixed position while the gap opens above it.
+		const floor = Math.max(this.minHeight?.(inner) ?? 0, this.maxSeen);
+		const padCount = Math.max(0, floor - rendered.length);
+		if (this.lastPad === 0 && padCount === 0) return rendered;
+		// Child output is cached and shared; copy before mutating.
+		const lines = [...rendered];
 		if (this.lastPad !== 0) {
 			const pad = " ".repeat(this.lastPad);
 			for (let i = 0; i < lines.length; i++) lines[i] = `${pad}${lines[i]}`;
 		}
-		// Vertical floor: pad just before the trailing frame rule(s) so the frame
-		// stays at a fixed position while the gap opens above it.
 		const isRule = lines.map((line) => Centered.isRuleLine(line));
 		let trailingRules = 0;
 		for (let i = lines.length - 1; i >= 0 && isRule[i]; i--) trailingRules++;
-		const floor = Math.max(this.minHeight?.(inner) ?? 0, this.maxSeen);
-		const padCount = Math.max(0, floor - lines.length);
 		if (padCount > 0) {
 			const blanks: string[] = [];
 			for (let i = 0; i < padCount; i++) blanks.push("");

@@ -230,7 +230,7 @@ class NoticeComponent implements Component {
 		this.body = bodyText ? new Text(bodyText, 0, 0) : undefined;
 	}
 
-	render(width: number): string[] {
+	render(width: number): readonly string[] {
 		if (this.expanded && this.body) return this.body.render(width);
 		return [this.collapsedLine(width)];
 	}
@@ -627,7 +627,7 @@ export default function humminSubagents(pi: ExtensionAPI): void {
 			const expandedText = new Text(`${label}  ${args?.prompt ?? ""}`, 0, 0);
 			const expanded = context.expanded;
 			return {
-				render(width: number): string[] {
+				render(width: number): readonly string[] {
 					if (expanded) return expandedText.render(width);
 					return [buildCollapsedRow(width, label, detail, suffix)];
 				},
