@@ -663,6 +663,20 @@
         }
       }
     },
+    "shellDefaultTimeout": {
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "const": "disabled"
+        }
+      ],
+      "description": "Default timeout in seconds for bash and PowerShell commands the model runs without an explicit timeout; 0 or \"disabled\" disables the default. Does not apply to sandboxed bash.",
+      "default": 120
+    },
     "sessionDir": {
       "type": "string",
       "description": "Custom session storage directory, in the same format as the --session-dir CLI flag."

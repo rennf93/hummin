@@ -62,6 +62,7 @@ export const SETTINGS_DEFAULTS = {
 		mode: "on",
 		inlineBudget: 3000,
 	},
+	shellDefaultTimeout: 120,
 	cacheWarming: "idle",
 	tuiMode: "fullscreen",
 	fullscreenExitOutput: "transcript",

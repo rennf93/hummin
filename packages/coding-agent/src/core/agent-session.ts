@@ -3909,6 +3909,7 @@ export class AgentSession {
 	}): void {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
+		const shellDefaultTimeout = this.settingsManager.getShellDefaultTimeout();
 		const shellPath = this.settingsManager.getShellPath();
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
@@ -3919,7 +3920,12 @@ export class AgentSession {
 				)
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					bash: {
+						commandPrefix: shellCommandPrefix,
+						shellPath,
+						defaultTimeout: shellDefaultTimeout,
+					},
+					powershell: { defaultTimeout: shellDefaultTimeout },
 				});
 
 		this._baseToolDefinitions = new Map(

@@ -34,6 +34,7 @@ The complete command surface, grouped by area. Built-in upstream commands ship a
 | `/resume` | Resume a past session |
 | `/name` | Name this session |
 | `/fork`, `/clone` | Branch the session |
+| `/carry` | New session linked to the previous transcript by reference (hummin; consult via the `sessions` tool) |
 | `/rewind` | Restore files and/or conversation to an earlier prompt |
 | `/export` | Export as md / html / jsonl |
 | `/share` | Share as a gist |
