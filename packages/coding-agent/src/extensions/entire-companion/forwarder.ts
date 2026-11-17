@@ -71,10 +71,16 @@ export function createExecFileHookRunner(): HookRunner {
 		runHook(hookName, payload) {
 			return new Promise((resolvePromise) => {
 				try {
+					// Strip the nested marker: this process is the top-level agent, and the
+					// installed Entire CLI treats an inherited marker as "nested" and skips
+					// capture entirely (verified against 0.13.4; the nightly source warns
+					// the CLI must not do this, so strip for every version).
+					const env = { ...process.env };
+					delete env.ENTIRE_PI_NESTED;
 					const child = execFile(
 						"sh",
 						["-c", `entire hooks pi ${hookName}`],
-						{ timeout: 10000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+						{ timeout: 10000, windowsHide: true, maxBuffer: 4 * 1024 * 1024, env },
 						(_err, stdout) => resolvePromise(typeof stdout === "string" ? stdout : ""),
 					);
 					child.stdin?.end(JSON.stringify(payload));

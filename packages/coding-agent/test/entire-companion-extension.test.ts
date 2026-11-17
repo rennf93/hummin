@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -324,6 +324,35 @@ describe("entire companion extension", () => {
 		for (const file of ["index.ts", "forwarder.ts"]) {
 			const src = readFileSync(join(testDir, "../src/extensions/entire-companion", file), "utf8");
 			expect(src).not.toMatch(/fetch\(|node:https?["']|from ["']http/);
+		}
+	});
+});
+
+describe("hook runner child environment", () => {
+	test("strips the nested marker so the installed CLI does not skip capture", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "entire-companion-path-"));
+		const binDir = join(dir, "bin");
+		mkdirSync(binDir, { recursive: true });
+		const payloadFile = join(dir, "payload.json");
+		const envFile = join(dir, "env.txt");
+		writeFileSync(
+			join(binDir, "entire"),
+			`#!/bin/sh\ncat > ${payloadFile}\nenv | grep -c ENTIRE_PI_NESTED > ${envFile} || true\n`,
+		);
+		chmodSync(join(binDir, "entire"), 0o755);
+		const prevPath = process.env.PATH ?? "";
+		const prevMarker = process.env.ENTIRE_PI_NESTED;
+		process.env.ENTIRE_PI_NESTED = "1";
+		process.env.PATH = `${binDir}:${prevPath}`;
+		try {
+			const { createExecFileHookRunner } = await import("../src/extensions/entire-companion/forwarder.ts");
+			await createExecFileHookRunner().runHook("session_start", { type: "session_start" });
+			expect(JSON.parse(readFileSync(payloadFile, "utf8")).type).toBe("session_start");
+			expect(readFileSync(envFile, "utf8").trim()).toBe("0");
+		} finally {
+			process.env.PATH = prevPath;
+			if (prevMarker === undefined) delete process.env.ENTIRE_PI_NESTED;
+			else process.env.ENTIRE_PI_NESTED = prevMarker;
 		}
 	});
 });
