@@ -524,6 +524,9 @@ export class AgentSession {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
+		// Persist-time secret masking consults persistMasking.enabled; the session
+		// manager keeps raw entries in memory and only masks the bytes on disk.
+		config.sessionManager.setPersistMaskingEnabled(() => this.settingsManager.getPersistMaskingEnabled());
 		this._scopedModels = config.scopedModels ?? [];
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];

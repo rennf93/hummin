@@ -24,6 +24,9 @@ export const SETTINGS_DEFAULTS = {
 			maxRetryDelayMs: 60000,
 		},
 	},
+	persistMasking: {
+		enabled: true,
+	},
 	hideThinkingBlock: false,
 	showCacheMissNotices: false,
 	quietStartup: false,

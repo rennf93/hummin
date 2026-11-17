@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### New Features
+
+- Secret masking at persist time: known secret token formats (GitHub, OpenAI, Anthropic, OpenRouter, AWS keys, bearer headers, private key blocks) are replaced with `[REDACTED:<kind>]` placeholders when session entries are written to disk, on by default; set `persistMasking.enabled` to `false` to keep sessions raw.
+
 ## [1.12.0] - 2026-11-13
 
 ### New Features
