@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Behavior Changes
+
+- Per-turn TODO reminder: when a session has a `todo` list with open items that has not been updated for 5+ turns, a short reminder is injected as hidden context (not shown in the transcript) listing the in-progress and first pending items, nudging the model to update the list via the `todo` tool or mark items done. Sessions without a todo list pay nothing.
+
 ## [1.12.0] - 2026-11-13
 
 ### New Features
