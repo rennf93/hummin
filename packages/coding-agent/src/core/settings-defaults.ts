@@ -15,6 +15,10 @@ export const SETTINGS_DEFAULTS = {
 		reserveTokens: 16384,
 		skipPrompt: false,
 	},
+	usageLimitWait: {
+		enabled: true,
+		maxWaitMinutes: 360,
+	},
 	retry: {
 		enabled: true,
 		maxRetries: 3,

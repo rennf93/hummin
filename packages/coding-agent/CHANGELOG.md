@@ -9,7 +9,8 @@
 
 ### Behavior Changes
 
-- **Default shell command timeout**: `bash` and `powershell` commands the model runs without an explicit timeout are killed after `shellDefaultTimeout` (120 seconds; `0` or `"disabled"` turns it off). The per-call `timeout` parameter still wins. PowerShell previously had no timeout path at all.
+- **Usage-limit auto-wait**: when a provider fails a turn with a textual usage-limit reset time (OpenRouter, Z.AI coding plans), hummin waits until the reset (plus a 30-second buffer) and continues the same session instead of failing the turn. Controlled by `usageLimitWait.enabled` (default on) and capped by `usageLimitWait.maxWaitMinutes` (default 360 minutes); the run's abort cancels the wait, and waits do not consume retry limits.
+- - **Default shell command timeout**: `bash` and `powershell` commands the model runs without an explicit timeout are killed after `shellDefaultTimeout` (120 seconds; `0` or `"disabled"` turns it off). The per-call `timeout` parameter still wins. PowerShell previously had no timeout path at all.
 
 ## [1.12.0] - 2026-11-13
 
