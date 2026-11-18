@@ -31,6 +31,11 @@ function initGitRepo(repoDir: string): void {
 	git(["init", "--initial-branch=main"], repoDir);
 	git(["config", "--local", "user.email", "test@test.com"], repoDir);
 	git(["config", "--local", "user.name", "Test"], repoDir);
+	// hummin: isolate the fixture from global git hooks and signing config
+	// (identity guards reject the test author; tag signing breaks lightweight tags).
+	mkdirSync(join(repoDir, ".githooks"), { recursive: true });
+	git(["config", "--local", "core.hooksPath", join(repoDir, ".githooks")], repoDir);
+	git(["config", "--local", "tag.gpgSign", "false"], repoDir);
 }
 
 // Helper to create a commit with a file

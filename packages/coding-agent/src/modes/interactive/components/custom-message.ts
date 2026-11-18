@@ -154,14 +154,13 @@ export class CustomMessageComponent extends Container {
 		);
 	}
 
-	override render(width: number): string[] {
+	override render(width: number): readonly string[] {
 		const lines = super.render(width);
 		if (!this.showTimestamp || lines.length === 0) {
 			return lines;
 		}
 		const tag = theme.fg("dim", formatMessageTimestamp(this.message.timestamp));
 		const padWidth = Math.max(0, width - 1 - visibleWidth(tag));
-		lines.push(truncateToWidth(" ".repeat(padWidth) + tag, width));
-		return lines;
+		return [...lines, truncateToWidth(" ".repeat(padWidth) + tag, width)];
 	}
 }

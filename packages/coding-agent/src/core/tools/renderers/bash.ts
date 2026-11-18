@@ -46,7 +46,7 @@ class ShellCallRenderComponent implements Component {
 	setExpandedText(text: string): void {
 		this.expandedText.setText(text);
 	}
-	render(width: number): string[] {
+	render(width: number): readonly string[] {
 		if (this.expanded) return this.expandedText.render(width);
 		return [this.buildCollapsedLine(width)];
 	}

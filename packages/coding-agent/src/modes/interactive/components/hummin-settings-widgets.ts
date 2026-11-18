@@ -61,10 +61,12 @@ export class TextInputSubmenu extends Container {
 		this.input.handleInput(data);
 	}
 
-	render(width: number): string[] {
+	render(width: number): readonly string[] {
 		const lines = super.render(width);
-		if (this.error) lines.splice(lines.length - 1, 0, theme.fg("error", `  ${this.error}`));
-		return lines;
+		if (!this.error) return lines;
+		const withError = [...lines];
+		withError.splice(withError.length - 1, 0, theme.fg("error", `  ${this.error}`));
+		return withError;
 	}
 }
 

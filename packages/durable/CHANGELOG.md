@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- `@earendil-works/pi-durable/images/fit` fits the images entering a conversation to its model's limits with any `ImageProcessor`, before they are stored, as the coding agent does: `createFitImagesExtension(processor)` is an `afterTool` hook for the results of every tool the model calls (MCP tools, code mode's `image()`), and `fitImage(bytes, mimeType, limits, processor)` and `fitImages(content, limits, processor)` fit a host's input before it is submitted. An image that cannot be prepared is left out with a note. `imageLimits(model)` (`/tools`) resolves a model's limits as `read` does. Example 47 shows both.
+- `onAbort: "keep"` on an input submission keeps it queued through `Conversation.abort()` and abort cascades, as a failed run keeps its queue under `afterFailedRun: "keep"`: the next input places it and that run answers it. For input its sender cannot take back, such as another agent's message; `Submission.abort()` still withdraws it. The default, `"withdraw"`, settles it `unanswered` with reason `aborted` as before.
+
+### Fixed
+
+- `read` no longer adds a diagnostic saying the current model does not support images, which stayed in the tool result after switching to a vision model; the image is still replaced with a placeholder per request for models without image input, and `details.imageUnsupportedByModel` names such a model for UIs ([#12131](https://github.com/earendil-works/pi/issues/12131))
+
 ## [1.12.0] - 2026-11-13
 
 ### Breaking Changes

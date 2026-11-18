@@ -132,9 +132,9 @@ export interface Component {
 	/**
 	 * Render the component to lines for the given viewport width
 	 * @param width - Current viewport width
-	 * @returns Array of strings, each representing a line
+	 * @returns Lines to draw. Components may return a cached array: callers must not modify it.
 	 */
-	render(width: number): string[];
+	render(width: number): readonly string[];
 
 	/** Optional handler for keyboard input when component has focus. */
 	handleInput?(data: string): void;
@@ -378,12 +378,75 @@ type ActiveOverlayFocusRestoreState = EligibleOverlayFocusRestoreState | Blocked
 type OverlayFocusRestoreState = { status: "inactive" } | ActiveOverlayFocusRestoreState;
 type OverlayFocusRestorePolicy = "clear" | "preserve";
 
+/** Concatenated child output of a container, kept across frames. */
+export interface ChildLines {
+	readonly width: number;
+	readonly children: readonly Component[];
+	readonly parts: readonly (readonly string[])[];
+	readonly lines: string[];
+}
+
+function sameLines(a: readonly string[], b: readonly string[]): boolean {
+	if (a === b) return true;
+	if (a.length !== b.length) return false;
+	for (let index = 0; index < a.length; index++) {
+		if (a[index] !== b[index]) return false;
+	}
+	return true;
+}
+
+/**
+ * Render children and concatenate their lines.
+ *
+ * Returns `previous` unchanged when the children and their lines are unchanged. Unchanged subtrees
+ * then keep array identity, so every ancestor container skips its copy too. Without this, each
+ * frame of a long fullscreen transcript copied every rendered line once per nesting level.
+ * Callers must treat the returned lines as read-only, like any component's cached render output.
+ */
+export function renderChildLines(
+	children: readonly Component[],
+	width: number,
+	previous: ChildLines | undefined,
+): ChildLines {
+	const parts = children.map((child) => child.render(width));
+	if (
+		previous?.width === width &&
+		previous.children.length === children.length &&
+		children.every(
+			(child, index) => child === previous.children[index] && sameLines(parts[index]!, previous.parts[index]!),
+		)
+	) {
+		return previous;
+	}
+	const lines: string[] = [];
+	for (const part of parts) {
+		for (const line of part) lines.push(line);
+	}
+	return { width, children: [...children], parts, lines };
+}
+
+/** Dispatch a mouse event to the child of a vertical child layout that covers its row. */
+export function dispatchMouseToChildLines(
+	layout: ChildLines,
+	event: TuiMouseEvent,
+): TuiMouseDispatchResult | undefined {
+	let childY = 0;
+	for (let index = 0; index < layout.children.length; index++) {
+		const childHeight = layout.parts[index]!.length;
+		if (event.y >= childY && event.y < childY + childHeight) {
+			return dispatchMouseEvent(layout.children[index]!, { ...event, y: event.y - childY, height: childHeight });
+		}
+		childY += childHeight;
+	}
+	return undefined;
+}
+
 /**
  * Container - a component that contains other components
  */
 export class Container implements Component {
 	children: Component[] = [];
-	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
+	private childLines?: ChildLines;
 
 	/**
 	 * Scrollbar marker hits collected during the last render: content rows (relative to this
@@ -414,38 +477,25 @@ export class Container implements Component {
 
 	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
 		if (event.y < 0 || event.y >= event.height) return undefined;
-		const mouseChildren =
-			this.mouseLayout?.width === event.width
-				? this.mouseLayout.children
-				: this.children.map((component) => ({ component, height: component.render(event.width).length }));
-		let childY = 0;
-		for (const { component: child, height: childHeight } of mouseChildren) {
-			if (event.y >= childY && event.y < childY + childHeight) {
-				const result = dispatchMouseEvent(child, {
-					...event,
-					y: event.y - childY,
-					height: childHeight,
-				});
-				if (result?.focus && (this as Component).handleInput) return { ...result, focusTarget: this };
-				return result;
-			}
-			childY += childHeight;
-		}
-		return undefined;
+		const layout =
+			this.childLines?.width === event.width
+				? this.childLines
+				: renderChildLines(this.children, event.width, undefined);
+		const result = dispatchMouseToChildLines(layout, event);
+		if (result?.focus && (this as Component).handleInput) return { ...result, focusTarget: this };
+		return result;
 	}
 
-	render(width: number): string[] {
-		const lines: string[] = [];
-		const mouseChildren: Array<{ component: Component; height: number }> = [];
+	render(width: number): readonly string[] {
+		this.childLines = renderChildLines(this.children, width, this.childLines);
 		const markers: ContainerMarker[] = [];
-		for (const child of this.children) {
-			const childOffset = lines.length;
-			const childLines = child.render(width);
-			mouseChildren.push({ component: child, height: childLines.length });
-			if (typeof child.scrollbarMarkerKind === "string" && childLines.length > 0) {
+		let childOffset = 0;
+		this.childLines.parts.forEach((part, index) => {
+			const child = this.children[index]!;
+			if (typeof child.scrollbarMarkerKind === "string" && part.length > 0) {
 				const anchoredBottom = child.scrollbarMarkerAnchor === "bottom";
 				markers.push({
-					row: childOffset + (anchoredBottom ? childLines.length - 1 : 0),
+					row: childOffset + (anchoredBottom ? part.length - 1 : 0),
 					kind: child.scrollbarMarkerKind,
 				});
 			}
@@ -454,13 +504,10 @@ export class Container implements Component {
 					markers.push({ ...marker, row: marker.row + childOffset });
 				}
 			}
-			for (const line of childLines) {
-				lines.push(line);
-			}
-		}
-		this.mouseLayout = { width, children: mouseChildren };
+			childOffset += part.length;
+		});
 		this.renderMarkers = markers;
-		return lines;
+		return this.childLines.lines;
 	}
 }
 
@@ -586,6 +633,11 @@ export abstract class TuiBase extends Container implements TUI {
 	/** Global callback for debug key (Shift+Ctrl+D). Called before input is forwarded to focused component. */
 	public onDebug?: () => void;
 	private renderRequested = false;
+	/**
+	 * Whether a render request since the last frame may have changed component output. Only
+	 * `requestViewRender()` leaves it false, so a renderer may reuse the previous frame's output.
+	 */
+	protected contentChanged = true;
 	private immediateRenderScheduled = false;
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
@@ -703,6 +755,8 @@ export abstract class TuiBase extends Container implements TUI {
 		component: Component | null;
 		overlayFocusRestore: OverlayFocusRestorePolicy;
 	}): void {
+		// Focused components draw a cursor, so a focus change must not reuse earlier output.
+		this.contentChanged = true;
 		const previousFocus = this.focusedComponent;
 		let nextFocus = component;
 		const previousFocusedOverlay = previousFocus
@@ -1101,6 +1155,7 @@ export abstract class TuiBase extends Container implements TUI {
 
 	renderNow(force = false): void {
 		if (force) this.resetRenderState();
+		this.contentChanged = true;
 		this.renderRequested = false;
 		this.cancelRenderTimer();
 		this.lastRenderAt = performance.now();
@@ -1113,12 +1168,19 @@ export abstract class TuiBase extends Container implements TUI {
 			this.requestImmediateRender();
 			return;
 		}
+		this.contentChanged = true;
+		this.requestViewRender();
+	}
+
+	/** Request a frame for a change that leaves component output unchanged, such as a scroll position. */
+	protected requestViewRender(): void {
 		if (this.renderRequested) return;
 		this.renderRequested = true;
 		process.nextTick(() => this.scheduleRender());
 	}
 
 	private requestImmediateRender(): void {
+		this.contentChanged = true;
 		this.cancelRenderTimer();
 		this.renderRequested = true;
 		if (this.immediateRenderScheduled) return;
@@ -1587,7 +1649,7 @@ export abstract class TuiBase extends Container implements TUI {
 	 * directly after CURSOR_MARKER is dropped because the terminal cursor is drawn there. Fake cursors
 	 * of components without focus have no CURSOR_MARKER and stay visible.
 	 */
-	protected resolveFakeCursors(lines: string[]): string[] {
+	protected resolveFakeCursors(lines: readonly string[]): string[] {
 		return lines.map((line) => {
 			if (!line.includes(FAKE_CURSOR_START)) return line;
 			const resolved = this.showHardwareCursor ? line.replace(FOCUSED_FAKE_CURSOR, "$1$2") : line;

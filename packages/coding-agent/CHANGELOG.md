@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Extension components: `render()` now returns `readonly string[]`, and `Container` returns the same cached array while its children are unchanged. Extensions that modify render output in place, including `super.render()` in a `Container` subclass or an embedded component's output, must copy it first ([#9549](https://github.com/earendil-works/pi/issues/9549))
+
 ### New Features
 
 - **Entire companion (optional)**: when a project is Entire-enabled and the `entire` CLI is on PATH, hummin forwards session lifecycle to Entire so checkpoints, transcripts, brain recall, and resume work for hummin sessions; brain brief/recall arrives as hidden context, and a new `/entire` command prints the project's Entire facts. Projects without Entire see nothing. hummin never enables Entire, writes settings or hooks, pushes, or installs daemons. See [Entire](docs/reference/entire.md).
@@ -16,6 +20,23 @@
 - **Usage-limit auto-wait**: when a provider fails a turn with a textual usage-limit reset time (OpenRouter, Z.AI coding plans), hummin waits until the reset (plus a 30-second buffer) and continues the same session instead of failing the turn. Controlled by `usageLimitWait.enabled` (default on) and capped by `usageLimitWait.maxWaitMinutes` (default 360 minutes); the run's abort cancels the wait, and waits do not consume retry limits.
 - **Default shell command timeout**: `bash` and `powershell` commands the model runs without an explicit timeout are killed after `shellDefaultTimeout` (120 seconds; `0` or `"disabled"` turns it off). The per-call `timeout` parameter still wins. PowerShell previously had no timeout path at all.
 - Per-turn TODO reminder: when a session has a `todo` list with open items that has not been updated for 5+ turns, a short reminder is injected as hidden context (not shown in the transcript) listing the in-progress and first pending items, nudging the model to update the list via the `todo` tool or mark items done. Sessions without a todo list pay nothing.
+- The default model for the `openai`, `azure`, and `openai-codex` providers is now GPT-6.2 Sol (`gpt-6.2-sol`) instead of GPT-6.1 Sol, at the same price
+
+### Fixed
+
+- Updated `undici` to 8.12.4 for security advisories GHSA-mqg3-3v4r-cm32, GHSA-7xg3-fphp-28hg, GHSA-5rm8-gv32-r954, GHSA-9v6h-8rgp-m69f, GHSA-3g9m-rv3r-w5w2, and GHSA-r4pc-4jcp-7pqc ([#12200](https://github.com/earendil-works/pi/issues/12200))
+- Fixed `read` storing a note that the current model does not support images, which was replayed to the model as stale text after switching to a vision model. The image is still replaced with a placeholder per request for models without image input, and the read result now shows the warning in the TUI only, also when collapsed ([#12131](https://github.com/earendil-works/pi/issues/12131))
+- Fixed pi crashing with `RangeError: Maximum call stack size exceeded` when rendering a very large edit diff, for example after editing a file with a multi-megabyte line, and again on every resume of that session ([#8036](https://github.com/earendil-works/pi/issues/8036))
+- Fixed pressing Esc during a batch of tool calls leaving the calls that had not started yet without a result in the session; they now get an "Operation aborted" result ([#9986](https://github.com/earendil-works/pi/issues/9986))
+- Fixed an unreadable `CHANGELOG.md` (pi's own or an extension package's) printing `Warning: Could not parse changelog` over the interactive TUI; it now shows no changelog notes ([#11264](https://github.com/earendil-works/pi/issues/11264))
+- Fixed problems found when replacing the session with `/new`, `/resume`, `/fork` or RPC `new_session`, `switch_session` and `fork` never being shown, for example a project extension that fails to load after `/resume` into another project, or an `enabledModels` pattern that matches nothing after a settings change. Interactive mode now shows them in the chat and print, JSON and RPC modes write them to stderr; a problem already reported is not repeated. SDK hosts can call the new `AgentSessionRuntime.takeUnreportedDiagnostics()` at startup and after each replacement to get each diagnostic once
+- Fixed RPC `new_session`, `switch_session`, `fork` and `clone` running extension `session_start` and `resources_discover` handlers twice for the new session. RPC clients now also receive events emitted by `session_start` handlers, such as `entry_appended` for entries they append ([#10470](https://github.com/earendil-works/pi/issues/10470))
+- Fixed an exception thrown by an extension's `pi.events` handler being printed with `console.error` over the interactive TUI. It is now reported like other extension errors: in the chat in interactive mode, as `extension_error` in RPC mode and as `Extension error (...)` in print mode. Errors from a handler that fails after its session was replaced are dropped ([#11264](https://github.com/earendil-works/pi/issues/11264))
+- Fixed `AgentSession.reload()` not emitting `session_start` to extensions when the SDK host bound them with `bindExtensions({})`, after it had already emitted `session_shutdown`. Extensions that start work in `session_start`, such as the MCP extension connecting its servers, stayed stopped after a reload
+- Fixed `--mode json` dropping events emitted by extension `session_start` handlers, such as `entry_appended` for entries they append, at startup and after an extension replaces the session
+- Fixed `Could not restore model <provider>/<model>. Using <fallback>` being shown only at interactive startup. Resuming or forking into a session whose model no longer exists or has no login switched to another model without notice, and print, JSON and RPC modes never showed it. It is now reported in every mode, at startup and after `/resume`, `/fork` and RPC `switch_session` or `fork`
+- Fixed git and npm output, such as `Cloning into ...` or `added 12 packages`, being drawn over the interactive TUI when pi installed or refreshed packages during `/reload`, `/new`, `/resume` and `/fork`, including temporary `-e git:` and `-e npm:` packages. In interactive mode their output is now captured, and a failed install reports the end of it. Until the TUI starts, each install is announced as `Installing <source>...` on stderr instead of showing git and npm output. git and ssh can no longer prompt in interactive mode: a package that needs a typed password or passphrase fails with a hint to set up a credential helper or ssh agent, or to run `pi install <source>` once from the shell. `pi install` and `pi update` keep live output ([#11264](https://github.com/earendil-works/pi/issues/11264))
+- Fixed fullscreen scrolling in long sessions saturating a CPU core by re-rendering the whole transcript on every wheel event ([#9549](https://github.com/earendil-works/pi/issues/9549))
 
 ## [1.12.0] - 2026-11-13
 
