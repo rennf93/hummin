@@ -607,6 +607,11 @@ export interface TUI extends Component {
 	removeInputListener(listener: TuiInputListener): void;
 	onTerminalColorSchemeChange(listener: (scheme: TerminalColorScheme) => void): () => void;
 	setTerminalColorSchemeNotifications(enabled: boolean): void;
+	/**
+	 * Sets the handler called on SIGTSTP while this TUI owns the terminal, or clears it with undefined.
+	 * The listener is removed on stop(), so a child that owns the terminal afterwards is suspended normally.
+	 */
+	setSuspendSignalHandler(handler: (() => void) | undefined): void;
 	queryTerminalColors(options: {
 		timeoutMs: number;
 		onLateReply?: (colors: TerminalColors) => void;
@@ -632,6 +637,8 @@ export abstract class TuiBase extends Container implements TUI {
 
 	/** Global callback for debug key (Shift+Ctrl+D). Called before input is forwarded to focused component. */
 	public onDebug?: () => void;
+	private suspendSignalHandler: (() => void) | undefined;
+	private readonly suspendSignalListener = (): void => this.suspendSignalHandler?.();
 	private renderRequested = false;
 	/**
 	 * Whether a render request since the last frame may have changed component output. Only
@@ -1088,6 +1095,7 @@ export abstract class TuiBase extends Container implements TUI {
 		this.stopped = false;
 		process.off("exit", this.exitRestoreHandler);
 		process.on("exit", this.exitRestoreHandler);
+		this.updateSuspendSignalListener();
 		this.beforeTerminalStart();
 		this.terminal.start(
 			(data) => this.handleTerminalInput(data),
@@ -1130,6 +1138,18 @@ export abstract class TuiBase extends Container implements TUI {
 		}
 	}
 
+	setSuspendSignalHandler(handler: (() => void) | undefined): void {
+		this.suspendSignalHandler = handler;
+		this.updateSuspendSignalListener();
+	}
+
+	// Listen only while the TUI owns the terminal. After stop(), a child (external editor,
+	// interactive command) owns it, and a listener would keep SIGTSTP from stopping the process.
+	private updateSuspendSignalListener(): void {
+		process.off("SIGTSTP", this.suspendSignalListener);
+		if (this.suspendSignalHandler && !this.stopped) process.on("SIGTSTP", this.suspendSignalListener);
+	}
+
 	private queryCellSize(): void {
 		// Only query if terminal supports images (cell size is only used for image rendering)
 		if (!getCapabilities().images) {
@@ -1143,6 +1163,7 @@ export abstract class TuiBase extends Container implements TUI {
 	stop(options: TuiStopOptions = {}): void {
 		this.stopped = true;
 		process.off("exit", this.exitRestoreHandler);
+		this.updateSuspendSignalListener();
 		this.cancelRenderTimer();
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031l");
