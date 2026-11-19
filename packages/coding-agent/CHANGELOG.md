@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `ask_user` free-text editing hiding the choices: entering the inline answer (Tab or Enter on `Other...`) used to replace the option list with a bare prompt line, which read as a second screen. The `Other...` row itself is now the input field, every choice stays visible while typing, and long answers keep their tail so the cursor stays on screen.
+
 ## [1.13.0] - 2026-11-18
 
 ### Breaking Changes

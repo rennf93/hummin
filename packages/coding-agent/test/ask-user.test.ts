@@ -139,6 +139,30 @@ describe("ask_user inline free-text editing", () => {
 		expect(picked).toBe("hi");
 	});
 
+	it("editing keeps every choice row on the same screen", () => {
+		const { component, renders } = question(true, () => {});
+		component.handleInput("\t");
+		component.handleInput("working");
+		const frame = renders.at(-1)!.join("\n");
+		expect(frame).toContain("1. a");
+		expect(frame).toContain("2. b");
+		expect(frame).toContain("working▊");
+		// The choice rows must not carry the selection marker while the edit row owns it.
+		const optionRows = renders.at(-1)!.filter((line) => line.includes("1. a") || line.includes("2. b"));
+		for (const row of optionRows) expect(row).not.toContain("▸");
+	});
+
+	it("long input keeps the tail so the cursor stays visible", () => {
+		const { component, renders } = question(true, () => {});
+		component.handleInput("\t");
+		const long = "x".repeat(120) + "-tail-marker";
+		for (const ch of long) component.handleInput(ch);
+		const frame = renders.at(-1)!.join("\n");
+		expect(frame).toContain("-tail-marker▊");
+		// The head cannot fit at width 80; no run of 75 head characters survives.
+		expect(frame).not.toContain("x".repeat(75));
+	});
+
 	it("backspace edits and escape returns to the list without resolving", () => {
 		let picked: string | undefined;
 		const { component, renders } = question(true, (value) => {
