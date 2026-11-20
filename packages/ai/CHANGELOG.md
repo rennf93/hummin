@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Fixed Cloudflare's HTTP 525 (SSL handshake failed) not being retried like its 520 and 524 errors
 - Fixed `retryAssistantCall()` retaining an abort listener after each completed backoff, causing listener buildup across repeated retries ([#10506](https://github.com/earendil-works/pi/issues/10506))
 - Fixed GitHub Copilot models on the Responses API (GPT, Grok, MAI-Code) filling omitted optional tool arguments with empty strings or invented values. Their tools were sent without `strict`, which Copilot treats as strict mode; they now send `strict: false`, or `strict: true` for tools with JSON-schema constrained sampling. Copilot's Claude models now also send `strict: true` for those tools, as direct Anthropic does ([#12286](https://github.com/earendil-works/pi/issues/12286))
 - Fixed changing the thinking level on the OpenAI Codex provider invalidating the prompt cache on GPT-6 models. Thinking level changes, including switching to off, are now sent as `configuration_update` input items with a fixed `reasoning.effort`, as on the `openai` provider and in Codex ([#12269](https://github.com/earendil-works/pi/issues/12269))
