@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Fixed the bash tool returning `(no output)` when the output ended with a line over 50KB followed by an empty line; it now shows the end of that line ([#12350](https://github.com/earendil-works/pi/issues/12350))
 - Fixed `ctx.ui.pasteToEditor()` and `ctx.ui.setEditorText()` not repainting the editor when called outside terminal input handling, such as after an `await` in a command handler ([#12295](https://github.com/earendil-works/pi/issues/12295))
 - Fixed unscoped syntax-highlighted text inheriting the terminal foreground and becoming unreadable on contrasting tool cards ([#11092](https://github.com/earendil-works/pi/issues/11092))
 - Fixed `ask_user` free-text editing hiding the choices: entering the inline answer (Tab or Enter on `Other...`) used to replace the option list with a bare prompt line, which read as a second screen. The `Other...` row itself is now the input field, every choice stays visible while typing, and long answers keep their tail so the cursor stays on screen.
