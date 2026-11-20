@@ -22,7 +22,7 @@ function writeSession(dir: string, name: string, lines: FixtureLine[], parent?: 
 		timestamp: "2026-11-17T00:01:00.000Z",
 		...line,
 	}));
-	writeFileSync(file, [JSON.stringify(header), ...body.map((entry) => JSON.stringify(entry))].join("\n") + "\n");
+	writeFileSync(file, `${[JSON.stringify(header), ...body.map((entry) => JSON.stringify(entry))].join("\n")}\n`);
 	return file;
 }
 
