@@ -254,15 +254,27 @@ export class QuestionComponent implements Component {
 			this.padLine(this.theme.fg("accent", this.theme.bold(this.question)), width),
 			this.padLine("", width),
 		];
-		if (this.inputMode) {
-			const text = this.buffer || this.theme.fg("dim", "type your answer…");
-			const cursor = this.theme.fg("accent", "▊");
-			lines.push(this.padLine(`${this.theme.fg("accent", "▸")} ${this.theme.fg("dim", "❯")} ${text}${cursor}`, width));
-			lines.push(this.padLine("", width), this.padLine(this.theme.fg("dim", INPUT_HINT), width), bottom);
-			return lines;
-		}
+		// Free-text editing stays on the same screen: the Other row itself becomes
+		// the input field and every choice row stays rendered above it, so the
+		// options the user is choosing between never disappear while typing.
+		const editRowIndex = this.inputMode ? this.options.length - 1 : -1;
 		for (const [index, option] of this.options.entries()) {
-			const marker = index === this.selected ? this.theme.fg("accent", "▸") : " ";
+			if (index === editRowIndex) {
+				const bufferChars = [...this.buffer];
+				let text = this.buffer;
+				// Row budget: width minus borders (2), padLine lead/trail spaces (2),
+				// the "▸ ❯ " prompt prefix (4), and the cursor block (1).
+				const available = Math.max(0, width - 9);
+				while (bufferChars.length > 0 && visibleWidth(text) > available) {
+					bufferChars.shift();
+					text = bufferChars.join("");
+				}
+				const shown = text || this.theme.fg("dim", "type your answer…");
+				const cursor = this.theme.fg("accent", "▊");
+				lines.push(this.padLine(`${this.theme.fg("accent", "▸")} ${this.theme.fg("dim", "❯")} ${shown}${cursor}`, width));
+				continue;
+			}
+			const marker = !this.inputMode && index === this.selected ? this.theme.fg("accent", "▸") : " ";
 			const number = this.theme.fg("dim", `${index + 1}.`);
 			const recommended = index === this.recommended ? ` ${this.theme.fg("dim", "(recommended)")}` : "";
 			lines.push(this.padLine(`${marker} ${number} ${option}${recommended}`, width));
@@ -270,7 +282,7 @@ export class QuestionComponent implements Component {
 		if (this.sys1Line) lines.push(this.padLine("", width), this.padLine(this.theme.fg("dim", this.sys1Line), width));
 		lines.push(
 			this.padLine("", width),
-			this.padLine(this.theme.fg("dim", this.allowFreeText ? QUESTION_HINT : QUESTION_HINT_PLAIN), width),
+			this.padLine(this.theme.fg("dim", this.inputMode ? INPUT_HINT : this.allowFreeText ? QUESTION_HINT : QUESTION_HINT_PLAIN), width),
 			bottom,
 		);
 		return lines;
