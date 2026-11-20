@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Fixed OpenAI Decisions (`gpt-6-luna` classifier) usage dropping `cached_tokens` and `cache_write_tokens`: they are now reported as `cacheRead` and `cacheWrite` and no longer counted in `input`, and the catalog prices them at the input rate so the cost estimate is unchanged ([#12264](https://github.com/earendil-works/pi/issues/12264))
 - Fixed gateway errors such as "The provider is temporarily unavailable. Retry shortly.", "The provider ended the response before it was complete.", "The connection to the provider was reset.", and "The provider reported a failure while generating the response." not being retried ([#12227](https://github.com/earendil-works/pi/issues/12227))
 - Fixed temporary provider failures not being retried automatically: Anthropic `api_error` events during streaming, OpenRouter's "Provider returned an empty response" and "stopped before completing the response", streams that end with `finish_reason: "error"`, and "Repeat the request later" and "admission ceiling" responses
 - Fixed Cloudflare's HTTP 525 (SSL handshake failed) not being retried like its 520 and 524 errors
