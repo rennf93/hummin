@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Fixed `ctx.ui.pasteToEditor()` and `ctx.ui.setEditorText()` not repainting the editor when called outside terminal input handling, such as after an `await` in a command handler ([#12295](https://github.com/earendil-works/pi/issues/12295))
 - Fixed unscoped syntax-highlighted text inheriting the terminal foreground and becoming unreadable on contrasting tool cards ([#11092](https://github.com/earendil-works/pi/issues/11092))
 - Fixed `ask_user` free-text editing hiding the choices: entering the inline answer (Tab or Enter on `Other...`) used to replace the option list with a bare prompt line, which read as a second screen. The `Other...` row itself is now the input field, every choice stays visible while typing, and long answers keep their tail so the cursor stays on screen.
 - Fixed search in `/login`, `/logout`, `/scoped-models` and `/resume` keeping the highlight on the row scrolled to before typing, so Enter picked whichever entry landed there instead of the best match; a query now highlights the top match, as `/model` does ([#12245](https://github.com/earendil-works/pi/issues/12245), [#12246](https://github.com/earendil-works/pi/pull/12246) by [@acmerfight](https://github.com/acmerfight))
