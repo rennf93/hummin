@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a transcript notice when OpenAI drops reasoning items from a request, such as `OpenAI dropped 2 reasoning items: prefix_mismatch (details in session)` after compaction on GPT-6.2. Like the Anthropic thinking notice, it is shown when `showCacheMissNotices` is on and only when more items are dropped than in the previous response. Both notices now name the reasons
+
 ### Fixed
 
 - Fixed `ask_user` free-text editing hiding the choices: entering the inline answer (Tab or Enter on `Other...`) used to replace the option list with a bare prompt line, which read as a second screen. The `Other...` row itself is now the input field, every choice stays visible while typing, and long answers keep their tail so the cursor stays on screen.
