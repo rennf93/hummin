@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### New Features
+
+- OpenAI's reasoning items are now auditable: when the API withholds reasoning from a request, the transcript shows which items were dropped and why, such as `prefix_mismatch` after compaction on GPT-6.2
+- `ask_user` answers free text on an always-present input row under the choices instead of a separate screen
+
 ### Added
 
 - Added a transcript notice when OpenAI drops reasoning items from a request, such as `OpenAI dropped 2 reasoning items: prefix_mismatch (details in session)` after compaction on GPT-6.2. Like the Anthropic thinking notice, it is shown when `showCacheMissNotices` is on and only when more items are dropped than in the previous response. Both notices now name the reasons
