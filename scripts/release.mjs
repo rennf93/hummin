@@ -191,7 +191,13 @@ function bumpOrSetVersion(target) {
 
 	if (BUMP_TYPES.has(target)) {
 		console.log(`Bumping version (${target})...`);
-		run(`npm run version:${target}`);
+		// Run the chain directly instead of `npm run version:${target}`: each command
+		// spawns its own npm process, and a child npm re-exports its config as env vars,
+		// so the user-level allow-scripts entry would leak again into the grandchild's
+		// project-scoped installs (EALLOWSCRIPTS).
+		run(`npm version ${target} --workspace packages --no-git-tag-version --no-workspaces-update`);
+		run("node scripts/sync-versions.js");
+		run("npm install --package-lock-only --ignore-scripts");
 	} else {
 		if (compareVersions(target, currentVersion) <= 0) {
 			console.error(`Error: explicit version ${target} must be greater than current version ${currentVersion}.`);
