@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Sync: a pull that read a remote body and then refused it (a copy behind an archive slot) left the body's file open until garbage collection, which Node 22 warns about (DEP0137) and Node 26 throws for, uncaught. `pullSession` now calls `return()` on every body it read, and a `FileSystemSyncRemote` body closes its file on `return()` also before its first read.
+- Sync: a store whose outbox was turned off and on again after it committed could not upload any more (`uploadSession` failed with `OutboxUnavailableError` on every attempt): the commits between what the remote holds and the outbox's start were gone. The upload now creates an archive slot after the remote's head (the store's `export()`), so the session's history goes on from a full state, and `remoteHistory`/`pullSession` restore from the newest archive slot along the chain; a copy behind it gets `HistoryUnavailableError` and restores fresh.
+
 ## [1.13.0] - 2026-11-18
 
 ## [1.12.0] - 2026-11-13

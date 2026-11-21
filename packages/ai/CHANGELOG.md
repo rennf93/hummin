@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `openai_input_transformations` assistant message diagnostics to the OpenAI Responses, Azure OpenAI Responses, and OpenAI Codex providers. They list the replayed reasoning items the API withheld from the model and why, such as `prefix_mismatch` (from GPT-6.2 on, OpenAI drops reasoning that follows an edit of earlier input, for example after compaction) or `organization_mismatch`. `turn_boundary` removals are not recorded: models before GPT-5.6 report every earlier turn's reasoning that way on each request
+- Updated `openai` to 7.59.0
+- Added `qwen4-max-preview` to the Qwen Token Plan Individual providers ([#12259](https://github.com/earendil-works/pi/issues/12259))
+
+### Fixed
+
+- Fixed OpenAI Decisions (`gpt-6-luna` classifier) usage dropping `cached_tokens` and `cache_write_tokens`: they are now reported as `cacheRead` and `cacheWrite` and no longer counted in `input`, and the catalog prices them at the input rate so the cost estimate is unchanged ([#12264](https://github.com/earendil-works/pi/issues/12264))
+- Fixed gateway errors such as "The provider is temporarily unavailable. Retry shortly.", "The provider ended the response before it was complete.", "The connection to the provider was reset.", and "The provider reported a failure while generating the response." not being retried ([#12227](https://github.com/earendil-works/pi/issues/12227))
+- Fixed temporary provider failures not being retried automatically: Anthropic `api_error` events during streaming, OpenRouter's "Provider returned an empty response" and "stopped before completing the response", streams that end with `finish_reason: "error"`, and "Repeat the request later" and "admission ceiling" responses
+- Fixed Cloudflare's HTTP 525 (SSL handshake failed) not being retried like its 520 and 524 errors
+- Fixed `retryAssistantCall()` retaining an abort listener after each completed backoff, causing listener buildup across repeated retries ([#10506](https://github.com/earendil-works/pi/issues/10506))
+- Fixed GitHub Copilot models on the Responses API (GPT, Grok, MAI-Code) filling omitted optional tool arguments with empty strings or invented values. Their tools were sent without `strict`, which Copilot treats as strict mode; they now send `strict: false`, or `strict: true` for tools with JSON-schema constrained sampling. Copilot's Claude models now also send `strict: true` for those tools, as direct Anthropic does ([#12286](https://github.com/earendil-works/pi/issues/12286))
+- Fixed changing the thinking level on the OpenAI Codex provider invalidating the prompt cache on GPT-6 models. Thinking level changes, including switching to off, are now sent as `configuration_update` input items with a fixed `reasoning.effort`, as on the `openai` provider and in Codex ([#12269](https://github.com/earendil-works/pi/issues/12269))
+- Fixed the OpenAI Codex provider ignoring `maxTokens`; it is now sent as `max_output_tokens` (at least 16) unless the model sets `compat.supportsMaxOutputTokens: false`
+- Fixed the OpenAI Codex provider getting almost no prompt cache hits for the system prompt on GPT-6.2 models. GPT-6.2 places top-level `instructions` after the conversation, so each new turn invalidated the cache for it. The system prompt is now sent as the first `developer` input item, as Codex does, and no `instructions` field is sent ([#12273](https://github.com/earendil-works/pi/issues/12273))
+
 ## [1.13.0] - 2026-11-18
 
 ### Added

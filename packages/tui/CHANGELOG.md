@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `TUI.setSuspendSignalHandler()`, which sets a handler called when the process receives `SIGTSTP` while the TUI owns the terminal, from `start()` until `stop()`. The `SIGTSTP` listener is removed on `stop()`, so a child that owns the terminal afterwards is suspended normally ([#12283](https://github.com/earendil-works/pi/pull/12283) by [@haoqixu](https://github.com/haoqixu))
+
+### Fixed
+
+- Fixed Enter on an autocomplete menu submitting the prompt when the completed text started with `/`, such as a Tab path menu for an absolute path (`look at /tmp/fi`) or a slash command argument (`/open /tm`). Enter now submits only from the slash command name menu ([#12309](https://github.com/earendil-works/pi/issues/12309), [#12312](https://github.com/earendil-works/pi/pull/12312) by [@acmerfight](https://github.com/acmerfight))
+
 ## [1.13.0] - 2026-11-18
 
 ### Breaking Changes

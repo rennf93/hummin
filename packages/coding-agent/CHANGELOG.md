@@ -2,9 +2,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a transcript notice when OpenAI drops reasoning items from a request, such as `OpenAI dropped 2 reasoning items: prefix_mismatch (details in session)` after compaction on GPT-6.2. Like the Anthropic thinking notice, it is shown when `showCacheMissNotices` is on and only when more items are dropped than in the previous response. Both notices now name the reasons
+
 ### Fixed
 
+- Fixed the bash tool returning `(no output)` when the output ended with a line over 50KB followed by an empty line; it now shows the end of that line ([#12350](https://github.com/earendil-works/pi/issues/12350))
+- Fixed `ctx.ui.pasteToEditor()` and `ctx.ui.setEditorText()` not repainting the editor when called outside terminal input handling, such as after an `await` in a command handler ([#12295](https://github.com/earendil-works/pi/issues/12295))
+- Fixed unscoped syntax-highlighted text inheriting the terminal foreground and becoming unreadable on contrasting tool cards ([#11092](https://github.com/earendil-works/pi/issues/11092))
 - Fixed `ask_user` free-text editing hiding the choices: entering the inline answer (Tab or Enter on `Other...`) used to replace the option list with a bare prompt line, which read as a second screen. The `Other...` row itself is now the input field, every choice stays visible while typing, and long answers keep their tail so the cursor stays on screen.
+- Fixed search in `/login`, `/logout`, `/scoped-models` and `/resume` keeping the highlight on the row scrolled to before typing, so Enter picked whichever entry landed there instead of the best match; a query now highlights the top match, as `/model` does ([#12245](https://github.com/earendil-works/pi/issues/12245), [#12246](https://github.com/earendil-works/pi/pull/12246) by [@acmerfight](https://github.com/acmerfight))
+- Fixed exiting pi, `pi config` and the `--resume` and other startup pickers dropping terminal output still queued in stdout, such as the resets that turn off mouse tracking and Kitty keyboard reporting; the shell could then print mouse and key reports as text. pi now waits up to one second for queued output before exiting or continuing ([#12133](https://github.com/earendil-works/pi/issues/12133))
+- Fixed moving the cursor in a search field with Left, Right, Home or End moving the highlight back to the first entry in `/login`, `/logout`, `/model`, `/scoped-models`, `/resume`, `/settings`, the per-model settings model picker and `pi config` ([#12245](https://github.com/earendil-works/pi/issues/12245))
+- Fixed llama.cpp decision classifiers ignoring the image input that llama.cpp reports, such as Clef with its `mmproj`; `models.classify()` now sends their images to `/v1/systemone` ([#12282](https://github.com/earendil-works/pi/issues/12282))
+- Fixed `kill -TSTP` from outside pi stopping it without restoring the terminal, which left mouse tracking and the Kitty keyboard protocol on at the shell prompt and turned mouse movement into garbage input. pi now suspends as with Ctrl+Z and redraws on `fg` ([#12283](https://github.com/earendil-works/pi/pull/12283) by [@haoqixu](https://github.com/haoqixu))
+- Fixed changing the thinking level on the `openai-codex` provider invalidating the prompt cache on GPT-6 models ([#12269](https://github.com/earendil-works/pi/issues/12269))
 
 ## [1.13.0] - 2026-11-18
 

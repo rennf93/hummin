@@ -91,7 +91,6 @@ describe("Fireworks models", () => {
 			// Explicit in the generated catalog because the runtime default is non-strict.
 			supportsStrictMode: true,
 			supportsStore: false,
-			supportsDeveloperRole: false,
 			requiresReasoningContentOnAssistantMessages: true,
 			thinkingFormat: "openai",
 			supportsMidConvoSystemMessages: true,
