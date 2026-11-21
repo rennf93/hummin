@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
 	askInteractive,
-	buildOptions,
 	CHOICE_MAX,
 	CHOICES_MAX,
 	CHOICES_MIN,
-	FREE_TEXT_LABEL,
 	INPUT_HINT,
 	normalizeChoices,
 	normalizeQuestion,
@@ -43,13 +41,6 @@ describe("ask_user helpers", () => {
 		expect(() => normalizeChoices(Array.from({ length: CHOICES_MAX + 1 }, (_, i) => `c${i}`))).toThrow();
 		expect(normalizeChoices(["a", "b"])).toEqual(["a", "b"]);
 		expect(normalizeChoices(Array.from({ length: CHOICES_MAX }, (_, i) => `c${i}`))).toHaveLength(CHOICES_MAX);
-	});
-
-	it("appends the free-text escape hatch only when allowed", () => {
-		expect(buildOptions(["a", "b"], false)).toEqual(["a", "b"]);
-		const withFree = buildOptions(["a", "b"], true);
-		expect(withFree).toEqual(["a", "b", FREE_TEXT_LABEL]);
-		expect(withFree[withFree.length - 1]).toBe(FREE_TEXT_LABEL);
 	});
 
 	it("validates params in one pass", () => {
@@ -113,7 +104,7 @@ function question(allowFreeText: boolean, picked: (value: string | undefined) =>
 		fakeTheme as never,
 		keyKb as never,
 		"Q",
-		buildOptions(["a", "b"], allowFreeText),
+		["a", "b"],
 		allowFreeText,
 		picked,
 		undefined,
@@ -175,22 +166,21 @@ describe("ask_user inline free-text editing", () => {
 		component.handleInput("\x1b");
 		expect(picked).toBeUndefined();
 		const list = renders.at(-1)!.join("\n");
-		expect(list).toContain(FREE_TEXT_LABEL);
 		expect(list).toContain(QUESTION_HINT);
-		component.handleInput("\r"); // first option, list mode again
+		component.handleInput("\r"); // first option, back in the list
 		expect(picked).toBe("a");
 	});
 
-	it("confirming Other... switches to inline input instead of a second screen", () => {
+	it("navigating to the free-text row types in place; enter submits", () => {
 		let picked: string | undefined;
 		const { component, renders } = question(true, (value) => {
 			picked = value;
 		});
 		component.handleInput("\x1b[B"); // down to b
-		component.handleInput("\x1b[B"); // down to Other...
-		component.handleInput("\r");
+		component.handleInput("\x1b[B"); // down to the free-text row
 		expect(renders.at(-1)!.join("\n")).toContain("type your answer…");
 		component.handleInput("maybe b");
+		expect(renders.at(-1)!.join("\n")).toContain("maybe b▊");
 		component.handleInput("\r");
 		expect(picked).toBe("maybe b");
 	});
@@ -245,7 +235,7 @@ describe("ask_user lifecycle", () => {
 		expect(joined).toContain("Pick one");
 		expect(joined).toContain("1. a");
 		expect(joined).toContain("2. b");
-		expect(joined).toContain(FREE_TEXT_LABEL);
+		expect(joined).toContain("type your answer…");
 		expect(joined).toContain(QUESTION_HINT);
 	});
 

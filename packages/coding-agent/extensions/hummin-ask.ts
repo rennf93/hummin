@@ -28,8 +28,7 @@ export const QUESTION_MAX = 500;
 export const CHOICE_MAX = 80;
 export const CHOICES_MIN = 2;
 export const CHOICES_MAX = 6;
-export const FREE_TEXT_LABEL = "Other...";
-export const QUESTION_HINT = "↑/↓ navigate · enter select · tab free-text · esc cancel";
+export const QUESTION_HINT = "↑/↓ navigate · enter select · ❯ type a free answer · esc cancel";
 export const QUESTION_HINT_PLAIN = "↑/↓ navigate · enter select · escape cancel";
 export const INPUT_HINT = "enter submit · esc back";
 
@@ -59,11 +58,6 @@ export function normalizeChoices(raw: string[]): string[] {
 		throw new Error(`ask_user: requires ${CHOICES_MIN}-${CHOICES_MAX} choices, got ${choices.length}`);
 	}
 	return choices;
-}
-
-/** Selector options, with the free-text escape hatch appended when allowed. */
-export function buildOptions(choices: readonly string[], allowFreeText: boolean): string[] {
-	return allowFreeText ? [...choices, FREE_TEXT_LABEL] : [...choices];
 }
 
 /** Validate params up front so bad calls fail before any UI is shown. */
@@ -121,7 +115,7 @@ class AskUserCallComponent implements Component {
 			const recommended = index === args?.recommended ? ` ${theme.fg("dim", "(recommended)")}` : "";
 			lines.push(`  ${theme.fg("dim", `${index + 1}.`)} ${theme.fg("muted", choice)}${recommended}`);
 		});
-		if (args?.allowFreeText) lines.push(`  ${theme.fg("dim", FREE_TEXT_LABEL)}`);
+		if (args?.allowFreeText) lines.push(`  ${theme.fg("dim", "(or type your own answer)")}`);
 		this.expandedLines = lines;
 	}
 
@@ -136,13 +130,15 @@ class AskUserCallComponent implements Component {
 /**
  * Bordered question selector in the fleet-panel visual language.
  * One instance per ask; `done` fires exactly once; dispose removes the abort listener.
+ * The last row is an always-present free-text field when `allowFreeText` is on: no
+ * "Other" option, just an input row under the choices.
  */
 export class QuestionComponent implements Component {
 	private selected = 0;
-	private inputMode = false;
 	private buffer = "";
 	private disposed = false;
-	private readonly options: readonly string[];
+	private readonly choices: readonly string[];
+	private readonly freeTextRow: number;
 	private readonly onAbort: () => void;
 	private readonly question: string;
 	private readonly allowFreeText: boolean;
@@ -161,7 +157,7 @@ export class QuestionComponent implements Component {
 		theme: Theme,
 		kb: KeybindingsManager,
 		question: string,
-		options: readonly string[],
+		choices: readonly string[],
 		allowFreeText: boolean,
 		done: (picked: string | undefined) => void,
 		signal: AbortSignal | undefined,
@@ -172,7 +168,8 @@ export class QuestionComponent implements Component {
 		this.theme = theme;
 		this.kb = kb;
 		this.question = question;
-		this.options = options;
+		this.choices = choices;
+		this.freeTextRow = allowFreeText ? choices.length : -1;
 		this.allowFreeText = allowFreeText;
 		this.recommended = recommended;
 		this.sys1Line = sys1Line;
@@ -193,40 +190,51 @@ export class QuestionComponent implements Component {
 
 	handleInput(data: string): void {
 		if (this.disposed) return;
-		if (this.inputMode) {
-			// Inline free-text editing: typing happens in place, no second screen.
-			if (this.kb.matches(data, "tui.select.cancel")) {
-				this.inputMode = false;
+		// The free-text row is the last selection target. While it is focused, printable
+		// keys edit the draft in place and backspace edits it too; other keys keep their
+		// meanings. Printable keys on a choice row do nothing.
+		if (this.selected === this.freeTextRow) {
+			if (data === "\x7f" || data === "\b") {
+				this.buffer = [...this.buffer].slice(0, -1).join("");
+				this.tui.requestRender();
+				return;
+			}
+			if ([...data].some((ch) => ch >= " " && ch !== "\x7f")) {
+				for (const ch of data) if (ch >= " " && ch !== "\x7f") this.buffer += ch;
+				this.tui.requestRender();
+				return;
+			}
+		}
+		if (this.kb.matches(data, "tui.select.cancel")) {
+			// On the free-text row with a draft, escape clears it and returns to the
+			// choices; with no draft it cancels the whole question.
+			if (this.selected === this.freeTextRow && this.buffer) {
 				this.buffer = "";
-			} else if (this.kb.matches(data, "tui.select.confirm")) {
+				this.selected = 0;
+				this.tui.requestRender();
+				return;
+			}
+			this.finish(undefined);
+			return;
+		}
+		if (data === "\t" && this.allowFreeText) {
+			this.selected = this.freeTextRow;
+			this.tui.requestRender();
+			return;
+		}
+		const total = this.allowFreeText ? this.choices.length + 1 : this.choices.length;
+		if (this.kb.matches(data, "tui.select.up"))
+			this.selected = (this.selected + total - 1) % total;
+		else if (this.kb.matches(data, "tui.select.down")) this.selected = (this.selected + 1) % total;
+		else if (this.kb.matches(data, "tui.select.confirm")) {
+			if (this.selected === this.freeTextRow) {
 				const text = this.buffer.trim();
 				if (text) {
 					this.finish(text);
 					return;
 				}
-			} else if (data === "\x7f" || data === "\b") {
-				this.buffer = [...this.buffer].slice(0, -1).join("");
 			} else {
-				for (const ch of data) if (ch >= " " && ch !== "\x7f") this.buffer += ch;
-			}
-			this.tui.requestRender();
-			return;
-		}
-		if (this.kb.matches(data, "tui.select.cancel")) {
-			this.finish(undefined);
-			return;
-		}
-		if (data === "\t" && this.allowFreeText) {
-			this.inputMode = true;
-		} else if (this.kb.matches(data, "tui.select.up"))
-			this.selected = (this.selected + this.options.length - 1) % this.options.length;
-		else if (this.kb.matches(data, "tui.select.down")) this.selected = (this.selected + 1) % this.options.length;
-		else if (this.kb.matches(data, "tui.select.confirm")) {
-			const picked = this.options[this.selected];
-			if (picked === FREE_TEXT_LABEL) {
-				this.inputMode = true;
-			} else {
-				this.finish(picked);
+				this.finish(this.choices[this.selected]);
 				return;
 			}
 		}
@@ -254,35 +262,34 @@ export class QuestionComponent implements Component {
 			this.padLine(this.theme.fg("accent", this.theme.bold(this.question)), width),
 			this.padLine("", width),
 		];
-		// Free-text editing stays on the same screen: the Other row itself becomes
-		// the input field and every choice row stays rendered above it, so the
-		// options the user is choosing between never disappear while typing.
-		const editRowIndex = this.inputMode ? this.options.length - 1 : -1;
-		for (const [index, option] of this.options.entries()) {
-			if (index === editRowIndex) {
-				const bufferChars = [...this.buffer];
-				let text = this.buffer;
-				// Row budget: width minus borders (2), padLine lead/trail spaces (2),
-				// the "▸ ❯ " prompt prefix (4), and the cursor block (1).
-				const available = Math.max(0, width - 9);
-				while (bufferChars.length > 0 && visibleWidth(text) > available) {
-					bufferChars.shift();
-					text = bufferChars.join("");
-				}
-				const shown = text || this.theme.fg("dim", "type your answer…");
-				const cursor = this.theme.fg("accent", "▊");
-				lines.push(this.padLine(`${this.theme.fg("accent", "▸")} ${this.theme.fg("dim", "❯")} ${shown}${cursor}`, width));
-				continue;
-			}
-			const marker = !this.inputMode && index === this.selected ? this.theme.fg("accent", "▸") : " ";
+		for (const [index, option] of this.choices.entries()) {
+			const marker = index === this.selected ? this.theme.fg("accent", "▸") : " ";
 			const number = this.theme.fg("dim", `${index + 1}.`);
 			const recommended = index === this.recommended ? ` ${this.theme.fg("dim", "(recommended)")}` : "";
 			lines.push(this.padLine(`${marker} ${number} ${option}${recommended}`, width));
 		}
+		// The free-text row is always on when allowed: the field itself is the last
+		// row, so the choices never disappear while the user types.
+		if (this.allowFreeText) {
+			let shown = this.buffer || this.theme.fg("dim", "type your answer…");
+			if (this.buffer) {
+				// Row budget: borders (2), padLine spaces (2), the "❯ " prompt (2),
+				// and the cursor block (1); keep the tail so the cursor stays visible.
+				const available = Math.max(0, width - 7);
+				const bufferChars = [...this.buffer];
+				while (bufferChars.length > 0 && visibleWidth(this.buffer) > available) {
+					bufferChars.shift();
+					this.buffer = bufferChars.join("");
+				}
+				shown = this.buffer;
+			}
+			const cursor = this.selected === this.freeTextRow ? this.theme.fg("accent", "▊") : "";
+			lines.push(this.padLine(`${this.theme.fg("accent", "❯")} ${shown}${cursor}`, width));
+		}
 		if (this.sys1Line) lines.push(this.padLine("", width), this.padLine(this.theme.fg("dim", this.sys1Line), width));
 		lines.push(
 			this.padLine("", width),
-			this.padLine(this.theme.fg("dim", this.inputMode ? INPUT_HINT : this.allowFreeText ? QUESTION_HINT : QUESTION_HINT_PLAIN), width),
+			this.padLine(this.theme.fg("dim", this.selected === this.freeTextRow ? INPUT_HINT : this.allowFreeText ? QUESTION_HINT : QUESTION_HINT_PLAIN), width),
 			bottom,
 		);
 		return lines;
@@ -320,15 +327,14 @@ export async function askInteractive(
 	sys1Line?: string,
 ): Promise<AskUserResult> {
 	notifyQuestionPending(ctx, question);
-	const options = buildOptions(choices, allowFreeText);
 	const picked = await withAbort(
 		ctx.ui.custom<string | undefined>(
 			(tui, theme, kb, done) =>
-				new QuestionComponent(tui, theme, kb, question, options, allowFreeText, done, signal, recommended, sys1Line),
+				new QuestionComponent(tui, theme, kb, question, choices, allowFreeText, done, signal, recommended, sys1Line),
 		),
 		signal,
 	);
-	if (signal?.aborted || picked === undefined || picked === FREE_TEXT_LABEL) return result("", true);
+	if (signal?.aborted || picked === undefined) return result("", true);
 	return result(picked, false);
 }
 
@@ -347,7 +353,7 @@ export default function humminAsk(pi: ExtensionAPI): void {
 		name: "ask_user",
 		label: "Ask User",
 		description:
-			"Ask the user a question with 2-6 explicit choices and return the picked answer. Use when a decision is genuinely the user's to make (ambiguous scope, destructive action, missing requirement). Mark your preferred option with recommended (0-based index) so the UI labels it '(recommended)'. The user can always pick Other... and type inline; set allowFreeText false to remove that option. Cancelled means the user declined to answer.",
+			"Ask the user a question with 2-6 explicit choices and return the picked answer. Use when a decision is genuinely the user's to make (ambiguous scope, destructive action, missing requirement). Mark your preferred option with recommended (0-based index) so the UI labels it '(recommended)'. The user can also type their own answer on the free-text row (default on); set allowFreeText false to remove it. Cancelled means the user declined to answer.",
 		promptSnippet: "ask_user: ask the user a multiple-choice question and return the answer",
 		parameters: Type.Object({
 			question: Type.String({ minLength: 1, maxLength: QUESTION_MAX, description: "The question to ask" }),
@@ -356,7 +362,7 @@ export default function humminAsk(pi: ExtensionAPI): void {
 				{ minItems: CHOICES_MIN, maxItems: CHOICES_MAX, description: "The answer options" },
 			),
 			allowFreeText: Type.Optional(
-				Type.Boolean({ description: "Offer a free-form 'Other...' answer typed inline (default true)" }),
+				Type.Boolean({ description: "Offer a free-form answer typed on the free-text row (default true)" }),
 			),
 			recommended: Type.Optional(
 				Type.Number({ description: "0-based index of the choice you recommend; shown as '(recommended)'" }),
