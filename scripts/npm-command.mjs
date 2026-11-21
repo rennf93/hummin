@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 // `allow-scripts` entry lands at CLI/env priority and npm 11+ rejects it in the
 // project-scoped installs our scripts run (EALLOWSCRIPTS). All call sites pass
 // --ignore-scripts or run no lifecycle scripts, so the allowlist is irrelevant here.
-function childEnv() {
+export function childEnv() {
 	const env = { ...process.env };
 	for (const key of Object.keys(env)) {
 		if (key.startsWith("npm_config_")) delete env[key];

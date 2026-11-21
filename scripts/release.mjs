@@ -21,6 +21,7 @@
  */
 
 import { execSync, spawnSync } from "node:child_process";
+import { childEnv } from "./npm-command.mjs";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getPublicWorkspacePackages } from "./release-packages.mjs";
@@ -38,7 +39,10 @@ if (!RELEASE_TARGET || (!BUMP_TYPES.has(RELEASE_TARGET) && !SEMVER_RE.test(RELEA
 function run(cmd, options = {}) {
 	console.log(`$ ${cmd}`);
 	try {
-		return execSync(cmd, { encoding: "utf-8", stdio: options.silent ? "pipe" : "inherit", ...options });
+		// Strip npm_config_* env vars: npm exports its config to children, so a user-level
+		// allow-scripts entry lands at CLI priority and npm 11+ rejects it in the
+		// project-scoped installs our scripts run (EALLOWSCRIPTS).
+		return execSync(cmd, { encoding: "utf-8", stdio: options.silent ? "pipe" : "inherit", env: childEnv(), ...options });
 	} catch (e) {
 		if (!options.ignoreError) {
 			console.error(`Command failed: ${cmd}`);
