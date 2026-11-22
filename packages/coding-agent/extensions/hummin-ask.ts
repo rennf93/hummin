@@ -136,6 +136,8 @@ class AskUserCallComponent implements Component {
 export class QuestionComponent implements Component {
 	private selected = 0;
 	private buffer = "";
+	/** Cursor position inside the free-text draft, in characters. */
+	private cursor = 0;
 	private disposed = false;
 	private readonly choices: readonly string[];
 	private readonly freeTextRow: number;
@@ -190,26 +192,16 @@ export class QuestionComponent implements Component {
 
 	handleInput(data: string): void {
 		if (this.disposed) return;
-		// The free-text row is the last selection target. While it is focused, printable
-		// keys edit the draft in place and backspace edits it too; other keys keep their
-		// meanings. Printable keys on a choice row do nothing.
-		if (this.selected === this.freeTextRow) {
-			if (data === "\x7f" || data === "\b") {
-				this.buffer = [...this.buffer].slice(0, -1).join("");
-				this.tui.requestRender();
-				return;
-			}
-			if ([...data].some((ch) => ch >= " " && ch !== "\x7f")) {
-				for (const ch of data) if (ch >= " " && ch !== "\x7f") this.buffer += ch;
-				this.tui.requestRender();
-				return;
-			}
-		}
+		const total = this.allowFreeText ? this.choices.length + 1 : this.choices.length;
+		// Control keys before text: escape sequences must never land in the draft (the
+		// old order turned "\x1b[A" into literal "[A"), and the selection keys work
+		// from every row, including the free-text one.
 		if (this.kb.matches(data, "tui.select.cancel")) {
 			// On the free-text row with a draft, escape clears it and returns to the
 			// choices; with no draft it cancels the whole question.
 			if (this.selected === this.freeTextRow && this.buffer) {
 				this.buffer = "";
+				this.cursor = 0;
 				this.selected = 0;
 				this.tui.requestRender();
 				return;
@@ -217,16 +209,61 @@ export class QuestionComponent implements Component {
 			this.finish(undefined);
 			return;
 		}
+		if (this.kb.matches(data, "tui.select.up")) {
+			this.selected = (this.selected + total - 1) % total;
+			this.tui.requestRender();
+			return;
+		}
+		if (this.kb.matches(data, "tui.select.down")) {
+			this.selected = (this.selected + 1) % total;
+			this.tui.requestRender();
+			return;
+		}
+		// Escape sequences that are not selection movement are control input: ignore
+		// them rather than appending them to the draft. On the free-text row the
+		// horizontal pair moves the cursor inside the draft.
+		if (data.startsWith("\x1b")) {
+			if (this.selected === this.freeTextRow && this.kb.matches(data, "tui.editor.cursorLeft")) {
+				this.cursor = Math.max(0, this.cursor - 1);
+				this.tui.requestRender();
+				return;
+			}
+			if (this.selected === this.freeTextRow && this.kb.matches(data, "tui.editor.cursorRight")) {
+				this.cursor = Math.min(this.buffer.length, this.cursor + 1);
+				this.tui.requestRender();
+				return;
+			}
+			return;
+		}
 		if (data === "\t" && this.allowFreeText) {
 			this.selected = this.freeTextRow;
 			this.tui.requestRender();
 			return;
 		}
-		const total = this.allowFreeText ? this.choices.length + 1 : this.choices.length;
-		if (this.kb.matches(data, "tui.select.up"))
-			this.selected = (this.selected + total - 1) % total;
-		else if (this.kb.matches(data, "tui.select.down")) this.selected = (this.selected + 1) % total;
-		else if (this.kb.matches(data, "tui.select.confirm")) {
+		// The free-text row is the last selection target. While it is focused, printable
+		// keys edit the draft in place and backspace edits it too; other keys keep their
+		// meanings. Printable keys on a choice row do nothing.
+		if (this.selected === this.freeTextRow) {
+			if (data === "\x7f" || data === "\b") {
+				if (this.cursor > 0) {
+					const chars = [...this.buffer];
+					this.buffer = chars.slice(0, this.cursor - 1).join("") + chars.slice(this.cursor).join("");
+					this.cursor -= 1;
+				}
+				this.tui.requestRender();
+				return;
+			}
+			if ([...data].some((ch) => ch >= " " && ch !== "\x7f")) {
+				const inserted = [...data].filter((ch) => ch >= " " && ch !== "\x7f").join("");
+				const chars = [...this.buffer];
+				this.buffer =
+					chars.slice(0, this.cursor).join("") + inserted + chars.slice(this.cursor).join("");
+				this.cursor += [...inserted].length;
+				this.tui.requestRender();
+				return;
+			}
+		}
+		if (this.kb.matches(data, "tui.select.confirm")) {
 			if (this.selected === this.freeTextRow) {
 				const text = this.buffer.trim();
 				if (text) {
@@ -271,20 +308,20 @@ export class QuestionComponent implements Component {
 		// The free-text row is always on when allowed: the field itself is the last
 		// row, so the choices never disappear while the user types.
 		if (this.allowFreeText) {
-			let shown = this.buffer || this.theme.fg("dim", "type your answer…");
-			if (this.buffer) {
-				// Row budget: borders (2), padLine spaces (2), the "❯ " prompt (2),
-				// and the cursor block (1); keep the tail so the cursor stays visible.
-				const available = Math.max(0, width - 7);
-				const bufferChars = [...this.buffer];
-				while (bufferChars.length > 0 && visibleWidth(this.buffer) > available) {
-					bufferChars.shift();
-					this.buffer = bufferChars.join("");
-				}
-				shown = this.buffer;
-			}
-			const cursor = this.selected === this.freeTextRow ? this.theme.fg("accent", "▊") : "";
-			lines.push(this.padLine(`${this.theme.fg("accent", "❯")} ${shown}${cursor}`, width));
+			const chars = [...this.buffer];
+			const focused = this.selected === this.freeTextRow;
+			// Row budget: borders (2), padLine spaces (2), the "❯ " prompt (2), and
+			// the cursor block (1). Keep the tail so the cursor stays visible; a
+			// cursor left of the window pins the window to it. Rendering never mutates
+			// the draft: the whole buffer is kept and submitted even when only the
+			// tail fits.
+			const available = Math.max(0, width - 7);
+			const start = Math.min(Math.max(0, chars.length - available), this.cursor);
+			const shownText = chars.slice(start).join("") || this.theme.fg("dim", "type your answer…");
+			const block = focused ? this.theme.fg("accent", "▊") : "";
+			const offset = focused ? Math.max(0, this.cursor - start) : shownText.length;
+			const shown = `${shownText.slice(0, offset)}${block}${shownText.slice(offset)}`;
+			lines.push(this.padLine(`${this.theme.fg("accent", "❯")} ${shown}`, width));
 		}
 		if (this.sys1Line) lines.push(this.padLine("", width), this.padLine(this.theme.fg("dim", this.sys1Line), width));
 		lines.push(

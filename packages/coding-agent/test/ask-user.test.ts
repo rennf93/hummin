@@ -92,7 +92,9 @@ const keyKb = {
 		(action === "tui.select.confirm" && data === "\r") ||
 		(action === "tui.select.cancel" && data === "\x1b") ||
 		(action === "tui.select.up" && data === "\x1b[A") ||
-		(action === "tui.select.down" && data === "\x1b[B"),
+		(action === "tui.select.down" && data === "\x1b[B") ||
+		(action === "tui.editor.cursorLeft" && data === "\x1b[D") ||
+		(action === "tui.editor.cursorRight" && data === "\x1b[C"),
 };
 
 function question(allowFreeText: boolean, picked: (value: string | undefined) => void, recommended?: number) {
@@ -115,6 +117,39 @@ function question(allowFreeText: boolean, picked: (value: string | undefined) =>
 }
 
 describe("ask_user inline free-text editing", () => {
+	// Regression for the arrow-keys-into-the-draft bug: the printable branch ran
+	// before the keybindings, so "\x1b[A" lost its ESC and appended "[A" as text.
+	it("arrow keys edit the draft instead of inserting escape text", () => {
+		const { component, renders } = question(true, () => {});
+		component.handleInput("\t");
+		component.handleInput("hi");
+		component.handleInput("\x1b[D"); // left past the end
+		component.handleInput("X"); // lands between h and i
+		const frame = renders.at(-1)!.join("\n");
+		expect(frame).toContain("hX▊i");
+		expect(frame).not.toContain("[");
+		component.handleInput("\x1b[C"); // right back to the end
+		component.handleInput("!");
+		expect(renders.at(-1)!.join("\n")).toContain("hXi!▊");
+		// Up and down return to the options instead of typing "[A"/"[B".
+		component.handleInput("\x1b[A");
+		expect(renders.at(-1)!.join("\n")).not.toContain("▊");
+		// The draft survives the round trip back to the free-text row.
+		component.handleInput("\x1b[B");
+		component.handleInput("\x1b[B");
+		expect(renders.at(-1)!.join("\n")).toContain("hXi!");
+	});
+
+	it("left at the start of the draft is a no-op", () => {
+		const { component, renders } = question(true, () => {});
+		component.handleInput("\t");
+		component.handleInput("a");
+		component.handleInput("\x1b[D");
+		component.handleInput("\x1b[D");
+		component.handleInput("b");
+		expect(renders.at(-1)!.join("\n")).toContain("b▊a");
+	});
+
 	it("tab enters inline input, typed keys land in place, enter submits", () => {
 		let picked: string | undefined;
 		const { component, renders } = question(true, (value) => {
@@ -146,7 +181,7 @@ describe("ask_user inline free-text editing", () => {
 	it("long input keeps the tail so the cursor stays visible", () => {
 		const { component, renders } = question(true, () => {});
 		component.handleInput("\t");
-		const long = "x".repeat(120) + "-tail-marker";
+		const long = `${"x".repeat(120)}-tail-marker`;
 		for (const ch of long) component.handleInput(ch);
 		const frame = renders.at(-1)!.join("\n");
 		expect(frame).toContain("-tail-marker▊");
