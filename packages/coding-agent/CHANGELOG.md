@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `ask_user` arrow keys inserting literal escape text (`[A`, `[B`, `[C`, `[D`) into the free-text draft instead of moving the cursor: selection and control keys now run before printable text handling, and the free-text row has a real cursor (Left/Right move it, typing inserts at it, backspace deletes before it); the draft also survives moving back to the choices
+
 ## [1.13.1] - 2026-11-21
 
 ### New Features
