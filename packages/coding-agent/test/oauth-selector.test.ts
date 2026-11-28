@@ -98,6 +98,7 @@ describe("OAuthSelectorComponent", () => {
 			}
 		).prototype.getLoginProviderOptions;
 		const fakeThis = {
+			settingsManager: { getProvidersShowAll: () => false },
 			session: {
 				modelRuntime: {
 					getProviders: () => [{ id: "deepseek", name: "DeepSeek", auth: { apiKey: { name: "API key" } } }],

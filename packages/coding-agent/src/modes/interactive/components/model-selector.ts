@@ -421,12 +421,10 @@ export class UpstreamModelSelectorComponent extends Container implements Focusab
 				this.onSelectAsDefaultCallback(selectedModel.model);
 			}
 		}
-		// Pass everything else to search input. Cursor keys leave the query as it is and must not move the selection.
+		// Pass everything else to search input
 		else {
-			const previousQuery = this.searchInput.getValue();
 			this.searchInput.handleInput(keyData);
-			const query = this.searchInput.getValue();
-			if (query !== previousQuery) this.filterModels(query);
+			this.filterModels(this.searchInput.getValue());
 		}
 	}
 

@@ -45,7 +45,6 @@
 - Fixed Amazon Bedrock requests hanging behind `HTTPS_PROXY` with AWS SSO profiles ([#12353](https://github.com/earendil-works/pi/issues/12353))
 - Fixed HTTP 400 after tool calls without text on Cloudflare Workers AI's GPT-OSS 120B and 20B, Granite 4.0 H Micro, and Llama 3.3 70B Instruct FP8 Fast ([#12194](https://github.com/earendil-works/pi/issues/12194))
 - Fixed HTTP 400 for non-strict Anthropic tools with Draft 7 tuples ([#12212](https://github.com/earendil-works/pi/issues/12212))
-- Fixed OpenAI Decisions usage dropping cache read and write tokens ([#12264](https://github.com/earendil-works/pi/issues/12264))
 - Fixed extension providers with `fetchModels` making model lookups quadratic in catalog size, which blocked pi for about a second with ~10k models ([#12311](https://github.com/earendil-works/pi/issues/12311))
 - Fixed the model list still offering models their providers shut down: `gpt-5-chat-latest` on `openai` and `azure`, Groq's `llama-3.1-8b-instant`, `llama-3.3-70b-versatile` and `qwen/qwen3.6-27b`, and the undocumented `mistral-medium-3.5` ([#12202](https://github.com/earendil-works/pi/issues/12202))
 - Fixed Markdown after an unclosed `$` before a number, such as `+$50`, rendering as raw text for the rest of the paragraph ([#12389](https://github.com/earendil-works/pi/issues/12389) by [@wuhaoyujerry](https://github.com/wuhaoyujerry))
@@ -53,19 +52,15 @@
 - Fixed MCP requests to servers that echo request IDs as strings timing out, and large MCP Streamable HTTP events blocking pi for seconds ([#12205](https://github.com/earendil-works/pi/issues/12205), [#12224](https://github.com/earendil-works/pi/issues/12224))
 - Fixed Groq Qwen models failing with `400 Unexpected message role`; OpenAI-compatible providers other than OpenAI now receive system messages (the system prompt and mid-conversation system messages) with the `system` role ([#10741](https://github.com/earendil-works/pi/issues/10741))
 - Fixed `/copy` saying "No agent messages to copy yet." after Esc during a tool call or after a provider error; it now copies the previous answer. RPC `get_last_assistant_text` skips the same messages ([#12119](https://github.com/earendil-works/pi/issues/12119), [#12121](https://github.com/earendil-works/pi/pull/12121) by [@acmerfight](https://github.com/acmerfight))
-- Fixed `pi.exec` reporting exit code 0 for commands ended by a signal, such as a timeout, an abort or a crash; it now reports 128 + the signal number, like a shell (143 for SIGTERM, 137 for SIGKILL) ([#12088](https://github.com/earendil-works/pi/issues/12088), [#12089](https://github.com/earendil-works/pi/pull/12089) by [@acmerfight](https://github.com/acmerfight))
 - Fixed GitHub Copilot Gemini and Kimi models (`gemini-4-argon`, `gemini-4-carbon`, `gemini-3.8-flash`, `kimi-k3`) ignoring the thinking level, and Copilot usage always reporting 0 reasoning tokens ([#12110](https://github.com/earendil-works/pi/pull/12110) by [@DenielC1](https://github.com/DenielC1))
 - Fixed provider errors that report only a Node socket error code, such as `read ECONNRESET`, `write EPIPE`, or `connect ETIMEDOUT`, not triggering automatic retries ([#12128](https://github.com/earendil-works/pi/issues/12128))
-- Fixed OpenAI rejecting requests with a 400 error when a tool's schema contains a node without a `type` (such as `items: {}` or `Type.Unknown()`); such tools are now sent in non-strict mode ([#12049](https://github.com/earendil-works/pi/issues/12049))
 - Fixed Mistral Large 4 tool calls stalling for minutes; Mistral models no longer receive strict tools unless `compat.supportsStrictMode` is set ([#12148](https://github.com/earendil-works/pi/issues/12148))
-- Fixed non-strict Anthropic tool schemas not telling the model that extra arguments are forbidden ([#12067](https://github.com/earendil-works/pi/issues/12067))
 - Fixed GitHub Copilot models on the Responses API (GPT, Grok, MAI-Code) filling omitted optional tool arguments with empty strings or invented values ([#12286](https://github.com/earendil-works/pi/issues/12286))
 - Fixed the OpenAI Codex WebSocket 60-minute connection limit failing the turn when it hit mid-stream, for example during long thinking; the request is now retried on a fresh connection ([#12124](https://github.com/earendil-works/pi/issues/12124))
 - Fixed the `openai-codex` provider getting almost no prompt cache hits for the system prompt on GPT-6.2 models ([#12273](https://github.com/earendil-works/pi/issues/12273))
 - Fixed the `openai-codex` provider ignoring a model's `maxTokens`
 - Fixed fullscreen Kitty images disappearing after a full redraw such as a window resize ([#12010](https://github.com/earendil-works/pi/issues/12010))
 - Fixed text after a multi-row inline image in Markdown drawing over the image ([#12017](https://github.com/earendil-works/pi/issues/12017))
-- Fixed Kitty and iTerm2 images covering overlays drawn over them ([#11584](https://github.com/earendil-works/pi/issues/11584))
 - Fixed Enter on a Tab path menu for an absolute path (`look at /tmp/fi`) or a slash command argument menu (`/open /tm`) submitting the prompt instead of accepting the completion ([#12309](https://github.com/earendil-works/pi/issues/12309), [#12312](https://github.com/earendil-works/pi/pull/12312) by [@acmerfight](https://github.com/acmerfight))
 
 ### New Features
@@ -80,7 +75,7 @@
 
 ### Breaking Changes
 
-- Removed telemetry reporting from pi for new installs and updates (`/api/report-install`), the `enableInstallTelemetry` setting (`SettingsManager.getEnableInstallTelemetry()` / `setEnableInstallTelemetry()`), and `PI_TELEMETRY`
+- Unlike upstream, hummin keeps opt-in install telemetry: the `enableInstallTelemetry` setting, `PI_TELEMETRY`, and the anonymous version ping after changelog-detected updates stay. Upstream removed all of these in v1.7.0; hummin's default and the `/privacy` surface are unchanged
 - Replaced the `showCacheMissNotices` setting with one setting per transcript notice: `notices.cacheMisses`, `notices.cacheWarming`, `notices.compactionCosts`, and `notices.reasoningDrops`, configured under Notices in `/settings`. An existing `showCacheMissNotices` value is migrated to all four. `SettingsManager.getShowCacheMissNotices()` and `setShowCacheMissNotices()` are removed; use `getNotices()` and `setNotice()` instead
 
 ### Added
@@ -97,7 +92,6 @@
 - Added decision models on the Radius provider, callable from codemode `models.classify()`
 - Added `responseId` to codemode `models.classify()` results. OpenRouter's System One fills it with its generation ID, and its billed cost replaces the catalog estimate. See [codemode](docs/codemode.md)
 - Added GPT-6.2 Astra and GPT-6.2 Sol to the `openai`, `azure`, and `openai-codex` providers. Both reject reasoning effort `none` and `minimal`, so thinking level `off` is unavailable. Azure serves them with a 1.05M context window; Codex serves GPT-6.2 Sol with 500K and GPT-6.2 Astra with 272K
-- Added `qwen4-max-preview` to the Qwen Token Plan Individual providers ([#12259](https://github.com/earendil-works/pi/issues/12259))
 
 ### Changed
 

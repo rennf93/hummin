@@ -397,6 +397,11 @@ export class SettingsList implements Component {
 	}
 
 	private addHintLine(lines: string[], width: number): void {
+		if (this.options.hint) {
+			lines.push("");
+			lines.push(truncateToWidth(this.theme.hint(`  ${this.options.hint}`), width));
+			return;
+		}
 		const kb = getKeybindings();
 		const confirm = [...kb.getKeys("tui.select.confirm"), "space"].join("/");
 		const keysHint = `${confirm} to change · ${kb.getKeys("tui.select.cancel").join("/")} to cancel`;

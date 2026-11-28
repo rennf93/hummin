@@ -132,7 +132,13 @@ describe("--agent-dir at startup", () => {
 			}),
 		);
 
-		const { stdout, stderr } = await runNode(cliPath, ["--list-models", "agent-dir", "--agent-dir", "agent"], dir);
+		// --no-extensions: hummin's bundled extensions (sys1 engine warnings, the
+		// /mcp shim conflict notice) write to stderr and this test only lists models.
+		const { stdout, stderr } = await runNode(
+			cliPath,
+			["--no-extensions", "--list-models", "agent-dir", "--agent-dir", "agent"],
+			dir,
+		);
 
 		expect(stderr).toBe("");
 		expect(stdout).toContain("agent-dir-model");
