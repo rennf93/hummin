@@ -88,8 +88,10 @@ jobs:
       fail-fast: false
       matrix:
         # hummin overlay: macOS coverage on top of upstream's suite split.
+        # pi-ai gets its own leg: the suite is the heaviest importer and dies
+        # silently on shared "other" runners (OOM during worker startup).
         os: [ubuntu-latest, macos-15]
-        name: [coding-agent, durable, chord, other]
+        name: [coding-agent, durable, chord, ai, other]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -133,7 +135,7 @@ jobs:
           # Every other workspace, so new packages are tested without editing this workflow.
           args=()
           for dir in packages/*/; do
-            case "$dir" in packages/coding-agent/ | packages/durable/ | packages/chord/) continue ;; esac
+            case "$dir" in packages/coding-agent/ | packages/durable/ | packages/chord/ | packages/ai/) continue ;; esac
             args+=(--workspace "${dir%/}")
           done
           npm run test:scripts

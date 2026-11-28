@@ -103,11 +103,14 @@ function lastNonEmptyLine(text: string): string | undefined {
 function shellTruncationWarnings(
 	truncation: BashToolDetails["truncation"],
 	fullOutputPath: string | undefined,
+	fullOutputError?: string,
 ): string | undefined {
-	if (!truncation?.truncated && !fullOutputPath) return undefined;
+	if (!truncation?.truncated && !fullOutputPath && !fullOutputError) return undefined;
 	const warnings: string[] = [];
 	if (fullOutputPath) {
 		warnings.push(`Full output: ${fullOutputPath}`);
+	} else if (fullOutputError) {
+		warnings.push(`Could not save the full output: ${fullOutputError}`);
 	}
 	if (truncation?.truncated) {
 		if (truncation.truncatedBy === "lines") {
@@ -129,15 +132,19 @@ function rebuildBashResultRenderComponent(
 	options: ToolRenderResultOptions,
 	showImages: boolean,
 	isError: boolean,
+	timerText: string | undefined,
 ): void {
 	component.clear();
 
 	let output = getTextOutput(result as any, showImages).trim();
 	const truncation = result.details?.truncation;
 	const fullOutputPath = result.details?.fullOutputPath;
-	if (!options.isPartial && truncation?.truncated && fullOutputPath && output.endsWith("]")) {
+	const fullOutputError = result.details?.fullOutputError;
+	// The model's footer names the file or why it could not be saved; the warning below says the same.
+	const footerMarker = fullOutputPath ?? fullOutputError;
+	if (!options.isPartial && truncation?.truncated && footerMarker && output.endsWith("]")) {
 		const footerStart = output.lastIndexOf("\n\n[");
-		if (footerStart !== -1 && output.slice(footerStart).includes(fullOutputPath)) {
+		if (footerStart !== -1 && output.slice(footerStart).includes(footerMarker)) {
 			output = output.slice(0, footerStart).trimEnd();
 		}
 	}
@@ -156,7 +163,7 @@ function rebuildBashResultRenderComponent(
 
 	// Collapsed and successful: the call row carries the summary; only surface truncation.
 	if (!options.expanded && !isError) {
-		const warning = shellTruncationWarnings(truncation, fullOutputPath);
+		const warning = shellTruncationWarnings(truncation, fullOutputPath, fullOutputError);
 		if (warning) component.addChild(new Text(`\n${warning}`, 0, 0));
 		return;
 	}
@@ -169,8 +176,27 @@ function rebuildBashResultRenderComponent(
 			.join("\n");
 		component.addChild(new Text(`\n${styledOutput}`, 0, 0));
 	}
-	const warning = shellTruncationWarnings(truncation, fullOutputPath);
-	if (warning) component.addChild(new Text(`\n${warning}`, 0, 0));
+
+	if (truncation?.truncated || fullOutputPath || fullOutputError) {
+		const warnings: string[] = [];
+		if (fullOutputPath) {
+			warnings.push(`Full output: ${fullOutputPath}`);
+		} else if (fullOutputError) {
+			warnings.push(`Could not save the full output: ${fullOutputError}`);
+		}
+		if (truncation?.truncated) {
+			if (truncation.truncatedBy === "lines") {
+				warnings.push(`Truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines`);
+			} else {
+				warnings.push(
+					`Truncated: ${truncation.outputLines} lines shown (${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit)`,
+				);
+			}
+		}
+		component.addChild(new Text(`\n${theme.fg("warning", `[${warnings.join(". ")}]`)}`, 0, 0));
+	}
+
+	if (timerText) component.addChild(new Text(`\n${theme.fg("muted", timerText)}`, 0, 0));
 }
 
 /** Shell renderers are shared by shell tools, which differ only in the tool name they display. */
@@ -192,9 +218,16 @@ export function createShellRenderers(toolName: string): Pick<ToolDefinition<any,
 		},
 		renderResult(result, options, _theme, context) {
 			// Keeps the shared timer's per-second redraw and end time in step with the result.
-			toolTimerText(context, options.isPartial);
+			const timerText = toolTimerText(context, options.isPartial);
 			const component = (context.lastComponent as Container | undefined) ?? new Container();
-			rebuildBashResultRenderComponent(component, result as any, options, context.showImages, context.isError);
+			rebuildBashResultRenderComponent(
+				component,
+				result as any,
+				options,
+				context.showImages,
+				context.isError,
+				timerText,
+			);
 			component.invalidate();
 			return component;
 		},

@@ -18,9 +18,12 @@ export interface ChannelHandler {
 	 * protocol error too.
 	 */
 	message(message: Message): void | Promise<void>;
-	/** The link closed, from either end; called once. */
-	closed(): void;
+	/** The link closed, from either end, for `reason`; called once. */
+	closed(reason: LinkCloseReason): void;
 }
+
+/** Why a link closed: this host (`local`), its heartbeat, a protocol error, or the other end or transport (`peer`). */
+export type LinkCloseReason = "local" | "heartbeat" | "protocol" | "peer";
 
 /** What a channel is made with besides its link and handler. */
 type ChannelOptions = {
@@ -73,6 +76,11 @@ export class Channel {
 	#lastReceived = Date.now();
 	/** Whether a `ping` went out since the last received message. */
 	#pinged = false;
+	/** How many `ping`s it sent and how many `pong`s it received: a fence waits for the `pong` of its own `ping`. */
+	#pings = 0;
+	#pongs = 0;
+	/** The fences waiting for their `pong`, oldest first; made by the first (most links never fence). */
+	#fences: { readonly ping: number; readonly then: () => void }[] | undefined;
 	/**
 	 * Messages received while one is handled asynchronously, in order, and the index of the next to handle; `undefined`
 	 * while none waits.
@@ -80,6 +88,8 @@ export class Channel {
 	#held: { queue: Uint8Array[]; next: number } | undefined;
 	/** Whether a message is being handled asynchronously: the held ones wait. */
 	#waiting = false;
+	/** Why this end closes the link, set before it does (the transport may call back at once); else the peer did. */
+	#closing: LinkCloseReason | undefined;
 	readonly #hello: Uint8Array;
 	/** Counts the bytes of the encoded messages (sizes the channel has). */
 	readonly #bytes: ChordCounter<"chord.link.bytes">;
@@ -143,8 +153,9 @@ export class Channel {
 		else this.#link.send(bytes);
 	}
 
+	/** Closes the link from this end (`local`). */
 	close(): void {
-		this.#link.close();
+		this.#close("local");
 	}
 
 	/**
@@ -156,11 +167,36 @@ export class Channel {
 	tick(now: number, paused: number, ping: number, close: number): void {
 		if (paused > 0) this.#lastReceived = Math.min(this.#lastReceived + paused, now - ping);
 		const silent = now - this.#lastReceived;
-		if (silent >= close) this.close();
+		if (silent >= close) this.#close("heartbeat");
 		else if (silent >= ping && !this.#pinged && this.#state.kind === "open") {
 			this.#pinged = true;
+			this.#pings++;
 			this.#link.send(this.#codec.encode({ kind: "ping" }));
 		}
+	}
+
+	/**
+	 * A fence (slice 14 §2.3): sends a `ping` and runs `then` when its `pong` arrived. A link is ordered and the peer
+	 * answers a `ping` after everything it handled before it, so whatever the peer sent before it saw the `ping` has
+	 * arrived here by then. Pings and pongs are counted: a liveness `pong` in transit ends no fence. Returns what
+	 * cancels it; a link that closes first runs none.
+	 */
+	fence(then: () => void): () => void {
+		const fence = { ping: ++this.#pings, then };
+		this.#fences ??= [];
+		this.#fences.push(fence);
+		this.send({ kind: "ping" });
+		return () => {
+			const at = this.#fences?.indexOf(fence) ?? -1;
+			if (at !== -1) this.#fences!.splice(at, 1);
+		};
+	}
+
+	/** A `pong` arrived: the fences of the pings up to it run, in order. */
+	#ponged(): void {
+		this.#pongs++;
+		const fences = this.#fences;
+		while (fences !== undefined && fences.length > 0 && fences[0]!.ping <= this.#pongs) fences.shift()!.then();
 	}
 
 	#receive(bytes: Uint8Array): void {
@@ -184,7 +220,8 @@ export class Channel {
 			if (message.kind === "hello") throw new Error("handshake: a second hello");
 			// Control of the link itself, never queued behind the window.
 			if (message.kind === "ping") this.#link.send(this.#codec.encode({ kind: "pong" }));
-			else if (message.kind !== "pong") {
+			else if (message.kind === "pong") this.#ponged();
+			else {
 				const handling = this.#handler.message(message);
 				if (handling !== undefined) this.#hold(handling);
 			}
@@ -229,7 +266,7 @@ export class Channel {
 	#failed(error: unknown): void {
 		if (this.#state.kind === "closed") return;
 		this.#report(error);
-		this.close();
+		this.#close("protocol");
 	}
 
 	/** A message from its bytes, checked against the message schema unless the link is trusted. */
@@ -255,10 +292,17 @@ export class Channel {
 		this.#handler.opened();
 	}
 
+	#close(reason: LinkCloseReason): void {
+		if (this.#state.kind === "closed") return;
+		this.#closing ??= reason;
+		this.#link.close();
+	}
+
 	#closed(): void {
 		if (this.#state.kind === "closed") return;
 		this.#state = { kind: "closed" };
 		this.#held = undefined;
-		this.#handler.closed();
+		this.#fences = undefined;
+		this.#handler.closed(this.#closing ?? "peer");
 	}
 }

@@ -233,7 +233,7 @@ const CATEGORY_ITEM_IDS: Record<string, readonly string[]> = {
 		"cache-warming-mode",
 		"hide-thinking",
 		"mermaid-rendering",
-		"cache-miss-notices",
+		"notices",
 	],
 	models: ["default-thinking-level", "model-thinking", "providers-show-all"],
 	memory: ["memory-enabled", "memory-mode", "memory-vault-dir", "memory-provider", "memory-model"],

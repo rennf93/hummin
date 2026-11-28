@@ -29,7 +29,7 @@ const TABLE = "app.store:edits";
 
 /** A store on a fresh `:memory:` database, as Chord's layers see it. */
 async function memoryStore(options?: { readonly outbox?: boolean }): Promise<ChordStore> {
-	return (await openStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), context, options)) as ChordStore;
+	return await openStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), context, options);
 }
 
 /** A fence that admits and records what it adopted. */
@@ -65,11 +65,11 @@ describe("opening", () => {
 	it("creates a new store at seq 0 without an outbox, and reopens a file at its last seq and ids", async () => {
 		directory = await mkdtemp(join(tmpdir(), "chord-store-"));
 		const path = join(directory, "store.sqlite");
-		const store = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+		const store = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
 		expect([store.lastSeq, store.outbox]).toEqual([0, undefined]);
 		expect(await created(store)).toBe(2);
 		await store.close(context);
-		const reopened = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+		const reopened = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
 		expect(reopened.lastSeq).toBe(1);
 		const { adopted, fence } = recording();
 		await reopened.commit([createDocument({ ...ADDRESS, key: "b" }, BASE, "{}")], fence, context);
@@ -80,7 +80,7 @@ describe("opening", () => {
 	it("migrates a store of schema 2 to 3: its records kept, a host column and its index added", async () => {
 		directory = await mkdtemp(join(tmpdir(), "chord-store-"));
 		const path = join(directory, "store.sqlite");
-		const store = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+		const store = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
 		await created(store);
 		await store.close(context);
 		// The store as schema 2 left it.
@@ -89,7 +89,7 @@ describe("opening", () => {
 		await db.exec("ALTER TABLE chord_documents DROP COLUMN host");
 		await db.exec("UPDATE chord_store_schema SET version = 2");
 		await db.close();
-		const migrated = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+		const migrated = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
 		const record = await migrated.read((executor) => findDocument(executor, ADDRESS), context);
 		expect(record).toMatchObject({ id: 2, owner: "app.store" });
 		expect(record?.host).toBeUndefined();
@@ -149,11 +149,7 @@ describe("the commit step", () => {
 	it("numbers up to Number.MAX_SAFE_INTEGER after an import near it, then fails storage_failed: no seq repeats", async () => {
 		const [manifest, ...rest] = await exported(await memoryStore());
 		const parts = [{ ...manifest!, lastSeq: Number.MAX_SAFE_INTEGER - 1 }, ...rest];
-		const store = (await importStore(
-			sqliteBackend(await openNodeSqliteDatabase(":memory:")),
-			parts,
-			context,
-		)) as ChordStore;
+		const store = await importStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), parts, context);
 		expect(await created(store)).toBe(2);
 		expect(store.lastSeq).toBe(Number.MAX_SAFE_INTEGER);
 		const refused = store.commit([createDocument({ ...ADDRESS, key: "b" }, BASE, "{}")], recording().fence, context);
@@ -314,11 +310,11 @@ describe("the id allocator (D3)", () => {
 	it("saturates at Number.MAX_SAFE_INTEGER across reopen: mints and Chord creations are refused, the store goes on", async () => {
 		directory = await mkdtemp(join(tmpdir(), "chord-store-"));
 		const path = join(directory, "store.sqlite");
-		const store = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+		const store = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
 		await store.commit([raising(Number.MAX_SAFE_INTEGER)], recording().fence, context);
 		expect(store.nextId).toBe(Number.MAX_SAFE_INTEGER);
 		await store.close(context);
-		const reopened = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+		const reopened = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
 		expect(reopened.nextId).toBe(Number.MAX_SAFE_INTEGER);
 		expect(() => reopened.mintId()).toThrow("ID space is exhausted");
 		const refused = reopened.commit([createDocument(ADDRESS, BASE, "{}")], recording().fence, context);
@@ -364,6 +360,45 @@ describe("close", () => {
 		expect(await rejection(queued)).toMatchObject({ code: "released" });
 		await closed;
 		expect(await rejection(store.read(async () => 1, context))).toMatchObject({ code: "released" });
+	});
+});
+
+describe("settled", () => {
+	const create = (key: string) => createDocument({ ...ADDRESS, key }, BASE, "{}");
+
+	it("resolves once the commits queued before it were adopted or rejected", async () => {
+		const store = await memoryStore();
+		const events: string[] = [];
+		const fence = (name: string, admit = true) => ({
+			admit: () => admit,
+			adopt: () => void events.push(`adopt ${name}`),
+		});
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], fence("a"), context);
+		await held.entered;
+		const queued = store.commit([create("b")], fence("b"), context);
+		const refused = rejection(store.commit([create("c")], fence("c", false), context));
+		const settled = store.settled().then(() => events.push("settled"));
+		await Promise.resolve();
+		expect(events).toEqual([]);
+		held.release();
+		await settled;
+		expect(events).toEqual(["adopt a", "adopt b", "settled"]);
+		expect(await Promise.all([running, queued])).toEqual([1, 2]);
+		expect(await refused).toMatchObject({ code: "released" });
+	});
+
+	it("does not wait for a commit queued after the call; resolves on a closed store", async () => {
+		const store = await memoryStore();
+		const before = store.settled();
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], recording().fence, context);
+		await held.entered;
+		await before;
+		held.release();
+		await running;
+		await (store as Store).close(context);
+		await store.settled();
 	});
 });
 
@@ -466,7 +501,7 @@ describe("a commit series", () => {
 			(index, seq, ids) => receipts.push([index, seq, ids]),
 			telemetry.context,
 		);
-		expect(result).toEqual({ stored: 3 });
+		expect(result).toEqual({ kind: "stored", stored: 3 });
 		expect(seen).toEqual([2]);
 		expect(receipts).toEqual([
 			[0, 1, [2]],
@@ -498,7 +533,7 @@ describe("a commit series", () => {
 			(index) => receipts.push(index),
 			context,
 		);
-		expect(result).toEqual({ stored: 1, refused: refusal });
+		expect(result).toEqual({ kind: "refused", stored: 1, refused: refusal });
 		expect(receipts).toEqual([0]);
 		expect(store.lastSeq).toBe(1);
 		const keys = await store.read(
@@ -608,7 +643,10 @@ describe("a commit series", () => {
 			},
 		};
 		const later = { check: async (step: Step) => void seen.push(step.table(TABLE)?.version), writes: [sees] };
-		expect(await store.commitSeries([unchecked([table]), later], () => {}, context)).toEqual({ stored: 2 });
+		expect(await store.commitSeries([unchecked([table]), later], () => {}, context)).toEqual({
+			kind: "stored",
+			stored: 2,
+		});
 		expect(seen).toEqual([1, 1]);
 		expect(store.table(TABLE)?.version).toBe(1);
 	});
@@ -639,11 +677,7 @@ describe("a commit series", () => {
 	it("counts only commits with writes against the seq bound: empty ones at Number.MAX_SAFE_INTEGER still stand", async () => {
 		const [manifest, ...rest] = await exported(await memoryStore());
 		const parts = [{ ...manifest!, lastSeq: Number.MAX_SAFE_INTEGER - 1 }, ...rest];
-		const store = (await importStore(
-			sqliteBackend(await openNodeSqliteDatabase(":memory:")),
-			parts,
-			context,
-		)) as ChordStore;
+		const store = await importStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), parts, context);
 		await created(store);
 		const receipts: [number, number][] = [];
 		const empty = await store.commitSeries(
@@ -651,7 +685,7 @@ describe("a commit series", () => {
 			(index, seq) => receipts.push([index, seq]),
 			context,
 		);
-		expect(empty).toEqual({ stored: 2 });
+		expect(empty).toEqual({ kind: "stored", stored: 2 });
 		expect(receipts).toEqual([
 			[0, Number.MAX_SAFE_INTEGER],
 			[1, Number.MAX_SAFE_INTEGER],
@@ -688,7 +722,7 @@ describe("group commit", () => {
 			transactions++;
 			return transaction(callback);
 		};
-		const store = (await openStore(sqliteBackend(db), context, options)) as ChordStore;
+		const store = await openStore(sqliteBackend(db), context, options);
 		// Opening's own transactions (the schema) do not count.
 		const opened = transactions;
 		return { store, transactions: () => transactions - opened };
@@ -1014,11 +1048,7 @@ describe("group commit", () => {
 	it("runs a group that would pass the end of the seq range alone: the commits that fit are stored", async () => {
 		const [manifest, ...rest] = await exported(await memoryStore());
 		const parts = [{ ...manifest!, lastSeq: Number.MAX_SAFE_INTEGER - 2 }, ...rest];
-		const store = (await importStore(
-			sqliteBackend(await openNodeSqliteDatabase(":memory:")),
-			parts,
-			context,
-		)) as ChordStore;
+		const store = await importStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), parts, context);
 		const held = holdNextCommit(store);
 		const running = store.commit([create("a")], recording().fence, context);
 		await held.entered;

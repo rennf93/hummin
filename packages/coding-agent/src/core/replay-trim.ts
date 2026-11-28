@@ -27,7 +27,7 @@
 // empty field, never to a missing field.
 
 import type { Context, TextContent, ThinkingContent, ToolResultMessage } from "@earendil-works/pi-ai";
-import { isOpenAICompletionsReasoningField } from "@earendil-works/pi-ai/api/openai-completions";
+import { decodeThinkingSignature } from "@earendil-works/pi-ai/api/openai-completions-reasoning";
 
 /** hummin settings shape for replay trimming (settings key `replayTrim`). */
 export interface ReplayTrimSettings {
@@ -68,7 +68,8 @@ function stripThinking(api: string, block: ThinkingContent): boolean {
 		const signature = block.thinkingSignature;
 		// Plain-field signatures mean the reasoning is replayed as a flat string
 		// (waste). Anything else (structured/encrypted replay data) must go back.
-		return signature === undefined || signature.trim().length === 0 || isOpenAICompletionsReasoningField(signature);
+		if (signature === undefined || signature.trim().length === 0) return true;
+		return decodeThinkingSignature(signature)?.kind === "field";
 	}
 	return false; // unknown API - keep replay until verified
 }

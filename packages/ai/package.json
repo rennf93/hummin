@@ -76,15 +76,15 @@
 		"build": "npm run generate-models && npm run build:offline",
 		"build:offline": "npm run check:model-data && tsc -p tsconfig.build.json && node ../../scripts/package-files.mjs clean dist/providers/data && node ../../scripts/package-files.mjs copy src/providers/data dist/providers",
 		"test": "vitest --run",
-		"prepublishOnly": "npm run clean && npm run build",
-		"generate-image-models": "node scripts/generate-image-models.ts --strict"
+		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "0.129.0",
 		"@aws-sdk/client-bedrock-runtime": "3.1127.0",
+		"@aws-sdk/credential-provider-node": "3.972.82",
 		"@earendil-works/pi-schema": "1.13.1",
 		"@earendil-works/pi-telemetry": "1.13.1",
-		"@google/genai": "2.32.0",
+		"@google/genai": "3.6.1",
 		"@smithy/node-http-handler": "4.12.1",
 		"http-proxy-agent": "9.1.0",
 		"https-proxy-agent": "9.1.0",

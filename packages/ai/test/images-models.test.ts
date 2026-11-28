@@ -394,7 +394,11 @@ describe("Models with image models", () => {
 		expect(provider.getModels().every((model) => isModelType(model, "chat"))).toBe(true);
 		expect(provider.getAllModels?.().some((model) => isModelType(model, "image"))).toBe(true);
 		expect(images.every((m) => m.type === "image" && m.api === "openrouter-images")).toBe(true);
-		expect(models.getModelsOfType("image").every((m) => m.provider === "openrouter")).toBe(true);
+		// hummin: the radius static catalog contributes its own image models when the
+		// gateway config loads, so the catalog-wide image check admits both providers.
+		expect(
+			models.getModelsOfType("image").every((m) => m.provider === "openrouter" || m.provider === "radius"),
+		).toBe(true);
 
 		// One upstream id can expose separate chat and image operations.
 		const chat = models.getModel("openrouter", "google/gemini-3-pro-image");

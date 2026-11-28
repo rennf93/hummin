@@ -18,7 +18,8 @@ import { isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, parse, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { build, type Loader, type Plugin } from "esbuild";
+import type { Loader, Plugin } from "esbuild";
+import { esbuildBuild } from "../esbuild.ts";
 import { type BaseInputs, readRecorded, recordedSources } from "../plugins/base-inputs.ts";
 import { conditionsOf } from "../surfaces/bundle.ts";
 
@@ -55,7 +56,7 @@ export async function buildWorkerBase(entry: string, execArgv: readonly string[]
 	// Built as if at the file system's root: the source map's paths relative to it, made absolute by `sourceRoot`.
 	const root = parse(resolve(entry)).root;
 	const inputs = new Map<string, string>();
-	const result = await build({
+	const result = await esbuildBuild({
 		entryPoints: [{ in: entry, out: ENTRY_NAME }],
 		// One flat directory: every chunk imports the others as `./<name>`, and the source maps' paths stay relative to
 		// the root.
@@ -78,6 +79,10 @@ export async function buildWorkerBase(entry: string, execArgv: readonly string[]
 		ignoreAnnotations: true,
 		// Function and class names as the source has them (`name` stays what unbundled code sees).
 		keepNames: true,
+		// Minified but for the names: every worker holds the base's source text, and V8 keeps a text with any non-ASCII
+		// character (a comment's `§`) as UTF-16, twice its size.
+		minifyWhitespace: true,
+		minifySyntax: true,
 		sourcemap: "linked",
 		sourcesContent: false,
 		sourceRoot: pathToFileURL(root).href,
@@ -111,7 +116,7 @@ export async function buildWorkerBase(entry: string, execArgv: readonly string[]
  */
 export async function nodeBaseInputs(entry: string, conditions: readonly string[]): Promise<BaseInputs> {
 	const inputs = new Map<string, string>();
-	await build({
+	await esbuildBuild({
 		entryPoints: [entry],
 		write: false,
 		bundle: true,

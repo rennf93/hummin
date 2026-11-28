@@ -60,6 +60,14 @@ function setOf(base: string, scripts: readonly RegisteredScript[]): ScriptSet {
 	};
 }
 
+/** The set a server still building its surface shows (`surface-build.ts`): no base. */
+const UNBUILT: ScriptSet = { base: "", combined: "", plugins: [] };
+
+/** The set the test's server shows first: `scripts` under base B1, or the unbuilt one. */
+function shownSet(scripts: readonly RegisteredScript[] | "unbuilt"): ScriptSet {
+	return scripts === "unbuilt" ? UNBUILT : setOf("B1", scripts);
+}
+
 /** A timer of the client's environment the test fires itself: its pause and its callback. */
 type ManualTimer = { readonly ms: number; readonly fire: () => void };
 
@@ -77,8 +85,11 @@ async function setup(
 		readonly follow?: false;
 		/** The server never answers: the client's sockets never open. */
 		readonly offline?: true;
-		/** The set the server shows from the start (default: `initial`'s). */
-		readonly shown?: readonly RegisteredScript[];
+		/** The set the server shows from the start (default: `initial`'s); `unbuilt`: the one with no base. */
+		readonly shown?: readonly RegisteredScript[] | "unbuilt";
+		/** Holds the server's base answers until it settles (a slow network). */
+		readonly baseAnswers?: Promise<void>;
+		readonly limits?: chordNext.PartLimits;
 	} = {},
 ) {
 	let failing = more.failing ?? 0;
@@ -88,7 +99,7 @@ async function setup(
 		onError: () => {},
 	});
 	await server.load(
-		[{ name: "chord.web", facet: scriptsFacet<TestPrincipal>("web", { set: setOf("B1", more.shown ?? initial) }) }],
+		[{ name: "chord.web", facet: scriptsFacet<TestPrincipal>("web", { set: shownSet(more.shown ?? initial) }) }],
 		context,
 	);
 	const fetched: string[] = [];
@@ -97,6 +108,7 @@ async function setup(
 	const sockets: { events: SocketEvents; link: chordNext.Link }[] = [];
 	let serverBase = "B1";
 	const asked: string[] = [];
+	const states: chordNext.ConnectionState[] = [];
 	const client = await startClient<TestPrincipal>({
 		scripts: WebScripts,
 		base: "B1",
@@ -125,11 +137,15 @@ async function setup(
 		},
 		serverBase: async () => {
 			asked.push(serverBase);
+			await more.baseAnswers;
 			return serverBase;
 		},
-		outdated: () => outdated.push("outdated"),
+		// With the connection state then: the loop has stopped (`waiting`) before the app starts over.
+		outdated: () => outdated.push(`outdated (${states.at(-1)})`),
+		onConnection: (state) => states.push(state),
 		...(more.styles === undefined ? {} : { styles: more.styles }),
 		...(more.follow === undefined ? {} : { follow: more.follow }),
+		...(more.limits === undefined ? {} : { limits: more.limits }),
 		environment: {
 			now: () => Date.now(),
 			after: (ms, callback) => {
@@ -361,15 +377,87 @@ describe("outdated clients", () => {
 		await server.close(context);
 	});
 
-	it("asks the server's base before reconnecting: another one calls outdated and stops", async () => {
+	it("asks the server's base at a reconnect: another one stops the loop, then calls outdated", async () => {
 		const { client, server, outdated, sockets, setServerBase } = await setup([]);
 		setServerBase("B2");
 		sockets[0]!.link.close();
 		await until(() => outdated.length === 1);
 		await new Promise((resolve) => setTimeout(resolve, 400));
-		expect(sockets).toHaveLength(1);
+		expect([sockets.length <= 2, outdated]).toEqual([true, ["outdated (waiting)"]]);
 		await client.stop(context);
 		await server.close(context);
+	});
+
+	it("a slow base answer after the next link opened: that link ends before outdated is called", async () => {
+		const gate = Promise.withResolvers<void>();
+		const { client, server, outdated, sockets, setServerBase } = await setup([], [], { baseAnswers: gate.promise });
+		setServerBase("B2");
+		sockets[0]!.link.close();
+		await until(() => sockets.length === 2);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		gate.resolve();
+		await until(() => outdated.length === 1);
+		expect(outdated).toEqual(["outdated (waiting)"]);
+		await client.stop(context);
+		await server.close(context);
+	});
+});
+
+describe("a server still building its surface", () => {
+	// styles.test.ts' reconnect case failed when the page reconnected before the restarted server's build: the page took
+	// the set with no base for another base and reloaded, losing the state it had.
+	it("skips the set with no base it shows first, and applies the first set that follows", async () => {
+		const a1 = script("@test/a", "d1", "hello");
+		const a2 = script("@test/a", "d2", "hello again");
+		const { client, server, outdated } = await setup([a1], [a2], { shown: "unbuilt" });
+		const greeting = await client.host.get(Greeting, {}, context);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect([greeting.text.value, outdated]).toEqual(["hello", []]);
+		await publishTo(server, "web", setOf("B1", [a2]), context);
+		await until(() => greeting.text.value === "hello again");
+		expect(outdated).toEqual([]);
+		await client.stop(context);
+		await server.close(context);
+	});
+
+	it("a reconnect finding the set with no base calls no outdated; a plugin that kept its old code loads with the first set", async () => {
+		const a1 = script("@test/a", "d1", "hello");
+		const a2 = script("@test/a", "d2", "hello again", 1);
+		const { client, server, outdated, errors, sockets } = await setup([a1], [a2]);
+		const greeting = await client.host.get(Greeting, {}, context);
+		await publishTo(server, "web", setOf("B1", [a2]), context);
+		await until(() => errors.some(({ kind }) => kind === "plugins"));
+		expect(greeting.text.value).toBe("hello");
+		// The server restarts: its scripts object shows the set with no base until its build publishes the first set.
+		await publishTo(server, "web", UNBUILT, context);
+		sockets[0]!.link.close();
+		await until(() => sockets.length === 2);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(outdated).toEqual([]);
+		await publishTo(server, "web", setOf("B1", [a2]), context);
+		await until(() => greeting.text.value === "hello again");
+		expect(outdated).toEqual([]);
+		await client.stop(context);
+		await server.close(context);
+	});
+});
+
+describe("part limits", () => {
+	it("takes parts from the server within the limits it was given, and none past them", async () => {
+		const a1 = script("@test/a", "d1", "hello");
+		const a2 = script("@test/a", "d2", "hello again");
+		const within = await setup([a1], [a2], { shown: [a2], limits: { part: 1024 * 1024 } });
+		const greeting = await within.client.host.get(Greeting, {}, context);
+		await until(() => greeting.text.value === "hello again");
+		await within.client.stop(context);
+		await within.server.close(context);
+		// The scripts object's set is past 32 bytes: the client never gets it, so it keeps the code it started with.
+		const past = await setup([a1], [a2], { shown: [a2], limits: { part: 32 } });
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(past.fetched).toEqual([]);
+		expect((await past.client.host.get(Greeting, {}, context)).text.value).toBe("hello");
+		await past.client.stop(context);
+		await past.server.close(context);
 	});
 });
 
