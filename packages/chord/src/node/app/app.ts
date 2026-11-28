@@ -1,7 +1,7 @@
 // `startServer` (slice 13 §1, §5; decisions "The app kit, point 1" to "point 5"): the server of an app built with the kit.
 // It lays out the data directory, opens the server's store, creates the server host, the HTTP component and one
 // workers component per worker kind, the plugins component over the app's required root and the user's root, loads
-// the server's plugins with the kit's own facets (the start-data object, sessions, the owner link, pairing, files),
+// the server's plugins with the kit's own facets (the start-data object, sign-ins, the owner link, pairing, files),
 // and gives the app the controls it needs: the owner link, `applyChanges`, installs, export, import and delete per
 // address (the worker's data and the server's records and rows belonging to the address).
 // After the listen, off the start's path, it builds the bases (the surfaces' base bundles, each worker kind's worker
@@ -65,7 +65,7 @@ import { type AppLayout, createLayout, defaultDataDir, openDataDir, privateStore
 import { OWNER_PATH, OwnerLink, ownerFacet, ownerTokenFile } from "./owner.ts";
 import { Pairings, pairingFacet } from "./pairing.ts";
 import { secretFile } from "./secrets.ts";
-import { createSessions } from "./sessions.ts";
+import { createSignIns } from "./sign-ins.ts";
 
 /** The server's host kind: the kit's server host is `Server()`. */
 export const Server = hostKind("server");
@@ -190,14 +190,14 @@ export type AppOptions<P extends Principal> = {
 } & ({ readonly workers?: readonly [] } | { readonly principal: { readonly worker: (address: Address) => P } });
 
 /**
- * The bounds of what public endpoints, clients and imports may cost: live ephemeral sessions (1,000; past it the
+ * The bounds of what public endpoints, clients and imports may cost: live ephemeral sign-ins (1,000; past it the
  * oldest ends, signed out), pairings under way that anonymous clients started (100 in all, 10 per client address; past
  * them 429; the owner's own are not counted), uploads under way per `Files` object (64; past it `unavailable`, `busy`),
  * an archive's unpacked bytes (4 GiB) and entries (100,000).
  */
 export type AppLimits = {
 	readonly uploads?: number;
-	readonly ephemeralSessions?: number;
+	readonly ephemeralSignIns?: number;
 	readonly pendingPairings?: number;
 	readonly pairingsPerAddress?: number;
 	readonly importBytes?: number;
@@ -245,7 +245,7 @@ export interface App<P extends Principal> {
 	readonly dataDir: string;
 	/** The owner link of this start (single use, 10 minutes): `http://127.0.0.1:<port>/_chord/owner#<token>`. */
 	ownerLink(): string;
-	/** The owner token file's path (a device session of the owner, mode 0600). */
+	/** The owner token file's path (a device sign-in of the owner, mode 0600). */
 	readonly ownerTokenFile: string;
 	/**
 	 * Settles once every base (the web and terminal base bundles, each worker kind's worker base) was built after the
@@ -261,7 +261,8 @@ export interface App<P extends Principal> {
 	readonly baseWatched: Promise<void>;
 	/**
 	 * Builds the dirty plugins and rolls them out: the server, every worker kind, then the clients; never by itself. Calls
-	 * run one after another (a later one builds after the earlier one rolled out).
+	 * run one after another (a later one builds after the earlier one rolled out); one whose context aborts while it
+	 * waits stops waiting and builds nothing (`Plugins.apply`).
 	 */
 	applyChanges(context: Context): Promise<RolloutResult>;
 	/**
@@ -322,7 +323,7 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 		context,
 	);
 	const { onError, api, limits = {} } = options;
-	const sessions = createSessions<P>(cookieSecret, { maxEphemeral: limits.ephemeralSessions });
+	const signIns = createSignIns<P>(cookieSecret, { maxEphemeral: limits.ephemeralSignIns });
 	const { telemetry, principalAttributes } = options;
 	const host = createHost<P>({
 		address: Server(),
@@ -337,7 +338,7 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 		host,
 		{
 			listen: options.listen ?? { host: "127.0.0.1", port: 0 },
-			links: { path: "/chord", opened: sessions.opened },
+			links: { path: "/chord", opened: signIns.opened },
 			telemetry,
 			onError: (error) => onError({ kind: "http", error }),
 		},
@@ -372,7 +373,7 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 			name: "chord.app.info",
 			facet: appInfoFacet({ dataDir: layout.dataDir, name: options.name, version: api.versions[0] ?? "", owner }),
 		},
-		{ name: "chord.app.sessions", facet: sessions.facet },
+		{ name: "chord.app.sign-ins", facet: signIns.facet },
 		{ name: "chord.app.owner", facet: ownerFacet(link, owner) },
 		{
 			name: "chord.app.pairing",
@@ -405,7 +406,7 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 	};
 	try {
 		for (const kind of options.workers ?? []) {
-			workers.set(kind.kind.kind, workersOf(host, kind, options, layout, plugins, workerHosts, context));
+			workers.set(kind.kind.kind, workersOf(host, store, kind, options, layout, plugins, workerHosts, context));
 		}
 		for (const surface of surfacesOf(host, options, plugins)) {
 			surfaces.push(surface);
@@ -431,7 +432,7 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 
 /**
  * Refuses an owner the kit could not recognize or that would act as the server (a declaration policy the types cannot
- * express): sessions keep the owner as JSON, so a field `undefined` (or anything else not strict JSON) would never
+ * express): sign-ins keep the owner as JSON, so a field `undefined` (or anything else not strict JSON) would never
  * match it again; the server's principal reaches every worker's kit objects.
  */
 function checkOwner<P extends Principal>(owner: P, server: P, context: Context): void {
@@ -593,6 +594,7 @@ function modulesOf(api: AppApi, kind: AppKind | undefined): HostPackages {
  */
 function workersOf<P extends Principal>(
 	host: Host<P>,
+	store: Store,
 	kind: AppWorkerKind<P>,
 	options: AppOptions<P>,
 	layout: AppLayout,
@@ -616,6 +618,8 @@ function workersOf<P extends Principal>(
 			...(kind.env === undefined ? {} : { env: kind.env }),
 			baseDir: join(layout.workerBases, kind.kind.kind),
 			compileCache: layout.compileCache,
+			// The server's: a worker's exit is published after the commits its calls queued there.
+			store,
 			// The server reaches its workers' kit objects (`HostData`) whatever the app admits.
 			authorize: (principal, address) =>
 				samePrincipal(principal, server, context) || kind.authorize(principal, address),
@@ -687,8 +691,6 @@ class RunningApp<P extends Principal> implements App<P> {
 	/** The recording of the base code after the start (`watchBaseCode`). */
 	#scanning: Promise<void> = Promise.resolve();
 	#closing: Promise<void> | undefined;
-	/** The latest `applyChanges`, settled to nothing: the next one starts after it. */
-	#applying: Promise<void> = Promise.resolve();
 
 	constructor(
 		host: Host<P>,
@@ -756,26 +758,13 @@ class RunningApp<P extends Principal> implements App<P> {
 	}
 
 	applyChanges(context: Context): Promise<RolloutResult> {
-		// One build and rollout at a time: a later build rolled out before an earlier one would leave the older code
-		// deployed (each host applies the last set it is handed).
-		const applied = this.#applying.then(() => this.#applyChanges(context));
-		this.#applying = applied.then(
-			() => {},
-			() => {},
-		);
-		return applied;
-	}
-
-	/** One build of the dirty plugins and its rollout: the server, every worker kind, then the clients. */
-	async #applyChanges(context: Context): Promise<RolloutResult> {
-		const plugins = this.#component;
-		const built = await plugins.build(plugins.state.value.dirty, context);
+		// One build and rollout at a time (`Plugins.apply`): the server, every worker kind, then the clients.
 		const steps = [
-			plugins.step("server", this.host),
+			this.#component.step("server", this.host),
 			...[...this.workers].map(([name, each]) => each.step(name)),
 			...this.#surfaces.map(({ name, surface }) => surface.step(name)),
 		];
-		return plugins.rollout(steps, built, context);
+		return this.#component.apply(steps, context);
 	}
 
 	async exportData(address: Address, path: string, context: Context): Promise<void> {

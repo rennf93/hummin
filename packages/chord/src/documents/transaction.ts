@@ -9,8 +9,8 @@ import type { JobHandle, Outcome, Run, StartOptions } from "../jobs/index.ts";
 import type { Job } from "../jobs/internal.ts";
 import type { Columns, PutRowOf, RowOf } from "../store/columns.ts";
 import type { Condition, SetOf } from "../store/expression.ts";
-import { refreshOf } from "../store/live-query.ts";
 import type { ColumnRefs, Query } from "../store/query.ts";
+import { ReadRefresh } from "../store/reads.ts";
 import { refusalOf } from "../store/refusal.ts";
 import type { StagedWrite } from "../store/step.ts";
 import type { ChordStore } from "../store/store.ts";
@@ -140,6 +140,8 @@ export class Transaction implements Tx {
 	/** When its commit reaches the store (a run state's deferred change, D8). */
 	readonly #persistence: CommitPersistence;
 	#state: "open" | "committing" | "stepping" | "committed" | "discarded" | "cut" = "open";
+	/** The error its cut throws, once cut (one instance: `cutWith` tells it from other failures). */
+	#cut: ChordError | undefined;
 	/** Rejected by `cut` while the commit waits in the store's queue: its caller is told at once (rule 3). */
 	#queued: PromiseWithResolvers<never> | undefined;
 	/** What its commit adopts, once it started (telemetry's `chord.commit` counts it when asked). */
@@ -513,12 +515,19 @@ export class Transaction implements Tx {
 		throw new Error(`${this.#documents.label}: the transaction has settled`);
 	}
 
+	/** The one error every use after its cut throws, made by the first. */
 	#cutError(): ChordError {
-		return new ChordError({
+		this.#cut ??= new ChordError({
 			code: "released",
 			reason: "discarded",
 			message: `${this.#documents.label}: the transaction was discarded at the seal`,
 		});
+		return this.#cut;
+	}
+
+	/** Whether `error` is its cut's: the seal discarded it, nothing else failed it. */
+	cutWith(error: unknown): boolean {
+		return this.#cut !== undefined && error === this.#cut;
 	}
 
 	/** The handle behind `table`, one of this object's tables (another object's is refused). */
@@ -547,13 +556,14 @@ export class Transaction implements Tx {
 	}
 
 	/**
-	 * Stages the re-run of the live queries over the tables this transaction wrote (decision "Live queries over an
-	 * object's own tables"): read in the commit step after every table write staged so far (the callback's), published
-	 * in the commit's batch. None when no written table has a live query.
+	 * Stages the refresh of the store's reads over the tables this transaction wrote (slice 14 §3.2): the reads are
+	 * chosen and tested in the commit step, after every table write staged so far (the callback's), and published in
+	 * the commit's batch. Staged whether or not a read exists now: one opened while this commit waits is refreshed too.
 	 */
 	#refreshQueries(tables: ReadonlyMap<TableHandle, TableChanges>): void {
-		const refresh = refreshOf(tables.keys(), this.#context);
-		if (refresh === undefined) return;
+		const written = [...tables.keys()].map((handle) => handle.sql.table);
+		const changes = () => [...tables.values()].flatMap((each) => each.changes());
+		const refresh = new ReadRefresh(this.#writes!.store.reads, written, changes, this.#context);
 		this.#writes!.staged.push(refresh.write);
 		this.stage(refresh, () => refresh);
 	}

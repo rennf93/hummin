@@ -307,13 +307,11 @@ export class SettingsList implements Component {
 		} else if (kb.matches(data, "tui.select.cancel")) {
 			this.onCancel();
 		} else if (this.searchEnabled && this.searchInput) {
-			const previousValue = this.searchInput.getValue();
+			// Cursor keys leave the query as it is and must not move the selection.
+			const previousQuery = this.searchInput.getValue();
 			this.searchInput.handleInput(data);
-			// Only refilter when the query actually changed; a stray control key
-			// must not reset the selection.
-			if (this.searchInput.getValue() !== previousValue) {
-				this.applyFilter(this.searchInput.getValue());
-			}
+			const query = this.searchInput.getValue();
+			if (query !== previousQuery) this.applyFilter(query);
 		}
 	}
 
@@ -399,12 +397,15 @@ export class SettingsList implements Component {
 	}
 
 	private addHintLine(lines: string[], width: number): void {
+		const kb = getKeybindings();
+		const confirm = [...kb.getKeys("tui.select.confirm"), "space"].join("/");
+		const keysHint = `${confirm} to change · ${kb.getKeys("tui.select.cancel").join("/")} to cancel`;
 		lines.push("");
-		const hint =
-			this.options.hint ??
-			(this.searchEnabled
-				? "Type to search · Enter/Space to change · Esc to cancel"
-				: "Enter/Space to change · Esc to cancel");
-		lines.push(truncateToWidth(this.theme.hint(`  ${hint}`), width));
+		lines.push(
+			truncateToWidth(
+				this.theme.hint(this.searchEnabled ? `  Type to search · ${keysHint}` : `  ${keysHint}`),
+				width,
+			),
+		);
 	}
 }

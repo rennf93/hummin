@@ -164,6 +164,16 @@ export class CustomEditor extends Editor {
 			return;
 		}
 
+		// Follow-up submit (Alt+Enter) - apply the selected autocomplete suggestion just like Enter does
+		const followUpHandler = this.actionHandlers.get("app.message.followUp");
+		if (followUpHandler && this.keybindings.matches(data, "app.message.followUp")) {
+			if (this.confirmAutocomplete() === "applied") {
+				return;
+			}
+			followUpHandler();
+			return;
+		}
+
 		// Footer navigator fast path: with an empty editor, the plain down arrow
 		// (when "down" resolves as part of app.footer.navigate) opens the navigator.
 		if (
@@ -181,7 +191,12 @@ export class CustomEditor extends Editor {
 		// Check all other app actions. With text in the editor, the plain down arrow
 		// (an app.footer.navigate default) falls through to cursor movement instead.
 		for (const [action, handler] of this.actionHandlers) {
-			if (action !== "app.interrupt" && action !== "app.exit" && this.keybindings.matches(data, action)) {
+			if (
+				action !== "app.interrupt" &&
+				action !== "app.exit" &&
+				action !== "app.message.followUp" &&
+				this.keybindings.matches(data, action)
+			) {
 				if (action === "app.footer.navigate" && this.getText().length > 0 && matchesKey(data, "down")) {
 					continue;
 				}

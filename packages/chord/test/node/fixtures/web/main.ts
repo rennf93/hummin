@@ -3,7 +3,9 @@
 // in-place reload keeps), a counter held while shown (`useHold`, `useWatch`, `useRefState`), and a note in page state
 // (`usePageState`) whose component the "remount" button replaces by another function, as a plugin reload does, a
 // greeting in the page's language (`useMessages`), the core facet contributing its catalogs, the page's beats subscribed
-// while shown (`useEvents`, its member and label switchable), and the plugins' parts (components). The page's reports and its client's stop are left on `globalThis` for the tests.
+// while shown (`useEvents`, its member and label switchable), the server's desk as the page is admitted to it
+// (`useLive`, shown on request), and the plugins' parts (components). The page's reports and its client's stop are
+// left on `globalThis` for the tests.
 
 import * as React from "react";
 import { createElement as h, useLayoutEffect, useState } from "react";
@@ -15,6 +17,7 @@ import {
 	HostProvider,
 	useEvents,
 	useHold,
+	useLive,
 	useMessages,
 	usePageState,
 	useRefState,
@@ -45,6 +48,8 @@ const probe = globalThis as unknown as {
 	relabel?: (label: string) => void;
 	switchBeats?: () => void;
 	toggleBeats?: () => void;
+	/** Shows the desk (a test's server plugin serves it). */
+	showDesk?: () => void;
 };
 probe.loads = (probe.loads ?? 0) + 1;
 probe.errors = [];
@@ -120,6 +125,26 @@ function Beats() {
 	return h("span", { id: "beats", "data-member": member, "data-state": ref?.state.value.kind }, label);
 }
 
+/**
+ * The server's desk while it is live: its text, whether `write` is granted, and a click that writes when it is
+ * (nothing for a reader).
+ */
+function Desk() {
+	const live = useLive(useHold(webApi.Desk, {}));
+	const text = useWatch(live?.text);
+	return h(
+		"button",
+		{
+			type: "button",
+			id: "desk",
+			// What `useLive` returned, in this render.
+			"data-mode": live === undefined ? "none" : live.write !== undefined ? "editor" : "reader",
+			onClick: () => void live?.write?.("edited", BACKGROUND_CONTEXT),
+		},
+		text ?? "",
+	);
+}
+
 /** The greeting, in the page's language. */
 function Greeting() {
 	const { t, locale } = useMessages(greetings);
@@ -133,7 +158,9 @@ function App() {
 	const [shown, setShown] = useState(true);
 	const [note, setNote] = useState(0);
 	const [beats, setBeats] = useState(true);
+	const [desk, setDesk] = useState(false);
 	probe.toggleBeats = () => setBeats((value) => !value);
+	probe.showDesk = () => setDesk(true);
 	return h(
 		"div",
 		null,
@@ -151,6 +178,7 @@ function App() {
 		h(NOTES[note % NOTES.length]!),
 		h(Greeting),
 		beats ? h(Beats) : null,
+		desk ? h(Desk) : null,
 	);
 }
 
