@@ -181,7 +181,9 @@ describe("startup dialog program status", () => {
 	it("reports an input as blocked on its title", async () => {
 		const result = showStartupInput(SettingsManager.inMemory(), "Project name");
 		const terminal = await startedTerminal();
-		expect(terminal.reports).toEqual([{ state: "blocked", app: "hummin", kind: "question", message: "Project name" }]);
+		expect(terminal.reports).toEqual([
+			{ state: "blocked", app: "hummin", kind: "question", message: "Project name" },
+		]);
 
 		terminal.type("demo");
 		terminal.type("\r");
